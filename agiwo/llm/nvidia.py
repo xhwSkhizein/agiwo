@@ -47,7 +47,7 @@ class NvidiaModel(OpenAIModel):
         resolved_base_url = (
             self.base_url
             or settings.nvidia_base_url
-            or os.getenv("NVIDIA_BASE_URL")
+            or os.getenv("NVIDIA_BUILD_BASE_URL")
             or "https://integrate.api.nvidia.com/v1"
         )
 

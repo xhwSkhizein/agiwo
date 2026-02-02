@@ -23,6 +23,10 @@ uv sync
 
 ## 运行测试用例
 
+### 单元测试（Mock 测试）
+
+以下测试使用 mock 对象，不会调用真实的 API：
+
 ### 运行所有测试
 
 ```bash
@@ -81,6 +85,44 @@ uv run pytest tests/llm/ -k "basic" -v
 # 显示简短错误追踪
 uv run pytest tests/llm/ -v --tb=short
 ```
+
+### 真实 API 测试
+
+项目包含一个独立的真实 API 测试脚本 `test_real_api.py`，用于测试各个 LLM 提供商的真实 API 调用。
+
+#### 配置 API Keys
+
+1. 复制 `.env.example` 为 `.env`：
+   ```bash
+   cp .env.example .env
+   ```
+
+2. 编辑 `.env` 文件，填入真实的 API keys：
+   ```bash
+   OPENAI_API_KEY=your_openai_api_key_here
+   DEEPSEEK_API_KEY=your_deepseek_api_key_here
+   NVIDIA_BUILD_API_KEY=your_nvidia_api_key_here
+   ANTHROPIC_API_KEY=your_anthropic_api_key_here
+   ```
+
+#### 运行真实 API 测试
+
+```bash
+# 使用 uv 运行
+uv run python test_real_api.py
+
+# 或直接运行（需要先激活虚拟环境）
+python test_real_api.py
+```
+
+测试脚本会：
+- 自动检测已配置的 API keys
+- 依次测试所有配置的提供商
+- 显示流式响应内容
+- 输出详细的测试结果汇总
+- 跳过未配置 API key 的提供商
+
+**注意**：真实 API 测试会产生 API 调用费用，请谨慎使用。
 
 ## 项目结构
 
