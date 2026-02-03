@@ -1,4 +1,4 @@
-"""Unified Jinja2 template renderer for Agio configuration system.
+"""Unified Jinja2 template renderer for agiwo configuration system.
 
 This module provides a single, simple interface for rendering templates
 across all components: config loading, agent execution, and agent prompts.
@@ -32,7 +32,7 @@ class TemplateRenderer:
     """Unified Jinja2 template renderer - global singleton.
 
     Usage:
-        from agio.config.template import renderer
+        from agiwo.config.template import renderer
         result = renderer.render("Hello {{ name }}", name="World")
     """
 

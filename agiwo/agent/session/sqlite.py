@@ -3,6 +3,9 @@ SQLite implementation of SessionStore.
 """
 
 import json
+from dataclasses import asdict, is_dataclass
+from datetime import datetime
+from typing import Any
 
 import aiosqlite
 
@@ -18,7 +21,7 @@ class SQLiteSessionStore(SessionStore):
     SQLite implementation of SessionStore.
     """
 
-    def __init__(self, db_path: str = "agio.db") -> None:
+    def __init__(self, db_path: str = "agiwo.db") -> None:
         self.db_path = db_path
         self._connection: aiosqlite.Connection | None = None
         self._initialized = False
@@ -35,6 +38,10 @@ class SQLiteSessionStore(SessionStore):
         self._initialized = True
 
         logger.info("sqlite_connected", db_path=self.db_path)
+
+    async def initialize(self) -> None:
+        """Backward-compatible alias for connect()."""
+        await self.connect()
 
     async def disconnect(self) -> None:
         """Close database connection."""
@@ -53,7 +60,7 @@ class SQLiteSessionStore(SessionStore):
             """
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY,
-                runnable_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
                 runnable_type TEXT NOT NULL DEFAULT 'agent',
                 session_id TEXT NOT NULL,
                 user_id TEXT,
@@ -77,7 +84,7 @@ class SQLiteSessionStore(SessionStore):
                 session_id TEXT NOT NULL,
                 run_id TEXT NOT NULL,
                 sequence INTEGER NOT NULL,
-                runnable_id TEXT,
+                agent_id TEXT,
                 runnable_type TEXT,
                 role TEXT NOT NULL,
                 content TEXT,
@@ -112,7 +119,7 @@ class SQLiteSessionStore(SessionStore):
 
         # Create indexes for runs
         await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_runs_agent_id ON runs(runnable_id)"
+            "CREATE INDEX IF NOT EXISTS idx_runs_agent_id ON runs(agent_id)"
         )
         await self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id)"
@@ -142,19 +149,115 @@ class SQLiteSessionStore(SessionStore):
 
         await self._connection.commit()
 
+        # Migrate existing tables to add missing columns if needed
+        await self._migrate_tables()
+
+    async def _migrate_tables(self) -> None:
+        """Migrate existing tables to add missing columns if needed."""
+        if not self._connection:
+            return
+
+        try:
+            runs_columns = await self._get_table_columns("runs")
+            steps_columns = await self._get_table_columns("steps")
+
+            # --- runs table ---
+            await self._ensure_column("runs", "agent_id", "TEXT", runs_columns)
+            await self._ensure_column(
+                "runs",
+                "runnable_type",
+                "TEXT NOT NULL DEFAULT 'agent'",
+                runs_columns,
+            )
+            await self._ensure_column("runs", "response_content", "TEXT", runs_columns)
+            await self._ensure_column("runs", "metrics", "TEXT", runs_columns)
+            await self._ensure_column("runs", "updated_at", "TEXT", runs_columns)
+            await self._ensure_column("runs", "parent_run_id", "TEXT", runs_columns)
+            await self._ensure_column("runs", "trace_id", "TEXT", runs_columns)
+
+            # Backfill agent_id from runnable_id if present in old schema
+            if "runnable_id" in runs_columns and "agent_id" in runs_columns:
+                await self._connection.execute(
+                    "UPDATE runs SET agent_id = runnable_id WHERE agent_id IS NULL"
+                )
+
+            # --- steps table ---
+            await self._ensure_column("steps", "agent_id", "TEXT", steps_columns)
+            await self._ensure_column(
+                "steps",
+                "runnable_type",
+                "TEXT NOT NULL DEFAULT 'agent'",
+                steps_columns,
+            )
+            await self._ensure_column("steps", "content_for_user", "TEXT", steps_columns)
+            await self._ensure_column("steps", "reasoning_content", "TEXT", steps_columns)
+            await self._ensure_column("steps", "tool_calls", "TEXT", steps_columns)
+            await self._ensure_column("steps", "tool_call_id", "TEXT", steps_columns)
+            await self._ensure_column("steps", "name", "TEXT", steps_columns)
+            await self._ensure_column("steps", "metrics", "TEXT", steps_columns)
+            await self._ensure_column("steps", "parent_run_id", "TEXT", steps_columns)
+            await self._ensure_column("steps", "trace_id", "TEXT", steps_columns)
+            await self._ensure_column("steps", "span_id", "TEXT", steps_columns)
+            await self._ensure_column("steps", "parent_span_id", "TEXT", steps_columns)
+            await self._ensure_column("steps", "depth", "INTEGER DEFAULT 0", steps_columns)
+            await self._ensure_column("steps", "llm_messages", "TEXT", steps_columns)
+            await self._ensure_column("steps", "llm_tools", "TEXT", steps_columns)
+            await self._ensure_column(
+                "steps", "llm_request_params", "TEXT", steps_columns
+            )
+
+            if "runnable_id" in steps_columns and "agent_id" in steps_columns:
+                await self._connection.execute(
+                    "UPDATE steps SET agent_id = runnable_id WHERE agent_id IS NULL"
+                )
+
+            # Ensure indexes exist for new columns
+            await self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runs_agent_id ON runs(agent_id)"
+            )
+            await self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_steps_session_run_seq "
+                "ON steps(session_id, run_id, sequence)"
+            )
+
+            await self._connection.commit()
+        except Exception as e:
+            logger.debug("migration_skipped", error=str(e))
+
+    async def _get_table_columns(self, table_name: str) -> set[str]:
+        if not self._connection:
+            return set()
+        async with self._connection.execute(f"PRAGMA table_info({table_name})") as cursor:
+            rows = await cursor.fetchall()
+        return {row[1] for row in rows}
+
+    async def _ensure_column(
+        self,
+        table_name: str,
+        column_name: str,
+        column_def: str,
+        existing: set[str],
+    ) -> None:
+        if column_name in existing:
+            return
+        await self._connection.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}"
+        )
+        existing.add(column_name)
+
     async def _ensure_connection(self) -> None:
         """Ensure database connection is established."""
         if not self._initialized:
             await self.connect()
 
     def _serialize_model(self, model: Run | Step) -> dict:
-        """Serialize Pydantic model to dict, handling nested models."""
-        data = model.model_dump(mode="json", exclude_none=True)
+        """Serialize Pydantic model or dataclass to dict, handling nested models."""
+        data = self._model_to_dict(model)
         # Convert nested models to JSON strings
         if isinstance(model, Run) and model.metrics:
-            data["metrics"] = json.dumps(model.metrics.model_dump(mode="json"))
+            data["metrics"] = self._serialize_metrics(model.metrics)
         elif isinstance(model, Step) and model.metrics:
-            data["metrics"] = json.dumps(model.metrics.model_dump(mode="json"))
+            data["metrics"] = self._serialize_metrics(model.metrics)
 
         # Convert list/dict fields to JSON strings
         if isinstance(model, Step):
@@ -168,12 +271,47 @@ class SQLiteSessionStore(SessionStore):
                 data["llm_request_params"] = json.dumps(model.llm_request_params)
 
         # Convert datetime to ISO format string
-        if "created_at" in data and isinstance(data["created_at"], str) is False:
-            data["created_at"] = data["created_at"].isoformat()
-        if "updated_at" in data and isinstance(data["updated_at"], str) is False:
-            data["updated_at"] = data["updated_at"].isoformat()
+        for field_name in ("created_at", "updated_at"):
+            if field_name in data and not isinstance(data[field_name], str):
+                data[field_name] = data[field_name].isoformat()
+
+        # Map Run model fields to database columns
+        if isinstance(model, Run):
+            # Map agent_id to agent_id for database compatibility
+            if "agent_id" in data:
+                data["agent_id"] = data.pop("agent_id")
+                data["runnable_type"] = "agent"
+        elif isinstance(model, Step):
+            # Map agent_id to agent_id for database compatibility
+            if "agent_id" in data:
+                data["agent_id"] = data.pop("agent_id")
+                data["runnable_type"] = "agent"
 
         return data
+
+    def _model_to_dict(self, model: Run | Step) -> dict:
+        if is_dataclass(model):
+            data = asdict(model)
+            return {k: v for k, v in data.items() if v is not None}
+        return model.model_dump(mode="json", exclude_none=True)
+
+    def _serialize_metrics(self, metrics: Any) -> str:
+        if is_dataclass(metrics):
+            payload = asdict(metrics)
+        else:
+            payload = metrics.model_dump(mode="json")
+        return json.dumps(self._normalize_datetimes(payload))
+
+    def _normalize_datetimes(self, value: Any) -> Any:
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {k: self._normalize_datetimes(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._normalize_datetimes(v) for v in value]
+        if isinstance(value, tuple):
+            return [self._normalize_datetimes(v) for v in value]
+        return value
 
     def _deserialize_run(self, row: aiosqlite.Row) -> Run:
         """Deserialize database row to Run model."""
@@ -181,9 +319,20 @@ class SQLiteSessionStore(SessionStore):
 
         # Parse JSON fields
         if data.get("metrics"):
-            data["metrics"] = json.loads(data["metrics"])
+            metrics_data = json.loads(data["metrics"])
+            from agiwo.agent.schema import RunMetrics
 
-        return Run.model_validate(data)
+            # RunMetrics is a dataclass
+            data["metrics"] = RunMetrics(**metrics_data)
+
+        # Map database columns to Run model fields
+        if "agent_id" in data:
+            data["agent_id"] = data.pop("agent_id")
+        # Remove runnable_type as it's not in the Run model
+        data.pop("runnable_type", None)
+
+        # Run is a dataclass, so use direct instantiation
+        return Run(**data)
 
     def _deserialize_step(self, row: aiosqlite.Row) -> Step:
         """Deserialize database row to Step model."""
@@ -191,7 +340,11 @@ class SQLiteSessionStore(SessionStore):
 
         # Parse JSON fields
         if data.get("metrics"):
-            data["metrics"] = json.loads(data["metrics"])
+            metrics_data = json.loads(data["metrics"])
+            from agiwo.agent.schema import StepMetrics
+
+            # StepMetrics is a dataclass
+            data["metrics"] = StepMetrics(**metrics_data)
         if data.get("tool_calls"):
             data["tool_calls"] = json.loads(data["tool_calls"])
         if data.get("llm_messages"):
@@ -201,7 +354,20 @@ class SQLiteSessionStore(SessionStore):
         if data.get("llm_request_params"):
             data["llm_request_params"] = json.loads(data["llm_request_params"])
 
-        return Step.model_validate(data)
+        # Map database columns to Step model fields
+        if "agent_id" in data:
+            data["agent_id"] = data.pop("agent_id")
+        # Remove runnable_type as it's not in the Step model
+        data.pop("runnable_type", None)
+
+        # Convert role string to MessageRole enum
+        if "role" in data and isinstance(data["role"], str):
+            from agiwo.agent.schema import MessageRole
+
+            data["role"] = MessageRole(data["role"])
+
+        # Step is a dataclass, so use direct instantiation
+        return Step(**data)
 
     # --- Run Operations ---
 
@@ -257,7 +423,7 @@ class SQLiteSessionStore(SessionStore):
         await self._ensure_connection()
 
         try:
-            query = "SELECT * FROM runs WHERE runnable_id IS NOT NULL"
+            query = "SELECT * FROM runs WHERE agent_id IS NOT NULL"
             params = []
 
             if user_id:
@@ -354,7 +520,7 @@ class SQLiteSessionStore(SessionStore):
         start_seq: int | None = None,
         end_seq: int | None = None,
         run_id: str | None = None,
-        runnable_id: str | None = None,
+        agent_id: str | None = None,
         limit: int = 1000,
     ) -> list[Step]:
         """Get steps for a session with optional filtering."""
@@ -373,9 +539,9 @@ class SQLiteSessionStore(SessionStore):
             if run_id is not None:
                 query += " AND run_id = ?"
                 params.append(run_id)
-            if runnable_id is not None:
-                query += " AND runnable_id = ?"
-                params.append(runnable_id)
+            if agent_id is not None:
+                query += " AND agent_id = ?"
+                params.append(agent_id)
 
             query += " ORDER BY sequence ASC LIMIT ?"
             params.append(limit)

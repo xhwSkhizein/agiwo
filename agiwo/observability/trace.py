@@ -33,7 +33,7 @@ class Span(BaseModel):
     """
     Execution span - minimal tracing unit.
 
-    Design follows OpenTelemetry Span specification with Agio-specific extensions.
+    Design follows OpenTelemetry Span specification with agiwo-specific extensions.
     """
 
     # === Identity ===

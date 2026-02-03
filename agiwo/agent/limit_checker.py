@@ -5,11 +5,11 @@ Execution Limit Checker - Validates execution constraints.
 import time
 from typing import TYPE_CHECKING
 
-from agiwo.agent.base import AgentConfigOptions
+from agiwo.agent.config_options import AgentConfigOptions
 
 
 if TYPE_CHECKING:
-    from agiwo.agent.executor import RunState
+    from agiwo.agent.run_state import RunState
 
 
 class ExecutionLimitChecker:

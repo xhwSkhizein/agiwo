@@ -16,8 +16,6 @@
 import asyncio
 import os
 import sys
-import tempfile
-import shutil
 from pathlib import Path
 from uuid import uuid4
 from typing import Any
@@ -45,6 +43,22 @@ from agiwo.utils.logging import get_logger
 load_dotenv()
 
 logger = get_logger(__name__)
+
+
+def _prepare_db_paths(test_name: str) -> tuple[str, str]:
+    """Create deterministic sqlite db paths for tests."""
+    base_dir = os.getenv("AGIWO_TEST_DB_DIR") or os.path.join(
+        os.getcwd(), "test_dbs"
+    )
+    os.makedirs(base_dir, exist_ok=True)
+    db_path = os.path.join(base_dir, f"{test_name}_agent.db")
+    trace_db_path = os.path.join(base_dir, f"{test_name}_traces.db")
+
+    for path in (db_path, trace_db_path):
+        if os.path.exists(path):
+            os.remove(path)
+
+    return db_path, trace_db_path
 
 
 class TestCalculatorTool(BaseTool):
@@ -184,11 +198,11 @@ async def test_tools_support():
     print("测试 1: Tools 支持和工具调用")
     print("=" * 60)
 
-    # 创建临时数据库
-    temp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(temp_dir, "test_agent.db")
-    trace_db_path = os.path.join(temp_dir, "test_traces.db")
+    # 创建测试数据库文件
+    db_path, trace_db_path = _prepare_db_paths("tools_support")
 
+    session_store: SQLiteSessionStore | None = None
+    trace_store: SQLiteTraceStore | None = None
     try:
         # 创建 SessionStore 和 TraceStore
         session_store = SQLiteSessionStore(db_path=db_path)
@@ -283,11 +297,10 @@ async def test_tools_support():
         traceback.print_exc()
         return False
     finally:
-        # 清理临时文件
-        try:
-            shutil.rmtree(temp_dir)
-        except Exception:
-            pass
+        if session_store:
+            await session_store.disconnect()
+        if trace_store:
+            await trace_store.close()
 
 
 async def test_skills_loading():
@@ -296,11 +309,11 @@ async def test_skills_loading():
     print("测试 2: Skills 加载和使用")
     print("=" * 60)
 
-    # 创建临时数据库
-    temp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(temp_dir, "test_agent.db")
-    trace_db_path = os.path.join(temp_dir, "test_traces.db")
+    # 创建测试数据库文件
+    db_path, trace_db_path = _prepare_db_paths("skills_loading")
 
+    session_store: SQLiteSessionStore | None = None
+    trace_store: SQLiteTraceStore | None = None
     try:
         # 创建 SessionStore 和 TraceStore
         session_store = SQLiteSessionStore(db_path=db_path)
@@ -311,7 +324,7 @@ async def test_skills_loading():
         trace_collector = TraceCollector(store=trace_store)
 
         # 创建测试 Skill 目录结构
-        test_skills_dir = os.path.join(temp_dir, "test_skills")
+        test_skills_dir = os.path.join(os.path.dirname(db_path), "test_skills")
         os.makedirs(test_skills_dir, exist_ok=True)
 
         # 创建一个简单的测试 Skill（使用符合命名规范的名称）
@@ -421,11 +434,10 @@ description: 这是一个测试技能，用于验证 Skills 系统是否正常�
         traceback.print_exc()
         return False
     finally:
-        # 清理临时文件
-        try:
-            shutil.rmtree(temp_dir)
-        except Exception:
-            pass
+        if session_store:
+            await session_store.disconnect()
+        if trace_store:
+            await trace_store.close()
 
 
 async def test_data_persistence():
@@ -434,11 +446,11 @@ async def test_data_persistence():
     print("测试 3: 数据持久化（SessionStore 和 TraceStore）")
     print("=" * 60)
 
-    # 创建临时数据库
-    temp_dir = tempfile.mkdtemp()
-    db_path = os.path.join(temp_dir, "test_agent.db")
-    trace_db_path = os.path.join(temp_dir, "test_traces.db")
+    # 创建测试数据库文件
+    db_path, trace_db_path = _prepare_db_paths("data_persistence")
 
+    session_store: SQLiteSessionStore | None = None
+    trace_store: SQLiteTraceStore | None = None
     try:
         # 创建 SessionStore 和 TraceStore
         session_store = SQLiteSessionStore(db_path=db_path)
@@ -577,11 +589,10 @@ async def test_data_persistence():
         traceback.print_exc()
         return False
     finally:
-        # 清理临时文件
-        try:
-            shutil.rmtree(temp_dir)
-        except Exception:
-            pass
+        if session_store:
+            await session_store.disconnect()
+        if trace_store:
+            await trace_store.close()
 
 
 def create_test_model():
@@ -589,8 +600,8 @@ def create_test_model():
     # 按优先级尝试不同的模型
     models_to_try = [
         # ("OpenAI", OpenAIModel, "OPENAI_API_KEY", "gpt-4o-mini"),
-        # ("DeepSeek", DeepseekModel, "DEEPSEEK_API_KEY", "deepseek-chat"),
-        ("NVIDIA", NvidiaModel, "NVIDIA_BUILD_API_KEY", "z-ai/glm4.7"),
+        ("DeepSeek", DeepseekModel, "DEEPSEEK_API_KEY", "deepseek-chat"),
+        # ("NVIDIA", NvidiaModel, "NVIDIA_BUILD_API_KEY", "z-ai/glm4.7"),
         # ("Anthropic", AnthropicModel, "ANTHROPIC_API_KEY", "claude-3-5-sonnet-20240620"),
     ]
 

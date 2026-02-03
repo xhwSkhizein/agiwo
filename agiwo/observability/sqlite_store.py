@@ -5,6 +5,7 @@ SQLite implementation of TraceStore.
 import asyncio
 import json
 from collections import deque
+from typing import Any
 
 import aiosqlite
 
@@ -27,7 +28,7 @@ class SQLiteTraceStore:
 
     def __init__(
         self,
-        db_path: str = "agio.db",
+        db_path: str = "agiwo.db",
         collection_name: str = "agiwo_traces",
         buffer_size: int = 200,
     ) -> None:
@@ -79,6 +80,8 @@ class SQLiteTraceStore:
                 total_tokens INTEGER DEFAULT 0,
                 total_llm_calls INTEGER DEFAULT 0,
                 total_tool_calls INTEGER DEFAULT 0,
+                total_cache_read_tokens INTEGER DEFAULT 0,
+                total_cache_creation_tokens INTEGER DEFAULT 0,
                 max_depth INTEGER DEFAULT 0,
                 input_query TEXT,
                 final_output TEXT,
@@ -105,6 +108,36 @@ class SQLiteTraceStore:
         )
 
         await self._connection.commit()
+
+        # Migrate existing tables to add missing columns
+        await self._migrate_tables()
+
+    async def _migrate_tables(self) -> None:
+        """Migrate existing tables to add missing columns if needed."""
+        if not self._connection:
+            return
+
+        try:
+            # Check if total_cache_read_tokens column exists
+            async with self._connection.execute(
+                f"PRAGMA table_info({self.collection_name})"
+            ) as cursor:
+                columns = [row[1] for row in await cursor.fetchall()]
+
+            # Add missing columns if they don't exist
+            if "total_cache_read_tokens" not in columns:
+                await self._connection.execute(
+                    f"ALTER TABLE {self.collection_name} ADD COLUMN total_cache_read_tokens INTEGER DEFAULT 0"
+                )
+            if "total_cache_creation_tokens" not in columns:
+                await self._connection.execute(
+                    f"ALTER TABLE {self.collection_name} ADD COLUMN total_cache_creation_tokens INTEGER DEFAULT 0"
+                )
+
+            await self._connection.commit()
+        except Exception as e:
+            # Ignore errors if columns already exist or table doesn't exist
+            logger.debug("migration_skipped", error=str(e))
 
     def _serialize_trace(self, trace: Trace) -> dict:
         """Serialize Trace to dict for database storage."""
@@ -199,8 +232,9 @@ class SQLiteTraceStore:
 
         return None
 
-    async def query_traces(self, query: TraceQuery) -> list[Trace]:
+    async def query_traces(self, query: TraceQuery | dict[str, Any]) -> list[Trace]:
         """Query traces"""
+        query = self._coerce_query(query)
         if self._connection is None:
             await self.initialize()
 
@@ -252,6 +286,11 @@ class SQLiteTraceStore:
 
         # Fallback to buffer
         return self._query_buffer(query)
+
+    def _coerce_query(self, query: TraceQuery | dict[str, Any]) -> TraceQuery:
+        if isinstance(query, TraceQuery):
+            return query
+        return TraceQuery(**query)
 
     def _query_buffer(self, query: TraceQuery) -> list[Trace]:
         """Query from in-memory buffer"""

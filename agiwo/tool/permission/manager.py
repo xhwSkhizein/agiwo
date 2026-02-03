@@ -68,7 +68,7 @@ class PermissionManager:
         self.consent_waiter = consent_waiter
         self.permission_service = permission_service
         self._tool_configs = tool_configs or {}
-        # LRU cache: key = (user_id, tool_name, args_hash), value = (ConsentResult, timestamp)
+        # Simple cache: key = (user_id, tool_name, args_hash), value = (ConsentResult, timestamp)
         self._cache: dict[str, tuple[ConsentResult, float]] = {}
         self._cache_ttl = cache_ttl
         self._cache_size = cache_size

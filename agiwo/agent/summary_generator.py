@@ -6,7 +6,7 @@ from agiwo.agent.summarizer import build_termination_messages
 from agiwo.utils.logging import get_logger
 
 from agiwo.agent.llm_handler import LLMStreamHandler
-from agiwo.agent.executor import RunState
+from agiwo.agent.run_state import RunState
 from agiwo.utils.abort_signal import AbortSignal
 
 logger = get_logger(__name__)

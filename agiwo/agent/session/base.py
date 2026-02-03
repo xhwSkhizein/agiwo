@@ -61,7 +61,7 @@ class SessionStore(ABC):
         start_seq: int | None = None,
         end_seq: int | None = None,
         run_id: str | None = None,
-        runnable_id: str | None = None,
+        agent_id: str | None = None,
         limit: int = 1000,
     ) -> list[Step]:
         """
@@ -72,7 +72,7 @@ class SessionStore(ABC):
             start_seq: Start sequence (inclusive), None = from beginning
             end_seq: End sequence (inclusive), None = to end
             run_id: Filter by run_id (optional)
-            runnable_id: Filter by runnable_id (optional)
+            agent_id: Filter by agent_id (optional)
             limit: Maximum return count
         """
         pass
@@ -227,7 +227,7 @@ class InMemorySessionStore(SessionStore):
         start_seq: int | None = None,
         end_seq: int | None = None,
         run_id: str | None = None,
-        runnable_id: str | None = None,
+        agent_id: str | None = None,
         limit: int = 1000,
     ) -> list[Step]:
         steps = self.steps.get(session_id, [])
@@ -238,8 +238,8 @@ class InMemorySessionStore(SessionStore):
             steps = [s for s in steps if s.sequence <= end_seq]
         if run_id is not None:
             steps = [s for s in steps if s.run_id == run_id]
-        if runnable_id is not None:
-            steps = [s for s in steps if s.runnable_id == runnable_id]
+        if agent_id is not None:
+            steps = [s for s in steps if s.agent_id == agent_id]
 
         return steps[:limit]
 

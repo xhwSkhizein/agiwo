@@ -240,7 +240,7 @@ class TraceCollector:
             data = event.data or {}
 
             # Check if this is a nested execution
-            if event.nested_runnable_id:
+            if event.agent_id:
                 # Find parent span for nested execution
                 parent_span = self._find_parent_span_for_nested(
                     event, span_stack, current_span
@@ -251,10 +251,10 @@ class TraceCollector:
                     trace_id=trace.trace_id,
                     parent_span_id=parent_span.span_id if parent_span else None,
                     kind=SpanKind.AGENT,
-                    name=event.nested_runnable_id,
+                    name=event.agent_id,
                     depth=(parent_span.depth + 1) if parent_span else 1,
                     attributes={
-                        "agent_id": event.nested_runnable_id,
+                        "agent_id": event.agent_id,
                         "nested": True,
                         "parent_run_id": event.parent_run_id,
                         "session_id": data.get("session_id"),

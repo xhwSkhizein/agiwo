@@ -45,7 +45,7 @@ class TraceStore:
     def __init__(
         self,
         mongo_uri: str | None = None,
-        db_name: str = "agio",
+        db_name: str = "agiwo",
         collection_name: str = "traces",
         buffer_size: int = 200,
     ) -> None:
@@ -145,8 +145,9 @@ class TraceStore:
 
         return None
 
-    async def query_traces(self, query: TraceQuery) -> list[Trace]:
+    async def query_traces(self, query: TraceQuery | dict[str, Any]) -> list[Trace]:
         """Query traces"""
+        query = self._coerce_query(query)
         mongo_query: dict[str, Any] = {}
 
         if query.agent_id:
@@ -190,6 +191,11 @@ class TraceStore:
 
         # Fallback to buffer
         return self._query_buffer(query)
+
+    def _coerce_query(self, query: TraceQuery | dict[str, Any]) -> TraceQuery:
+        if isinstance(query, TraceQuery):
+            return query
+        return TraceQuery(**query)
 
     def _query_buffer(self, query: TraceQuery) -> list[Trace]:
         """Query from in-memory buffer"""

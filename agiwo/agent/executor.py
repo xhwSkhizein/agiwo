@@ -11,145 +11,25 @@ This module implements the core agent execution loop:
 from __future__ import annotations
 
 import asyncio
-import time
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
-from agiwo.agent.base import AgentConfigOptions
+from agiwo.agent.schema import RunOutput
+from agiwo.agent.config_options import AgentConfigOptions
 from agiwo.agent.limit_checker import ExecutionLimitChecker
 from agiwo.agent.llm_handler import LLMStreamHandler
 from agiwo.agent.summary_generator import SummaryGenerator
-from agiwo.agent.schema import RunMetrics, Step, StepAdapter, StepDelta, RunOutput
 from agiwo.llm.base import Model
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.tool.permission.manager import PermissionManager
 from agiwo.agent.execution_context import ExecutionContext
-from agiwo.agent.step_factory import StepFactory
 from agiwo.tool.base import BaseTool
 from agiwo.tool.executor import ToolExecutor
+from agiwo.agent.run_state import RunState
 from agiwo.utils.logging import get_logger
-
-if TYPE_CHECKING:
-    from typing import Self
 
 from agiwo.agent.side_effect_processor import SideEffectProcessor
 
 
 logger = get_logger(__name__)
-
-
-# ToolCallAccumulator moved to agio.agent.step_builder
-
-
-class MetricsTracker:
-    """Internal metrics tracker for aggregating execution statistics."""
-
-    def __init__(self) -> None:
-        self.total_tokens = 0
-        self.input_tokens = 0
-        self.output_tokens = 0
-        self.steps_count = 0
-        self.tool_calls_count = 0
-        self.assistant_steps_count = 0
-        self.pending_tool_calls = None
-        self.response_content = None
-
-    def track(self, step: Step) -> None:
-        self.steps_count += 1
-
-        if step.metrics:
-            if step.metrics.total_tokens:
-                self.total_tokens += step.metrics.total_tokens
-            if step.metrics.input_tokens:
-                self.input_tokens += step.metrics.input_tokens
-            if step.metrics.output_tokens:
-                self.output_tokens += step.metrics.output_tokens
-
-        if step.is_assistant_step():
-            self.assistant_steps_count += 1
-            if step.content:
-                self.response_content = step.content
-            if step.tool_calls:
-                self.tool_calls_count += len(step.tool_calls)
-                self.pending_tool_calls = step.tool_calls
-        elif step.role.value == "tool":
-            self.pending_tool_calls = None
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Run State
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-@dataclass
-class RunState:
-    """Encapsulates all mutable state for a single execution run."""
-
-    context: ExecutionContext
-    config: AgentConfigOptions
-    messages: list[dict]
-    pipeline: SideEffectProcessor
-    tracker: MetricsTracker
-    sf: StepFactory
-    tool_schemas: list[dict] | None = None
-    start_time: float = field(default_factory=time.time)
-    current_step: int = 0
-    termination_reason: str | None = None
-
-    @classmethod
-    def create(
-        cls,
-        context: ExecutionContext,
-        config: AgentConfigOptions,
-        messages: list[dict],
-        pipeline: SideEffectProcessor,
-        tool_schemas: list[dict] | None = None,
-    ) -> Self:
-        return cls(
-            context=context,
-            config=config,
-            messages=messages,
-            pipeline=pipeline,
-            tracker=MetricsTracker(),
-            sf=StepFactory(context),
-            tool_schemas=tool_schemas,
-        )
-
-    @property
-    def elapsed(self) -> float:
-        return time.time() - self.start_time
-
-    async def record_step(self, step: Step, *, append_message: bool = True) -> None:
-        """Queue for persistence, track metrics, emit event, optionally append to messages."""
-        await self.pipeline.commit_step(step)
-        self.tracker.track(step)
-        if append_message:
-            self.messages.append(StepAdapter.to_llm_message(step))
-
-    async def emit_delta(self, step_id: str, delta: StepDelta) -> None:
-        await self.pipeline.emit_step_delta(step_id, delta)
-
-    def build_output(self) -> RunOutput:
-        return RunOutput(
-            response=self.tracker.response_content,
-            run_id=self.context.run_id,
-            session_id=self.context.session_id,
-            metrics=RunMetrics(
-                duration=self.elapsed,
-                total_tokens=self.tracker.total_tokens,
-                input_tokens=self.tracker.input_tokens,
-                output_tokens=self.tracker.output_tokens,
-                steps_count=self.tracker.steps_count,
-                tool_calls_count=self.tracker.tool_calls_count,
-            ),
-            termination_reason=self.termination_reason,
-        )
-
-    async def cleanup(self) -> None:
-        pass
-
-
-# StepBuilder moved to agio.agent.step_builder
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -174,25 +54,21 @@ class AgentExecutor:
         self,
         model: Model,
         tools: list[BaseTool],
-        pipeline: SideEffectProcessor,
-        config: AgentConfigOptions | None = None,
+        side_effect_processor: SideEffectProcessor,
+        options: AgentConfigOptions | None = None,
         permission_manager: PermissionManager | None = None,
     ):
-        self.pipeline = pipeline
-        self.config = config or AgentConfigOptions()
+        self.side_effect_processor = side_effect_processor
+        self.options = options or AgentConfigOptions()
 
         # 初始化各个组件
         self.llm_handler = LLMStreamHandler(model)
-        self.tool_executor = ToolExecutor(
-            tools,
-            permission_manager=permission_manager,
-            default_timeout=self.config.timeout_per_step,
-        )
-        self.limit_checker = ExecutionLimitChecker(self.config)
+        self.tool_executor = ToolExecutor(tools=tools)
+        self.limit_checker = ExecutionLimitChecker(self.options)
         self.summary_generator = SummaryGenerator(
             llm_handler=self.llm_handler,
-            enabled=self.config.enable_termination_summary,
-            custom_prompt=self.config.termination_summary_prompt,
+            enabled=self.options.enable_termination_summary,
+            custom_prompt=self.options.termination_summary_prompt,
         )
 
         self._tool_schemas = [t.to_openai_schema() for t in tools] if tools else None
@@ -210,7 +86,11 @@ class AgentExecutor:
         abort_signal: AbortSignal | None = None,
     ) -> RunOutput:
         state = RunState.create(
-            context, self.config, messages, self.pipeline, self._tool_schemas
+            context,
+            self.options,
+            messages,
+            self.side_effect_processor,
+            self._tool_schemas,
         )
 
         try:
@@ -296,4 +176,4 @@ class AgentExecutor:
             await state.record_step(step)
 
     async def _allocate_sequence(self) -> int:
-        return await self.pipeline.allocate_sequence()
+        return await self.side_effect_processor.allocate_sequence()

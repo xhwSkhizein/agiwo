@@ -28,14 +28,14 @@ class ToolResult:
     tool_call_id: str
     input_args: dict[str, Any]
     content: str  # Result for LLM (used when building messages)
-    content_for_user: str | None = (
-        None  # Display content for frontend (preferred for UI)
-    )
     output: Any  # Raw execution result
-    error: str | None = None
     start_time: float
     end_time: float
     duration: float
+    content_for_user: str | None = (
+        None  # Display content for frontend (preferred for UI)
+    )
+    error: str | None = None
     is_success: bool = True
 
 

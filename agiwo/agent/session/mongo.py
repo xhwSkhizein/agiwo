@@ -46,7 +46,7 @@ class MongoSessionStore(SessionStore):
     def __init__(
         self,
         uri: str = "mongodb://localhost:27017",
-        db_name: str = "agio",
+        db_name: str = "agiwo",
     ):
         self.uri = uri
         self.db_name = db_name
@@ -144,7 +144,7 @@ class MongoSessionStore(SessionStore):
         await self._ensure_connection()
 
         try:
-            query = {"runnable_id": {"$exists": True}}
+            query = {"agent_id": {"$exists": True}}
             if user_id:
                 query["user_id"] = user_id
             if session_id:
@@ -242,7 +242,7 @@ class MongoSessionStore(SessionStore):
         start_seq: int | None = None,
         end_seq: int | None = None,
         run_id: str | None = None,
-        runnable_id: str | None = None,
+        agent_id: str | None = None,
         limit: int = 1000,
     ) -> list[Step]:
         """Get steps for a session with optional filtering."""
@@ -260,8 +260,8 @@ class MongoSessionStore(SessionStore):
 
             if run_id is not None:
                 query["run_id"] = run_id
-            if runnable_id is not None:
-                query["runnable_id"] = runnable_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
 
             cursor = self.steps_collection.find(query).sort("sequence", 1).limit(limit)
 

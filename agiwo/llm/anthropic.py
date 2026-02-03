@@ -323,7 +323,7 @@ class AnthropicModel(Model):
                         }
                     ]
                     # Note: We emit the tool call when it's complete
-                    # or should we emit deltas? Agio seems to prefer chunks.
+                    # or should we emit deltas? agiwo seems to prefer chunks.
                     # Given the current structure, we'll emit the full tool call at block stop.
 
             elif event.type == "message_delta":

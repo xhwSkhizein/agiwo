@@ -51,6 +51,35 @@ class RunLifecycle:
         """Set the execution output (success case)."""
         self._output = output
 
+    async def _handle_failure(self, exc_val: BaseException) -> None:
+        """Handle failure case for the run."""
+        self.run.status = RunStatus.FAILED
+        logger.error(
+            "run_failed",
+            run_id=self.run.id,
+            agent_id=self.run.agent_id,
+            error=str(exc_val),
+            exc_info=True,
+        )
+        await self.side_effect_processor.emit_run_failed(self.run, exc_val)
+
+    async def _handle_success(self) -> None:
+        """Handle success case for the run."""
+        self.run.status = RunStatus.COMPLETED
+        self.run.response_content = self._output.response
+
+        # Sync Metrics
+        self._sync_output_metrics()
+
+        await self.side_effect_processor.emit_run_completed(self.run, self._output)
+
+    async def _handle_incomplete(self) -> None:
+        """Handle unexpected empty output without exception."""
+        self.run.status = RunStatus.FAILED
+        msg = "Run exited without output or exception"
+        logger.error("run_incomplete", run_id=self.run.id, error=msg)
+        await self.side_effect_processor.emit_run_failed(self.run, Exception(msg))
+
     async def __aenter__(self) -> Run:
         """Start the Run."""
         self.run = Run(
@@ -75,32 +104,13 @@ class RunLifecycle:
         self._finalize_timing()
 
         if exc_val:
-            # === FAILURE CASE ===
-            self.run.status = RunStatus.FAILED
-            logger.error(
-                "run_failed",
-                run_id=self.run.id,
-                agent_id=self.run.agent_id,
-                error=str(exc_val),
-                exc_info=True,
-            )
-            await self.side_effect_processor.emit_run_failed(self.run, exc_val)
+            await self._handle_failure(exc_val)
+            return
 
-        elif self._output:
-            # === SUCCESS CASE ===
-            self.run.status = RunStatus.COMPLETED
-            self.run.response_content = self._output.response
+        if self._output:
+            await self._handle_success()
+            return
 
-            # Sync Metrics
-            self._sync_output_metrics()
-
-            await self.side_effect_processor.emit_run_completed(self.run, self._output)
-
-        else:
-            # === UNEXPECTED EMPTY CASE ===
-            # This happens if code exited without exception but set_output wasn't called.
-            # We treat this as a failure or incomplete run.
-            self.run.status = RunStatus.FAILED
-            msg = "Run exited without output or exception"
-            logger.error("run_incomplete", run_id=self.run.id, error=msg)
-            await self.side_effect_processor.emit_run_failed(self.run, Exception(msg))
+        # This happens if code exited without exception but set_output wasn't called.
+        # We treat this as a failure or incomplete run.
+        await self._handle_incomplete()

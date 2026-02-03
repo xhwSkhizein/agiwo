@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from agiwo.agent.schema import Step, StepDelta
 from agiwo.llm.helper import normalize_usage_metrics
 
-from agiwo.agent.executor import RunState
+from agiwo.agent.run_state import RunState
 
 
 class ToolCallAccumulator:
@@ -76,20 +76,14 @@ class StepBuilder:
                     time.time() - self.step_start_time
                 ) * 1000
 
-        # Accumulate content
         if chunk.content:
-            self.step.content = (self.step.content or "") + chunk.content
-            delta.content = chunk.content
+            self._append_content(delta, chunk.content)
 
         if chunk.reasoning_content:
-            self.step.reasoning_content = (
-                self.step.reasoning_content or ""
-            ) + chunk.reasoning_content
-            delta.reasoning_content = chunk.reasoning_content
+            self._append_reasoning(delta, chunk.reasoning_content)
 
         if chunk.tool_calls:
-            self.tool_accumulator.accumulate(chunk.tool_calls)
-            delta.tool_calls = chunk.tool_calls
+            self._append_tool_calls(delta, chunk.tool_calls)
 
         # Usage (typically only in final chunk)
         if chunk.usage and self.step.metrics:
@@ -110,10 +104,22 @@ class StepBuilder:
         self.step.tool_calls = self.tool_accumulator.finalize() or None
 
         if self.step.metrics:
-            self.step.metrics.exec_end_at = datetime.now(timezone.utc)
+            self.step.metrics.end_at = datetime.now(timezone.utc)
             self.step.metrics.duration_ms = (time.time() - self.step_start_time) * 1000
 
         return self.step
+
+    def _append_content(self, delta: StepDelta, content: str) -> None:
+        self.step.content = (self.step.content or "") + content
+        delta.content = content
+
+    def _append_reasoning(self, delta: StepDelta, reasoning: str) -> None:
+        self.step.reasoning_content = (self.step.reasoning_content or "") + reasoning
+        delta.reasoning_content = reasoning
+
+    def _append_tool_calls(self, delta: StepDelta, tool_calls: list[dict]) -> None:
+        self.tool_accumulator.accumulate(tool_calls)
+        delta.tool_calls = tool_calls
 
 
 __all__ = ["StepBuilder", "ToolCallAccumulator"]

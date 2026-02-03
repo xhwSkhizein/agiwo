@@ -8,11 +8,10 @@ class ExecutionContext:
     # Execution identity
     session_id: str
     run_id: str
-    # User Context
-    user_id: str | None = None
-
     # Session-level resources
     wire: Wire
+    # User Context
+    user_id: str | None = None
 
     # Hierarchy information
     depth: int = 0

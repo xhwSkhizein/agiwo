@@ -25,7 +25,7 @@ class OTLPExporter:
     """
     OTLP (OpenTelemetry Protocol) exporter.
 
-    Converts Agio Trace/Span to OTLP format and exports to configured endpoint.
+    Converts agiwo Trace/Span to OTLP format and exports to configured endpoint.
 
     Supports:
     - Jaeger (via OTLP gRPC/HTTP)
@@ -97,7 +97,7 @@ class OTLPExporter:
         Export trace to OTLP backend.
 
         Args:
-            trace: Agio Trace to export
+            trace: agiwo Trace to export
 
         Returns:
             True if export succeeded, False otherwise
@@ -148,7 +148,7 @@ class OTLPExporter:
 
     def _convert_trace_to_otlp(self, trace: Trace) -> list:
         """
-        Convert Agio Trace to OTLP ReadableSpan list.
+        Convert agiwo Trace to OTLP ReadableSpan list.
 
         This is a simplified conversion. Full implementation would use
         opentelemetry.sdk.trace.ReadableSpan with proper context propagation.

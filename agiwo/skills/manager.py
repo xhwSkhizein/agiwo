@@ -153,7 +153,7 @@ class SkillManager:
 
 
 def _iter_skill_dirs_from_env() -> list[str]:
-    raw = os.getenv("AGIO_SKILLS_DIRS") or os.getenv("AGIO_SKILLS_DIR")
+    raw = os.getenv("agiwo_SKILLS_DIRS") or os.getenv("agiwo_SKILLS_DIR")
     if not raw:
         return []
 

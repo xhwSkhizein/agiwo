@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from agiwo.agent.step_builder import StepBuilder
 from agiwo.agent.schema import StepMetrics
-from agiwo.agent.executor import RunState
+from agiwo.agent.run_state import RunState
 from agiwo.llm.base import Model
 from agiwo.utils.abort_signal import AbortSignal
 
@@ -57,7 +57,7 @@ class LLMStreamHandler:
             llm_tools=tools.copy() if tools else None,
             llm_request_params=self._get_request_params(),
             metrics=StepMetrics(
-                exec_start_at=datetime.now(timezone.utc),
+                start_at=datetime.now(timezone.utc),
                 model_name=getattr(self.model, "model_name", None),
                 provider=getattr(self.model, "provider", None),
             ),

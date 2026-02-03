@@ -137,16 +137,16 @@ class Step:
     """
 
     # --- Indexing & Association ---
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
     run_id: str  # Logical grouping for a single user query → response cycle
     sequence: int  # Global sequence within session (1, 2, 3, ...)
+    role: MessageRole  # Core Content (Standard LLM Message)
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     # --- Agent Binding (for unified Fork/Resume) ---
     agent_id: str | None = None  # Agent ID that created this step
 
     # --- Core Content (Standard LLM Message) ---
-    role: MessageRole
     content: str | None = None  # LLM message content
     content_for_user: str | None = (
         None  # Display content for frontend (preferred for UI)
@@ -201,7 +201,7 @@ class Step:
         return self.is_assistant_step() and bool(self.tool_calls)
 
 
-@dataclass(frozen=True)
+@dataclass
 class StepEvent:
     """
     Unified event for Step-based streaming.
@@ -259,12 +259,11 @@ class Run:
 
     """
 
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
     agent_id: str
     session_id: str
-    user_id: str | None = None
-
     input_query: str
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str | None = None
     status: RunStatus = RunStatus.STARTING
 
     # Aggregated metadata
@@ -313,7 +312,9 @@ class StepAdapter:
         Returns:
             dict: Message in OpenAI format
         """
-        msg: dict[str, Any] = {"role": step.role.value}
+        # Handle role as enum or string
+        role_value = step.role.value if hasattr(step.role, "value") else step.role
+        msg: dict[str, Any] = {"role": role_value}
 
         if step.content is not None:
             msg["content"] = step.content

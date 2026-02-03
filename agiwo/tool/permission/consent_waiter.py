@@ -76,36 +76,28 @@ class ConsentWaiter:
         try:
             # Wait for decision or timeout
             await asyncio.wait_for(event.wait(), timeout=timeout)
-
-            async with self._lock:
-                decision = self._decisions.get(tool_call_id)
-                if decision is None:
-                    # Timeout occurred, create deny decision
-                    decision = ConsentDecision(decision="deny", patterns=[])
-                    self._decisions[tool_call_id] = decision
-                return decision
-
         except asyncio.TimeoutError:
-            # Handle timeout
             async with self._lock:
-                decision = ConsentDecision(decision="deny", patterns=[])
-                self._decisions[tool_call_id] = decision
-                # Clean up Event
-                self._events.pop(tool_call_id, None)
-                self._timeouts.pop(tool_call_id, None)
-
+                self._decisions[tool_call_id] = ConsentDecision(
+                    decision="deny", patterns=[]
+                )
             logger.warning(
                 "consent_wait_timeout",
                 tool_call_id=tool_call_id,
                 timeout=timeout,
             )
             raise
-
         finally:
-            # Clean up resources
             async with self._lock:
                 self._events.pop(tool_call_id, None)
                 self._timeouts.pop(tool_call_id, None)
+
+        async with self._lock:
+            decision = self._decisions.get(tool_call_id)
+            if decision is None:
+                decision = ConsentDecision(decision="deny", patterns=[])
+                self._decisions[tool_call_id] = decision
+            return decision
 
     async def resolve(
         self,

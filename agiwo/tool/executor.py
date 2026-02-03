@@ -86,15 +86,18 @@ class ToolExecutor:
                     start_time=time.time(),
                 )
 
-        tasks = [asyncio.create_task(_run_single(tc)) for tc in tool_calls]
-        done, _ = await asyncio.wait(tasks, return_when=asyncio.ALL_COMPLETED)
+        results = await asyncio.gather(
+            *(_run_single(tc) for tc in tool_calls),
+            return_exceptions=True,
+        )
 
-        results: list[ToolResult] = []
-        for task in tasks:
-            try:
-                results.append(task.result())
-            except asyncio.CancelledError:
-                results.append(
+        normalized: list[ToolResult] = []
+        for result in results:
+            if isinstance(result, ToolResult):
+                normalized.append(result)
+                continue
+            if isinstance(result, asyncio.CancelledError):
+                normalized.append(
                     self._create_error_result(
                         call_id="",
                         tool_name="unknown",
@@ -102,17 +105,19 @@ class ToolExecutor:
                         start_time=time.time(),
                     )
                 )
-            except Exception as e:
-                results.append(
+                continue
+            if isinstance(result, Exception):
+                normalized.append(
                     self._create_error_result(
                         call_id="",
                         tool_name="unknown",
-                        error=f"Tool execution failed: {e}",
+                        error=f"Tool execution failed: {result}",
                         start_time=time.time(),
                     )
                 )
+                continue
 
-        return results
+        return normalized
 
     async def aexecute(
         self,
@@ -144,27 +149,14 @@ class ToolExecutor:
 
         # 解析参数
         try:
-            if isinstance(fn_args, str):
-                args = json.loads(fn_args)
-            elif isinstance(fn_args, dict):
-                args = fn_args
-            else:
-                args = {}
-        except json.JSONDecodeError as e:
-            try:
-                if fn_args.startswith("{") and fn_args.endswith("}"):
-                    args = ast.literal_eval(fn_args)
-                    if not isinstance(args, dict):
-                        raise ValueError("Not a dict")
-                else:
-                    raise e
-            except Exception:
-                return self._create_error_result(
-                    call_id=call_id,
-                    tool_name=fn_name,
-                    error=f"Invalid JSON arguments: {e}. Raw: {fn_args[:100]}...",
-                    start_time=start_time,
-                )
+            args = self._parse_tool_args(fn_args)
+        except ValueError as e:
+            return self._create_error_result(
+                call_id=call_id,
+                tool_name=fn_name,
+                error=str(e),
+                start_time=start_time,
+            )
 
         args["tool_call_id"] = call_id
 
@@ -235,6 +227,29 @@ class ToolExecutor:
             duration=end_time - start_time,
             is_success=False,
         )
+
+    def _parse_tool_args(self, fn_args: Any) -> dict[str, Any]:
+        if isinstance(fn_args, dict):
+            return fn_args
+
+        if not isinstance(fn_args, str):
+            return {}
+
+        try:
+            return json.loads(fn_args)
+        except json.JSONDecodeError as e:
+            try:
+                if fn_args.startswith("{") and fn_args.endswith("}"):
+                    args = ast.literal_eval(fn_args)
+                    if not isinstance(args, dict):
+                        raise ValueError("Not a dict")
+                    return args
+            except Exception:
+                pass
+
+            raise ValueError(
+                f"Invalid JSON arguments: {e}. Raw: {fn_args[:100]}..."
+            ) from e
 
     def _create_denied_result(
         self,
