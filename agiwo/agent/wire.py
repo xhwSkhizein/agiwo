@@ -1,7 +1,7 @@
 import asyncio
 from typing import AsyncIterator
 
-from agiwo.agent.schema import StepEvent
+from agiwo.agent.schema import StreamEvent
 
 
 class Wire:
@@ -14,6 +14,7 @@ class Wire:
     - close(): Signal that no more events will be written
 
     Thread-safe and supports multiple concurrent writers.
+    Single-consumer: read() can only be claimed once.
     """
 
     # Sentinel value to signal end of stream
@@ -28,15 +29,16 @@ class Wire:
         """
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
         self._closed = False
+        self._reader_claimed = False
         self._writer_count = 0
         self._lock = asyncio.Lock()
 
-    async def write(self, event: "StepEvent") -> None:
+    async def write(self, event: "StreamEvent") -> None:
         """
         Write an event to the wire.
 
         Args:
-            event: StepEvent to write
+            event: StreamEvent to write
 
         Raises:
             RuntimeError: If wire is already closed
@@ -46,7 +48,7 @@ class Wire:
             return
         await self._queue.put(event)
 
-    def write_nowait(self, event: "StepEvent") -> None:
+    def write_nowait(self, event: "StreamEvent") -> None:
         """
         Write an event without waiting (non-blocking).
 
@@ -71,13 +73,16 @@ class Wire:
         self._closed = True
         await self._queue.put(self._SENTINEL)
 
-    async def read(self) -> AsyncIterator["StepEvent"]:
+    async def read(self) -> AsyncIterator["StreamEvent"]:
         """
         Read events from the wire until closed.
 
         Yields:
-            StepEvent: Events written to the wire
+            StreamEvent: Events written to the wire
         """
+        if self._reader_claimed:
+            raise RuntimeError("wire_read_already_claimed")
+        self._reader_claimed = True
         while True:
             item = await self._queue.get()
             if item is self._SENTINEL:

@@ -11,22 +11,21 @@ This module implements the core agent execution loop:
 from __future__ import annotations
 
 import asyncio
+import time
 
-from agiwo.agent.schema import RunOutput
+from agiwo.agent.schema import RunOutput, create_tool_step
 from agiwo.agent.config_options import AgentConfigOptions
-from agiwo.agent.limit_checker import ExecutionLimitChecker
 from agiwo.agent.llm_handler import LLMStreamHandler
-from agiwo.agent.summary_generator import SummaryGenerator
+from agiwo.agent.summarizer import build_termination_messages
 from agiwo.llm.base import Model
 from agiwo.utils.abort_signal import AbortSignal
-from agiwo.tool.permission.manager import PermissionManager
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.tool.base import BaseTool
 from agiwo.tool.executor import ToolExecutor
 from agiwo.agent.run_state import RunState
 from agiwo.utils.logging import get_logger
 
-from agiwo.agent.side_effect_processor import SideEffectProcessor
+from agiwo.agent.run_io import RunIO
 
 
 logger = get_logger(__name__)
@@ -46,30 +45,26 @@ class AgentExecutor:
     组件：
     - LLMStreamHandler: LLM 调用和流式处理
     - ToolExecutor: 工具执行
-    - ExecutionLimitChecker: 限制检查
-    - SummaryGenerator: 摘要生成
+    - 内置限制检查与摘要生成
     """
+
+    SUMMARY_REASONS = frozenset(
+        {"max_steps", "timeout", "max_tokens", "error_with_context"}
+    )
 
     def __init__(
         self,
         model: Model,
         tools: list[BaseTool],
-        side_effect_processor: SideEffectProcessor,
+        run_io: RunIO,
         options: AgentConfigOptions | None = None,
-        permission_manager: PermissionManager | None = None,
     ):
-        self.side_effect_processor = side_effect_processor
+        self.run_io = run_io
         self.options = options or AgentConfigOptions()
 
         # 初始化各个组件
         self.llm_handler = LLMStreamHandler(model)
         self.tool_executor = ToolExecutor(tools=tools)
-        self.limit_checker = ExecutionLimitChecker(self.options)
-        self.summary_generator = SummaryGenerator(
-            llm_handler=self.llm_handler,
-            enabled=self.options.enable_termination_summary,
-            custom_prompt=self.options.termination_summary_prompt,
-        )
 
         self._tool_schemas = [t.to_openai_schema() for t in tools] if tools else None
 
@@ -85,12 +80,11 @@ class AgentExecutor:
         pending_tool_calls: list[dict] | None = None,
         abort_signal: AbortSignal | None = None,
     ) -> RunOutput:
-        state = RunState.create(
-            context,
-            self.options,
-            messages,
-            self.side_effect_processor,
-            self._tool_schemas,
+        state = RunState(
+            context=context,
+            config=self.options,
+            messages=messages,
+            tool_schemas=self._tool_schemas,
         )
 
         try:
@@ -101,7 +95,7 @@ class AgentExecutor:
         except Exception as e:
             state.termination_reason = (
                 "error_with_context"
-                if state.tracker.assistant_steps_count > 0
+                if state.assistant_steps_count > 0
                 else "error"
             )
             logger.error(
@@ -109,13 +103,12 @@ class AgentExecutor:
                 run_id=state.context.run_id,
                 error=str(e),
                 error_type=type(e).__name__,
-                steps_completed=state.tracker.steps_count,
+                steps_completed=state.steps_count,
                 termination_reason=state.termination_reason,
                 exc_info=True,
             )
         finally:
-            await self.summary_generator.maybe_generate_summary(state, abort_signal)
-            await state.cleanup()
+            await self._maybe_generate_summary(state, abort_signal)
 
         return state.build_output()
 
@@ -136,13 +129,17 @@ class AgentExecutor:
         # Main agent loop
         while True:
             # 检查限制
-            if reason := self.limit_checker.check_limits(state):
+            if reason := self._check_limits(state):
                 state.termination_reason = reason
                 break
 
             # LLM 调用
             state.current_step += 1
-            step = await self.llm_handler.stream_assistant_step(state, abort_signal)
+            step, llm_context = await self.llm_handler.stream_assistant_step(
+                state, self.run_io, abort_signal
+            )
+            await self.run_io.commit_step(step, llm=llm_context)
+            state.track_step(step)
 
             if not step.tool_calls:
                 state.termination_reason = "completed"
@@ -165,15 +162,66 @@ class AgentExecutor:
         )
 
         for result in results:
-            seq = await self._allocate_sequence()
-            step = state.sf.tool_step(
+            seq = await self.run_io.allocate_sequence()
+            step = create_tool_step(
+                state.context,
                 sequence=seq,
                 tool_call_id=result.tool_call_id,
                 name=result.tool_name,
                 content=result.content,
                 content_for_user=result.content_for_user,
             )
-            await state.record_step(step)
+            await self.run_io.commit_step(step)
+            state.track_step(step)
 
-    async def _allocate_sequence(self) -> int:
-        return await self.side_effect_processor.allocate_sequence()
+    def _check_limits(self, state: RunState) -> str | None:
+        """检查所有执行限制，返回终止原因或 None。"""
+        if state.current_step >= self.options.max_steps:
+            return "max_steps"
+
+        if self.options.run_timeout and state.elapsed > self.options.run_timeout:
+            return "timeout"
+
+        if state.context.timeout_at and time.time() >= state.context.timeout_at:
+            return "timeout"
+
+        if (
+            self.options.max_output_tokens
+            and state.total_tokens >= self.options.max_output_tokens
+        ):
+            return "max_tokens"
+
+        return None
+
+    async def _maybe_generate_summary(
+        self,
+        state: RunState,
+        abort_signal: AbortSignal | None,
+    ) -> None:
+        if not self.options.enable_termination_summary:
+            return
+
+        if state.termination_reason not in self.SUMMARY_REASONS:
+            return
+
+        summary_messages = build_termination_messages(
+            messages=state.messages,
+            termination_reason=state.termination_reason,
+            pending_tool_calls=state.pending_tool_calls,
+            custom_prompt=self.options.termination_summary_prompt,
+        )
+
+        step, llm_context = await self.llm_handler.stream_assistant_step(
+            state,
+            self.run_io,
+            abort_signal,
+            messages=summary_messages,
+            tools=None,
+        )
+        await self.run_io.commit_step(step, llm=llm_context)
+        state.track_step(step, append_message=False)
+
+        logger.info(
+            "summary_generated",
+            tokens=step.metrics.total_tokens if step.metrics else 0,
+        )

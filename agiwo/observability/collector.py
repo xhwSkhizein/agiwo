@@ -1,5 +1,5 @@
 """
-Trace collector - builds Trace from StepEvent stream.
+Trace collector - builds Trace from StreamEvent stream.
 
 Uses middleware pattern to wrap event streams without modifying core execution logic.
 """
@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
-from agiwo.agent.schema import Step, StepEvent, StepEventType
+from agiwo.agent.schema import EventType, LLMCallContext, StepRecord, StreamEvent
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 from agiwo.observability.otlp_exporter import get_otlp_exporter
 from agiwo.utils.logging import get_logger
@@ -22,7 +23,7 @@ logger = get_logger(__name__)
 
 class TraceCollector:
     """
-    Trace collector - constructs Trace from StepEvent stream.
+    Trace collector - constructs Trace from StreamEvent stream.
 
     Usage:
         collector = TraceCollector(store)
@@ -46,7 +47,7 @@ class TraceCollector:
         self._trace: Trace | None = None
         self._span_stack: dict[str, Span] = {}
         self._current_span: Span | None = None
-        self._assistant_step_cache: dict[str, Step] = {}
+        self._assistant_step_cache: dict[str, StepRecord] = {}
 
     def start(
         self,
@@ -68,7 +69,7 @@ class TraceCollector:
         self._current_span = None
         self._assistant_step_cache = {}
 
-    async def collect(self, event: StepEvent) -> None:
+    async def collect(self, event: StreamEvent) -> None:
         """Process a single event in push mode."""
         if not self._trace:
             # If start() wasn't called, we can't collect.
@@ -90,10 +91,10 @@ class TraceCollector:
 
         # Incremental save at critical checkpoints
         should_save = event.type in {
-            StepEventType.RUN_STARTED,
-            StepEventType.STEP_COMPLETED,
-            StepEventType.RUN_COMPLETED,
-            StepEventType.RUN_FAILED,
+            EventType.RUN_STARTED,
+            EventType.STEP_COMPLETED,
+            EventType.RUN_COMPLETED,
+            EventType.RUN_FAILED,
         }
 
         if should_save and self.store:
@@ -178,13 +179,13 @@ class TraceCollector:
 
     async def wrap_stream(
         self,
-        event_stream: AsyncIterator[StepEvent],
+        event_stream: AsyncIterator[StreamEvent],
         trace_id: str | None = None,
         agent_id: str | None = None,
         session_id: str | None = None,
         user_id: str | None = None,
         input_query: str | None = None,
-    ) -> AsyncIterator[StepEvent]:
+    ) -> AsyncIterator[StreamEvent]:
         """
         Wrap event stream to automatically collect trace information.
 
@@ -197,7 +198,7 @@ class TraceCollector:
             input_query: User input
 
         Yields:
-            StepEvent: Original events with injected trace_id/span_id
+            StreamEvent: Original events with injected trace_id/span_id
         """
         self.start(
             trace_id=trace_id,
@@ -220,27 +221,29 @@ class TraceCollector:
 
     def _process_event(
         self,
-        event: StepEvent,
+        event: StreamEvent,
         trace: Trace,
         span_stack: dict[str, Span],
         current_span: Span | None,
-        assistant_step_cache: dict[str, Step],
-    ) -> tuple[Span | None, dict[str, Step]]:
+        assistant_step_cache: dict[str, StepRecord],
+    ) -> tuple[Span | None, dict[str, StepRecord]]:
         """
         Process single event, return currently active span and updated assistant_step_cache.
 
         Returns:
-            tuple[Span | None, dict[str, Step]]: (current_span, updated_cache)
+            tuple[Span | None, dict[str, StepRecord]]: (current_span, updated_cache)
         """
 
         event_type = event.type
 
         # === RUN_STARTED ===
-        if event_type == StepEventType.RUN_STARTED:
+        if event_type == EventType.RUN_STARTED:
             data = event.data or {}
+            agent_name = event.agent_id or data.get("agent_id") or "agent"
+            is_nested = event.parent_run_id is not None
 
             # Check if this is a nested execution
-            if event.agent_id:
+            if is_nested:
                 # Find parent span for nested execution
                 parent_span = self._find_parent_span_for_nested(
                     event, span_stack, current_span
@@ -251,10 +254,10 @@ class TraceCollector:
                     trace_id=trace.trace_id,
                     parent_span_id=parent_span.span_id if parent_span else None,
                     kind=SpanKind.AGENT,
-                    name=event.agent_id,
+                    name=agent_name,
                     depth=(parent_span.depth + 1) if parent_span else 1,
                     attributes={
-                        "agent_id": event.agent_id,
+                        "agent_id": agent_name,
                         "nested": True,
                         "parent_run_id": event.parent_run_id,
                         "session_id": data.get("session_id"),
@@ -271,10 +274,10 @@ class TraceCollector:
                 trace_id=trace.trace_id,
                 parent_span_id=parent.span_id if parent else None,
                 kind=SpanKind.AGENT,
-                name=data.get("agent_id", "agent"),
+                name=agent_name,
                 depth=(parent.depth + 1) if parent else 0,
                 attributes={
-                    "agent_id": data.get("agent_id"),
+                    "agent_id": agent_name,
                     "session_id": data.get("session_id"),
                 },
             )
@@ -286,11 +289,11 @@ class TraceCollector:
             return span, {}
 
         # === STEP_COMPLETED ===
-        elif event_type == StepEventType.STEP_COMPLETED:
-            if not event.snapshot:
+        elif event_type == EventType.STEP_COMPLETED:
+            if not event.step:
                 return current_span, {}
 
-            step = event.snapshot
+            step = event.step
             updated_cache = {}
 
             # Cache Assistant Step for tool call parameter extraction
@@ -302,54 +305,13 @@ class TraceCollector:
 
             if step.role.value == "tool":
                 # Tool 调用 Span - 使用 Step 的时间戳
-                from datetime import timezone
+                start_time, end_time, duration_ms = self._extract_step_times(step)
 
-                start_time = (
-                    step.metrics.start_at
-                    if step.metrics and step.metrics.start_at
-                    else step.created_at
-                )
-                # Ensure start_time is timezone-aware
-                if start_time and start_time.tzinfo is None:
-                    start_time = start_time.replace(tzinfo=timezone.utc)
-                end_time = (
-                    step.metrics.end_at
-                    if step.metrics and step.metrics.end_at
-                    else None
-                )
-                # Ensure end_time is timezone-aware
-                if end_time and end_time.tzinfo is None:
-                    end_time = end_time.replace(tzinfo=timezone.utc)
-                duration_ms = step.metrics.duration_ms if step.metrics else None
-
-                # Determine parent span - improved for nested execution
-                parent_span_id = step.parent_span_id
-                if not parent_span_id:
-                    # For nested execution, try to find parent Agent Span first
-                    if step.parent_run_id:
-                        parent_agent_span = span_stack.get(step.parent_run_id)
-                        if parent_agent_span:
-                            parent_span_id = parent_agent_span.span_id
-
-                    # Fallback: find parent from span_stack
-                    if not parent_span_id:
-                        # Find Agent Span for this run_id
-                        run_span = span_stack.get(step.run_id)
-                        parent_span_id = run_span.span_id if run_span else None
-                    if not parent_span_id and current_span:
-                        parent_span_id = current_span.span_id
-
-                # Get parent span for depth calculation
-                parent = None
-                if parent_span_id:
-                    # Find parent span by span_id
-                    for span in span_stack.values():
-                        if span.span_id == parent_span_id:
-                            parent = span
-                            break
-                if not parent:
-                    parent = span_stack.get(step.run_id) or current_span
-                parent_depth = parent.depth if parent else 0
+                (
+                    parent_span_id,
+                    _parent_span,
+                    parent_depth,
+                ) = self._resolve_parent_span(step, span_stack, current_span)
 
                 # Extract tool input arguments from Assistant Step
                 tool_input_args = {}
@@ -412,54 +374,13 @@ class TraceCollector:
 
             elif step.role.value == "assistant":
                 # LLM 调用 Span - 使用 Step 的时间戳和上下文
-                from datetime import timezone
+                start_time, end_time, duration_ms = self._extract_step_times(step)
 
-                start_time = (
-                    step.metrics.start_at
-                    if step.metrics and step.metrics.start_at
-                    else step.created_at
-                )
-                # Ensure start_time is timezone-aware
-                if start_time and start_time.tzinfo is None:
-                    start_time = start_time.replace(tzinfo=timezone.utc)
-                end_time = (
-                    step.metrics.end_at
-                    if step.metrics and step.metrics.end_at
-                    else None
-                )
-                # Ensure end_time is timezone-aware
-                if end_time and end_time.tzinfo is None:
-                    end_time = end_time.replace(tzinfo=timezone.utc)
-                duration_ms = step.metrics.duration_ms if step.metrics else None
-
-                # Determine parent span - improved for nested execution
-                parent_span_id = step.parent_span_id
-                if not parent_span_id:
-                    # For nested execution, try to find parent Agent Span first
-                    if step.parent_run_id:
-                        parent_agent_span = span_stack.get(step.parent_run_id)
-                        if parent_agent_span:
-                            parent_span_id = parent_agent_span.span_id
-
-                    # Fallback: find parent from span_stack
-                    if not parent_span_id:
-                        # Find Agent Span for this run_id
-                        run_span = span_stack.get(step.run_id)
-                        parent_span_id = run_span.span_id if run_span else None
-                    if not parent_span_id and current_span:
-                        parent_span_id = current_span.span_id
-
-                # Get parent span for depth calculation
-                parent = None
-                if parent_span_id:
-                    # Find parent span by span_id
-                    for span in span_stack.values():
-                        if span.span_id == parent_span_id:
-                            parent = span
-                            break
-                if not parent:
-                    parent = span_stack.get(step.run_id) or current_span
-                parent_depth = parent.depth if parent else 0
+                (
+                    parent_span_id,
+                    _parent_span,
+                    parent_depth,
+                ) = self._resolve_parent_span(step, span_stack, current_span)
 
                 # Build name
                 name = (
@@ -488,7 +409,7 @@ class TraceCollector:
                     output_preview=step.content[: self.PREVIEW_LENGTH]
                     if step.content
                     else None,
-                    llm_details=self._build_llm_details(step),
+                    llm_details=self._build_llm_details(step, event.llm),
                 )
 
                 if step.metrics:
@@ -513,7 +434,7 @@ class TraceCollector:
                 return current_span, updated_cache
 
         # === RUN_COMPLETED ===
-        elif event_type == StepEventType.RUN_COMPLETED:
+        elif event_type == EventType.RUN_COMPLETED:
             span = span_stack.get(event.run_id)
             if span:
                 response = event.data.get("response") if event.data else None
@@ -527,7 +448,7 @@ class TraceCollector:
             return span_stack.get(event.run_id), {}
 
         # === RUN_FAILED ===
-        elif event_type == StepEventType.RUN_FAILED:
+        elif event_type == EventType.RUN_FAILED:
             span = span_stack.get(event.run_id)
             if span:
                 error = event.data.get("error") if event.data else "Unknown error"
@@ -538,7 +459,7 @@ class TraceCollector:
 
     def _find_parent_span_for_nested(
         self,
-        event: StepEvent,
+        event: StreamEvent,
         span_stack: dict[str, Span],
         current_span: Span | None,
     ) -> Span | None:
@@ -571,9 +492,59 @@ class TraceCollector:
 
         return None
 
+    def _normalize_time(self, value: datetime | None) -> datetime | None:
+        if value and value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value
+
+    def _extract_step_times(
+        self, step: StepRecord
+    ) -> tuple[datetime | None, datetime | None, float | None]:
+        start_time = (
+            step.metrics.start_at if step.metrics and step.metrics.start_at else None
+        ) or step.created_at
+        end_time = step.metrics.end_at if step.metrics else None
+        duration_ms = step.metrics.duration_ms if step.metrics else None
+        return (
+            self._normalize_time(start_time),
+            self._normalize_time(end_time),
+            duration_ms,
+        )
+
+    def _resolve_parent_span(
+        self,
+        step: StepRecord,
+        span_stack: dict[str, Span],
+        current_span: Span | None,
+    ) -> tuple[str | None, Span | None, int]:
+        parent_span_id = step.parent_span_id
+        if not parent_span_id:
+            if step.parent_run_id:
+                parent_agent_span = span_stack.get(step.parent_run_id)
+                if parent_agent_span:
+                    parent_span_id = parent_agent_span.span_id
+
+            if not parent_span_id:
+                run_span = span_stack.get(step.run_id)
+                parent_span_id = run_span.span_id if run_span else None
+
+            if not parent_span_id and current_span:
+                parent_span_id = current_span.span_id
+
+        parent = None
+        if parent_span_id:
+            for span in span_stack.values():
+                if span.span_id == parent_span_id:
+                    parent = span
+                    break
+        if not parent:
+            parent = span_stack.get(step.run_id) or current_span
+        parent_depth = parent.depth if parent else 0
+        return parent_span_id, parent, parent_depth
+
     def _build_tool_details(
         self,
-        tool_step: Step,
+        tool_step: StepRecord,
         input_args: dict[str, Any],
     ) -> dict[str, Any]:
         """Build complete tool call details from Tool Step and input arguments."""
@@ -598,15 +569,17 @@ class TraceCollector:
 
         return details
 
-    def _build_llm_details(self, step: Step) -> dict[str, Any]:
-        """Build complete LLM call details from Step."""
-        if not step.llm_messages:
+    def _build_llm_details(
+        self, step: StepRecord, llm: LLMCallContext | None
+    ) -> dict[str, Any]:
+        """Build complete LLM call details from Step and LLM context."""
+        if not llm:
             return {}
 
         details: dict[str, Any] = {
-            "request": step.llm_request_params or {},
-            "messages": step.llm_messages,
-            "tools": step.llm_tools,
+            "request": llm.request_params or {},
+            "messages": llm.messages,
+            "tools": llm.tools,
             "response_content": step.content,
             "response_tool_calls": step.tool_calls,
             "finish_reason": getattr(step, "finish_reason", None),

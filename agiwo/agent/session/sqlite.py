@@ -9,7 +9,7 @@ from typing import Any
 
 import aiosqlite
 
-from agiwo.agent.schema import Run, Step
+from agiwo.agent.schema import Run, StepRecord
 from agiwo.agent.session.base import SessionStore
 from agiwo.utils.logging import get_logger
 
@@ -250,25 +250,19 @@ class SQLiteSessionStore(SessionStore):
         if not self._initialized:
             await self.connect()
 
-    def _serialize_model(self, model: Run | Step) -> dict:
+    def _serialize_model(self, model: Run | StepRecord) -> dict:
         """Serialize Pydantic model or dataclass to dict, handling nested models."""
         data = self._model_to_dict(model)
         # Convert nested models to JSON strings
         if isinstance(model, Run) and model.metrics:
             data["metrics"] = self._serialize_metrics(model.metrics)
-        elif isinstance(model, Step) and model.metrics:
+        elif isinstance(model, StepRecord) and model.metrics:
             data["metrics"] = self._serialize_metrics(model.metrics)
 
         # Convert list/dict fields to JSON strings
-        if isinstance(model, Step):
+        if isinstance(model, StepRecord):
             if model.tool_calls:
                 data["tool_calls"] = json.dumps(model.tool_calls)
-            if model.llm_messages:
-                data["llm_messages"] = json.dumps(model.llm_messages)
-            if model.llm_tools:
-                data["llm_tools"] = json.dumps(model.llm_tools)
-            if model.llm_request_params:
-                data["llm_request_params"] = json.dumps(model.llm_request_params)
 
         # Convert datetime to ISO format string
         for field_name in ("created_at", "updated_at"):
@@ -281,7 +275,7 @@ class SQLiteSessionStore(SessionStore):
             if "agent_id" in data:
                 data["agent_id"] = data.pop("agent_id")
                 data["runnable_type"] = "agent"
-        elif isinstance(model, Step):
+        elif isinstance(model, StepRecord):
             # Map agent_id to agent_id for database compatibility
             if "agent_id" in data:
                 data["agent_id"] = data.pop("agent_id")
@@ -289,7 +283,7 @@ class SQLiteSessionStore(SessionStore):
 
         return data
 
-    def _model_to_dict(self, model: Run | Step) -> dict:
+    def _model_to_dict(self, model: Run | StepRecord) -> dict:
         if is_dataclass(model):
             data = asdict(model)
             return {k: v for k, v in data.items() if v is not None}
@@ -334,8 +328,8 @@ class SQLiteSessionStore(SessionStore):
         # Run is a dataclass, so use direct instantiation
         return Run(**data)
 
-    def _deserialize_step(self, row: aiosqlite.Row) -> Step:
-        """Deserialize database row to Step model."""
+    def _deserialize_step(self, row: aiosqlite.Row) -> StepRecord:
+        """Deserialize database row to StepRecord model."""
         data = dict(row)
 
         # Parse JSON fields
@@ -347,12 +341,9 @@ class SQLiteSessionStore(SessionStore):
             data["metrics"] = StepMetrics(**metrics_data)
         if data.get("tool_calls"):
             data["tool_calls"] = json.loads(data["tool_calls"])
-        if data.get("llm_messages"):
-            data["llm_messages"] = json.loads(data["llm_messages"])
-        if data.get("llm_tools"):
-            data["llm_tools"] = json.loads(data["llm_tools"])
-        if data.get("llm_request_params"):
-            data["llm_request_params"] = json.loads(data["llm_request_params"])
+        data.pop("llm_messages", None)
+        data.pop("llm_tools", None)
+        data.pop("llm_request_params", None)
 
         # Map database columns to Step model fields
         if "agent_id" in data:
@@ -367,7 +358,7 @@ class SQLiteSessionStore(SessionStore):
             data["role"] = MessageRole(data["role"])
 
         # Step is a dataclass, so use direct instantiation
-        return Step(**data)
+        return StepRecord(**data)
 
     # --- Run Operations ---
 
@@ -469,7 +460,7 @@ class SQLiteSessionStore(SessionStore):
 
     # --- Step Operations ---
 
-    async def save_step(self, step: Step) -> None:
+    async def save_step(self, step: StepRecord) -> None:
         """Save or update a step."""
         await self._ensure_connection()
 
@@ -500,7 +491,7 @@ class SQLiteSessionStore(SessionStore):
             )
             raise
 
-    async def save_steps_batch(self, steps: list[Step]) -> None:
+    async def save_steps_batch(self, steps: list[StepRecord]) -> None:
         """Batch save steps."""
         if not steps:
             return
@@ -522,7 +513,7 @@ class SQLiteSessionStore(SessionStore):
         run_id: str | None = None,
         agent_id: str | None = None,
         limit: int = 1000,
-    ) -> list[Step]:
+    ) -> list[StepRecord]:
         """Get steps for a session with optional filtering."""
         await self._ensure_connection()
 
@@ -557,7 +548,7 @@ class SQLiteSessionStore(SessionStore):
             logger.error("get_steps_failed", error=str(e), session_id=session_id)
             raise
 
-    async def get_last_step(self, session_id: str) -> Step | None:
+    async def get_last_step(self, session_id: str) -> StepRecord | None:
         """Get the last step of a session."""
         await self._ensure_connection()
 
@@ -687,7 +678,7 @@ class SQLiteSessionStore(SessionStore):
         self,
         session_id: str,
         tool_call_id: str,
-    ) -> Step | None:
+    ) -> StepRecord | None:
         """Get a Tool Step by tool_call_id."""
         await self._ensure_connection()
 

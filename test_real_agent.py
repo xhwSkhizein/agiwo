@@ -26,18 +26,12 @@ from agiwo.agent.base import AgiwoAgent
 from agiwo.agent.config_options import AgentConfigOptions
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.wire import Wire
-from agiwo.agent.schema import Run, Step
 from agiwo.agent.session.sqlite import SQLiteSessionStore
-from agiwo.agent.session.base import SessionStore
 from agiwo.observability.sqlite_store import SQLiteTraceStore
 from agiwo.observability.collector import TraceCollector
-from agiwo.observability.trace import Trace
 from agiwo.skills.manager import SkillManager
 from agiwo.tool.base import BaseTool, ToolResult
-from agiwo.llm.openai import OpenAIModel
 from agiwo.llm.deepseek import DeepseekModel
-from agiwo.llm.nvidia import NvidiaModel
-from agiwo.llm.anthropic import AnthropicModel
 from agiwo.utils.logging import get_logger
 
 load_dotenv()
@@ -47,9 +41,7 @@ logger = get_logger(__name__)
 
 def _prepare_db_paths(test_name: str) -> tuple[str, str]:
     """Create deterministic sqlite db paths for tests."""
-    base_dir = os.getenv("AGIWO_TEST_DB_DIR") or os.path.join(
-        os.getcwd(), "test_dbs"
-    )
+    base_dir = os.getenv("AGIWO_TEST_DB_DIR") or os.path.join(os.getcwd(), ".tempdata")
     os.makedirs(base_dir, exist_ok=True)
     db_path = os.path.join(base_dir, f"{test_name}_agent.db")
     trace_db_path = os.path.join(base_dir, f"{test_name}_traces.db")

@@ -67,6 +67,7 @@ trash/
 *.log
 logs/
 test_dbs/
+.tempdata/
 
 # OS
 .DS_Store

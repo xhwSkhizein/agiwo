@@ -5,7 +5,7 @@ Repository interface and in-memory implementation.
 import asyncio
 from abc import ABC, abstractmethod
 
-from agiwo.agent.schema import Run, Step
+from agiwo.agent.schema import Run, StepRecord
 
 
 class SessionStore(ABC):
@@ -45,12 +45,12 @@ class SessionStore(ABC):
     # --- Step Operations ---
 
     @abstractmethod
-    async def save_step(self, step: Step) -> None:
+    async def save_step(self, step: StepRecord) -> None:
         """Save single Step"""
         pass
 
     @abstractmethod
-    async def save_steps_batch(self, steps: list[Step]) -> None:
+    async def save_steps_batch(self, steps: list[StepRecord]) -> None:
         """Batch save Steps (for fork operations)"""
         pass
 
@@ -63,7 +63,7 @@ class SessionStore(ABC):
         run_id: str | None = None,
         agent_id: str | None = None,
         limit: int = 1000,
-    ) -> list[Step]:
+    ) -> list[StepRecord]:
         """
         Get Steps (sorted by sequence)
 
@@ -78,7 +78,7 @@ class SessionStore(ABC):
         pass
 
     @abstractmethod
-    async def get_last_step(self, session_id: str) -> Step | None:
+    async def get_last_step(self, session_id: str) -> StepRecord | None:
         """Get last Step"""
         pass
 
@@ -128,7 +128,7 @@ class SessionStore(ABC):
         self,
         session_id: str,
         tool_call_id: str,
-    ) -> Step | None:
+    ) -> StepRecord | None:
         """Get a Tool Step by tool_call_id"""
         steps = await self.get_steps(session_id)
         for step in steps:
@@ -144,7 +144,7 @@ class InMemorySessionStore(SessionStore):
 
     def __init__(self) -> None:
         self.runs: dict[str, Run] = {}
-        self.steps: dict[str, list[Step]] = {}  # session_id -> list[Step]
+        self.steps: dict[str, list[StepRecord]] = {}  # session_id -> list[StepRecord]
         self._sequence_counters: dict[str, int] = {}  # session_id -> counter
         self._sequence_locks: dict[str, asyncio.Lock] = {}  # session_id -> lock
 
@@ -179,7 +179,7 @@ class InMemorySessionStore(SessionStore):
 
     # --- Step Operations ---
 
-    async def save_step(self, step: Step) -> None:
+    async def save_step(self, step: StepRecord) -> None:
         """
         Save or update a step.
 
@@ -217,7 +217,7 @@ class InMemorySessionStore(SessionStore):
             # Keep steps sorted by sequence
             self.steps[step.session_id].sort(key=lambda s: s.sequence)
 
-    async def save_steps_batch(self, steps: list[Step]) -> None:
+    async def save_steps_batch(self, steps: list[StepRecord]) -> None:
         for step in steps:
             await self.save_step(step)
 
@@ -229,7 +229,7 @@ class InMemorySessionStore(SessionStore):
         run_id: str | None = None,
         agent_id: str | None = None,
         limit: int = 1000,
-    ) -> list[Step]:
+    ) -> list[StepRecord]:
         steps = self.steps.get(session_id, [])
 
         if start_seq is not None:
@@ -243,7 +243,7 @@ class InMemorySessionStore(SessionStore):
 
         return steps[:limit]
 
-    async def get_last_step(self, session_id: str) -> Step | None:
+    async def get_last_step(self, session_id: str) -> StepRecord | None:
         steps = self.steps.get(session_id, [])
         return steps[-1] if steps else None
 

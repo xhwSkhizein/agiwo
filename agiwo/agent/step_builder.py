@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Awaitable, Callable
 from datetime import datetime, timezone
 
-from agiwo.agent.schema import Step, StepDelta
+from agiwo.agent.schema import StepRecord, StepDelta
+from agiwo.llm.base import StreamChunk
 from agiwo.llm.helper import normalize_usage_metrics
-
-from agiwo.agent.run_state import RunState
 
 
 class ToolCallAccumulator:
@@ -57,13 +57,13 @@ class ToolCallAccumulator:
 class StepBuilder:
     """Accumulates streaming chunks into a complete Step."""
 
-    step: Step
-    state: RunState
+    step: StepRecord
+    emit_delta: Callable[[str, StepDelta], Awaitable[None]]
     step_start_time: float = field(default_factory=time.time)
     tool_accumulator: ToolCallAccumulator = field(default_factory=ToolCallAccumulator)
     first_token_received: bool = False
 
-    async def process_chunk(self, chunk) -> None:
+    async def process_chunk(self, chunk: StreamChunk) -> None:
         """Process a single stream chunk."""
         delta = StepDelta()
         has_content = chunk.content or chunk.reasoning_content or chunk.tool_calls
@@ -95,9 +95,9 @@ class StepBuilder:
 
         # Emit delta
         if has_content or delta.usage:
-            await self.state.emit_delta(self.step.id, delta)
+            await self.emit_delta(self.step.id, delta)
 
-    def finalize(self) -> Step:
+    def finalize(self) -> StepRecord:
         """Finalize step with accumulated data and metrics."""
         self.step.content = self.step.content or None
         self.step.reasoning_content = self.step.reasoning_content or None

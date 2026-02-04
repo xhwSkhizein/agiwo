@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from agiwo.agent.schema import StepEvent, StepEventType
+from agiwo.agent.schema import StreamEvent, EventType
 from agiwo.tool.permission.consent_store import ConsentStore
 from agiwo.tool.permission.consent_waiter import ConsentWaiter
 from agiwo.tool.permission.service import PermissionDecision, PermissionService
@@ -329,8 +329,8 @@ class PermissionManager:
         """Send TOOL_AUTH_REQUIRED event"""
         args_preview = self._summarize_args(tool_name, tool_args)
 
-        event = StepEvent(
-            type=StepEventType.TOOL_AUTH_REQUIRED,
+        event = StreamEvent(
+            type=EventType.TOOL_AUTH_REQUIRED,
             run_id=context.run_id,
             step_id=None,  # Tool call hasn't created Step yet
             data={
@@ -371,8 +371,8 @@ class PermissionManager:
         reason: str,
     ) -> None:
         """Send TOOL_AUTH_DENIED event"""
-        event = StepEvent(
-            type=StepEventType.TOOL_AUTH_DENIED,
+        event = StreamEvent(
+            type=EventType.TOOL_AUTH_DENIED,
             run_id=context.run_id,
             data={
                 "tool_call_id": tool_call_id,

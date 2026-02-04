@@ -6,28 +6,18 @@ from agiwo.config.settings import settings
 from agiwo.agent.session.base import SessionStore, InMemorySessionStore
 from agiwo.agent.session.sqlite import SQLiteSessionStore
 from agiwo.agent.session.mongo import MongoSessionStore
-from agiwo.observability.collector import TraceCollector
-from agiwo.observability.store import TraceStore
-from agiwo.observability.sqlite_store import SQLiteTraceStore
 from agiwo.skills.manager import SkillManager
 
 
 @dataclass
 class AgentConfigOptions:
     max_steps: int = 10
-    timeout_per_step: int = 120  # seconds
     run_timeout: int = 600  # seconds
-    parallel_tool_calls: bool = True
     max_output_tokens: int = 8196
-    max_history_messages: int = 10
 
     # Agent Loop Configuration
     enable_termination_summary: bool = False
     termination_summary_prompt: str = ""
-
-    enable_auto_compact: bool = False
-    auto_compact_prompt: str = ""
-    auto_compact_threshold: float = 0.75
 
     # runtime vars
     work_dir: str | None = None
@@ -36,9 +26,12 @@ class AgentConfigOptions:
     # skills
     skill_manager: SkillManager | None = None
 
+    # tracing
+    is_trace_enabled: bool = True
+    stream_cleanup_timeout: float = 5.0
+
     # side-effect saving
     session_store: SessionStore | None = None
-    trace_collector: TraceCollector | None = None
 
     def __post_init__(self):
         self.work_dir = os.getcwd() if self.work_dir is None else self.work_dir
@@ -64,22 +57,5 @@ class AgentConfigOptions:
             else:
                 self.session_store = InMemorySessionStore()
 
-        if self.trace_collector is None:
-            if settings.default_trace_store == "mongo":
-                trace_store = TraceStore(
-                    mongo_uri=settings.mongo_uri,
-                    db_name=settings.mongo_db_name,
-                    collection_name=settings.trace_collection_name,
-                    buffer_size=settings.trace_buffer_size,
-                )
-            elif settings.default_trace_store == "sqlite":
-                trace_store = SQLiteTraceStore(
-                    db_path=settings.sqlite_db_path,
-                    collection_name=settings.trace_collection_name,
-                    buffer_size=settings.trace_buffer_size,
-                )
-            else:
-                trace_store = None
-            self.trace_collector = (
-                TraceCollector(store=trace_store) if trace_store else None
-            )
+        if settings.default_trace_store not in ("mongo", "sqlite"):
+            self.is_trace_enabled = False

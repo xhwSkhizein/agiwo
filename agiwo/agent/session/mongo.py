@@ -3,9 +3,10 @@ MongoDB implementation of SessionStore.
 """
 
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import ValidationError
 
-from agiwo.agent.schema import Run, Step
+from dataclasses import asdict
+
+from agiwo.agent.schema import Run, StepRecord, MessageRole, RunMetrics, StepMetrics
 from agiwo.agent.session.base import SessionStore
 from agiwo.utils.logging import get_logger
 
@@ -94,6 +95,28 @@ class MongoSessionStore(SessionStore):
 
             logger.info("mongodb_connected", uri=self.uri, db_name=self.db_name)
 
+    def _serialize_dataclass(self, obj) -> dict:
+        data = asdict(obj)
+        if "role" in data and hasattr(data["role"], "value"):
+            data["role"] = data["role"].value
+        return filter_none_values(data)
+
+    def _deserialize_run(self, doc: dict) -> Run:
+        doc.pop("_id", None)
+        metrics = doc.get("metrics")
+        if isinstance(metrics, dict):
+            doc["metrics"] = RunMetrics(**metrics)
+        return Run(**doc)
+
+    def _deserialize_step(self, doc: dict) -> StepRecord:
+        doc.pop("_id", None)
+        if "role" in doc and isinstance(doc["role"], str):
+            doc["role"] = MessageRole(doc["role"])
+        metrics = doc.get("metrics")
+        if isinstance(metrics, dict):
+            doc["metrics"] = StepMetrics(**metrics)
+        return StepRecord(**doc)
+
     async def disconnect(self) -> None:
         """Close MongoDB connection."""
         if self.client:
@@ -110,8 +133,7 @@ class MongoSessionStore(SessionStore):
         await self._ensure_connection()
 
         try:
-            run_data = run.model_dump(mode="json", exclude_none=True)
-            run_data = filter_none_values(run_data)
+            run_data = self._serialize_dataclass(run)
 
             await self.runs_collection.update_one(
                 {"id": run.id}, {"$set": run_data}, upsert=True
@@ -127,7 +149,7 @@ class MongoSessionStore(SessionStore):
         try:
             doc = await self.runs_collection.find_one({"id": run_id})
             if doc:
-                return Run.model_validate(doc)
+                return self._deserialize_run(doc)
             return None
         except Exception as e:
             logger.error("get_run_failed", error=str(e), run_id=run_id)
@@ -159,14 +181,7 @@ class MongoSessionStore(SessionStore):
 
             runs = []
             async for doc in cursor:
-                try:
-                    runs.append(Run.model_validate(doc))
-                except ValidationError as e:
-                    logger.error(
-                        "list_runs_validation_failed",
-                        error=str(e),
-                        doc_id=doc.get("id") or str(doc.get("_id")),
-                    )
+                runs.append(self._deserialize_run(doc))
             return runs
         except Exception as e:
             logger.error("list_runs_failed", error=str(e))
@@ -189,12 +204,11 @@ class MongoSessionStore(SessionStore):
 
     # --- Step Operations ---
 
-    async def save_step(self, step: Step) -> None:
+    async def save_step(self, step: StepRecord) -> None:
         """Save or update a step."""
         await self._ensure_connection()
 
-        step_data = step.model_dump(mode="json", exclude_none=True)
-        step_data = filter_none_values(step_data)
+        step_data = self._serialize_dataclass(step)
 
         try:
             # Use upsert: update if step.id exists, insert otherwise
@@ -211,7 +225,7 @@ class MongoSessionStore(SessionStore):
             )
             raise
 
-    async def save_steps_batch(self, steps: list[Step]) -> None:
+    async def save_steps_batch(self, steps: list[StepRecord]) -> None:
         """Batch save steps."""
         if not steps:
             return
@@ -221,8 +235,7 @@ class MongoSessionStore(SessionStore):
         try:
             operations = []
             for step in steps:
-                step_data = step.model_dump(mode="json", exclude_none=True)
-                step_data = filter_none_values(step_data)
+                step_data = self._serialize_dataclass(step)
 
                 from pymongo import UpdateOne
 
@@ -244,7 +257,7 @@ class MongoSessionStore(SessionStore):
         run_id: str | None = None,
         agent_id: str | None = None,
         limit: int = 1000,
-    ) -> list[Step]:
+    ) -> list[StepRecord]:
         """Get steps for a session with optional filtering."""
         await self._ensure_connection()
 
@@ -267,13 +280,13 @@ class MongoSessionStore(SessionStore):
 
             steps = []
             async for doc in cursor:
-                steps.append(Step.model_validate(doc))
+                steps.append(self._deserialize_step(doc))
             return steps
         except Exception as e:
             logger.error("get_steps_failed", error=str(e), session_id=session_id)
             raise
 
-    async def get_last_step(self, session_id: str) -> Step | None:
+    async def get_last_step(self, session_id: str) -> StepRecord | None:
         """Get the last step of a session."""
         await self._ensure_connection()
 
@@ -285,7 +298,7 @@ class MongoSessionStore(SessionStore):
             )
 
             async for doc in cursor:
-                return Step.model_validate(doc)
+                return self._deserialize_step(doc)
             return None
         except Exception as e:
             logger.error("get_last_step_failed", error=str(e), session_id=session_id)
@@ -400,7 +413,7 @@ class MongoSessionStore(SessionStore):
         self,
         session_id: str,
         tool_call_id: str,
-    ) -> Step | None:
+    ) -> StepRecord | None:
         """Get a Tool Step by tool_call_id."""
         await self._ensure_connection()
 
@@ -412,7 +425,7 @@ class MongoSessionStore(SessionStore):
                 }
             )
             if doc:
-                return Step.model_validate(doc)
+                return self._deserialize_step(doc)
             return None
         except Exception as e:
             logger.error(

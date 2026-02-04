@@ -24,12 +24,6 @@
 - Avoid logging sensitive values (API keys, tokens, credentials).
 - Trace/span models should stay serializable and consistent across stores.
 
-## Testing
-- Run `python test_real_agent.py` after core refactors that affect agent flow.
-- If tests require external APIs, document missing keys or skipped providers.
-- Prefer adding targeted tests over broad integration changes.
-
 ## Documentation
-- Update `review-0203.md` only when new review findings are discovered.
 - Keep README up to date for environment and run instructions.
 - Document any behavior decision before implementing it.
