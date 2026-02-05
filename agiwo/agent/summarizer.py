@@ -8,7 +8,10 @@ Design Philosophy:
 - Never truncates or discards existing context
 """
 
+import json
+
 from agiwo.agent.prompt_template import renderer
+from agiwo.agent.schema import TerminationReason
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -33,7 +36,7 @@ Please provide a summary report that includes:
 
 def build_termination_messages(
     messages: list[dict],
-    termination_reason: str,
+    termination_reason: TerminationReason | str,
     pending_tool_calls: list[dict] | None = None,
     custom_prompt: str | None = None,
 ) -> list[dict]:
@@ -55,27 +58,23 @@ def build_termination_messages(
     # Create a copy to avoid modifying original
     result_messages = list(messages)
 
-    # If there are pending tool calls, add placeholder tool results
-    if pending_tool_calls:
-        for tool_call in pending_tool_calls:
-            call_id = tool_call.get("id", "unknown")
-            tool_name = tool_call.get("function", {}).get("name", "unknown")
-            result_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call_id,
-                    "name": tool_name,
-                    "content": f"[Execution interrupted: {_format_termination_reason(termination_reason)}. "
-                    f"This tool call was not executed.]",
-                }
-            )
-
     # Build the user prompt requesting summary using Jinja2
     prompt_template = custom_prompt or DEFAULT_TERMINATION_USER_PROMPT
     user_prompt = renderer.render(
         prompt_template,
         termination_reason=_format_termination_reason(termination_reason),
     )
+
+    if pending_tool_calls:
+        pending_tool_calls_json = json.dumps(
+            pending_tool_calls,
+            ensure_ascii=False,
+            default=str,
+        )
+        user_prompt = (
+            f"{user_prompt}\n\n"
+            f"pending_tool_calls_not_executed_json: {pending_tool_calls_json}"
+        )
 
     result_messages.append(
         {
@@ -87,16 +86,19 @@ def build_termination_messages(
     return result_messages
 
 
-def _format_termination_reason(reason: str) -> str:
+def _format_termination_reason(reason: TerminationReason | str) -> str:
     """Format termination reason for human readability."""
+    # Convert Enum to string value if needed
+    reason_val = reason.value if isinstance(reason, TerminationReason) else reason
+    
     reason_mapping = {
-        "max_steps": "reaching the maximum number of execution steps",
-        "max_iterations": "reaching the maximum number of iterations",
-        "timeout": "execution timeout",
-        "cancelled": "user cancellation",
-        "tool_limit": "reaching the tool call limit",
+        TerminationReason.MAX_STEPS.value: "reaching the maximum number of execution steps",
+        "max_iterations": "reaching the maximum number of iterations", # legacy
+        TerminationReason.TIMEOUT.value: "execution timeout",
+        TerminationReason.CANCELLED.value: "user cancellation",
+        TerminationReason.TOOL_LIMIT.value: "reaching the tool call limit",
     }
-    return reason_mapping.get(reason, reason)
+    return reason_mapping.get(reason_val, reason_val)
 
 
 __all__ = [

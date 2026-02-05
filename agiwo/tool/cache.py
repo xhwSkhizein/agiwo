@@ -44,8 +44,12 @@ class ToolResultCache:
 
     def _make_key(self, session_id: str, tool_name: str, args: dict[str, Any]) -> str:
         """Create a cache key from session, tool, and arguments."""
-        # Filter out internal args (starting with _)
-        clean_args = {k: v for k, v in sorted(args.items()) if not k.startswith("_")}
+        # Filter out internal args (starting with _) and tool_call_id
+        clean_args = {
+            k: v
+            for k, v in sorted(args.items())
+            if not k.startswith("_") and k != "tool_call_id"
+        }
         args_str = str(clean_args)
         key_str = f"{session_id}:{tool_name}:{args_str}"
         return hashlib.sha256(key_str.encode()).hexdigest()[:16]

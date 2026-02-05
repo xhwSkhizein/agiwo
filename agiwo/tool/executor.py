@@ -9,6 +9,7 @@ from agiwo.agent.execution_context import ExecutionContext
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.tool.cache import ToolResultCache
 from agiwo.utils.abort_signal import AbortSignal
+from agiwo.llm.helper import parse_json_tool_args
 
 from agiwo.utils.logging import get_logger
 
@@ -68,6 +69,16 @@ class ToolExecutor:
                 return await self.aexecute(
                     tc, context=context, abort_signal=abort_signal
                 )
+            except asyncio.CancelledError:
+                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                tool_name = fn.get("name", "unknown")
+                call_id = tc.get("id", "") if isinstance(tc, dict) else ""
+                return ToolResult.error(
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                    error="Tool execution was cancelled",
+                    start_time=time.time(),
+                )
             except Exception as e:  # Defensive: should not propagate
                 fn = tc.get("function", {}) if isinstance(tc, dict) else {}
                 tool_name = fn.get("name", "unknown")
@@ -79,45 +90,14 @@ class ToolExecutor:
                     error=str(e),
                     exc_info=True,
                 )
-                return self._create_error_result(
-                    call_id=call_id,
+                return ToolResult.error(
+                    tool_call_id=call_id,
                     tool_name=tool_name,
                     error=f"Tool execution failed: {e}",
                     start_time=time.time(),
                 )
 
-        results = await asyncio.gather(
-            *(_run_single(tc) for tc in tool_calls),
-            return_exceptions=True,
-        )
-
-        normalized: list[ToolResult] = []
-        for result in results:
-            if isinstance(result, ToolResult):
-                normalized.append(result)
-                continue
-            if isinstance(result, asyncio.CancelledError):
-                normalized.append(
-                    self._create_error_result(
-                        call_id="",
-                        tool_name="unknown",
-                        error="Tool execution was cancelled",
-                        start_time=time.time(),
-                    )
-                )
-                continue
-            if isinstance(result, Exception):
-                normalized.append(
-                    self._create_error_result(
-                        call_id="",
-                        tool_name="unknown",
-                        error=f"Tool execution failed: {result}",
-                        start_time=time.time(),
-                    )
-                )
-                continue
-
-        return normalized
+        return await asyncio.gather(*(_run_single(tc) for tc in tool_calls))
 
     async def aexecute(
         self,
@@ -131,8 +111,8 @@ class ToolExecutor:
 
         start_time = time.time()
         if not fn_name:
-            return self._create_error_result(
-                call_id=call_id,
+            return ToolResult.error(
+                tool_call_id=call_id,
                 tool_name="unknown",
                 error="Tool name missing in tool call",
                 start_time=start_time,
@@ -140,8 +120,8 @@ class ToolExecutor:
 
         tool: BaseTool | None = self.tools_map.get(fn_name)
         if not tool:
-            return self._create_error_result(
-                call_id=call_id,
+            return ToolResult.error(
+                tool_call_id=call_id,
                 tool_name=fn_name,
                 error=f"Tool {fn_name} not found",
                 start_time=start_time,
@@ -149,10 +129,10 @@ class ToolExecutor:
 
         # 解析参数
         try:
-            args = self._parse_tool_args(fn_args)
+            args = parse_json_tool_args(fn_args)
         except ValueError as e:
-            return self._create_error_result(
-                call_id=call_id,
+            return ToolResult.error(
+                tool_call_id=call_id,
                 tool_name=fn_name,
                 error=str(e),
                 start_time=start_time,
@@ -171,6 +151,26 @@ class ToolExecutor:
             timeout_at = time.time() + timeout_seconds
             execution_context = replace(context, timeout_at=timeout_at)
 
+        # 检查缓存
+        if self.cache and tool.cacheable:
+            cached_result = self.cache.get(context.session_id, fn_name, args)
+            if cached_result:
+                logger.info(
+                    "tool_cache_hit",
+                    tool_name=fn_name,
+                    session_id=context.session_id,
+                )
+                # Return cached result with updated tool_call_id
+                # We update timestamps to current time to reflect this specific "execution" (cache retrieval)
+                now = time.time()
+                return replace(
+                    cached_result,
+                    tool_call_id=call_id,
+                    start_time=now,
+                    end_time=now,
+                    duration=0.0,
+                )
+
         # 执行工具
         try:
             logger.debug("executing_tool", tool_name=fn_name, tool_call_id=call_id)
@@ -183,11 +183,16 @@ class ToolExecutor:
                 success=result.is_success,
                 duration=result.duration,
             )
+
+            # 保存到缓存
+            if self.cache and tool.cacheable and result.is_success:
+                self.cache.set(context.session_id, fn_name, args, result)
+
             return result
         except asyncio.CancelledError:
             logger.info("tool_execution_cancelled", tool_name=fn_name)
-            return self._create_error_result(
-                call_id=call_id,
+            return ToolResult.error(
+                tool_call_id=call_id,
                 tool_name=fn_name,
                 error="Tool execution was cancelled",
                 start_time=start_time,
@@ -199,57 +204,12 @@ class ToolExecutor:
                 error=str(e),
                 exc_info=True,
             )
-            return self._create_error_result(
-                call_id=call_id,
+            return ToolResult.error(
+                tool_call_id=call_id,
                 tool_name=fn_name,
                 error=f"Tool execution failed: {e}",
                 start_time=start_time,
             )
-
-    def _create_error_result(
-        self,
-        call_id: str,
-        tool_name: str,
-        error: str,
-        start_time: float,
-    ) -> ToolResult:
-        """Create error result."""
-        end_time = time.time()
-        return ToolResult(
-            tool_name=tool_name,
-            tool_call_id=call_id,
-            input_args={},
-            content=error,
-            output=None,
-            error=error,
-            start_time=start_time,
-            end_time=end_time,
-            duration=end_time - start_time,
-            is_success=False,
-        )
-
-    def _parse_tool_args(self, fn_args: Any) -> dict[str, Any]:
-        if isinstance(fn_args, dict):
-            return fn_args
-
-        if not isinstance(fn_args, str):
-            return {}
-
-        try:
-            return json.loads(fn_args)
-        except json.JSONDecodeError as e:
-            try:
-                if fn_args.startswith("{") and fn_args.endswith("}"):
-                    args = ast.literal_eval(fn_args)
-                    if not isinstance(args, dict):
-                        raise ValueError("Not a dict")
-                    return args
-            except Exception:
-                pass
-
-            raise ValueError(
-                f"Invalid JSON arguments: {e}. Raw: {fn_args[:100]}..."
-            ) from e
 
     def _create_denied_result(
         self,

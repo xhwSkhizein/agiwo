@@ -29,6 +29,19 @@ class RunStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class TerminationReason(str, Enum):
+    """Reason why the agent execution terminated."""
+
+    COMPLETED = "completed"
+    MAX_STEPS = "max_steps"
+    TIMEOUT = "timeout"
+    MAX_TOKENS = "max_tokens"
+    ERROR = "error"
+    ERROR_WITH_CONTEXT = "error_with_context"
+    CANCELLED = "cancelled"
+    TOOL_LIMIT = "tool_limit"
+
+
 class EventType(str, Enum):
     """Event types for streaming"""
 
@@ -142,6 +155,74 @@ class StepRecord:
     def is_tool_step(self) -> bool:
         return self.role == MessageRole.TOOL
 
+    @classmethod
+    def user(
+        cls,
+        ctx: "ExecutionContext",
+        *,
+        sequence: int,
+        content: str,
+        **overrides,
+    ) -> "StepRecord":
+        """Create a user step."""
+        context_attrs = _build_step_context_attrs(ctx, overrides)
+        return cls(
+            sequence=sequence,
+            role=MessageRole.USER,
+            content=content,
+            **context_attrs,
+        )
+
+    @classmethod
+    def assistant(
+        cls,
+        ctx: "ExecutionContext",
+        *,
+        sequence: int,
+        content: str | None = None,
+        tool_calls: list[dict] | None = None,
+        reasoning_content: str | None = None,
+        metrics: StepMetrics | None = None,
+        **overrides,
+    ) -> "StepRecord":
+        """Create an assistant step."""
+        context_attrs = _build_step_context_attrs(ctx, overrides)
+        return cls(
+            sequence=sequence,
+            role=MessageRole.ASSISTANT,
+            content=content,
+            reasoning_content=reasoning_content,
+            tool_calls=tool_calls,
+            metrics=metrics,
+            **context_attrs,
+        )
+
+    @classmethod
+    def tool(
+        cls,
+        ctx: "ExecutionContext",
+        *,
+        sequence: int,
+        tool_call_id: str,
+        name: str,
+        content: str,
+        content_for_user: str | None = None,
+        metrics: StepMetrics | None = None,
+        **overrides,
+    ) -> "StepRecord":
+        """Create a tool step."""
+        context_attrs = _build_step_context_attrs(ctx, overrides)
+        return cls(
+            sequence=sequence,
+            role=MessageRole.TOOL,
+            content=content,
+            content_for_user=content_for_user,
+            tool_call_id=tool_call_id,
+            name=name,
+            metrics=metrics,
+            **context_attrs,
+        )
+
 
 def _build_step_context_attrs(
     ctx: "ExecutionContext", overrides: dict[str, Any]
@@ -156,68 +237,6 @@ def _build_step_context_attrs(
         "parent_span_id": overrides.get("parent_span_id", ctx.span_id),
         "depth": overrides.get("depth", ctx.depth),
     }
-
-
-def create_user_step(
-    ctx: "ExecutionContext",
-    *,
-    sequence: int,
-    content: str,
-    **overrides,
-) -> StepRecord:
-    context_attrs = _build_step_context_attrs(ctx, overrides)
-    return StepRecord(
-        sequence=sequence,
-        role=MessageRole.USER,
-        content=content,
-        **context_attrs,
-    )
-
-
-def create_assistant_step(
-    ctx: "ExecutionContext",
-    *,
-    sequence: int,
-    content: str | None = None,
-    tool_calls: list[dict] | None = None,
-    reasoning_content: str | None = None,
-    metrics: StepMetrics | None = None,
-    **overrides,
-) -> StepRecord:
-    context_attrs = _build_step_context_attrs(ctx, overrides)
-    return StepRecord(
-        sequence=sequence,
-        role=MessageRole.ASSISTANT,
-        content=content,
-        reasoning_content=reasoning_content,
-        tool_calls=tool_calls,
-        metrics=metrics,
-        **context_attrs,
-    )
-
-
-def create_tool_step(
-    ctx: "ExecutionContext",
-    *,
-    sequence: int,
-    tool_call_id: str,
-    name: str,
-    content: str,
-    content_for_user: str | None = None,
-    metrics: StepMetrics | None = None,
-    **overrides,
-) -> StepRecord:
-    context_attrs = _build_step_context_attrs(ctx, overrides)
-    return StepRecord(
-        sequence=sequence,
-        role=MessageRole.TOOL,
-        content=content,
-        content_for_user=content_for_user,
-        tool_call_id=tool_call_id,
-        name=name,
-        metrics=metrics,
-        **context_attrs,
-    )
 
 
 @dataclass
@@ -274,7 +293,7 @@ class RunOutput:
     run_id: str | None = None
     response: str | None = None
     metrics: RunMetrics | None = None
-    termination_reason: str | None = None
+    termination_reason: TerminationReason | None = None
     error: str | None = None
 
 

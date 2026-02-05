@@ -13,8 +13,8 @@ from typing import Any
 import yaml
 from pydantic import BaseModel
 
-from agiwo.skills.exceptions import SkillNotFoundError, SkillParseError
-from agiwo.skills.registry import SkillMetadata, SkillRegistry
+from agiwo.skill.exceptions import SkillNotFoundError, SkillParseError
+from agiwo.skill.registry import SkillMetadata, SkillRegistry
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)

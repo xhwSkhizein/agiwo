@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 
 from agiwo.agent.step_builder import StepBuilder
-from agiwo.agent.schema import StepMetrics, LLMCallContext, create_assistant_step
+from agiwo.agent.schema import StepMetrics, LLMCallContext, StepRecord
 from agiwo.agent.run_state import RunState
 from agiwo.agent.run_io import RunIO
 from agiwo.llm.base import Model
@@ -36,8 +36,8 @@ class LLMStreamHandler:
         tools = state.tool_schemas if tools is ... else tools
 
         llm_context = LLMCallContext(
-            messages=messages.copy(),
-            tools=tools.copy() if tools else None,
+            messages=list(messages),
+            tools=list(tools) if tools else None,
             request_params=self._get_request_params(),
         )
 
@@ -57,7 +57,7 @@ class LLMStreamHandler:
     ) -> StepBuilder:
         """创建 StepBuilder"""
         seq = await run_io.allocate_sequence()
-        step = create_assistant_step(
+        step = StepRecord.assistant(
             state.context,
             sequence=seq,
             content="",

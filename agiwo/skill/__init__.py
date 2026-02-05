@@ -6,11 +6,11 @@ agents to discover, activate, and execute skills with progressive disclosure
 to optimize context usage.
 """
 
-from agiwo.skills.exceptions import SkillError, SkillNotFoundError, SkillParseError
-from agiwo.skills.loader import SkillContent, SkillLoader
-from agiwo.skills.manager import SkillManager
-from agiwo.skills.registry import SkillMetadata, SkillRegistry
-from agiwo.skills.tool import SkillTool
+from agiwo.skill.exceptions import SkillError, SkillNotFoundError, SkillParseError
+from agiwo.skill.loader import SkillContent, SkillLoader
+from agiwo.skill.manager import SkillManager
+from agiwo.skill.registry import SkillMetadata, SkillRegistry
+from agiwo.skill.tool import SkillTool
 
 __all__ = [
     "SkillError",

@@ -28,14 +28,22 @@ class RunIO:
     ) -> None:
         self.context = context
         self.session_store = session_store
+        self._local_sequence = 0
 
     async def allocate_sequence(self) -> int:
         """Allocate next sequence number for the current session."""
         if self.session_store:
             if "seq_start" in self.context.metadata:
-                return self.context.metadata.pop("seq_start")
+                return int(self.context.metadata.pop("seq_start"))
             return await self.session_store.allocate_sequence(self.context.session_id)
-        return 1
+
+        if "seq_start" in self.context.metadata:
+            seq = int(self.context.metadata.pop("seq_start"))
+            self._local_sequence = max(self._local_sequence, seq)
+            return seq
+
+        self._local_sequence += 1
+        return self._local_sequence
 
     def _make_event(
         self,

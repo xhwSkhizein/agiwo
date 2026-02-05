@@ -9,9 +9,9 @@ import time
 from typing import Any
 
 from agiwo.tool.base import BaseTool, ToolResult
-from agiwo.skills.exceptions import SkillNotFoundError
-from agiwo.skills.loader import SkillLoader
-from agiwo.skills.registry import SkillRegistry
+from agiwo.skill.exceptions import SkillNotFoundError
+from agiwo.skill.loader import SkillLoader
+from agiwo.skill.registry import SkillRegistry
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.utils.logging import get_logger
@@ -96,26 +96,32 @@ class SkillTool(BaseTool):
         skill_name = parameters.get("skill_name")
 
         if not skill_name:
-            return self._create_error_result(
-                parameters,
-                "Missing required parameter: skill_name",
-                start_time,
+            return ToolResult.error(
+                tool_name=self.name,
+                error="Missing required parameter: skill_name",
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                start_time=start_time,
             )
 
         if not isinstance(skill_name, str):
-            return self._create_error_result(
-                parameters,
-                f"Invalid skill_name type: expected string, got {type(skill_name)}",
-                start_time,
+            return ToolResult.error(
+                tool_name=self.name,
+                error=f"Invalid skill_name type: expected string, got {type(skill_name)}",
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                start_time=start_time,
             )
 
         # Check if skill exists
         metadata = self.registry.get_metadata(skill_name)
         if not metadata:
-            return self._create_error_result(
-                parameters,
-                f"Skill '{skill_name}' not found. Available skills: {', '.join(self.registry.list_available())}",
-                start_time,
+            return ToolResult.error(
+                tool_name=self.name,
+                error=f"Skill '{skill_name}' not found. Available skills: {', '.join(self.registry.list_available())}",
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                start_time=start_time,
             )
 
         try:
@@ -150,47 +156,23 @@ class SkillTool(BaseTool):
             )
 
         except SkillNotFoundError as e:
-            return self._create_error_result(parameters, str(e), start_time)
+            return ToolResult.error(
+                tool_name=self.name,
+                error=str(e),
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                start_time=start_time,
+            )
         except Exception as e:
             logger.error(
                 "skill_activation_failed",
                 skill_name=skill_name,
                 error=str(e),
             )
-            return self._create_error_result(
-                parameters,
-                f"Failed to activate skill '{skill_name}': {e}",
-                start_time,
+            return ToolResult.error(
+                tool_name=self.name,
+                error=f"Failed to activate skill '{skill_name}': {e}",
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                start_time=start_time,
             )
-
-    def _create_error_result(
-        self,
-        parameters: dict[str, Any],
-        error: str,
-        start_time: float,
-    ) -> ToolResult:
-        """
-        Create an error ToolResult.
-
-        Args:
-            parameters: Tool parameters
-            error: Error message
-            start_time: Start time for duration calculation
-
-        Returns:
-            ToolResult with error information
-        """
-        end_time = time.time()
-        return ToolResult(
-            tool_name=self.name,
-            tool_call_id=parameters.get("tool_call_id", ""),
-            input_args=parameters,
-            content=f"Error: {error}",
-            content_for_user=f"Failed to activate skill: {error}",
-            output=None,
-            error=error,
-            start_time=start_time,
-            end_time=end_time,
-            duration=end_time - start_time,
-            is_success=False,
-        )

@@ -4,7 +4,9 @@ SQLite implementation of TraceStore.
 
 import asyncio
 import json
+import os
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -32,7 +34,7 @@ class SQLiteTraceStore:
         collection_name: str = "agiwo_traces",
         buffer_size: int = 200,
     ) -> None:
-        self.db_path = db_path
+        self.db_path = os.path.expanduser(db_path)
         self.collection_name = collection_name
         self.buffer_size = buffer_size
 
@@ -51,13 +53,16 @@ class SQLiteTraceStore:
         if self._initialized:
             return
 
-        self._connection = await aiosqlite.connect(self.db_path)
+        db_path = Path(self.db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self._connection = await aiosqlite.connect(str(db_path))
         self._connection.row_factory = aiosqlite.Row
 
         await self._create_tables()
         self._initialized = True
 
-        logger.info("sqlite_trace_store_initialized", db_path=self.db_path)
+        logger.info("sqlite_trace_store_initialized", db_path=str(db_path))
 
     async def _create_tables(self) -> None:
         """Create database tables and indexes."""

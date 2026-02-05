@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field
 
-from agiwo.skills.exceptions import SkillParseError
+from agiwo.skill.exceptions import SkillParseError
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)

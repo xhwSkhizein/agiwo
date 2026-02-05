@@ -3,7 +3,13 @@ from dataclasses import dataclass, field
 
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.config_options import AgentConfigOptions
-from agiwo.agent.schema import StepRecord, step_to_message, RunOutput, RunMetrics
+from agiwo.agent.schema import (
+    StepRecord,
+    step_to_message,
+    RunOutput,
+    RunMetrics,
+    TerminationReason,
+)
 
 
 @dataclass
@@ -16,7 +22,7 @@ class RunState:
     tool_schemas: list[dict] | None = None
     start_time: float = field(default_factory=time.time)
     current_step: int = 0
-    termination_reason: str | None = None
+    termination_reason: TerminationReason | None = None
     total_tokens: int = 0
     input_tokens: int = 0
     output_tokens: int = 0

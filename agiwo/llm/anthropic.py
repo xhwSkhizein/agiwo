@@ -14,7 +14,7 @@ except ImportError:
     raise ImportError("Please install anthropic package: uv add anthropic")
 
 from agiwo.llm.base import Model, StreamChunk
-from agiwo.llm.helper import normalize_usage_metrics
+from agiwo.llm.helper import normalize_usage_metrics, parse_json_tool_args
 from agiwo.config.settings import settings
 from agiwo.utils.retry import retry_async
 from agiwo.utils.logging import get_logger
@@ -87,25 +87,6 @@ class AnthropicModel(Model):
             use_key=resolved_api_key[:10] if resolved_api_key else "None",
         )
 
-    def _parse_tool_args(self, args: str | dict) -> dict:
-        """Parse tool arguments into a dictionary."""
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except json.JSONDecodeError:
-                logger.error("failed_to_decode_tool_arguments", arguments=args)
-                return {"__raw_arguments__": args}
-
-        if not isinstance(args, dict):
-            logger.error(
-                "invalid_tool_arguments_type",
-                arguments=args,
-                type=type(args).__name__,
-            )
-            return {"__raw_arguments__": args}
-
-        return args
-
     def _update_usage_info(self, usage_obj, usage_info: dict) -> None:
         """Update usage info from Anthropic usage object."""
         if not usage_obj:
@@ -151,7 +132,7 @@ class AnthropicModel(Model):
                         for tool_call in msg["tool_calls"]:
                             func = tool_call["function"]
                             args = func["arguments"]
-                            args = self._parse_tool_args(args)
+                            args = parse_json_tool_args(args)
 
                             content_blocks.append(
                                 {

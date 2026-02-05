@@ -13,7 +13,7 @@ from agiwo.agent.schema import (
     RunOutput,
     RunStatus,
     StreamEvent,
-    create_user_step,
+    StepRecord,
     steps_to_messages,
 )
 from agiwo.agent.run_io import RunIO
@@ -56,7 +56,9 @@ class AgiwoAgent(ABC):
         self.tools = tools
         self.system_prompt = system_prompt
         self.options = options or AgentConfigOptions()
-        self._trace_store = self._init_trace_store()
+        self._trace_store: TraceStore = self._init_trace_store()
+        if self._trace_store:
+            self._trace_store.initialize()
 
     @property
     def id(self) -> str:
@@ -87,17 +89,17 @@ class AgiwoAgent(ABC):
         2. 消费事件流（确保副作用如 Tracing 正常工作）。
         3. 等待并返回最终的 RunOutput。
         """
-        # 启动执行逻辑 (生产者)
         task = self._start_execution_task(
             user_input, context, abort_signal, close_wire_on_complete=True
         )
+        drain_task = self._start_stream_drain_task(
+            context=context, user_input=user_input
+        )
 
-        # 消费流 (消费者) - 主要是为了触发 Tracing 等副作用
-        stream = self._build_observable_stream(context, user_input)
-        async for _ in stream:
-            pass  # 耗尽流以确保所有事件都被收集器处理
-
-        return await task
+        try:
+            return await task
+        finally:
+            await self._cleanup_stream_drain_task(drain_task)
 
     async def run_stream(
         self,
@@ -245,7 +247,7 @@ class AgiwoAgent(ABC):
     ) -> None:
         """记录用户的输入作为序列中的一步。"""
         seq = await run_io.allocate_sequence()
-        user_step = create_user_step(
+        user_step = StepRecord.user(
             context,
             sequence=seq,
             content=user_input,
@@ -317,6 +319,9 @@ class AgiwoAgent(ABC):
         if not self.options.is_trace_enabled:
             return None
 
+        if self.options.trace_store:
+            return self.options.trace_store
+
         # TODO: Move to a TraceStoreFactory
         if settings.default_trace_store == "mongo":
             return TraceStore(
@@ -378,3 +383,34 @@ class AgiwoAgent(ABC):
         if task.done() and not task.cancelled():
             if exc := task.exception():
                 raise exc
+
+    def _start_stream_drain_task(
+        self,
+        *,
+        context: ExecutionContext,
+        user_input: str,
+    ) -> asyncio.Task[None]:
+        stream = self._build_observable_stream(context, user_input)
+        return asyncio.create_task(self._drain_stream(stream))
+
+    async def _drain_stream(self, stream: AsyncIterator[StreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    async def _cleanup_stream_drain_task(self, task: asyncio.Task[None]) -> None:
+        try:
+            async with asyncio.timeout(self.options.stream_cleanup_timeout):
+                await task
+        except asyncio.TimeoutError:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.error("stream_drain_task_cleanup_error", error=str(e))
+                return
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            logger.error("stream_drain_task_failed", error=str(e), exc_info=True)

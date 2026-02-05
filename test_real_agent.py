@@ -29,7 +29,7 @@ from agiwo.agent.wire import Wire
 from agiwo.agent.session.sqlite import SQLiteSessionStore
 from agiwo.observability.sqlite_store import SQLiteTraceStore
 from agiwo.observability.collector import TraceCollector
-from agiwo.skills.manager import SkillManager
+from agiwo.skill.manager import SkillManager
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.llm.deepseek import DeepseekModel
 from agiwo.utils.logging import get_logger
@@ -60,7 +60,9 @@ class TestCalculatorTool(BaseTool):
         return "calculator"
 
     def get_description(self) -> str:
-        return "执行简单的数学计算。接受两个数字和一个运算符（+、-、*、/），返回计算结果。"
+        return (
+            "执行简单的数学计算。接受两个数字和一个运算符（+、-、*、/），返回计算结果。"
+        )
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -130,7 +132,13 @@ class TestCalculatorTool(BaseTool):
             )
         except Exception as e:
             end_time = time.time()
-            return self._create_error_result(parameters, str(e), start_time)
+            return ToolResult.error(
+                tool_name=self.name,
+                error=str(e),
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                start_time=start_time,
+            )
 
 
 class TestEchoTool(BaseTool):
@@ -202,8 +210,6 @@ async def test_tools_support():
         await session_store.connect()
         await trace_store.initialize()
 
-        trace_collector = TraceCollector(store=trace_store)
-
         # 创建测试工具
         tools = [TestCalculatorTool(), TestEchoTool()]
 
@@ -222,7 +228,7 @@ async def test_tools_support():
             options=AgentConfigOptions(
                 max_steps=10,
                 session_store=session_store,
-                trace_collector=trace_collector,
+                trace_store=trace_store,
             ),
         )
 
@@ -260,7 +266,9 @@ async def test_tools_support():
         steps = await session_store.get_steps(session_id=session_id)
         print(f"   ✅ Steps 已保存: {len(steps)} 个步骤")
         for i, step in enumerate(steps[:5], 1):  # 只显示前5个
-            print(f"      {i}. {step.role.value}: {step.content[:50] if step.content else 'N/A'}")
+            print(
+                f"      {i}. {step.role.value}: {step.content[:50] if step.content else 'N/A'}"
+            )
 
         # 验证 TraceStore 数据
         print(f"\n🔍 验证 TraceStore 数据...")
@@ -313,8 +321,6 @@ async def test_skills_loading():
         await session_store.connect()
         await trace_store.initialize()
 
-        trace_collector = TraceCollector(store=trace_store)
-
         # 创建测试 Skill 目录结构
         test_skills_dir = os.path.join(os.path.dirname(db_path), "test_skills")
         os.makedirs(test_skills_dir, exist_ok=True)
@@ -362,7 +368,7 @@ description: 这是一个测试技能，用于验证 Skills 系统是否正常�
             options=AgentConfigOptions(
                 max_steps=10,
                 session_store=session_store,
-                trace_collector=trace_collector,
+                trace_store=trace_store,
                 skill_manager=skill_manager,
             ),
         )
@@ -397,7 +403,11 @@ description: 这是一个测试技能，用于验证 Skills 系统是否正常�
         steps = await session_store.get_steps(session_id=session_id)
         tool_steps = [s for s in steps if s.role.value == "tool"]
         skill_called = any(
-            s.name == "Skill" and "test-skill" in (s.content or "").lower()
+            s.name == "Skill"
+            and (
+                "test-skill" in (s.content_for_user or "").lower()
+                or "test skill" in (s.content or "").lower()
+            )
             for s in tool_steps
         )
 
@@ -406,7 +416,9 @@ description: 这是一个测试技能，用于验证 Skills 系统是否正常�
         else:
             print(f"   ⚠️  Skill 工具可能未被调用（检查步骤）")
             for step in tool_steps:
-                print(f"      - {step.name}: {step.content[:100] if step.content else 'N/A'}")
+                print(
+                    f"      - {step.name}: {step.content[:100] if step.content else 'N/A'}"
+                )
 
         # 验证 Skills 在 system prompt 中
         skills_section = skill_manager.render_skills_section()
@@ -450,8 +462,6 @@ async def test_data_persistence():
         await session_store.connect()
         await trace_store.initialize()
 
-        trace_collector = TraceCollector(store=trace_store)
-
         # 创建 Agent
         model = create_test_model()
         if not model:
@@ -469,7 +479,7 @@ async def test_data_persistence():
             options=AgentConfigOptions(
                 max_steps=10,
                 session_store=session_store,
-                trace_collector=trace_collector,
+                is_trace_enabled=True,
             ),
         )
 
@@ -511,7 +521,9 @@ async def test_data_persistence():
         # 检查所有 Runs
         runs = await session_store.list_runs(session_id=session_id)
         print(f"   ✅ 找到 {len(runs)} 个 Runs")
-        assert len(runs) == len(queries), f"应该有 {len(queries)} 个 Runs，但找到 {len(runs)} 个"
+        assert len(runs) == len(queries), (
+            f"应该有 {len(queries)} 个 Runs，但找到 {len(runs)} 个"
+        )
 
         # 检查所有 Steps
         steps = await session_store.get_steps(session_id=session_id)

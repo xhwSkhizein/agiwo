@@ -10,9 +10,9 @@ import json
 import os
 from pathlib import Path
 
-from agiwo.skills.loader import SkillLoader
-from agiwo.skills.registry import SkillMetadata, SkillRegistry
-from agiwo.skills.tool import SkillTool
+from agiwo.skill.loader import SkillLoader
+from agiwo.skill.registry import SkillMetadata, SkillRegistry
+from agiwo.skill.tool import SkillTool
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)

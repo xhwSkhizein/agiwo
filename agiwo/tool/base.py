@@ -38,6 +38,55 @@ class ToolResult:
     error: str | None = None
     is_success: bool = True
 
+    @classmethod
+    def error(
+        cls,
+        tool_name: str,
+        error: str,
+        tool_call_id: str = "",
+        input_args: dict[str, Any] | None = None,
+        start_time: float | None = None,
+    ) -> "ToolResult":
+        """Create a ToolResult representing an error."""
+        now = time.time()
+        start = start_time if start_time is not None else now
+        return cls(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            input_args=input_args or {},
+            content=f"Error: {error}",
+            output=None,
+            error=error,
+            start_time=start,
+            end_time=now,
+            duration=now - start,
+            is_success=False,
+        )
+
+    @classmethod
+    def aborted(
+        cls,
+        tool_name: str,
+        tool_call_id: str = "",
+        input_args: dict[str, Any] | None = None,
+        start_time: float | None = None,
+    ) -> "ToolResult":
+        """Create a ToolResult representing an aborted operation."""
+        now = time.time()
+        start = start_time if start_time is not None else now
+        return cls(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            input_args=input_args or {},
+            content="Operation was aborted",
+            output=None,
+            error="Aborted",
+            start_time=start,
+            end_time=now,
+            duration=now - start,
+            is_success=False,
+        )
+
 
 class BaseTool(ABC):
     """Common interface that every concrete tool must implement."""
@@ -107,37 +156,3 @@ class BaseTool(ABC):
                 "parameters": self.get_parameters(),
             },
         }
-
-    def _create_error_result(
-        self, parameters: dict, error: str, start_time: float
-    ) -> ToolResult:
-        """Create error result helper method."""
-
-        return ToolResult(
-            tool_name=self.name,
-            tool_call_id=parameters.get("tool_call_id", ""),
-            input_args=parameters,
-            content=f"Error: {error}",
-            output=None,
-            error=error,
-            start_time=start_time,
-            end_time=time.time(),
-            duration=time.time() - start_time,
-            is_success=False,
-        )
-
-    def _create_abort_result(self, parameters: dict, start_time: float) -> ToolResult:
-        """Create abort result helper method."""
-
-        return ToolResult(
-            tool_name=self.name,
-            tool_call_id=parameters.get("tool_call_id", ""),
-            input_args=parameters,
-            content="Operation was aborted",
-            output=None,
-            error="Aborted",
-            start_time=start_time,
-            end_time=time.time(),
-            duration=time.time() - start_time,
-            is_success=False,
-        )

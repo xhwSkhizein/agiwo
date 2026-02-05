@@ -3,8 +3,10 @@ SQLite implementation of SessionStore.
 """
 
 import json
+import os
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -22,7 +24,7 @@ class SQLiteSessionStore(SessionStore):
     """
 
     def __init__(self, db_path: str = "agiwo.db") -> None:
-        self.db_path = db_path
+        self.db_path = os.path.expanduser(db_path)
         self._connection: aiosqlite.Connection | None = None
         self._initialized = False
 
@@ -31,13 +33,16 @@ class SQLiteSessionStore(SessionStore):
         if self._initialized:
             return
 
-        self._connection = await aiosqlite.connect(self.db_path)
+        db_path = Path(self.db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        self._connection = await aiosqlite.connect(str(db_path))
         self._connection.row_factory = aiosqlite.Row
 
         await self._create_tables()
         self._initialized = True
 
-        logger.info("sqlite_connected", db_path=self.db_path)
+        logger.info("sqlite_connected", db_path=str(db_path))
 
     async def initialize(self) -> None:
         """Backward-compatible alias for connect()."""

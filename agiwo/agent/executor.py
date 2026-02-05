@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from agiwo.agent.schema import RunOutput, create_tool_step
+from agiwo.agent.schema import RunOutput, StepRecord, TerminationReason
 from agiwo.agent.config_options import AgentConfigOptions
 from agiwo.agent.llm_handler import LLMStreamHandler
 from agiwo.agent.summarizer import build_termination_messages
@@ -49,7 +49,12 @@ class AgentExecutor:
     """
 
     SUMMARY_REASONS = frozenset(
-        {"max_steps", "timeout", "max_tokens", "error_with_context"}
+        {
+            TerminationReason.MAX_STEPS,
+            TerminationReason.TIMEOUT,
+            TerminationReason.MAX_TOKENS,
+            TerminationReason.ERROR_WITH_CONTEXT,
+        }
     )
 
     def __init__(
@@ -90,13 +95,13 @@ class AgentExecutor:
         try:
             await self._run_loop(state, pending_tool_calls, abort_signal)
         except asyncio.CancelledError:
-            state.termination_reason = "cancelled"
+            state.termination_reason = TerminationReason.CANCELLED
             logger.info("agent_execution_cancelled", run_id=state.context.run_id)
         except Exception as e:
             state.termination_reason = (
-                "error_with_context"
+                TerminationReason.ERROR_WITH_CONTEXT
                 if state.assistant_steps_count > 0
-                else "error"
+                else TerminationReason.ERROR
             )
             logger.error(
                 "agent_execution_failed",
@@ -142,7 +147,7 @@ class AgentExecutor:
             state.track_step(step)
 
             if not step.tool_calls:
-                state.termination_reason = "completed"
+                state.termination_reason = TerminationReason.COMPLETED
                 return  # Normal completion
 
             await self._execute_tools(state, step.tool_calls, abort_signal)
@@ -163,7 +168,7 @@ class AgentExecutor:
 
         for result in results:
             seq = await self.run_io.allocate_sequence()
-            step = create_tool_step(
+            step = StepRecord.tool(
                 state.context,
                 sequence=seq,
                 tool_call_id=result.tool_call_id,
@@ -174,22 +179,22 @@ class AgentExecutor:
             await self.run_io.commit_step(step)
             state.track_step(step)
 
-    def _check_limits(self, state: RunState) -> str | None:
+    def _check_limits(self, state: RunState) -> TerminationReason | None:
         """检查所有执行限制，返回终止原因或 None。"""
         if state.current_step >= self.options.max_steps:
-            return "max_steps"
+            return TerminationReason.MAX_STEPS
 
         if self.options.run_timeout and state.elapsed > self.options.run_timeout:
-            return "timeout"
+            return TerminationReason.TIMEOUT
 
         if state.context.timeout_at and time.time() >= state.context.timeout_at:
-            return "timeout"
+            return TerminationReason.TIMEOUT
 
         if (
             self.options.max_output_tokens
             and state.total_tokens >= self.options.max_output_tokens
         ):
-            return "max_tokens"
+            return TerminationReason.MAX_TOKENS
 
         return None
 

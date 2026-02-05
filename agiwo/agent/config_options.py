@@ -6,7 +6,7 @@ from agiwo.config.settings import settings
 from agiwo.agent.session.base import SessionStore, InMemorySessionStore
 from agiwo.agent.session.sqlite import SQLiteSessionStore
 from agiwo.agent.session.mongo import MongoSessionStore
-from agiwo.skills.manager import SkillManager
+from agiwo.skill.manager import SkillManager
 
 
 @dataclass
@@ -26,9 +26,12 @@ class AgentConfigOptions:
     # skills
     skill_manager: SkillManager | None = None
 
+    from typing import Any
+
     # tracing
     is_trace_enabled: bool = True
     stream_cleanup_timeout: float = 5.0
+    trace_store: Any | None = None
 
     # side-effect saving
     session_store: SessionStore | None = None
@@ -44,7 +47,8 @@ class AgentConfigOptions:
         if self.skill_manager is None:
             if settings.is_skills_enabled:
                 from pathlib import Path
-                skill_dirs = [Path(d) for d in settings.skills_dirs]
+
+                skill_dirs = [Path(d) for d in settings.skill_dirs]
                 self.skill_manager = SkillManager(skill_dirs=skill_dirs)
             else:
                 self.skill_manager = None
