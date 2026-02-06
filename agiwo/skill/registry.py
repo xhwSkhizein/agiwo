@@ -49,9 +49,9 @@ class SkillRegistry:
     def __init__(self) -> None:
         """Initialize skill registry with empty cache."""
         self._metadata_cache: dict[str, SkillMetadata] = {}
-        self._skill_dirs: list[Path] = []
+        self._skills_dirs: list[Path] = []
 
-    async def discover_skills(self, skill_dirs: list[Path]) -> list[SkillMetadata]:
+    async def discover_skills(self, skills_dirs: list[Path]) -> list[SkillMetadata]:
         """
         Discover all available skills in the given directories.
 
@@ -60,15 +60,15 @@ class SkillRegistry:
         if some skills fail to parse.
 
         Args:
-            skill_dirs: List of directories to scan for skills
+            skills_dirs: List of directories to scan for skills
 
         Returns:
             List of discovered skill metadata
         """
-        self._skill_dirs = skill_dirs
+        self._skills_dirs = skills_dirs
         cache: dict[str, SkillMetadata] = {}
 
-        for skill_dir in skill_dirs:
+        for skill_dir in skills_dirs:
             skill_dir = Path(skill_dir).expanduser().resolve()
             if not skill_dir.exists():
                 logger.warning("skill_dir_not_found", path=str(skill_dir))
@@ -139,11 +139,11 @@ class SkillRegistry:
 
         Re-scans all skill directories and updates the metadata cache.
         """
-        if not self._skill_dirs:
-            logger.warning("no_skill_dirs_configured")
+        if not self._skills_dirs:
+            logger.warning("no_skills_dirs_configured")
             return
 
-        await self.discover_skills(self._skill_dirs)
+        await self.discover_skills(self._skills_dirs)
 
     def _parse_skill_frontmatter(self, skill_path: Path) -> SkillMetadata:
         """

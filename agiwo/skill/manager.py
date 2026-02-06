@@ -31,15 +31,15 @@ class SkillManager:
 
     def __init__(
         self,
-        skill_dirs: list[Path],
+        skills_dirs: list[Path],
     ) -> None:
         """
         Initialize skill manager.
 
         Args:
-            skill_dirs: List of directories to scan for skills
+            skills_dirs: List of directories to scan for skills
         """
-        self._skill_dirs = skill_dirs
+        self._skills_dirs = skills_dirs
         self.registry = SkillRegistry()
         self.loader = SkillLoader(self.registry)
         self._skill_tool: SkillTool | None = None
@@ -52,8 +52,8 @@ class SkillManager:
         This should be called during agent startup to populate the
         metadata cache with all available skills.
         """
-        skill_dirs = self._resolve_skill_dirs()
-        self._metadata_cache = await self.registry.discover_skills(skill_dirs)
+        skills_dirs = self._resolve_skills_dirs()
+        self._metadata_cache = await self.registry.discover_skills(skills_dirs)
         logger.info("skill_manager_initialized", skill_count=len(self._metadata_cache))
 
     def get_skill_tool(self) -> SkillTool:
@@ -121,11 +121,11 @@ class SkillManager:
 
         Re-scans skill directories and updates the metadata cache.
         """
-        skill_dirs = self._resolve_skill_dirs()
-        self._metadata_cache = await self.registry.discover_skills(skill_dirs)
+        skills_dirs = self._resolve_skills_dirs()
+        self._metadata_cache = await self.registry.discover_skills(skills_dirs)
         logger.info("skills_reloaded", skill_count=len(self._metadata_cache))
 
-    def _resolve_skill_dirs(self) -> list[Path]:
+    def _resolve_skills_dirs(self) -> list[Path]:
         """
         Resolve skill directories from configuration and environment.
 
@@ -135,14 +135,14 @@ class SkillManager:
         dirs: list[Path] = []
 
         # Add configured directories
-        for skill_dir in self._skill_dirs:
+        for skill_dir in self._skills_dirs:
             resolved = Path(skill_dir).expanduser().resolve()
             if resolved.exists():
                 dirs.append(resolved)
             else:
                 logger.debug("skill_dir_not_found", path=str(resolved))
 
-        for env_dir in _iter_skill_dirs_from_env():
+        for env_dir in _iter_skills_dirs_from_env():
             resolved = Path(env_dir).expanduser().resolve()
             if resolved.exists():
                 dirs.append(resolved)
@@ -152,7 +152,7 @@ class SkillManager:
         return dirs
 
 
-def _iter_skill_dirs_from_env() -> list[str]:
+def _iter_skills_dirs_from_env() -> list[str]:
     raw = os.getenv("agiwo_SKILLS_DIRS") or os.getenv("agiwo_SKILLS_DIR")
     if not raw:
         return []

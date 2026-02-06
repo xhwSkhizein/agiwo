@@ -19,12 +19,12 @@ class SessionStore(ABC):
     @abstractmethod
     async def save_run(self, run: Run) -> None:
         """Save Run"""
-        pass
+        ...
 
     @abstractmethod
     async def get_run(self, run_id: str) -> Run | None:
         """Get Run"""
-        pass
+        ...
 
     @abstractmethod
     async def list_runs(
@@ -35,24 +35,24 @@ class SessionStore(ABC):
         offset: int = 0,
     ) -> list[Run]:
         """List Runs"""
-        pass
+        ...
 
     @abstractmethod
     async def delete_run(self, run_id: str) -> None:
         """Delete Run"""
-        pass
+        ...
 
     # --- Step Operations ---
 
     @abstractmethod
     async def save_step(self, step: StepRecord) -> None:
         """Save single Step"""
-        pass
+        ...
 
     @abstractmethod
     async def save_steps_batch(self, steps: list[StepRecord]) -> None:
         """Batch save Steps (for fork operations)"""
-        pass
+        ...
 
     @abstractmethod
     async def get_steps(
@@ -75,12 +75,12 @@ class SessionStore(ABC):
             agent_id: Filter by agent_id (optional)
             limit: Maximum return count
         """
-        pass
+        ...
 
     @abstractmethod
     async def get_last_step(self, session_id: str) -> StepRecord | None:
         """Get last Step"""
-        pass
+        ...
 
     @abstractmethod
     async def delete_steps(self, session_id: str, start_seq: int) -> int:
@@ -90,12 +90,12 @@ class SessionStore(ABC):
         Returns:
             Number of deleted Steps
         """
-        pass
+        ...
 
     @abstractmethod
     async def get_step_count(self, session_id: str) -> int:
         """Get total Step count for session"""
-        pass
+        ...
 
     @abstractmethod
     async def get_max_sequence(self, session_id: str) -> int:
@@ -105,7 +105,7 @@ class SessionStore(ABC):
         Returns:
             Maximum sequence number, or 0 if no steps exist
         """
-        pass
+        ...
 
     @abstractmethod
     async def allocate_sequence(self, session_id: str) -> int:
@@ -119,8 +119,7 @@ class SessionStore(ABC):
         Returns:
             Next sequence number (starting from 1)
         """
-        pass
-
+        ...
 
     # --- Tool Result Query (for cross-agent reference) ---
 

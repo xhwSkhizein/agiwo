@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from agiwo.agent.step_builder import StepBuilder
 from agiwo.agent.schema import StepMetrics, LLMCallContext, StepRecord
 from agiwo.agent.run_state import RunState
-from agiwo.agent.run_io import RunIO
+from agiwo.agent.side_effect_io import SideEffectIO
 from agiwo.llm.base import Model
 from agiwo.utils.abort_signal import AbortSignal
 
@@ -25,7 +25,7 @@ class LLMStreamHandler:
     async def stream_assistant_step(
         self,
         state: RunState,
-        run_io: RunIO,
+        run_io: SideEffectIO,
         abort_signal: AbortSignal | None,
         *,
         messages: list[dict] | None = None,
@@ -52,7 +52,7 @@ class LLMStreamHandler:
 
     async def _create_step_builder(
         self,
-        run_io: RunIO,
+        run_io: SideEffectIO,
         state: RunState,
     ) -> StepBuilder:
         """创建 StepBuilder"""

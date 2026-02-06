@@ -45,5 +45,10 @@ class Model(ABC):
     ) -> AsyncIterator[StreamChunk]:
         pass
 
+    async def close(self) -> None:
+        """Close the model's underlying client connection."""
+        if hasattr(self, "client") and self.client is not None:
+            await self.client.close()
+
 
 __all__ = ["Model", "StreamChunk"]

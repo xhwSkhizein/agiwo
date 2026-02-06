@@ -29,22 +29,14 @@ class SilentUndefined(Undefined):
 
 
 class TemplateRenderer:
-    """Unified Jinja2 template renderer - global singleton.
+    """Unified Jinja2 template renderer.
 
     Usage:
         from agiwo.config.template import renderer
         result = renderer.render("Hello {{ name }}", name="World")
     """
 
-    _instance = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._init_engine()
-        return cls._instance
-
-    def _init_engine(self) -> None:
+    def __init__(self) -> None:
         """Initialize Jinja2 environment with sandbox for security."""
         self.env = SandboxedEnvironment(
             autoescape=False,

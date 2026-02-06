@@ -16,7 +16,7 @@ from agiwo.agent.schema import EventType, LLMCallContext, StepRecord, StreamEven
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 from agiwo.observability.otlp_exporter import get_otlp_exporter
 from agiwo.utils.logging import get_logger
-from agiwo.observability.store import TraceStore
+from agiwo.observability.base import BaseTraceStore
 
 logger = get_logger(__name__)
 
@@ -34,7 +34,7 @@ class TraceCollector:
 
     PREVIEW_LENGTH = 500  # Input/output preview length
 
-    def __init__(self, store: "TraceStore | None" = None) -> None:
+    def __init__(self, store: BaseTraceStore | None = None) -> None:
         """
         Initialize collector.
 

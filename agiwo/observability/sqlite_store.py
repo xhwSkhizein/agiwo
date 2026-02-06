@@ -11,14 +11,14 @@ from typing import Any
 
 import aiosqlite
 
+from agiwo.observability.base import BaseTraceStore, TraceQuery
 from agiwo.observability.trace import Trace, Span
-from agiwo.observability.store import TraceQuery
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-class SQLiteTraceStore:
+class SQLiteTraceStore(BaseTraceStore):
     """
     SQLite implementation of TraceStore.
 

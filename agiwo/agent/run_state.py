@@ -2,7 +2,7 @@ import time
 from dataclasses import dataclass, field
 
 from agiwo.agent.execution_context import ExecutionContext
-from agiwo.agent.config_options import AgentConfigOptions
+from agiwo.agent.options import AgentOptions
 from agiwo.agent.schema import (
     StepRecord,
     step_to_message,
@@ -17,7 +17,7 @@ class RunState:
     """Encapsulates all mutable state for a single execution run."""
 
     context: ExecutionContext
-    config: AgentConfigOptions
+    config: AgentOptions
     messages: list[dict]
     tool_schemas: list[dict] | None = None
     start_time: float = field(default_factory=time.time)

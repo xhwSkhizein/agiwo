@@ -14,7 +14,7 @@ import asyncio
 import time
 
 from agiwo.agent.schema import RunOutput, StepRecord, TerminationReason
-from agiwo.agent.config_options import AgentConfigOptions
+from agiwo.agent.options import AgentOptions
 from agiwo.agent.llm_handler import LLMStreamHandler
 from agiwo.agent.summarizer import build_termination_messages
 from agiwo.llm.base import Model
@@ -25,7 +25,7 @@ from agiwo.tool.executor import ToolExecutor
 from agiwo.agent.run_state import RunState
 from agiwo.utils.logging import get_logger
 
-from agiwo.agent.run_io import RunIO
+from agiwo.agent.side_effect_io import SideEffectIO
 
 
 logger = get_logger(__name__)
@@ -61,11 +61,11 @@ class AgentExecutor:
         self,
         model: Model,
         tools: list[BaseTool],
-        run_io: RunIO,
-        options: AgentConfigOptions | None = None,
+        run_io: SideEffectIO,
+        options: AgentOptions | None = None,
     ):
         self.run_io = run_io
-        self.options = options or AgentConfigOptions()
+        self.options = options or AgentOptions()
 
         # 初始化各个组件
         self.llm_handler = LLMStreamHandler(model)

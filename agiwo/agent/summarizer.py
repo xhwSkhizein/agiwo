@@ -90,10 +90,10 @@ def _format_termination_reason(reason: TerminationReason | str) -> str:
     """Format termination reason for human readability."""
     # Convert Enum to string value if needed
     reason_val = reason.value if isinstance(reason, TerminationReason) else reason
-    
+
     reason_mapping = {
         TerminationReason.MAX_STEPS.value: "reaching the maximum number of execution steps",
-        "max_iterations": "reaching the maximum number of iterations", # legacy
+        "max_iterations": "reaching the maximum number of iterations",  # legacy
         TerminationReason.TIMEOUT.value: "execution timeout",
         TerminationReason.CANCELLED.value: "user cancellation",
         TerminationReason.TOOL_LIMIT.value: "reaching the tool call limit",
@@ -101,8 +101,4 @@ def _format_termination_reason(reason: TerminationReason | str) -> str:
     return reason_mapping.get(reason_val, reason_val)
 
 
-__all__ = [
-    "build_termination_messages",
-    "DEFAULT_TERMINATION_USER_PROMPT",
-    "_format_termination_reason",
-]
+__all__ = ["build_termination_messages", "DEFAULT_TERMINATION_USER_PROMPT"]

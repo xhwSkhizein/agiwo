@@ -122,7 +122,7 @@ class OpenAIModel(Model):
             tools_count=len(tools) if tools else 0,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
-            detail=json.dumps(params, indent=2, ensure_ascii=False),
+            detail=params,
         )
 
         try:

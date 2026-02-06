@@ -1,45 +1,28 @@
 """
-Trace storage - MongoDB persistence with in-memory cache.
+MongoDB implementation of trace storage.
 """
 
 import asyncio
 from collections import deque
-from datetime import datetime
 from typing import Any
-from pydantic import BaseModel, Field
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
-from agiwo.observability.trace import SpanStatus, Trace
+from agiwo.observability.base import BaseTraceStore, TraceQuery
+from agiwo.observability.trace import Trace
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-class TraceQuery(BaseModel):
-    """Trace query parameters"""
-
-    agent_id: str | None = None
-    session_id: str | None = None
-    user_id: str | None = None
-    status: SpanStatus | None = None
-    start_time: datetime | None = None
-    end_time: datetime | None = None
-    min_duration_ms: float | None = None
-    max_duration_ms: float | None = None
-    limit: int = Field(default=50, ge=1, le=500)
-    offset: int = Field(default=0, ge=0)
-
-
-class TraceStore:
+class MongoTraceStore(BaseTraceStore):
     """
-    Trace storage - MongoDB persistence + in-memory cache.
+    MongoDB implementation of BaseTraceStore.
 
     Features:
     - Async MongoDB operations
     - In-memory ring buffer for real-time access
     - SSE subscriber support
-
-    Note: TraceStore is managed by ConfigSystem. Use ConfigSystem to get instance.
     """
 
     def __init__(
@@ -246,4 +229,4 @@ class TraceStore:
             logger.info("trace_store_closed")
 
 
-__all__ = ["TraceStore", "TraceQuery"]
+__all__ = ["MongoTraceStore"]

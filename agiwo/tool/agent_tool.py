@@ -2,7 +2,7 @@ import time
 from typing import Any
 from uuid import uuid4
 
-from agiwo.agent.base import AgiwoAgent
+from agiwo.agent.agent import AgiwoAgent
 from agiwo.agent.schema import RunOutput
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.agent.execution_context import ExecutionContext
@@ -45,7 +45,7 @@ class AgentTool(BaseTool):
             max_depth: Maximum nesting depth for Agent as Tool
         """
         self.agent = agent
-        self.name = name or agent.name
+        self.name = name or agent.id
         self.description = description or agent.description
         self.max_depth = max_depth
 

@@ -39,8 +39,8 @@ class agiwoSettings(BaseSettings):
     vector_db_path: str | None = "~/.agiwo/vector_db"
 
     # Repository and Storage settings
-    default_session_store: str | None = "sqlite"
-    default_trace_store: str | None = "sqlite"
+    default_session_store: str | None = None
+    default_trace_store: str | None = None
     trace_collection_name: str | None = "agiwo_traces"
     trace_buffer_size: int = 200
 

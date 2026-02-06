@@ -232,7 +232,7 @@ class AnthropicModel(Model):
             tools_count=len(anthropic_tools) if anthropic_tools else 0,
             temperature=self.temperature,
             max_tokens=params["max_tokens"],
-            detail=json.dumps(params, ensure_ascii=False),
+            detail=params,
         )
 
         try:

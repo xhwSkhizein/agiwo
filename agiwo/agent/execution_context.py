@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
 
-from agiwo.agent.wire import Wire
+from agiwo.agent.stream_channel import Wire
 
 
-@dataclass(frozen=True)
+@dataclass
 class ExecutionContext:
     # Execution identity
     session_id: str

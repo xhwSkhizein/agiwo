@@ -11,7 +11,7 @@ from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.session.base import SessionStore
 
 
-class RunIO:
+class SideEffectIO:
     """
     Side-effect handler for Agent execution.
 
@@ -24,26 +24,16 @@ class RunIO:
     def __init__(
         self,
         context: ExecutionContext,
-        session_store: SessionStore | None = None,
+        session_store: SessionStore,
     ) -> None:
         self.context = context
         self.session_store = session_store
-        self._local_sequence = 0
 
     async def allocate_sequence(self) -> int:
         """Allocate next sequence number for the current session."""
-        if self.session_store:
-            if "seq_start" in self.context.metadata:
-                return int(self.context.metadata.pop("seq_start"))
-            return await self.session_store.allocate_sequence(self.context.session_id)
-
         if "seq_start" in self.context.metadata:
-            seq = int(self.context.metadata.pop("seq_start"))
-            self._local_sequence = max(self._local_sequence, seq)
-            return seq
-
-        self._local_sequence += 1
-        return self._local_sequence
+            return int(self.context.metadata.pop("seq_start"))
+        return await self.session_store.allocate_sequence(self.context.session_id)
 
     def _make_event(
         self,
@@ -78,9 +68,7 @@ class RunIO:
             data={"query": run.input_query, "session_id": run.session_id},
         )
         await self._write_event(event)
-
-        if self.session_store:
-            await self.session_store.save_run(run)
+        await self.session_store.save_run(run)
 
     async def emit_step_delta(self, step_id: str, delta: StepDelta) -> None:
         """Emit STEP_DELTA event."""
@@ -102,9 +90,7 @@ class RunIO:
             llm=llm,
         )
         await self._write_event(event)
-
-        if self.session_store:
-            await self.session_store.save_step(step)
+        await self.session_store.save_step(step)
 
     async def emit_run_completed(self, run: Run, output: RunOutput) -> None:
         """Emit RUN_COMPLETED event."""
@@ -122,9 +108,7 @@ class RunIO:
             data=data,
         )
         await self._write_event(event)
-
-        if self.session_store:
-            await self.session_store.save_run(run)
+        await self.session_store.save_run(run)
 
     async def emit_run_failed(self, run: Run, error: Exception) -> None:
         """Emit RUN_FAILED event."""
@@ -133,9 +117,7 @@ class RunIO:
             data={"error": str(error)},
         )
         await self._write_event(event)
-
-        if self.session_store:
-            await self.session_store.save_run(run)
+        await self.session_store.save_run(run)
 
 
-__all__ = ["RunIO"]
+__all__ = ["SideEffectIO"]

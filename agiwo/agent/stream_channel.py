@@ -30,8 +30,6 @@ class Wire:
         self._queue: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
         self._closed = False
         self._reader_claimed = False
-        self._writer_count = 0
-        self._lock = asyncio.Lock()
 
     async def write(self, event: "StreamEvent") -> None:
         """

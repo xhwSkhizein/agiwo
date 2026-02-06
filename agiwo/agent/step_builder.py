@@ -17,42 +17,6 @@ from agiwo.llm.base import StreamChunk
 from agiwo.llm.helper import normalize_usage_metrics
 
 
-class ToolCallAccumulator:
-    """Accumulate streaming tool calls."""
-
-    def __init__(self) -> None:
-        self._calls: dict[int, dict] = {}
-
-    def accumulate(self, delta_calls: list[dict]) -> None:
-        for tc in delta_calls:
-            idx = tc.get("index", 0)
-
-            if idx not in self._calls:
-                self._calls[idx] = {
-                    "id": None,
-                    "type": "function",
-                    "function": {"name": "", "arguments": ""},
-                }
-
-            acc = self._calls[idx]
-
-            if tc.get("id"):
-                acc["id"] = tc["id"]
-
-            if tc.get("type"):
-                acc["type"] = tc["type"]
-
-            if tc.get("function"):
-                fn = tc["function"]
-                if fn.get("name"):
-                    acc["function"]["name"] += fn["name"]
-                if fn.get("arguments"):
-                    acc["function"]["arguments"] += fn["arguments"]
-
-    def finalize(self) -> list[dict]:
-        return [call for call in self._calls.values() if call["id"] is not None]
-
-
 @dataclass
 class StepBuilder:
     """Accumulates streaming chunks into a complete Step."""
@@ -60,8 +24,8 @@ class StepBuilder:
     step: StepRecord
     emit_delta: Callable[[str, StepDelta], Awaitable[None]]
     step_start_time: float = field(default_factory=time.time)
-    tool_accumulator: ToolCallAccumulator = field(default_factory=ToolCallAccumulator)
     first_token_received: bool = False
+    _tool_calls: dict[int, dict] = field(default_factory=dict, init=False, repr=False)
 
     async def process_chunk(self, chunk: StreamChunk) -> None:
         """Process a single stream chunk."""
@@ -101,7 +65,7 @@ class StepBuilder:
         """Finalize step with accumulated data and metrics."""
         self.step.content = self.step.content or None
         self.step.reasoning_content = self.step.reasoning_content or None
-        self.step.tool_calls = self.tool_accumulator.finalize() or None
+        self.step.tool_calls = self._finalize_tool_calls() or None
 
         if self.step.metrics:
             self.step.metrics.end_at = datetime.now(timezone.utc)
@@ -118,8 +82,39 @@ class StepBuilder:
         delta.reasoning_content = reasoning
 
     def _append_tool_calls(self, delta: StepDelta, tool_calls: list[dict]) -> None:
-        self.tool_accumulator.accumulate(tool_calls)
+        self._accumulate_tool_calls(tool_calls)
         delta.tool_calls = tool_calls
 
+    def _accumulate_tool_calls(self, delta_calls: list[dict]) -> None:
+        """Accumulate streaming tool calls."""
+        for tc in delta_calls:
+            idx = tc.get("index", 0)
 
-__all__ = ["StepBuilder", "ToolCallAccumulator"]
+            if idx not in self._tool_calls:
+                self._tool_calls[idx] = {
+                    "id": None,
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
+
+            acc = self._tool_calls[idx]
+
+            if tc.get("id"):
+                acc["id"] = tc["id"]
+
+            if tc.get("type"):
+                acc["type"] = tc["type"]
+
+            if tc.get("function"):
+                fn = tc["function"]
+                if fn.get("name"):
+                    acc["function"]["name"] += fn["name"]
+                if fn.get("arguments"):
+                    acc["function"]["arguments"] += fn["arguments"]
+
+    def _finalize_tool_calls(self) -> list[dict]:
+        """Finalize accumulated tool calls."""
+        return [call for call in self._tool_calls.values() if call["id"] is not None]
+
+
+__all__ = ["StepBuilder"]

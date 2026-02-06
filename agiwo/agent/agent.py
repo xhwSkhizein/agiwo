@@ -4,7 +4,7 @@ import asyncio
 from typing import AsyncIterator
 from uuid import uuid4
 
-from agiwo.agent.wire import Wire
+from agiwo.agent.stream_channel import Wire
 from agiwo.llm.base import Model
 from agiwo.tool.base import BaseTool
 from agiwo.agent.execution_context import ExecutionContext
@@ -16,14 +16,14 @@ from agiwo.agent.schema import (
     StepRecord,
     steps_to_messages,
 )
-from agiwo.agent.run_io import RunIO
+from agiwo.agent.side_effect_io import SideEffectIO
+from agiwo.agent.store_factory import create_session_store, create_trace_store
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.agent.prompt_template import renderer
 from agiwo.agent.executor import AgentExecutor
-from agiwo.agent.config_options import AgentConfigOptions
-from agiwo.config.settings import settings
-from agiwo.observability.store import TraceStore
-from agiwo.observability.sqlite_store import SQLiteTraceStore
+from agiwo.agent.options import AgentOptions
+from agiwo.agent.session.base import SessionStore
+from agiwo.observability.base import BaseTraceStore
 from agiwo.observability.collector import TraceCollector
 from agiwo.utils.logging import get_logger
 
@@ -43,32 +43,21 @@ class AgiwoAgent(ABC):
 
     def __init__(
         self,
-        name: str,
+        id: str,
         description: str,
         model: Model,
         tools: list[BaseTool] | None = None,
         system_prompt: str = "",
-        options: AgentConfigOptions | None = None,
+        options: AgentOptions | None = None,
     ):
-        self.name = name
+        self.id = id
         self.description = description
         self.model = model
         self.tools = tools
         self.system_prompt = system_prompt
-        self.options = options or AgentConfigOptions()
-        self._trace_store: TraceStore = self._init_trace_store()
-        if self._trace_store:
-            self._trace_store.initialize()
-
-    @property
-    def id(self) -> str:
-        return self.name
-
-    def get_name(self) -> str:
-        return self.name
-
-    def get_description(self) -> str:
-        return self.description
+        self.options = options or AgentOptions()
+        self._session_store: SessionStore = create_session_store()
+        self._trace_store: BaseTraceStore | None = create_trace_store()
 
     # ──────────────────────────────────────────────────────────────────────────
     # Public API
@@ -160,7 +149,7 @@ class AgiwoAgent(ABC):
                 logger.exception(
                     "agent_execution_crashed",
                     run_id=context.run_id,
-                    agent_id=self.name,
+                    agent_id=self.id,
                     error=str(e),
                 )
                 raise
@@ -186,7 +175,7 @@ class AgiwoAgent(ABC):
         4. 执行循环 (Executor)
         5. 发送 COMPLETE/FAIL 事件
         """
-        run_io = RunIO(context, self.options.session_store)
+        run_io = SideEffectIO(context, self._session_store)
         run = Run(
             id=context.run_id,
             agent_id=context.agent_id,
@@ -238,12 +227,12 @@ class AgiwoAgent(ABC):
             session_id=session_id or str(uuid4()),
             wire=Wire(),
             user_id=user_id,
-            agent_id=self.name,
+            agent_id=self.id,
             metadata={},
         )
 
     async def _record_user_step(
-        self, user_input: str, context: ExecutionContext, run_io: RunIO
+        self, user_input: str, context: ExecutionContext, run_io: SideEffectIO
     ) -> None:
         """记录用户的输入作为序列中的一步。"""
         seq = await run_io.allocate_sequence()
@@ -251,7 +240,7 @@ class AgiwoAgent(ABC):
             context,
             sequence=seq,
             content=user_input,
-            agent_id=self.name,
+            agent_id=self.id,
         )
         await run_io.commit_step(user_step)
 
@@ -259,19 +248,14 @@ class AgiwoAgent(ABC):
         """构建 LLM 消息列表 (System Prompt + Session History)。"""
         system_prompt = self._render_system_prompt()
 
-        if self.options.session_store:
-            # 从存储加载历史
-            steps = await self.options.session_store.get_steps(
-                session_id=context.session_id,
-                agent_id=self.name,  # 隔离 agent 记忆
-            )
-            messages = steps_to_messages(steps)
-            if system_prompt:
-                messages.insert(0, {"role": "system", "content": system_prompt})
-            return messages
-
-        # 无状态模式
-        return [{"role": "system", "content": system_prompt}] if system_prompt else []
+        steps = await self._session_store.get_steps(
+            session_id=context.session_id,
+            agent_id=self.id,  # 隔离 agent 记忆
+        )
+        messages = steps_to_messages(steps)
+        if system_prompt:
+            messages.insert(0, {"role": "system", "content": system_prompt})
+        return messages
 
     def _render_system_prompt(self) -> str:
         """渲染带有变量和技能的 system prompt。"""
@@ -314,33 +298,9 @@ class AgiwoAgent(ABC):
     # Helpers: Observability & Stream
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _init_trace_store(self) -> TraceStore | SQLiteTraceStore | None:
-        """根据配置初始化 trace store。"""
-        if not self.options.is_trace_enabled:
-            return None
-
-        if self.options.trace_store:
-            return self.options.trace_store
-
-        # TODO: Move to a TraceStoreFactory
-        if settings.default_trace_store == "mongo":
-            return TraceStore(
-                mongo_uri=settings.mongo_uri,
-                db_name=settings.mongo_db_name,
-                collection_name=settings.trace_collection_name,
-                buffer_size=settings.trace_buffer_size,
-            )
-        if settings.default_trace_store == "sqlite":
-            return SQLiteTraceStore(
-                db_path=settings.sqlite_db_path,
-                collection_name=settings.trace_collection_name,
-                buffer_size=settings.trace_buffer_size,
-            )
-        return None
-
     def _should_trace(self, context: ExecutionContext) -> bool:
         """决定此次执行是否启用 Tracing。"""
-        if not self.options.is_trace_enabled or not self._trace_store:
+        if self._trace_store is None:
             return False
         # 避免重复 Trace：只 Trace 根运行，或防止嵌套 Agent 抢夺事件
         return context.parent_run_id is None and context.depth == 0

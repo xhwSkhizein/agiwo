@@ -22,13 +22,13 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agiwo.agent.base import AgiwoAgent
-from agiwo.agent.config_options import AgentConfigOptions
+from agiwo.agent.agent import AgiwoAgent
+from agiwo.agent.options import AgentOptions
 from agiwo.agent.execution_context import ExecutionContext
-from agiwo.agent.wire import Wire
+from agiwo.agent.stream_channel import Wire
 from agiwo.agent.session.sqlite import SQLiteSessionStore
+from agiwo.config.settings import settings
 from agiwo.observability.sqlite_store import SQLiteTraceStore
-from agiwo.observability.collector import TraceCollector
 from agiwo.skill.manager import SkillManager
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.llm.deepseek import DeepseekModel
@@ -39,18 +39,25 @@ load_dotenv()
 logger = get_logger(__name__)
 
 
-def _prepare_db_paths(test_name: str) -> tuple[str, str]:
-    """Create deterministic sqlite db paths for tests."""
+def _prepare_test_settings(test_name: str) -> str:
+    """Configure settings for test and return the db path."""
     base_dir = os.getenv("AGIWO_TEST_DB_DIR") or os.path.join(os.getcwd(), ".tempdata")
     os.makedirs(base_dir, exist_ok=True)
-    db_path = os.path.join(base_dir, f"{test_name}_agent.db")
-    trace_db_path = os.path.join(base_dir, f"{test_name}_traces.db")
+    db_path = os.path.join(base_dir, f"{test_name}.db")
 
-    for path in (db_path, trace_db_path):
-        if os.path.exists(path):
-            os.remove(path)
+    if os.path.exists(db_path):
+        os.remove(db_path)
 
-    return db_path, trace_db_path
+    settings.default_session_store = "sqlite"
+    settings.default_trace_store = "sqlite"
+    settings.sqlite_db_path = db_path
+    return db_path
+
+
+def _reset_settings() -> None:
+    """Reset settings to defaults (no storage)."""
+    settings.default_session_store = None
+    settings.default_trace_store = None
 
 
 class TestCalculatorTool(BaseTool):
@@ -198,38 +205,25 @@ async def test_tools_support():
     print("测试 1: Tools 支持和工具调用")
     print("=" * 60)
 
-    # 创建测试数据库文件
-    db_path, trace_db_path = _prepare_db_paths("tools_support")
-
-    session_store: SQLiteSessionStore | None = None
-    trace_store: SQLiteTraceStore | None = None
+    db_path = _prepare_test_settings("tools_support")
+    model = None
     try:
-        # 创建 SessionStore 和 TraceStore
-        session_store = SQLiteSessionStore(db_path=db_path)
-        trace_store = SQLiteTraceStore(db_path=trace_db_path)
-        await session_store.connect()
-        await trace_store.initialize()
-
         # 创建测试工具
         tools = [TestCalculatorTool(), TestEchoTool()]
 
-        # 创建 Agent
+        # 创建 Agent (stores are created internally based on settings)
         model = create_test_model()
         if not model:
             print("⚠️  跳过测试：未找到可用的 LLM API Key")
             return False
 
         agent = AgiwoAgent(
-            name="test_agent",
+            id="test_agent",
             description="测试 Agent",
             model=model,
             tools=tools,
             system_prompt="你是一个有用的助手，可以使用工具来帮助用户。",
-            options=AgentConfigOptions(
-                max_steps=10,
-                session_store=session_store,
-                trace_store=trace_store,
-            ),
+            options=AgentOptions(max_steps=10),
         )
 
         # 创建执行上下文
@@ -240,7 +234,7 @@ async def test_tools_support():
             session_id=session_id,
             run_id=run_id,
             wire=wire,
-            agent_id=agent.name,
+            agent_id=agent.id,
         )
 
         # 运行 Agent
@@ -257,7 +251,10 @@ async def test_tools_support():
             print(f"   - 步骤数: {result.metrics.steps_count}")
             print(f"   - 工具调用数: {result.metrics.tool_calls_count}")
 
-        # 验证 SessionStore 数据
+        # 验证 SessionStore 数据 (access internal store for verification)
+        session_store = agent._session_store
+        assert session_store is not None, "SessionStore should be created from settings"
+
         print(f"\n🔍 验证 SessionStore 数据...")
         saved_run = await session_store.get_run(run_id)
         assert saved_run is not None, "Run 应该被保存"
@@ -265,15 +262,16 @@ async def test_tools_support():
 
         steps = await session_store.get_steps(session_id=session_id)
         print(f"   ✅ Steps 已保存: {len(steps)} 个步骤")
-        for i, step in enumerate(steps[:5], 1):  # 只显示前5个
+        for i, step in enumerate(steps[:5], 1):
             print(
                 f"      {i}. {step.role.value}: {step.content[:50] if step.content else 'N/A'}"
             )
 
         # 验证 TraceStore 数据
+        trace_store = agent._trace_store
+        assert trace_store is not None, "TraceStore should be created from settings"
+
         print(f"\n🔍 验证 TraceStore 数据...")
-        # TraceCollector 会在事件中注入 trace_id
-        # 我们需要从事件流中获取 trace_id，或者查询所有 traces
         traces = await trace_store.query_traces(
             {
                 "session_id": session_id,
@@ -282,7 +280,7 @@ async def test_tools_support():
         )
         if traces:
             print(f"   ✅ Traces 已保存: {len(traces)} 个 trace")
-            for trace in traces[:3]:  # 只显示前3个
+            for trace in traces[:3]:
                 print(f"      - Trace ID: {trace.trace_id}, Spans: {len(trace.spans)}")
         else:
             print(f"   ⚠️  未找到 Traces（可能 TraceCollector 未正确启动）")
@@ -297,10 +295,9 @@ async def test_tools_support():
         traceback.print_exc()
         return False
     finally:
-        if session_store:
-            await session_store.disconnect()
-        if trace_store:
-            await trace_store.close()
+        _reset_settings()
+        if model:
+            await model.close()
 
 
 async def test_skills_loading():
@@ -309,20 +306,12 @@ async def test_skills_loading():
     print("测试 2: Skills 加载和使用")
     print("=" * 60)
 
-    # 创建测试数据库文件
-    db_path, trace_db_path = _prepare_db_paths("skills_loading")
-
-    session_store: SQLiteSessionStore | None = None
-    trace_store: SQLiteTraceStore | None = None
+    db_path = _prepare_test_settings("skills_loading")
+    model = None
     try:
-        # 创建 SessionStore 和 TraceStore
-        session_store = SQLiteSessionStore(db_path=db_path)
-        trace_store = SQLiteTraceStore(db_path=trace_db_path)
-        await session_store.connect()
-        await trace_store.initialize()
-
         # 创建测试 Skill 目录结构
-        test_skills_dir = os.path.join(os.path.dirname(db_path), "test_skills")
+        base_dir = os.path.dirname(db_path)
+        test_skills_dir = os.path.join(base_dir, "test_skills")
         os.makedirs(test_skills_dir, exist_ok=True)
 
         # 创建一个简单的测试 Skill（使用符合命名规范的名称）
@@ -347,28 +336,26 @@ description: 这是一个测试技能，用于验证 Skills 系统是否正常�
             )
 
         # 创建 SkillManager
-        skill_manager = SkillManager(skill_dirs=[Path(test_skills_dir)])
+        skill_manager = SkillManager(skills_dirs=[Path(test_skills_dir)])
         await skill_manager.initialize()
 
         # 获取 SkillTool
         skill_tool = skill_manager.get_skill_tool()
 
-        # 创建 Agent，包含 SkillTool
+        # 创建 Agent (stores created internally via settings)
         model = create_test_model()
         if not model:
             print("⚠️  跳过测试：未找到可用的 LLM API Key")
             return False
 
         agent = AgiwoAgent(
-            name="test_agent_with_skills",
+            id="test_agent_with_skills",
             description="测试 Agent（带 Skills）",
             model=model,
             tools=[skill_tool],
             system_prompt="你是一个有用的助手，可以使用技能来帮助用户。",
-            options=AgentConfigOptions(
+            options=AgentOptions(
                 max_steps=10,
-                session_store=session_store,
-                trace_store=trace_store,
                 skill_manager=skill_manager,
             ),
         )
@@ -381,7 +368,7 @@ description: 这是一个测试技能，用于验证 Skills 系统是否正常�
             session_id=session_id,
             run_id=run_id,
             wire=wire,
-            agent_id=agent.name,
+            agent_id=agent.id,
         )
 
         # 运行 Agent，要求使用 Skill
@@ -399,6 +386,9 @@ description: 这是一个测试技能，用于验证 Skills 系统是否正常�
             print(f"   - 工具调用数: {result.metrics.tool_calls_count}")
 
         # 验证 Skill 是否被调用
+        session_store = agent._session_store
+        assert session_store is not None, "SessionStore should be created from settings"
+
         print(f"\n🔍 验证 Skills 调用...")
         steps = await session_store.get_steps(session_id=session_id)
         tool_steps = [s for s in steps if s.role.value == "tool"]
@@ -438,10 +428,9 @@ description: 这是一个测试技能，用于验证 Skills 系统是否正常�
         traceback.print_exc()
         return False
     finally:
-        if session_store:
-            await session_store.disconnect()
-        if trace_store:
-            await trace_store.close()
+        _reset_settings()
+        if model:
+            await model.close()
 
 
 async def test_data_persistence():
@@ -450,19 +439,10 @@ async def test_data_persistence():
     print("测试 3: 数据持久化（SessionStore 和 TraceStore）")
     print("=" * 60)
 
-    # 创建测试数据库文件
-    db_path, trace_db_path = _prepare_db_paths("data_persistence")
-
-    session_store: SQLiteSessionStore | None = None
-    trace_store: SQLiteTraceStore | None = None
+    db_path = _prepare_test_settings("data_persistence")
+    model = None
     try:
-        # 创建 SessionStore 和 TraceStore
-        session_store = SQLiteSessionStore(db_path=db_path)
-        trace_store = SQLiteTraceStore(db_path=trace_db_path)
-        await session_store.connect()
-        await trace_store.initialize()
-
-        # 创建 Agent
+        # 创建 Agent (stores created internally via settings)
         model = create_test_model()
         if not model:
             print("⚠️  跳过测试：未找到可用的 LLM API Key")
@@ -471,28 +451,16 @@ async def test_data_persistence():
         tools = [TestCalculatorTool(), TestEchoTool()]
 
         agent = AgiwoAgent(
-            name="test_agent_persistence",
+            id="test_agent_persistence",
             description="测试 Agent（持久化）",
             model=model,
             tools=tools,
             system_prompt="你是一个有用的助手。",
-            options=AgentConfigOptions(
-                max_steps=10,
-                session_store=session_store,
-                is_trace_enabled=True,
-            ),
+            options=AgentOptions(max_steps=10),
         )
 
         # 创建执行上下文
         session_id = str(uuid4())
-        run_id = str(uuid4())
-        wire = Wire()
-        context = ExecutionContext(
-            session_id=session_id,
-            run_id=run_id,
-            wire=wire,
-            agent_id=agent.name,
-        )
 
         # 运行多个对话
         print(f"\n📝 运行多个对话...")
@@ -507,15 +475,18 @@ async def test_data_persistence():
             print(f"\n   对话 {i}: {query}")
             run_id = str(uuid4())
             context = ExecutionContext(
-                session_id=session_id,  # 使用相同的 session_id
+                session_id=session_id,
                 run_id=run_id,
                 wire=Wire(),
-                agent_id=agent.name,
+                agent_id=agent.id,
             )
             result = await agent.run(query, context=context)
             all_runs.append((run_id, result))
 
         # 验证 SessionStore 数据
+        session_store = agent._session_store
+        assert session_store is not None, "SessionStore should be created from settings"
+
         print(f"\n🔍 验证 SessionStore 数据...")
 
         # 检查所有 Runs
@@ -549,9 +520,11 @@ async def test_data_persistence():
             print(f"   ✅ Run {run_id[:8]}... 有 {len(run_steps)} 个 Steps")
 
         # 验证 TraceStore 数据
+        trace_store = agent._trace_store
+        assert trace_store is not None, "TraceStore should be created from settings"
+
         print(f"\n🔍 验证 TraceStore 数据...")
 
-        # 查询所有 traces
         all_traces = await trace_store.query_traces(
             {
                 "session_id": session_id,
@@ -571,17 +544,19 @@ async def test_data_persistence():
         # 验证数据可以重新加载
         print(f"\n🔍 验证数据可以重新加载...")
 
-        # 创建新的 store 实例（模拟重启）
         new_session_store = SQLiteSessionStore(db_path=db_path)
         await new_session_store.initialize()
 
-        reloaded_runs = await new_session_store.list_runs(session_id=session_id)
-        assert len(reloaded_runs) == len(runs), "重新加载后 Runs 数量应该一致"
+        try:
+            reloaded_runs = await new_session_store.list_runs(session_id=session_id)
+            assert len(reloaded_runs) == len(runs), "重新加载后 Runs 数量应该一致"
 
-        reloaded_steps = await new_session_store.get_steps(session_id=session_id)
-        assert len(reloaded_steps) == len(steps), "重新加载后 Steps 数量应该一致"
+            reloaded_steps = await new_session_store.get_steps(session_id=session_id)
+            assert len(reloaded_steps) == len(steps), "重新加载后 Steps 数量应该一致"
 
-        print(f"   ✅ 数据可以正确重新加载")
+            print(f"   ✅ 数据可以正确重新加载")
+        finally:
+            await new_session_store.disconnect()
 
         print(f"\n✅ 测试 3 通过: 数据持久化")
         return True
@@ -593,10 +568,9 @@ async def test_data_persistence():
         traceback.print_exc()
         return False
     finally:
-        if session_store:
-            await session_store.disconnect()
-        if trace_store:
-            await trace_store.close()
+        _reset_settings()
+        if model:
+            await model.close()
 
 
 def create_test_model():

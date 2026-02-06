@@ -298,7 +298,7 @@ class RunOutput:
 
 
 def step_to_message(step: StepRecord) -> dict[str, Any]:
-    role_value = step.role.value if hasattr(step.role, "value") else step.role
+    role_value = step.role.value
     msg: dict[str, Any] = {"role": role_value}
 
     if step.content is not None:
