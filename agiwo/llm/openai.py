@@ -54,32 +54,23 @@ class OpenAIModel(Model):
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
         )
-        self.api_key = api_key
-        self.base_url = base_url
+        self.client = self._create_client()
 
-    def __post_init__(self):
-        super().__post_init__()
-
-        # Resolve API Key
-        resolved_api_key = None
+    def _resolve_api_key(self) -> str | None:
         if self.api_key:
-            resolved_api_key = self.api_key
-        elif settings.openai_api_key:
-            resolved_api_key = settings.openai_api_key.get_secret_value()
-        else:
-            raise ValueError("No API key provided")
+            return self.api_key
+        if settings.openai_api_key:
+            return settings.openai_api_key.get_secret_value()
+        return os.getenv("OPENAI_API_KEY")
 
-        # Resolve Base URL
-        resolved_base_url = (
-            self.base_url or settings.openai_base_url or os.getenv("OPENAI_BASE_URL")
+    def _resolve_base_url(self) -> str | None:
+        return self.base_url or settings.openai_base_url or os.getenv("OPENAI_BASE_URL")
+
+    def _create_client(self) -> AsyncOpenAI:
+        return AsyncOpenAI(
+            api_key=self._resolve_api_key(),
+            base_url=self._resolve_base_url(),
         )
-
-        # Create client if not provided
-        if not hasattr(self, "client") or self.client is None:
-            self.client = AsyncOpenAI(
-                api_key=resolved_api_key,
-                base_url=resolved_base_url,
-            )
 
     @retry_async(exceptions=OPENAI_RETRYABLE)
     async def arun_stream(

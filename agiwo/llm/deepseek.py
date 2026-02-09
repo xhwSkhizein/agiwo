@@ -31,34 +31,20 @@ class DeepseekModel(OpenAIModel):
             presence_penalty=presence_penalty,
         )
 
-    def __post_init__(self):
-        super().__post_init__()
-
-        # Resolve API Key: deepseek_api_key > DEEPSEEK_API_KEY
-        resolved_api_key = None
+    def _resolve_api_key(self) -> str | None:
         if self.api_key:
-            resolved_api_key = self.api_key
-        elif settings.deepseek_api_key:
-            resolved_api_key = settings.deepseek_api_key.get_secret_value()
-        else:
-            resolved_api_key = os.getenv("DEEPSEEK_API_KEY")
+            return self.api_key
+        if settings.deepseek_api_key:
+            return settings.deepseek_api_key.get_secret_value()
+        return os.getenv("DEEPSEEK_API_KEY")
 
-        # Resolve Base URL
-        resolved_base_url = (
+    def _resolve_base_url(self) -> str | None:
+        return (
             self.base_url
             or settings.deepseek_base_url
             or os.getenv("DEEPSEEK_BASE_URL")
             or "https://api.deepseek.com"
         )
-
-        # Create client
-        if not hasattr(self, "client") or self.client is None:
-            from openai import AsyncOpenAI
-
-            self.client = AsyncOpenAI(
-                api_key=resolved_api_key,
-                base_url=resolved_base_url,
-            )
 
     def _preprocess_messages_for_thinking_mode(
         self, messages: list[dict]

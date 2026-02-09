@@ -1,170 +1,132 @@
-# AGIWO
+# Agiwo
 
-AGIWO - AI Agent Framework
+Agiwo is a Python Agent SDK for building LLM-powered agents with tool calling, streaming, observability, and lifecycle hooks.
 
-## 项目简介
-
-AGIWO 是一个 AI Agent 框架，提供了统一的接口来调用多个 LLM 提供商（OpenAI、Anthropic、DeepSeek、NVIDIA）的 API。
-
-## 环境要求
-
-- Python >= 3.11
-- [uv](https://github.com/astral-sh/uv) - 用于依赖管理
-
-## 安装
-
-使用 uv 安装项目依赖：
+## Quick Start
 
 ```bash
 uv sync
+cp .env.example .env  # fill in your API keys
 ```
 
-这将创建虚拟环境并安装所有依赖项。
+```python
+from agiwo import Agent, AgentOptions, AgentHooks
+from agiwo.llm import DeepseekModel
+from agiwo.tool import BaseTool, ToolResult
 
-## 运行测试用例
+agent = Agent(
+    id="my-agent",
+    description="A helpful assistant",
+    model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
+    tools=[MyTool()],
+    system_prompt="You are a helpful assistant.",
+    options=AgentOptions(max_steps=10),
+)
 
-### 单元测试（Mock 测试）
+# Synchronous execution
+result = await agent.run("What is 2+2?")
+print(result.response)
 
-以下测试使用 mock 对象，不会调用真实的 API：
-
-### 运行所有测试
-
-```bash
-uv run pytest tests/ -v
+# Streaming execution
+async for event in agent.run_stream("What is 2+2?"):
+    print(event)
 ```
 
-### 运行 LLM 模块的测试
+## Requirements
 
-```bash
-uv run pytest tests/llm/ -v
+- Python >= 3.11
+- [uv](https://github.com/astral-sh/uv) for dependency management
+
+## Core Concepts
+
+- **Agent** - The primary entry point. Executes LLM loops with tool calling, streaming, and observability.
+- **Model** - Abstract LLM provider. Built-in: `OpenAIModel`, `AnthropicModel`, `DeepseekModel`, `NvidiaModel`.
+- **BaseTool** - Abstract tool interface. Implement `execute()` to create custom tools.
+- **AgentTool** - Wraps an Agent as a Tool for nested agent execution (Agent as Tool pattern).
+- **AgentHooks** - Lifecycle hooks for extensibility (see below).
+- **AgentOptions** - Execution configuration (max steps, timeout, etc.).
+- **RunStepStorage** - Persistence for runs and steps. Built-in: `InMemoryRunStepStorage`, `SQLiteRunStepStorage`, `MongoRunStepStorage`.
+- **BaseTraceStorage** - Observability storage with OTLP export support.
+- **SkillManager** - Discovers and loads SKILL.md-based agent skills.
+
+## Lifecycle Hooks
+
+All hooks are optional and async. Provide only what you need via `AgentHooks`:
+
+```python
+from agiwo import Agent, AgentHooks
+
+async def my_before_tool(tool_name, args):
+    print(f"Calling {tool_name} with {args}")
+    return None  # return modified args or None to keep original
+
+async def my_memory_write(session_id, content, metadata):
+    await my_vector_db.insert(session_id, content, metadata)
+
+async def my_memory_retrieve(session_id, query):
+    return await my_vector_db.search(session_id, query)
+
+agent = Agent(
+    id="my-agent",
+    model=my_model,
+    hooks=AgentHooks(
+        on_before_tool_call=my_before_tool,
+        on_after_tool_call=...,
+        on_before_llm_call=...,
+        on_after_llm_call=...,
+        on_before_run=...,
+        on_after_run=...,
+        on_memory_write=my_memory_write,
+        on_memory_retrieve=my_memory_retrieve,
+        on_step=...,
+        on_event=...,
+    ),
+)
 ```
 
-### 运行特定测试文件
+## Dependency Injection
 
-```bash
-# 测试 OpenAI 模型
-uv run pytest tests/llm/test_openai.py -v
+Stores are injected via constructor, not global config:
 
-# 测试 Anthropic 模型
-uv run pytest tests/llm/test_anthropic.py -v
+```python
+from agiwo import Agent
+from agiwo.agent.storage import SQLiteRunStepStorage
+from agiwo.observability import SQLiteTraceStorage
 
-# 测试 DeepSeek 模型
-uv run pytest tests/llm/test_deepseek.py -v
-
-# 测试 NVIDIA 模型
-uv run pytest tests/llm/test_nvidia.py -v
-
-# 测试基础类和工具函数
-uv run pytest tests/llm/test_base.py tests/llm/test_helper.py -v
+agent = Agent(
+    id="my-agent",
+    model=my_model,
+    run_step_storage=SQLiteRunStepStorage(db_path="my.db"),
+    trace_storage=SQLiteTraceStorage(db_path="my.db"),
+)
 ```
 
-### 运行特定测试用例
-
-```bash
-# 运行单个测试函数
-uv run pytest tests/llm/test_openai.py::test_openai_model_arun_stream_basic -v
-
-# 运行多个特定测试
-uv run pytest tests/llm/test_openai.py::test_openai_model_arun_stream_basic tests/llm/test_openai.py::test_openai_model_arun_stream_with_usage -v
-```
-
-### 测试选项
-
-- `-v` 或 `--verbose`: 显示详细输出
-- `-s`: 显示 print 输出
-- `--tb=short`: 显示简短的错误追踪
-- `--tb=line`: 只显示错误行
-- `-k <expression>`: 运行匹配表达式的测试
-
-示例：
-
-```bash
-# 只运行包含 "basic" 的测试
-uv run pytest tests/llm/ -k "basic" -v
-
-# 显示简短错误追踪
-uv run pytest tests/llm/ -v --tb=short
-```
-
-### 真实 API 测试
-
-项目包含一个独立的真实 API 测试脚本 `test_real_api.py`，用于测试各个 LLM 提供商的真实 API 调用。
-
-#### 配置 API Keys
-
-1. 复制 `.env.example` 为 `.env`：
-   ```bash
-   cp .env.example .env
-   ```
-
-2. 编辑 `.env` 文件，填入真实的 API keys：
-   ```bash
-   OPENAI_API_KEY=your_openai_api_key_here
-   DEEPSEEK_API_KEY=your_deepseek_api_key_here
-   NVIDIA_BUILD_API_KEY=your_nvidia_api_key_here
-   ANTHROPIC_API_KEY=your_anthropic_api_key_here
-   ```
-
-#### 运行真实 API 测试
-
-```bash
-# 使用 uv 运行
-uv run python test_real_api.py
-
-# 或直接运行（需要先激活虚拟环境）
-python test_real_api.py
-```
-
-测试脚本会：
-- 自动检测已配置的 API keys
-- 依次测试所有配置的提供商
-- 显示流式响应内容
-- 输出详细的测试结果汇总
-- 跳过未配置 API key 的提供商
-
-**注意**：真实 API 测试会产生 API 调用费用，请谨慎使用。
-
-## 项目结构
+## Project Structure
 
 ```
 agiwo/
-├── agiwo/
-│   ├── llm/          # LLM 模型实现
-│   │   ├── base.py    # 基础模型类
-│   │   ├── openai.py  # OpenAI 模型
-│   │   ├── anthropic.py  # Anthropic 模型
-│   │   ├── deepseek.py   # DeepSeek 模型
-│   │   ├── nvidia.py    # NVIDIA 模型
-│   │   └── helper.py    # 工具函数
-│   ├── config/        # 配置管理
-│   └── utils/         # 工具函数
-├── tests/             # 测试用例
-│   └── llm/          # LLM 模块测试
-└── pyproject.toml    # 项目配置
+├── agent/           # Core agent: Agent, executor, hooks, schema, options
+│   └── storage/     # Run Step stores (in-memory, SQLite, MongoDB)
+├── llm/             # LLM providers (OpenAI, Anthropic, DeepSeek, NVIDIA)
+├── tool/            # Tool system (BaseTool, AgentTool, ToolExecutor)
+│   └── permission/  # Tool permission/consent system
+├── skill/           # Skill discovery, loading, and management
+├── observability/   # Tracing, OTLP export, trace stores
+├── config/          # Global settings (env-based)
+└── utils/           # Logging, retry, abort signal
 ```
 
-## 开发
-
-### 添加新依赖
+## Testing
 
 ```bash
-uv add <package-name>
+# Run all unit tests
+uv run pytest tests/ -v
+
+# Run real API integration tests (requires API keys in .env)
+uv run python test_real_api.py
+uv run python test_real_agent.py
 ```
 
-### 添加开发依赖
+## License
 
-```bash
-uv add --dev <package-name>
-```
-
-### 激活虚拟环境
-
-```bash
-source .venv/bin/activate  # Linux/macOS
-# 或
-.venv\Scripts\activate  # Windows
-```
-
-## 许可证
-
-MIT-License
+MIT

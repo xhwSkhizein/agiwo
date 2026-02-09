@@ -8,16 +8,16 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 
-from agiwo.observability.base import BaseTraceStore, TraceQuery
+from agiwo.observability.base import BaseTraceStorage, TraceQuery
 from agiwo.observability.trace import Trace
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-class MongoTraceStore(BaseTraceStore):
+class MongoTraceStorage(BaseTraceStorage):
     """
-    MongoDB implementation of BaseTraceStore.
+    MongoDB implementation of BaseTraceStorage.
 
     Features:
     - Async MongoDB operations
@@ -72,7 +72,7 @@ class MongoTraceStore(BaseTraceStore):
                 await self._collection.create_index("duration_ms")
 
                 logger.info(
-                    "trace_store_initialized",
+                    "trace_storage_initialized",
                     db=self.db_name,
                     collection=self.collection_name,
                 )
@@ -82,7 +82,7 @@ class MongoTraceStore(BaseTraceStore):
                     message="MongoDB tracing disabled. Install motor: pip install motor",
                 )
             except Exception as e:
-                logger.error("trace_store_init_failed", error=str(e))
+                logger.error("trace_storage_init_failed", error=str(e))
 
         self._initialized = True
 
@@ -226,7 +226,7 @@ class MongoTraceStore(BaseTraceStore):
             self._client = None
             self._collection = None
             self._initialized = False
-            logger.info("trace_store_closed")
+            logger.info("trace_storage_closed")
 
 
-__all__ = ["MongoTraceStore"]
+__all__ = ["MongoTraceStorage"]

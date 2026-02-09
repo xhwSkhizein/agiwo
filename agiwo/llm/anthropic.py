@@ -55,37 +55,30 @@ class AnthropicModel(Model):
             presence_penalty=presence_penalty,
         )
 
-    def __post_init__(self):
-        super().__post_init__()
+        self.client = self._create_client()
 
-        resolved_api_key = None
+    def _resolve_api_key(self) -> str | None:
         if self.api_key:
             if hasattr(self.api_key, "get_secret_value"):
-                resolved_api_key = self.api_key.get_secret_value()
-            else:
-                resolved_api_key = self.api_key
-        elif hasattr(settings, "anthropic_api_key") and settings.anthropic_api_key:
-            resolved_api_key = settings.anthropic_api_key.get_secret_value()
-        else:
-            resolved_api_key = os.getenv("ANTHROPIC_API_KEY")
+                return self.api_key.get_secret_value()
+            return self.api_key
+        if hasattr(settings, "anthropic_api_key") and settings.anthropic_api_key:
+            return settings.anthropic_api_key.get_secret_value()
+        return os.getenv("ANTHROPIC_API_KEY")
 
-        resolved_base_url = (
+    def _resolve_base_url(self) -> str | None:
+        return (
             self.base_url
             or settings.anthropic_base_url
             or os.getenv("ANTHROPIC_BASE_URL")
         )
 
-        if not hasattr(self, "client") or self.client is None:
-            client_kwargs = {"api_key": resolved_api_key}
-            if resolved_base_url:
-                client_kwargs["base_url"] = resolved_base_url
-            self.client = AsyncAnthropic(**client_kwargs)
-
-        logger.info(
-            "AnthropicModel initialized",
-            model_name=getattr(self, "model_name", None) or self.name,
-            use_key=resolved_api_key[:10] if resolved_api_key else "None",
-        )
+    def _create_client(self) -> AsyncAnthropic:
+        client_kwargs = {"api_key": self._resolve_api_key()}
+        base_url = self._resolve_base_url()
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        return AsyncAnthropic(**client_kwargs)
 
     def _update_usage_info(self, usage_obj, usage_info: dict) -> None:
         """Update usage info from Anthropic usage object."""

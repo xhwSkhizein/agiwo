@@ -27,17 +27,16 @@ class TraceQuery(BaseModel):
     offset: int = Field(default=0, ge=0)
 
 
-class BaseTraceStore(ABC):
+class BaseTraceStorage(ABC):
     """
     Abstract base class for trace storage.
 
     All trace store implementations must extend this class.
     """
 
-    @abstractmethod
     async def initialize(self) -> None:
-        """Initialize the store (e.g. create connections, tables)."""
-        ...
+        """Initialize the store (e.g. create connections, tables). Called internally on first use."""
+        pass
 
     @abstractmethod
     async def save_trace(self, trace: Trace) -> None:
@@ -73,4 +72,4 @@ class BaseTraceStore(ABC):
         ...
 
 
-__all__ = ["BaseTraceStore", "TraceQuery"]
+__all__ = ["BaseTraceStorage", "TraceQuery"]

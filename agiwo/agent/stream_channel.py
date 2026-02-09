@@ -4,11 +4,11 @@ from typing import AsyncIterator
 from agiwo.agent.schema import StreamEvent
 
 
-class Wire:
+class StreamChannel:
     """
     Event streaming channel for Runnable execution.
 
-    Wire is a simple wrapper around asyncio.Queue that provides:
+    StreamChannel is a simple wrapper around asyncio.Queue that provides:
     - write(): Put an event into the channel
     - read(): Async iterate over events until closed
     - close(): Signal that no more events will be written
@@ -22,7 +22,7 @@ class Wire:
 
     def __init__(self, maxsize: int = 0) -> None:
         """
-        Initialize Wire.
+        Initialize StreamChannel.
 
         Args:
             maxsize: Maximum queue size (0 = unlimited)
@@ -33,13 +33,13 @@ class Wire:
 
     async def write(self, event: "StreamEvent") -> None:
         """
-        Write an event to the wire.
+        Write an event to the channel.
 
         Args:
             event: StreamEvent to write
 
         Raises:
-            RuntimeError: If wire is already closed
+            RuntimeError: If channel is already closed
         """
         if self._closed:
             # Silently ignore writes after close (graceful degradation)
@@ -62,7 +62,7 @@ class Wire:
 
     async def close(self) -> None:
         """
-        Close the wire, signaling no more events will be written.
+        Close the channel, signaling no more events will be written.
 
         This puts a sentinel value in the queue to stop readers.
         """
@@ -73,13 +73,13 @@ class Wire:
 
     async def read(self) -> AsyncIterator["StreamEvent"]:
         """
-        Read events from the wire until closed.
+        Read events from the channel until closed.
 
         Yields:
-            StreamEvent: Events written to the wire
+            StreamEvent: Events written to the channel
         """
         if self._reader_claimed:
-            raise RuntimeError("wire_read_already_claimed")
+            raise RuntimeError("channel_read_already_claimed")
         self._reader_claimed = True
         while True:
             item = await self._queue.get()
@@ -91,11 +91,11 @@ class Wire:
 
     @property
     def closed(self) -> bool:
-        """Check if wire is closed."""
+        """Check if channel is closed."""
         return self._closed
 
     def __repr__(self) -> str:
-        return f"Wire(closed={self._closed}, qsize={self._queue.qsize()})"
+        return f"StreamChannel(closed={self._closed}, qsize={self._queue.qsize()})"
 
 
-__all__ = ["Wire"]
+__all__ = ["StreamChannel"]

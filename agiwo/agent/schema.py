@@ -10,6 +10,87 @@ if TYPE_CHECKING:
     from agiwo.agent.execution_context import ExecutionContext
 
 
+class ContentType(str, Enum):
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+    FILE = "file"
+
+
+@dataclass
+class ContentPart:
+    type: ContentType
+    text: str | None = None
+    url: str | None = None
+    mime_type: str | None = None
+    detail: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+UserInput = str | list[ContentPart]
+
+MessageContent = str | list[dict[str, Any]]
+
+
+def normalize_input(user_input: UserInput) -> list[ContentPart]:
+    if isinstance(user_input, str):
+        return [ContentPart(type=ContentType.TEXT, text=user_input)]
+    return user_input
+
+
+def extract_text(user_input: UserInput) -> str:
+    if isinstance(user_input, str):
+        return user_input
+    texts = [
+        part.text for part in user_input if part.type == ContentType.TEXT and part.text
+    ]
+    return "\n".join(texts)
+
+
+def to_message_content(parts: list[ContentPart]) -> MessageContent:
+    if len(parts) == 1 and parts[0].type == ContentType.TEXT:
+        return parts[0].text or ""
+
+    result: list[dict[str, Any]] = []
+    for part in parts:
+        if part.type == ContentType.TEXT:
+            result.append({"type": "text", "text": part.text or ""})
+        elif part.type == ContentType.IMAGE:
+            block: dict[str, Any] = {
+                "type": "image_url",
+                "image_url": {"url": part.url or ""},
+            }
+            if part.detail:
+                block["image_url"]["detail"] = part.detail
+            result.append(block)
+        elif part.type == ContentType.AUDIO:
+            result.append(
+                {
+                    "type": "input_audio",
+                    "input_audio": {
+                        "url": part.url or "",
+                        "format": part.mime_type or "",
+                    },
+                }
+            )
+        elif part.type == ContentType.VIDEO:
+            result.append(
+                {
+                    "type": "video_url",
+                    "video_url": {"url": part.url or ""},
+                }
+            )
+        elif part.type == ContentType.FILE:
+            result.append(
+                {
+                    "type": "file",
+                    "file": {"url": part.url or "", "mime_type": part.mime_type or ""},
+                }
+            )
+    return result
+
+
 class MessageRole(str, Enum):
     """Standard LLM message roles"""
 
@@ -131,7 +212,7 @@ class StepRecord:
 
     agent_id: str | None = None
 
-    content: str | None = None
+    content: MessageContent | None = None
     content_for_user: str | None = None
     reasoning_content: str | None = None
 
@@ -161,7 +242,7 @@ class StepRecord:
         ctx: "ExecutionContext",
         *,
         sequence: int,
-        content: str,
+        content: MessageContent,
         **overrides,
     ) -> "StepRecord":
         """Create a user step."""
@@ -270,7 +351,7 @@ class Run:
 
     agent_id: str
     session_id: str
-    input_query: str
+    user_input: UserInput
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     user_id: str | None = None
     status: RunStatus = RunStatus.STARTING
@@ -287,7 +368,7 @@ class Run:
 
 @dataclass
 class RunOutput:
-    """Execution result from AgiwoAgent.run()."""
+    """Execution result from Agent.run()."""
 
     session_id: str | None = None
     run_id: str | None = None
@@ -318,3 +399,10 @@ def step_to_message(step: StepRecord) -> dict[str, Any]:
 def steps_to_messages(steps: list[StepRecord]) -> list[dict[str, Any]]:
     return [step_to_message(step) for step in steps]
 
+
+@dataclass
+class MemoryRecord:
+    content: str
+    relevance_score: float | None = None
+    source: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)

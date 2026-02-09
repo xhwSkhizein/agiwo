@@ -4,8 +4,6 @@ Trace collector - builds Trace from StreamEvent stream.
 Uses middleware pattern to wrap event streams without modifying core execution logic.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from datetime import datetime, timezone
@@ -16,7 +14,7 @@ from agiwo.agent.schema import EventType, LLMCallContext, StepRecord, StreamEven
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 from agiwo.observability.otlp_exporter import get_otlp_exporter
 from agiwo.utils.logging import get_logger
-from agiwo.observability.base import BaseTraceStore
+from agiwo.observability.base import BaseTraceStorage
 
 logger = get_logger(__name__)
 
@@ -34,12 +32,12 @@ class TraceCollector:
 
     PREVIEW_LENGTH = 500  # Input/output preview length
 
-    def __init__(self, store: BaseTraceStore | None = None) -> None:
+    def __init__(self, store: BaseTraceStorage | None = None) -> None:
         """
         Initialize collector.
 
         Args:
-            store: Optional TraceStore for persistence
+            store: Optional TraceStorage for persistence
         """
         self.store = store
 
@@ -304,7 +302,7 @@ class TraceCollector:
                         updated_cache[tool_call_id] = step
 
             if step.role.value == "tool":
-                # Tool 调用 Span - 使用 Step 的时间戳
+                # Tool call Span - use Step timestamps
                 start_time, end_time, duration_ms = self._extract_step_times(step)
 
                 (
@@ -373,7 +371,7 @@ class TraceCollector:
                 return current_span, updated_cache
 
             elif step.role.value == "assistant":
-                # LLM 调用 Span - 使用 Step 的时间戳和上下文
+                # LLM call Span - use Step timestamps and context
                 start_time, end_time, duration_ms = self._extract_step_times(step)
 
                 (
@@ -606,4 +604,81 @@ def create_collector(store=None) -> TraceCollector:
     return TraceCollector(store)
 
 
-__all__ = ["TraceCollector", "create_collector"]
+class InMemoryTraceStorage(BaseTraceStorage):
+    """
+    In-memory implementation of BaseTraceStorage.
+
+    Simple memory-only storage with ring buffer for real-time access.
+    No persistence - traces are lost when process exits.
+    """
+
+    def __init__(self, buffer_size: int = 200) -> None:
+        from collections import deque
+
+        self._buffer: deque[Trace] = deque(maxlen=buffer_size)
+        self._subscribers: list[asyncio.Queue] = []
+        self._initialized = True  # No async init needed
+
+    async def initialize(self) -> None:
+        """No-op for in-memory storage."""
+        pass
+
+    async def save_trace(self, trace: Trace) -> None:
+        """Save trace to in-memory buffer."""
+        self._buffer.append(trace)
+        # Notify subscribers
+        for queue in self._subscribers:
+            try:
+                queue.put_nowait(trace)
+            except asyncio.QueueFull:
+                pass
+
+    async def get_trace(self, trace_id: str) -> Trace | None:
+        """Get a trace by ID from buffer."""
+        for trace in self._buffer:
+            if trace.trace_id == trace_id:
+                return trace
+        return None
+
+    async def query_traces(self, query) -> list[Trace]:
+        """Query traces from buffer (limited filtering)."""
+        from agiwo.observability.base import TraceQuery
+
+        if isinstance(query, dict):
+            query = TraceQuery(**query)
+
+        results = list(self._buffer)
+
+        if query.agent_id:
+            results = [t for t in results if t.agent_id == query.agent_id]
+        if query.session_id:
+            results = [t for t in results if t.session_id == query.session_id]
+        if query.user_id:
+            results = [t for t in results if t.user_id == query.user_id]
+        if query.status:
+            results = [t for t in results if t.status == query.status]
+
+        return results[: query.limit]
+
+    def get_recent(self, limit: int = 20) -> list[Trace]:
+        """Get recent traces from buffer."""
+        return list(self._buffer)[-limit:]
+
+    def subscribe(self) -> asyncio.Queue:
+        """Subscribe to real-time trace updates."""
+        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        self._subscribers.append(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        """Unsubscribe from updates."""
+        if queue in self._subscribers:
+            self._subscribers.remove(queue)
+
+    async def close(self) -> None:
+        """Clear buffer and subscribers."""
+        self._buffer.clear()
+        self._subscribers.clear()
+
+
+__all__ = ["TraceCollector", "create_collector", "InMemoryTraceStorage"]

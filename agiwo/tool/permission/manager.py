@@ -356,7 +356,7 @@ class PermissionManager:
             timestamp=datetime.now(),
         )
 
-        await context.wire.write(event)
+        await context.channel.write(event)
         logger.info(
             "tool_auth_required_sent",
             tool_call_id=tool_call_id,
@@ -382,7 +382,7 @@ class PermissionManager:
             timestamp=datetime.now(),
         )
 
-        await context.wire.write(event)
+        await context.channel.write(event)
         logger.info(
             "tool_auth_denied_sent",
             tool_call_id=tool_call_id,

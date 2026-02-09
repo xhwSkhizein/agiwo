@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from agiwo.agent.stream_channel import Wire
+from agiwo.agent.stream_channel import StreamChannel
 
 
 @dataclass
@@ -9,7 +9,7 @@ class ExecutionContext:
     session_id: str
     run_id: str
     # Session-level resources
-    wire: Wire
+    channel: StreamChannel
     # User Context
     user_id: str | None = None
 
@@ -33,7 +33,7 @@ class ExecutionContext:
         return ExecutionContext(
             session_id=self.session_id,
             run_id=run_id,
-            wire=self.wire,
+            channel=self.channel,
             user_id=self.user_id,
             depth=self.depth + 1,
             parent_run_id=self.run_id,

@@ -1,5 +1,5 @@
 """
-SQLite implementation of TraceStore.
+SQLite implementation of TraceStorage.
 """
 
 import asyncio
@@ -11,16 +11,16 @@ from typing import Any
 
 import aiosqlite
 
-from agiwo.observability.base import BaseTraceStore, TraceQuery
+from agiwo.observability.base import BaseTraceStorage, TraceQuery
 from agiwo.observability.trace import Trace, Span
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
-class SQLiteTraceStore(BaseTraceStore):
+class SQLiteTraceStorage(BaseTraceStorage):
     """
-    SQLite implementation of TraceStore.
+    SQLite implementation of TraceStorage.
 
     Features:
     - Async SQLite operations
@@ -62,7 +62,14 @@ class SQLiteTraceStore(BaseTraceStore):
         await self._create_tables()
         self._initialized = True
 
-        logger.info("sqlite_trace_store_initialized", db_path=str(db_path))
+        logger.info("sqlite_trace_storage_initialized", db_path=str(db_path))
+
+    async def disconnect(self) -> None:
+        """Close database connection."""
+        if self._connection:
+            await self._connection.close()
+            self._connection = None
+            self._initialized = False
 
     async def _create_tables(self) -> None:
         """Create database tables and indexes."""
@@ -148,11 +155,10 @@ class SQLiteTraceStore(BaseTraceStore):
         """Serialize Trace to dict for database storage."""
         data = trace.model_dump(mode="json", exclude_none=True)
 
-        # Convert spans list to JSON string
-        if "spans" in data and data["spans"]:
-            data["spans"] = json.dumps(
-                [span.model_dump(mode="json") for span in trace.spans]
-            )
+        # Convert spans list to JSON string (always, even if empty)
+        data["spans"] = json.dumps(
+            [span.model_dump(mode="json") for span in trace.spans]
+        )
 
         # Convert datetime to ISO format string
         if "start_time" in data and isinstance(data["start_time"], str) is False:
@@ -344,4 +350,4 @@ class SQLiteTraceStore(BaseTraceStore):
             self._initialized = False
 
 
-__all__ = ["SQLiteTraceStore"]
+__all__ = ["SQLiteTraceStorage"]

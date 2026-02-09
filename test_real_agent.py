@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-真实 Agent 测试脚本
+Real Agent Test Script
 
-测试 Agent Run 的功能和逻辑：
-1. Tools 支持，工具调用
-2. Skills 加载和使用
-3. 数据持久化（SessionStore 正常保存所有数据，TraceStore 正常保存所有 Trace 信息）
+Test Agent Run functionality and logic:
+1. Tools support, tool calling
+2. Skills loading and usage
+3. Data persistence (RunStepStorage saves all data correctly, TraceStorage saves all Trace information correctly)
 
-使用方法：
+Usage:
     python test_real_agent.py
-    或
+    or
     uv run python test_real_agent.py
 """
 
@@ -22,14 +22,11 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agiwo.agent.agent import AgiwoAgent
-from agiwo.agent.options import AgentOptions
+from agiwo.agent.agent import Agent
+from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig
+from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
 from agiwo.agent.execution_context import ExecutionContext
-from agiwo.agent.stream_channel import Wire
-from agiwo.agent.session.sqlite import SQLiteSessionStore
-from agiwo.config.settings import settings
-from agiwo.observability.sqlite_store import SQLiteTraceStore
-from agiwo.skill.manager import SkillManager
+from agiwo.observability.sqlite_store import SQLiteTraceStorage
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.llm.deepseek import DeepseekModel
 from agiwo.utils.logging import get_logger
@@ -39,8 +36,10 @@ load_dotenv()
 logger = get_logger(__name__)
 
 
-def _prepare_test_settings(test_name: str) -> str:
-    """Configure settings for test and return the db path."""
+def _prepare_test_db(
+    test_name: str,
+) -> tuple[str, SQLiteRunStepStorage, SQLiteTraceStorage]:
+    """Create SQLite stores for test and return (db_path, session_store, trace_storage)."""
     base_dir = os.getenv("AGIWO_TEST_DB_DIR") or os.path.join(os.getcwd(), ".tempdata")
     os.makedirs(base_dir, exist_ok=True)
     db_path = os.path.join(base_dir, f"{test_name}.db")
@@ -48,27 +47,20 @@ def _prepare_test_settings(test_name: str) -> str:
     if os.path.exists(db_path):
         os.remove(db_path)
 
-    settings.default_session_store = "sqlite"
-    settings.default_trace_store = "sqlite"
-    settings.sqlite_db_path = db_path
-    return db_path
-
-
-def _reset_settings() -> None:
-    """Reset settings to defaults (no storage)."""
-    settings.default_session_store = None
-    settings.default_trace_store = None
+    session_store = SQLiteRunStepStorage(db_path=db_path)
+    trace_storage = SQLiteTraceStorage(db_path=db_path)
+    return db_path, session_store, trace_storage
 
 
 class TestCalculatorTool(BaseTool):
-    """测试用的计算器工具"""
+    """Test calculator tool"""
 
     def get_name(self) -> str:
         return "calculator"
 
     def get_description(self) -> str:
         return (
-            "执行简单的数学计算。接受两个数字和一个运算符（+、-、*、/），返回计算结果。"
+            "Perform simple mathematical calculations. Accept two numbers and an operator (+, -, *, /), return the calculation result."
         )
 
     def get_parameters(self) -> dict[str, Any]:
@@ -77,16 +69,16 @@ class TestCalculatorTool(BaseTool):
             "properties": {
                 "a": {
                     "type": "number",
-                    "description": "第一个数字",
+                    "description": "The first number",
                 },
                 "b": {
                     "type": "number",
-                    "description": "第二个数字",
+                    "description": "The second number",
                 },
                 "operator": {
                     "type": "string",
                     "enum": ["+", "-", "*", "/"],
-                    "description": "运算符",
+                    "description": "The operator",
                 },
             },
             "required": ["a", "b", "operator"],
@@ -118,10 +110,10 @@ class TestCalculatorTool(BaseTool):
                 result = a * b
             elif operator == "/":
                 if b == 0:
-                    raise ValueError("除数不能为零")
+                    raise ValueError("The divisor cannot be zero")
                 result = a / b
             else:
-                raise ValueError(f"不支持的运算符: {operator}")
+                raise ValueError(f"Unsupported operator: {operator}")
 
             end_time = time.time()
 
@@ -130,7 +122,7 @@ class TestCalculatorTool(BaseTool):
                 tool_call_id=parameters.get("tool_call_id", ""),
                 input_args=parameters,
                 content=str(result),
-                content_for_user=f"计算结果: {a} {operator} {b} = {result}",
+                content_for_user=f"Calculation result: {a} {operator} {b} = {result}",
                 output={"result": result},
                 is_success=True,
                 start_time=start_time,
@@ -149,13 +141,13 @@ class TestCalculatorTool(BaseTool):
 
 
 class TestEchoTool(BaseTool):
-    """测试用的回显工具"""
+    """Test echo tool"""
 
     def get_name(self) -> str:
         return "echo"
 
     def get_description(self) -> str:
-        return "回显输入的消息，用于测试工具调用。"
+        return "Echo the input message, used for testing tool calls."
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -163,7 +155,7 @@ class TestEchoTool(BaseTool):
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "要回显的消息",
+                    "description": "The message to be echoed",
                 },
             },
             "required": ["message"],
@@ -190,7 +182,7 @@ class TestEchoTool(BaseTool):
             tool_call_id=parameters.get("tool_call_id", ""),
             input_args=parameters,
             content=f"Echo: {message}",
-            content_for_user=f"回显: {message}",
+            content_for_user=f"Echo: {message}",
             output={"message": message},
             is_success=True,
             start_time=start_time,
@@ -200,121 +192,118 @@ class TestEchoTool(BaseTool):
 
 
 async def test_tools_support():
-    """测试 Tools 支持和工具调用"""
+    """Test Tools support and tool calling"""
     print("\n" + "=" * 60)
-    print("测试 1: Tools 支持和工具调用")
+    print("Test 1: Tools support and tool calling")
     print("=" * 60)
 
-    db_path = _prepare_test_settings("tools_support")
+    db_path, session_store, trace_storage = _prepare_test_db("tools_support")
     model = None
+    agent = None
     try:
-        # 创建测试工具
         tools = [TestCalculatorTool(), TestEchoTool()]
 
-        # 创建 Agent (stores are created internally based on settings)
         model = create_test_model()
         if not model:
-            print("⚠️  跳过测试：未找到可用的 LLM API Key")
+            print("⚠️  Skip test: No available LLM API Key")
             return False
 
-        agent = AgiwoAgent(
+        agent = Agent(
             id="test_agent",
-            description="测试 Agent",
+            description="Test Agent",
             model=model,
             tools=tools,
-            system_prompt="你是一个有用的助手，可以使用工具来帮助用户。",
-            options=AgentOptions(max_steps=10),
+            system_prompt="You are a helpful assistant, can use tools to help users.",
+            options=AgentOptions(
+                max_steps=10,
+                run_step_storage=RunStepStorageConfig(
+                    storage_type="sqlite",
+                    config={"db_path": db_path},
+                ),
+                trace_storage=TraceStorageConfig(
+                    storage_type="sqlite",
+                    config={"db_path": db_path},
+                ),
+            ),
         )
 
-        # 创建执行上下文
         session_id = str(uuid4())
-        run_id = str(uuid4())
-        wire = Wire()
-        context = ExecutionContext(
-            session_id=session_id,
-            run_id=run_id,
-            wire=wire,
-            agent_id=agent.id,
-        )
 
-        # 运行 Agent
-        print(f"\n📝 用户输入: 请计算 25 * 4 的结果")
-        result = await agent.run("请计算 25 * 4 的结果", context=context)
+        print(f"\n📝 User input: Please calculate 25 * 4")
+        result = await agent.run("Please calculate 25 * 4", session_id=session_id)
 
-        print(f"\n✅ Agent 执行完成")
+        print(f"\n✅ Agent execution completed")
         print(f"   - Run ID: {result.run_id}")
         print(f"   - Session ID: {result.session_id}")
-        print(f"   - 响应: {result.response}")
-        print(f"   - 终止原因: {result.termination_reason}")
+        print(f"   - Response: {result.response}")
+        print(f"   - Termination reason: {result.termination_reason}")
         if result.metrics:
-            print(f"   - 总 Token: {result.metrics.total_tokens}")
-            print(f"   - 步骤数: {result.metrics.steps_count}")
-            print(f"   - 工具调用数: {result.metrics.tool_calls_count}")
+            print(f"   - Total tokens: {result.metrics.total_tokens}")
+            print(f"   - Steps count: {result.metrics.steps_count}")
+            print(f"   - Tool calls count: {result.metrics.tool_calls_count}")
 
-        # 验证 SessionStore 数据 (access internal store for verification)
-        session_store = agent._session_store
-        assert session_store is not None, "SessionStore should be created from settings"
+        # Verify RunStepStorage data
+        print(f"\n🔍 Verify RunStepStorage data...")
+        run_step_storage = agent.run_step_storage
+        saved_run = await run_step_storage.get_run(result.run_id)
+        assert saved_run is not None, "Run should be saved"
+        print(f"   ✅ Run saved: {saved_run.id}")
 
-        print(f"\n🔍 验证 SessionStore 数据...")
-        saved_run = await session_store.get_run(run_id)
-        assert saved_run is not None, "Run 应该被保存"
-        print(f"   ✅ Run 已保存: {saved_run.id}")
-
-        steps = await session_store.get_steps(session_id=session_id)
-        print(f"   ✅ Steps 已保存: {len(steps)} 个步骤")
+        steps = await run_step_storage.get_steps(session_id=session_id)
+        print(f"   ✅ Steps saved: {len(steps)} steps")
         for i, step in enumerate(steps[:5], 1):
             print(
                 f"      {i}. {step.role.value}: {step.content[:50] if step.content else 'N/A'}"
             )
 
-        # 验证 TraceStore 数据
-        trace_store = agent._trace_store
-        assert trace_store is not None, "TraceStore should be created from settings"
-
-        print(f"\n🔍 验证 TraceStore 数据...")
-        traces = await trace_store.query_traces(
+        # Verify TraceStorage data
+        print(f"\n🔍 Verify TraceStorage data...")
+        trace_st = agent.trace_storage
+        traces = await trace_st.query_traces(
             {
                 "session_id": session_id,
                 "limit": 10,
             }
         )
         if traces:
-            print(f"   ✅ Traces 已保存: {len(traces)} 个 trace")
+            print(f"   ✅ Traces saved: {len(traces)} traces")
             for trace in traces[:3]:
                 print(f"      - Trace ID: {trace.trace_id}, Spans: {len(trace.spans)}")
         else:
-            print(f"   ⚠️  未找到 Traces（可能 TraceCollector 未正确启动）")
+            print(f"   ⚠️  No Traces found (maybe TraceCollector not started correctly)")
 
-        print(f"\n✅ 测试 1 通过: Tools 支持和工具调用")
+        print(f"\n✅ Test 1 passed: Tools support and tool calling")
         return True
 
     except Exception as e:
-        print(f"\n❌ 测试 1 失败: {type(e).__name__}: {e}")
+        print(f"\n❌ Test 1 failed: {type(e).__name__}: {e}")
         import traceback
 
         traceback.print_exc()
         return False
     finally:
-        _reset_settings()
         if model:
             await model.close()
+        if agent:
+            await agent.close()
 
 
 async def test_skills_loading():
-    """测试 Skills 加载和使用"""
+    """Test Skills loading and usage"""
     print("\n" + "=" * 60)
-    print("测试 2: Skills 加载和使用")
+    print("Test 2: Skills loading and usage")
     print("=" * 60)
 
-    db_path = _prepare_test_settings("skills_loading")
+    db_path, session_store, trace_storage = _prepare_test_db("skills_loading")
     model = None
+    agent = None
     try:
-        # 创建测试 Skill 目录结构
+        # Create test Skill directory structure
         base_dir = os.path.dirname(db_path)
         test_skills_dir = os.path.join(base_dir, "test_skills")
         os.makedirs(test_skills_dir, exist_ok=True)
 
-        # 创建一个简单的测试 Skill（使用符合命名规范的名称）
+        # Create a simple test Skill (using a name that follows the naming convention)
         test_skill_dir = os.path.join(test_skills_dir, "test-skill")
         os.makedirs(test_skill_dir, exist_ok=True)
         skill_md_path = os.path.join(test_skill_dir, "SKILL.md")
@@ -322,75 +311,62 @@ async def test_skills_loading():
             f.write(
                 """---
 name: test-skill
-description: 这是一个测试技能，用于验证 Skills 系统是否正常工作
+description: This is a test skill, used to verify if the Skills system works correctly
 ---
 
 # Test Skill
 
-这是一个测试技能。
+This is a test skill.
 
-## 使用方法
+## Usage
 
-这个技能用于测试目的。
+This skill is used for testing purposes.
 """
             )
 
-        # 创建 SkillManager
-        skill_manager = SkillManager(skills_dirs=[Path(test_skills_dir)])
-        await skill_manager.initialize()
-
-        # 获取 SkillTool
-        skill_tool = skill_manager.get_skill_tool()
-
-        # 创建 Agent (stores created internally via settings)
         model = create_test_model()
         if not model:
-            print("⚠️  跳过测试：未找到可用的 LLM API Key")
+            print("⚠️  Skip test: No available LLM API Key")
             return False
 
-        agent = AgiwoAgent(
+        agent = Agent(
             id="test_agent_with_skills",
-            description="测试 Agent（带 Skills）",
+            description="Test Agent (with Skills)",
             model=model,
-            tools=[skill_tool],
-            system_prompt="你是一个有用的助手，可以使用技能来帮助用户。",
+            system_prompt="You are a helpful assistant, can use skills to help users.",
             options=AgentOptions(
                 max_steps=10,
-                skill_manager=skill_manager,
+                enable_skill=True,
+                skills_dir=test_skills_dir,
+                run_step_storage=RunStepStorageConfig(
+                    storage_type="sqlite",
+                    config={"db_path": db_path},
+                ),
+                trace_storage=TraceStorageConfig(
+                    storage_type="sqlite",
+                    config={"db_path": db_path},
+                ),
             ),
         )
 
-        # 创建执行上下文
         session_id = str(uuid4())
-        run_id = str(uuid4())
-        wire = Wire()
-        context = ExecutionContext(
-            session_id=session_id,
-            run_id=run_id,
-            wire=wire,
-            agent_id=agent.id,
-        )
 
-        # 运行 Agent，要求使用 Skill
-        print(f"\n📝 用户输入: 请激活 test-skill 技能")
-        result = await agent.run("请激活 test-skill 技能", context=context)
+        print(f"\n📝 User input: Please activate test-skill")
+        result = await agent.run("Please activate test-skill", session_id=session_id)
 
-        print(f"\n✅ Agent 执行完成")
+        print(f"\n✅ Agent execution completed")
         print(f"   - Run ID: {result.run_id}")
         print(f"   - Session ID: {result.session_id}")
-        print(f"   - 响应: {result.response}")
-        print(f"   - 终止原因: {result.termination_reason}")
+        print(f"   - Response: {result.response}")
+        print(f"   - Termination reason: {result.termination_reason}")
         if result.metrics:
-            print(f"   - 总 Token: {result.metrics.total_tokens}")
-            print(f"   - 步骤数: {result.metrics.steps_count}")
-            print(f"   - 工具调用数: {result.metrics.tool_calls_count}")
+            print(f"   - Total tokens: {result.metrics.total_tokens}")
+            print(f"   - Steps count: {result.metrics.steps_count}")
+            print(f"   - Tool calls count: {result.metrics.tool_calls_count}")
 
-        # 验证 Skill 是否被调用
-        session_store = agent._session_store
-        assert session_store is not None, "SessionStore should be created from settings"
-
-        print(f"\n🔍 验证 Skills 调用...")
-        steps = await session_store.get_steps(session_id=session_id)
+        # Verify Skill is called
+        print(f"\n🔍 Verify Skills call...")
+        steps = await agent.run_step_storage.get_steps(session_id=session_id)
         tool_steps = [s for s in steps if s.role.value == "tool"]
         skill_called = any(
             s.name == "Skill"
@@ -402,130 +378,125 @@ description: 这是一个测试技能，用于验证 Skills 系统是否正常�
         )
 
         if skill_called:
-            print(f"   ✅ Skill 工具被调用")
+            print(f"   ✅ Skill tool is called")
         else:
-            print(f"   ⚠️  Skill 工具可能未被调用（检查步骤）")
+            print(f"   ⚠️  Skill tool may not be called (check steps)")
             for step in tool_steps:
                 print(
                     f"      - {step.name}: {step.content[:100] if step.content else 'N/A'}"
                 )
 
-        # 验证 Skills 在 system prompt 中
-        skills_section = skill_manager.render_skills_section()
-        if skills_section:
-            print(f"\n   ✅ Skills 已加载到 system prompt")
-            print(f"      找到 {len(skill_manager._metadata_cache)} 个技能")
+        # Verify Skills in system prompt
+        if "skill" in agent.system_prompt.lower() or "Available Skills" in agent.system_prompt:
+            print(f"\n   ✅ Skills loaded into system prompt")
         else:
-            print(f"\n   ⚠️  Skills section 为空")
+            print(f"\n   ⚠️  Skills section not found in system prompt")
 
-        print(f"\n✅ 测试 2 通过: Skills 加载和使用")
+        print(f"\n✅ Test 2 passed: Skills loading and usage")
         return True
 
     except Exception as e:
-        print(f"\n❌ 测试 2 失败: {type(e).__name__}: {e}")
+        print(f"\n❌ Test 2 failed: {type(e).__name__}: {e}")
         import traceback
 
         traceback.print_exc()
         return False
     finally:
-        _reset_settings()
         if model:
             await model.close()
+        if agent:
+            await agent.close()
 
 
 async def test_data_persistence():
-    """测试数据持久化"""
+    """Test data persistence"""
     print("\n" + "=" * 60)
-    print("测试 3: 数据持久化（SessionStore 和 TraceStore）")
+    print("Test 3: Data persistence (RunStepStorage and TraceStorage)")
     print("=" * 60)
 
-    db_path = _prepare_test_settings("data_persistence")
+    db_path, session_store, trace_storage = _prepare_test_db("data_persistence")
     model = None
+    agent = None
     try:
-        # 创建 Agent (stores created internally via settings)
         model = create_test_model()
         if not model:
-            print("⚠️  跳过测试：未找到可用的 LLM API Key")
+            print("⚠️  Skip test: No available LLM API Key")
             return False
 
         tools = [TestCalculatorTool(), TestEchoTool()]
 
-        agent = AgiwoAgent(
+        agent = Agent(
             id="test_agent_persistence",
-            description="测试 Agent（持久化）",
+            description="Test Agent (Persistence)",
             model=model,
             tools=tools,
-            system_prompt="你是一个有用的助手。",
-            options=AgentOptions(max_steps=10),
+            system_prompt="You are a helpful assistant.",
+            options=AgentOptions(
+                max_steps=10,
+                run_step_storage=RunStepStorageConfig(
+                    storage_type="sqlite",
+                    config={"db_path": db_path},
+                ),
+                trace_storage=TraceStorageConfig(
+                    storage_type="sqlite",
+                    config={"db_path": db_path},
+                ),
+            ),
         )
 
-        # 创建执行上下文
         session_id = str(uuid4())
 
-        # 运行多个对话
-        print(f"\n📝 运行多个对话...")
+        # Run multiple conversations
+        print(f"\n📝 Running multiple conversations...")
         queries = [
-            "请计算 10 + 20",
-            "请回显消息：Hello World",
-            "请计算 100 / 5",
+            "Please calculate 10 + 20",
+            "Please echo message: Hello World",
+            "Please calculate 100 / 5",
         ]
 
         all_runs = []
         for i, query in enumerate(queries, 1):
-            print(f"\n   对话 {i}: {query}")
-            run_id = str(uuid4())
-            context = ExecutionContext(
-                session_id=session_id,
-                run_id=run_id,
-                wire=Wire(),
-                agent_id=agent.id,
-            )
-            result = await agent.run(query, context=context)
-            all_runs.append((run_id, result))
+            print(f"\n   Conversation {i}: {query}")
+            result = await agent.run(query, session_id=session_id)
+            all_runs.append((result.run_id, result))
 
-        # 验证 SessionStore 数据
-        session_store = agent._session_store
-        assert session_store is not None, "SessionStore should be created from settings"
+        # Verify RunStepStorage data
+        print(f"\n🔍 Verify RunStepStorage data...")
 
-        print(f"\n🔍 验证 SessionStore 数据...")
-
-        # 检查所有 Runs
-        runs = await session_store.list_runs(session_id=session_id)
-        print(f"   ✅ 找到 {len(runs)} 个 Runs")
+        # Check all Runs
+        runs = await agent.run_step_storage.list_runs(session_id=session_id)
+        print(f"   ✅ Found {len(runs)} Runs")
         assert len(runs) == len(queries), (
-            f"应该有 {len(queries)} 个 Runs，但找到 {len(runs)} 个"
+            f"Should have {len(queries)} Runs, but found {len(runs)}"
         )
 
-        # 检查所有 Steps
-        steps = await session_store.get_steps(session_id=session_id)
-        print(f"   ✅ 找到 {len(steps)} 个 Steps")
-        assert len(steps) > 0, "应该有 Steps"
+        # Check all Steps
+        steps = await agent.run_step_storage.get_steps(session_id=session_id)
+        print(f"   ✅ Found {len(steps)} Steps")
+        assert len(steps) > 0, "Should have Steps"
 
-        # 按 role 分组统计
+        # Group by role statistics
         role_counts = {}
         for step in steps:
             role = step.role.value
             role_counts[role] = role_counts.get(role, 0) + 1
 
-        print(f"   Steps 统计:")
+        print(f"   Steps statistics:")
         for role, count in role_counts.items():
             print(f"      - {role}: {count}")
 
-        # 验证每个 Run 都有对应的 Steps
+        # Verify each Run has corresponding Steps
         for run_id, result in all_runs:
-            run_steps = await session_store.get_steps(
+            run_steps = await agent.run_step_storage.get_steps(
                 session_id=session_id, run_id=run_id
             )
-            assert len(run_steps) > 0, f"Run {run_id} 应该有 Steps"
-            print(f"   ✅ Run {run_id[:8]}... 有 {len(run_steps)} 个 Steps")
+            assert len(run_steps) > 0, f"Run {run_id} should have Steps"
+            print(f"   ✅ Run {run_id[:8]}... has {len(run_steps)} Steps")
 
-        # 验证 TraceStore 数据
-        trace_store = agent._trace_store
-        assert trace_store is not None, "TraceStore should be created from settings"
+        # Verify TraceStorage data
+        print(f"\n🔍 Verify TraceStorage data...")
 
-        print(f"\n🔍 验证 TraceStore 数据...")
-
-        all_traces = await trace_store.query_traces(
+        all_traces = await agent.trace_storage.query_traces(
             {
                 "session_id": session_id,
                 "limit": 100,
@@ -533,49 +504,50 @@ async def test_data_persistence():
         )
 
         if all_traces:
-            print(f"   ✅ 找到 {len(all_traces)} 个 Traces")
+            print(f"   ✅ Found {len(all_traces)} Traces")
             for trace in all_traces:
                 print(f"      - Trace ID: {trace.trace_id}")
                 print(f"        Spans: {len(trace.spans)}")
                 print(f"        Agent ID: {trace.agent_id}")
         else:
-            print(f"   ⚠️  未找到 Traces（可能 TraceCollector 未正确启动）")
+            print(f"   ⚠️  No Traces found (TraceCollector may not have started correctly)")
 
-        # 验证数据可以重新加载
-        print(f"\n🔍 验证数据可以重新加载...")
+        # Verify data can be reloaded
+        print(f"\n🔍 Verify data can be reloaded...")
 
-        new_session_store = SQLiteSessionStore(db_path=db_path)
+        new_session_store = SQLiteRunStepStorage(db_path=db_path)
         await new_session_store.initialize()
 
         try:
             reloaded_runs = await new_session_store.list_runs(session_id=session_id)
-            assert len(reloaded_runs) == len(runs), "重新加载后 Runs 数量应该一致"
+            assert len(reloaded_runs) == len(runs), "Runs count should be consistent after reload"
 
             reloaded_steps = await new_session_store.get_steps(session_id=session_id)
-            assert len(reloaded_steps) == len(steps), "重新加载后 Steps 数量应该一致"
+            assert len(reloaded_steps) == len(steps), "Steps count should be consistent after reload"
 
-            print(f"   ✅ 数据可以正确重新加载")
+            print(f"   ✅ Data can be correctly reloaded")
         finally:
             await new_session_store.disconnect()
 
-        print(f"\n✅ 测试 3 通过: 数据持久化")
+        print(f"\n✅ Test 3 passed: Data persistence")
         return True
 
     except Exception as e:
-        print(f"\n❌ 测试 3 失败: {type(e).__name__}: {e}")
+        print(f"\n❌ Test 3 failed: {type(e).__name__}: {e}")
         import traceback
 
         traceback.print_exc()
         return False
     finally:
-        _reset_settings()
         if model:
             await model.close()
+        if agent:
+            await agent.close()
 
 
 def create_test_model():
-    """创建测试用的 LLM Model"""
-    # 按优先级尝试不同的模型
+    """Create test LLM Model"""
+    # Try different models in priority order
     models_to_try = [
         # ("OpenAI", OpenAIModel, "OPENAI_API_KEY", "gpt-4o-mini"),
         ("DeepSeek", DeepseekModel, "DEEPSEEK_API_KEY", "deepseek-chat"),
@@ -639,68 +611,68 @@ def create_test_model():
 
 
 async def run_all_tests():
-    """运行所有测试"""
+    """Run all tests"""
     print("=" * 60)
-    print("Agent Run 功能测试")
+    print("Agent Run Functionality Test")
     print("=" * 60)
 
     results = []
 
-    # 测试 1: Tools 支持
+    # Test 1: Tools support
     try:
         result1 = await test_tools_support()
-        results.append(("Tools 支持", result1))
+        results.append(("Tools support", result1))
     except Exception as e:
-        print(f"\n❌ 测试 1 异常: {e}")
+        print(f"\n❌ Test 1 exception: {e}")
         import traceback
 
         traceback.print_exc()
-        results.append(("Tools 支持", False))
+        results.append(("Tools support", False))
 
-    # 测试 2: Skills 加载
+    # Test 2: Skills loading
     try:
         result2 = await test_skills_loading()
-        results.append(("Skills 加载", result2))
+        results.append(("Skills loading", result2))
     except Exception as e:
-        print(f"\n❌ 测试 2 异常: {e}")
+        print(f"\n❌ Test 2 exception: {e}")
         import traceback
 
         traceback.print_exc()
-        results.append(("Skills 加载", False))
+        results.append(("Skills loading", False))
 
-    # 测试 3: 数据持久化
+    # Test 3: Data persistence
     try:
         result3 = await test_data_persistence()
-        results.append(("数据持久化", result3))
+        results.append(("Data persistence", result3))
     except Exception as e:
-        print(f"\n❌ 测试 3 异常: {e}")
+        print(f"\n❌ Test 3 exception: {e}")
         import traceback
 
         traceback.print_exc()
-        results.append(("数据持久化", False))
+        results.append(("Data persistence", False))
 
-    # 汇总结果
+    # Summary results
     print("\n" + "=" * 60)
-    print("测试结果汇总")
+    print("Test Results Summary")
     print("=" * 60)
 
     for test_name, passed in results:
-        status = "✅ 通过" if passed else "❌ 失败"
+        status = "✅ Passed" if passed else "❌ Failed"
         print(f"{status}: {test_name}")
 
     success_count = sum(1 for _, passed in results if passed)
     total_count = len(results)
 
     print("\n" + "=" * 60)
-    print(f"总计: {total_count} 个测试")
-    print(f"通过: {success_count}, 失败: {total_count - success_count}")
+    print(f"Total: {total_count} tests")
+    print(f"Passed: {success_count}, Failed: {total_count - success_count}")
     print("=" * 60)
 
     return all(passed for _, passed in results)
 
 
 def main():
-    """主函数"""
+    """Main function"""
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print(__doc__)
         return
@@ -710,7 +682,7 @@ def main():
         sys.exit(0 if success else 1)
 
     except KeyboardInterrupt:
-        print("\n\n测试被用户中断")
+        print("\n\nTest interrupted by user")
         sys.exit(130)
     except Exception as e:
         print(f"\n\n[FATAL ERROR] {type(e).__name__}: {e}")

@@ -1,12 +1,13 @@
-from agiwo.observability.base import BaseTraceStore, TraceQuery
-from agiwo.observability.store import MongoTraceStore
-from agiwo.observability.sqlite_store import SQLiteTraceStore
-from agiwo.observability.collector import TraceCollector
+from agiwo.observability.base import BaseTraceStorage, TraceQuery
+from agiwo.observability.store import MongoTraceStorage
+from agiwo.observability.sqlite_store import SQLiteTraceStorage
+from agiwo.observability.collector import TraceCollector, InMemoryTraceStorage
 
 __all__ = [
-    "BaseTraceStore",
+    "BaseTraceStorage",
     "TraceQuery",
-    "MongoTraceStore",
-    "SQLiteTraceStore",
+    "MongoTraceStorage",
+    "SQLiteTraceStorage",
     "TraceCollector",
+    "InMemoryTraceStorage",
 ]

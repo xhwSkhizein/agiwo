@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
 
 
-class agiwoSettings(BaseSettings):
+class AgiwoSettings(BaseSettings):
     """
     Global configuration loaded from environment variables.
 
@@ -40,7 +40,7 @@ class agiwoSettings(BaseSettings):
 
     # Repository and Storage settings
     default_session_store: str | None = None
-    default_trace_store: str | None = None
+    default_trace_storage: str | None = None
     trace_collection_name: str | None = "agiwo_traces"
     trace_buffer_size: int = 200
 
@@ -83,7 +83,7 @@ class agiwoSettings(BaseSettings):
 
 
 # Global settings instance (singleton)
-settings = agiwoSettings()
+settings = AgiwoSettings()
 
 
-__all__ = ["agiwoSettings", "settings"]
+__all__ = ["AgiwoSettings", "settings"]

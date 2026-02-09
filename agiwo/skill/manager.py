@@ -86,8 +86,8 @@ class SkillManager:
 
         lines = ["## Available Skills"]
         lines.append(
-            "These skills are discovered at startup. Each entry includes a name "
-            "and description. Use the Skill tool to activate a skill when needed."
+            "These skills are discovered at startup. Each entry includes a name and description. "
+            "Use the Skill tool to activate a skill when needed."
         )
         lines.append("")
 

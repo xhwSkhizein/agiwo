@@ -1,9 +1,7 @@
-import ast
 import asyncio
 from dataclasses import dataclass, replace
 from typing import Any
 import time
-import json
 
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.tool.base import BaseTool, ToolResult
@@ -127,7 +125,7 @@ class ToolExecutor:
                 start_time=start_time,
             )
 
-        # 解析参数
+        # Parse arguments
         try:
             args = parse_json_tool_args(fn_args)
         except ValueError as e:
@@ -140,7 +138,7 @@ class ToolExecutor:
 
         args["tool_call_id"] = call_id
 
-        # 设置超时
+        # Set timeout
         timeout_seconds = (
             tool.timeout_seconds
             if tool and tool.timeout_seconds
@@ -151,7 +149,7 @@ class ToolExecutor:
             timeout_at = time.time() + timeout_seconds
             execution_context = replace(context, timeout_at=timeout_at)
 
-        # 检查缓存
+        # Check cache
         if self.cache and tool.cacheable:
             cached_result = self.cache.get(context.session_id, fn_name, args)
             if cached_result:
@@ -171,7 +169,7 @@ class ToolExecutor:
                     duration=0.0,
                 )
 
-        # 执行工具
+        # Execute tool
         try:
             logger.debug("executing_tool", tool_name=fn_name, tool_call_id=call_id)
             result: ToolResult = await tool.execute(
@@ -184,7 +182,7 @@ class ToolExecutor:
                 duration=result.duration,
             )
 
-            # 保存到缓存
+            # Save to cache
             if self.cache and tool.cacheable and result.is_success:
                 self.cache.set(context.session_id, fn_name, args, result)
 

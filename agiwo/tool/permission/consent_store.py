@@ -112,7 +112,7 @@ class MongoConsentStore(ConsentStore):
     """
     MongoDB implementation of ConsentStore.
 
-    Reuses MongoSessionStore's MongoDB connection.
+    Reuses MongoRunStepStorage's MongoDB connection.
     """
 
     def __init__(
@@ -124,7 +124,7 @@ class MongoConsentStore(ConsentStore):
         Initialize MongoDB consent store.
 
         Args:
-            client: MongoDB client (reused from MongoSessionStore, can be None)
+            client: MongoDB client (reused from MongoRunStepStorage, can be None)
             db_name: Database name
         """
         self.client = client

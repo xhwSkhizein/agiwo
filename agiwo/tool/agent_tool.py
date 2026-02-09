@@ -1,12 +1,14 @@
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
-from agiwo.agent.agent import AgiwoAgent
 from agiwo.agent.schema import RunOutput
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.tool.base import BaseTool, ToolResult
+
+if TYPE_CHECKING:
+    from agiwo.agent.agent import Agent
 
 
 # Default maximum nesting depth for Agent as Tool
@@ -26,25 +28,16 @@ class MaxDepthExceededError(Exception):
 
 
 class AgentTool(BaseTool):
-    """ """
+    """Wraps an Agent as a Tool for nested agent execution."""
 
     def __init__(
         self,
-        agent: AgiwoAgent,
+        agent: "Agent",
         name: str | None = None,
         description: str | None = None,
         max_depth: int = DEFAULT_MAX_DEPTH,
     ):
-        """
-        Initialize AgentTool.
-
-        Args:
-            agent: AgiwoAgent instance
-            name: Tool name
-            description: Tool description
-            max_depth: Maximum nesting depth for Agent as Tool
-        """
-        self.agent = agent
+        self._agent = agent
         self.name = name or agent.id
         self.description = description or agent.description
         self.max_depth = max_depth
@@ -110,7 +103,7 @@ class AgentTool(BaseTool):
         if current_depth > self.max_depth:
             error_msg = (
                 f"Maximum nesting depth ({self.max_depth}) exceeded. "
-                f"Current call chain: {' -> '.join(call_stack)} -> {self.agent.id}"
+                f"Current call chain: {' -> '.join(call_stack)} -> {self._agent.id}"
             )
             return ToolResult.error(
                 tool_name=self.get_name(),
@@ -121,9 +114,9 @@ class AgentTool(BaseTool):
             )
 
         # Safety check 2: Circular reference
-        if self.agent.id in call_stack:
+        if self._agent.id in call_stack:
             error_msg = (
-                f"Circular reference detected: {self.agent.id} is in call stack. "
+                f"Circular reference detected: {self._agent.id} is in call stack. "
                 f"Current call chain: {' -> '.join(call_stack)}"
             )
             return ToolResult.error(
@@ -135,31 +128,35 @@ class AgentTool(BaseTool):
             )
 
         # Add current agent to call stack
-        call_stack.append(self.agent.id)
+        call_stack.append(self._agent.id)
 
-        # Build input and context for Agent
+        # Build input and child context
         input_query = task
         if extra_context:
             input_query += f"\nAdditional context: {extra_context}"
 
         run_id = str(uuid4())
-        child_ctx = context.new_child(run_id=run_id, agent_id=self.agent.id)
+        child_ctx = context.new_child(run_id=run_id, agent_id=self._agent.id)
+        child_ctx.metadata["_call_stack"] = call_stack
 
-        output = ""
+        response_text = ""
         error = None
         try:
-            output: RunOutput = await self.agent.run(
-                input_query, context=child_ctx, abort_signal=abort_signal
+            run_output: RunOutput = await self._agent.run(
+                input_query,
+                context=child_ctx,
+                abort_signal=abort_signal,
             )
+            response_text = run_output.response or ""
         except CircularReferenceError as e:
             error = str(e)
-            output = f"Circular reference error: {error}"
+            response_text = f"Circular reference error: {error}"
         except MaxDepthExceededError as e:
             error = str(e)
-            output = f"Max depth exceeded: {error}"
+            response_text = f"Max depth exceeded: {error}"
         except Exception as e:
             error = str(e)
-            output = f"Error executing {self.agent.id}: {error}"
+            response_text = f"Error executing {self._agent.id}: {error}"
 
         end_time = time.time()
 
@@ -167,8 +164,8 @@ class AgentTool(BaseTool):
             tool_name=self.get_name(),
             tool_call_id=parameters.get("tool_call_id", ""),
             input_args={"task": task, "context": extra_context},
-            content=output,
-            output=output,
+            content=response_text,
+            output=response_text,
             error=error,
             start_time=start_time,
             end_time=end_time,
@@ -178,7 +175,7 @@ class AgentTool(BaseTool):
 
 
 def as_tool(
-    agent: AgiwoAgent,
+    agent: "Agent",
     description: str | None = None,
     name: str | None = None,
     max_depth: int = DEFAULT_MAX_DEPTH,

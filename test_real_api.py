@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-真实 API 测试脚本
+Real API Test Script
 
-使用真实的 API key 测试各个 LLM 提供商的 API 调用。
-需要在 .env 文件中配置相应的 API key。
+Test API calls for various LLM providers using real API keys.
+Requires corresponding API key configuration in .env file.
 
-环境变量配置：
+Environment Variable Configuration:
 - OPENAI_API_KEY
 - DEEPSEEK_API_KEY
 - NVIDIA_BUILD_API_KEY
 - ANTHROPIC_API_KEY
 
-使用方法：
+Usage:
     python test_real_api.py
-    或
+    or
     uv run python test_real_api.py
 """
 
@@ -36,7 +36,7 @@ load_dotenv()
 
 @dataclass
 class ProviderConfig:
-    """LLM 提供商配置"""
+    """LLM provider configuration"""
 
     name: str
     model_class: type
@@ -89,14 +89,14 @@ async def test_provider(
     provider: ProviderConfig, test_messages: list[dict]
 ) -> dict[str, Any]:
     """
-    测试单个 LLM 提供商
+    Test a single LLM provider
 
     Args:
-        provider: 提供商配置
-        test_messages: 测试消息列表
+        provider: Provider configuration
+        test_messages: Test messages list
 
     Returns:
-        测试结果字典
+        Test result dictionary
     """
     api_key = os.getenv(provider.api_key_env)
 
@@ -186,13 +186,13 @@ async def test_provider(
 
 
 async def run_all_tests():
-    """运行所有提供商的测试"""
-    test_messages = [{"role": "user", "content": "请用一句话介绍你自己。"}]
+    """Run tests for all providers"""
+    test_messages = [{"role": "user", "content": "Please introduce yourself in one sentence."}]
 
     print("=" * 60)
-    print("LLM API 真实测试")
+    print("LLM API Real Test")
     print("=" * 60)
-    print(f"\n测试消息: {test_messages[0]['content']}\n")
+    print(f"\nTest message: {test_messages[0]['content']}\n")
 
     results = []
 
@@ -201,7 +201,7 @@ async def run_all_tests():
         results.append(result)
 
     print("\n" + "=" * 60)
-    print("测试结果汇总")
+    print("Test Results Summary")
     print("=" * 60)
 
     for result in results:
@@ -215,32 +215,32 @@ async def run_all_tests():
         print(f"\n{status_icon} {result['provider']}: {result['status']}")
 
         if result["status"] == "success":
-            print(f"  模型: {result['model_id']}")
-            print(f"  内容长度: {result['content_length']} 字符")
-            print(f"  块数量: {result['chunks_count']}")
+            print(f"  Model: {result['model_id']}")
+            print(f"  Content length: {result['content_length']} chars")
+            print(f"  Chunks count: {result['chunks_count']}")
             if result.get("usage"):
                 usage = result["usage"]
-                print(f"  Token 使用: {usage}")
+                print(f"  Token usage: {usage}")
         elif result["status"] == "failed":
-            print(f"  错误: {result['error_type']}")
-            print(f"  详情: {result['error_message']}")
+            print(f"  Error: {result['error_type']}")
+            print(f"  Details: {result['error_message']}")
         elif result["status"] == "skipped":
-            print(f"  原因: {result['reason']}")
+            print(f"  Reason: {result['reason']}")
 
     success_count = sum(1 for r in results if r["status"] == "success")
     failed_count = sum(1 for r in results if r["status"] == "failed")
     skipped_count = sum(1 for r in results if r["status"] == "skipped")
 
     print("\n" + "=" * 60)
-    print(f"总计: {len(results)} 个提供商")
-    print(f"成功: {success_count}, 失败: {failed_count}, 跳过: {skipped_count}")
+    print(f"Total: {len(results)} providers")
+    print(f"Success: {success_count}, Failed: {failed_count}, Skipped: {skipped_count}")
     print("=" * 60)
 
     return results
 
 
 def main():
-    """主函数"""
+    """Main function"""
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print(__doc__)
         return
@@ -253,7 +253,7 @@ def main():
             sys.exit(1)
 
     except KeyboardInterrupt:
-        print("\n\n测试被用户中断")
+        print("\n\nTest interrupted by user")
         sys.exit(130)
     except Exception as e:
         print(f"\n\n[FATAL ERROR] {type(e).__name__}: {e}")

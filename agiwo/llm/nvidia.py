@@ -31,47 +31,20 @@ class NvidiaModel(OpenAIModel):
             presence_penalty=presence_penalty,
         )
 
-    def __post_init__(self):
-        super().__post_init__()
-
-        # Resolve API Key: nvidia_api_key > NVIDIA_BUILD_API_KEY
-        resolved_api_key = None
+    def _resolve_api_key(self) -> str | None:
         if self.api_key:
-            resolved_api_key = self.api_key
-        elif settings.nvidia_api_key:
-            resolved_api_key = settings.nvidia_api_key.get_secret_value()
-        else:
-            resolved_api_key = os.getenv("NVIDIA_BUILD_API_KEY")
+            return self.api_key
+        if settings.nvidia_api_key:
+            return settings.nvidia_api_key.get_secret_value()
+        return os.getenv("NVIDIA_BUILD_API_KEY")
 
-        # Resolve Base URL
-        resolved_base_url = (
+    def _resolve_base_url(self) -> str | None:
+        return (
             self.base_url
             or settings.nvidia_base_url
             or os.getenv("NVIDIA_BUILD_BASE_URL")
             or "https://integrate.api.nvidia.com/v1"
         )
-
-        # Create client
-        if not hasattr(self, "client") or self.client is None:
-            from openai import AsyncOpenAI
-
-            self.client = AsyncOpenAI(
-                api_key=resolved_api_key,
-                base_url=resolved_base_url,
-            )
-
-    async def arun_stream(
-        self,
-        messages: list[dict],
-        tools: list[dict] | None = None,
-    ) -> AsyncIterator[StreamChunk]:
-        """
-        Call NVIDIA API.
-
-        NVIDIA response chunks include reasoning_content which is already handled by OpenAIModel.arun_stream.
-        """
-        async for chunk in super().arun_stream(messages, tools=tools):
-            yield chunk
 
 
 __all__ = ["NvidiaModel"]
