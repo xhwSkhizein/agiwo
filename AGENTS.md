@@ -1,62 +1,204 @@
-# AGENTS Development Guide
+# AGENTS.md
 
-## Architecture Overview
+> Agiwo 开发指南。供 AI 编码助手和开发者快速理解项目结构、约定和决策。
 
-Agiwo follows a **Main Agent + Agent as Tools** pattern. The SDK does NOT implement multi-agent orchestration; instead, agents can be nested via `AgentTool`.
+## Project Map
 
-Key components:
-- `Agent` — concrete class (not ABC), the single entry point for execution
-- `AgentExecutor` — internal loop coordinator (LLM calls + tool execution)
-- `AgentHooks` — lifecycle hooks for extensibility (no subclassing needed)
-- `Model` — abstract LLM provider; subclasses override `_resolve_api_key`/`_resolve_base_url`/`_create_client`
-- `BaseTool` — abstract tool interface; `AgentTool` wraps an `Agent` as a tool
-- `RunStepStorage` / `BaseTraceStorage` — injected via constructor, not global config
+```
+agiwo/
+├── agent/                    # Agent 核心
+│   ├── agent.py              # Agent 类：唯一公开入口 (run / run_stream)
+│   ├── execution_context.py  # ExecutionContext：执行上下文，嵌套层级传递
+│   ├── hooks.py              # AgentHooks：生命周期钩子 (dataclass, 全部可选)
+│   ├── options.py            # AgentOptions + RunStepStorageConfig + TraceStorageConfig
+│   ├── schema.py             # 核心数据模型: Run, StepRecord, StreamEvent, RunOutput 等
+│   ├── stream_channel.py     # StreamChannel：asyncio.Queue 事件流通道
+│   ├── inner/                # 内部实现 (不对外暴露)
+│   │   ├── executor.py       # AgentExecutor：LLM + Tool 执行循环
+│   │   ├── llm_handler.py    # LLM 流式响应处理
+│   │   ├── message_assembler.py  # 消息组装 (system prompt + history + memory)
+│   │   ├── run_state.py      # 运行状态追踪
+│   │   ├── side_effect_io.py # 副作用 IO (事件发射 + 存储写入)
+│   │   ├── step_builder.py   # StepRecord 构建
+│   │   ├── summarizer.py     # 终止摘要生成
+│   │   └── system_prompt_builder.py  # System Prompt 动态构建
+│   └── storage/              # Run/Step 持久化
+│       ├── base.py           # RunStepStorage ABC + InMemoryRunStepStorage
+│       ├── factory.py        # StorageFactory：根据配置创建存储实例
+│       ├── sqlite.py         # SQLite 实现
+│       └── mongo.py          # MongoDB 实现
+├── llm/                      # LLM Provider 抽象层
+│   ├── base.py               # Model ABC + StreamChunk
+│   ├── openai.py             # OpenAIModel (其他 OpenAI 兼容 Provider 的基类)
+│   ├── anthropic.py          # AnthropicModel (独立实现，非 OpenAI 兼容)
+│   ├── deepseek.py           # DeepseekModel (继承 OpenAIModel)
+│   ├── nvidia.py             # NvidiaModel (继承 OpenAIModel)
+│   └── helper.py             # 工具函数: JSON 解析, usage 标准化
+├── tool/                     # Tool 系统
+│   ├── base.py               # BaseTool ABC + ToolResult + ToolDefinition
+│   ├── agent_tool.py         # AgentTool + as_tool()：Agent 作为 Tool 嵌套
+│   ├── executor.py           # ToolExecutor：批量并行执行 + 缓存
+│   ├── cache.py              # ToolResultCache
+│   ├── builtin/              # 内置工具 (装饰器自动注册)
+│   │   ├── registry.py       # @builtin_tool + @default_enable 装饰器
+│   │   ├── calculator.py     # 计算器
+│   │   ├── current_time.py   # 当前时间
+│   │   └── http_request.py   # HTTP 请求
+│   └── permission/           # 工具权限管理
+├── observability/            # 可观测性
+│   ├── base.py               # BaseTraceStorage ABC
+│   ├── trace.py              # Trace + Span 模型 (兼容 OpenTelemetry)
+│   ├── collector.py          # TraceCollector：从 StreamEvent 流构建 Trace
+│   ├── otlp_exporter.py      # OTLP 导出器
+│   ├── store.py              # MongoDB TraceStorage
+│   └── sqlite_store.py       # SQLite TraceStorage
+├── skill/                    # Skill 系统 (可选)
+│   ├── manager.py            # SkillManager：发现、加载、热重载
+│   ├── registry.py           # SkillRegistry + SkillMetadata
+│   ├── loader.py             # SkillLoader：SKILL.md 解析
+│   └── tool.py               # SkillTool：将 Skill 暴露为 Tool
+├── config/
+│   └── settings.py           # AgiwoSettings (pydantic-settings, env prefix: agiwo_)
+└── utils/
+    ├── abort_signal.py       # AbortSignal：优雅取消
+    ├── logging.py            # structlog 日志配置
+    ├── retry.py              # 异步重试装饰器
+    └── tojson.py             # JSON 序列化工具
+```
 
-## Core Principles
+## Core Components
 
-- Clarity over cleverness. Prefer explicit, readable code even if slightly longer.
-- SOLID + KISS. Single responsibility per class. No unnecessary abstractions.
-- No backward compatibility unless explicitly requested. Delete legacy code promptly.
-- No circular dependencies. If detected, refactor component coupling immediately.
-- All imports at file top. No local/lazy imports.
+### Agent (唯一入口)
 
-## Code Style
+`Agent` 是具体类 (非 ABC)，负责配置持有和执行生命周期。两个公开方法：
 
-- Python 3.11+. No `from __future__ import annotations`.
-- Type hints on all public methods and core data structures.
-- PascalCase for classes (`AgiwoSettings`), snake_case for functions/variables.
-- Prefer `is not None` for sentinel checks; truthy checks only when intentional.
-- Avoid mutable default arguments; use `None` + initialization in `__init__`.
-- Keep async code explicit: do not hide awaits behind implicit helpers.
-- Prefer small helpers over large methods with deep nesting.
-- Name by intent: `*_handler`, `*_builder`, `*_store`, `*_hook`.
+- `run(user_input, ...)` -> `RunOutput` -- 阻塞执行
+- `run_stream(user_input, ...)` -> `AsyncIterator[StreamEvent]` -- 流式执行
 
-## Adding New LLM Providers
+`Agent` 不做 LLM 调用和 Tool 执行，委托给 `AgentExecutor`。
 
-Subclass `Model` and override three methods:
-- `_resolve_api_key() -> str | None`
-- `_resolve_base_url() -> str | None`
-- `_create_client() -> <ClientType>`
+### AgentExecutor (内部循环)
 
-For OpenAI-compatible APIs, subclass `OpenAIModel` instead (only override resolve methods).
+`agent/inner/executor.py`。核心 `_run_loop`：LLM 调用 -> 检查 tool_calls -> 并行执行 Tools -> 追加消息 -> 循环直到完成或触发限制。
 
-## Adding New Hooks
+### Model (LLM 抽象)
 
-Add the hook type alias and field to `agiwo/agent/hooks.py`. Call the hook at the appropriate point in `Agent._execute_workflow` or `AgentExecutor._run_loop` / `_execute_tools`.
+`@dataclass` + ABC。子类必须实现 `arun_stream(messages, tools) -> AsyncIterator[StreamChunk]`。
 
-## Observability
+- OpenAI 兼容 API：继承 `OpenAIModel`，仅覆写 `_resolve_api_key` / `_resolve_base_url`
+- 非兼容 API (如 Anthropic)：直接继承 `Model`，完整实现 `arun_stream`
 
-- Logs must be structured and actionable (event name + key fields).
-- Never log sensitive values (API keys, tokens, credentials).
-- Trace/span models must stay serializable and consistent across stores.
-- OTLP export is optional; configure via environment variables.
+### BaseTool (Tool 抽象)
 
-## Testing
+ABC，子类实现 5 个方法：`get_name`, `get_description`, `get_parameters`, `is_concurrency_safe`, `execute`。
 
-- Unit tests in `tests/` use mocks (no real API calls).
-- Integration tests (`test_real_agent.py`, `test_real_api.py`) require `.env` API keys.
-- Run: `uv run pytest tests/ -v`
+`execute` 直接返回 `ToolResult` (包含 `content` 给 LLM + `content_for_user` 给前端)。
 
-## Dependency Injection
+### AgentTool (Agent 嵌套)
 
-Stores (`RunStepStorage`, `BaseTraceStorage`) are injected via `Agent` constructor. The SDK does NOT auto-create stores from global settings. Users choose their persistence layer explicitly.
+通过 `AgentTool` 或 `as_tool()` 将 Agent 包装为 Tool，实现 **Main Agent + Agent as Tools** 模式。内置深度限制和循环引用检测。
+
+### AgentHooks (生命周期钩子)
+
+纯 dataclass，所有字段可选。不需要子类化，直接传入回调函数。
+
+钩子点：`on_before_run`, `on_after_run`, `on_before_tool_call`, `on_after_tool_call`, `on_before_llm_call`, `on_after_llm_call`, `on_step`, `on_event`, `on_memory_write`, `on_memory_retrieve`。
+
+### Storage
+
+- **RunStepStorage**：Run/Step 持久化接口。通过 `AgentOptions.run_step_storage` 配置
+- **BaseTraceStorage**：Trace 持久化接口。通过 `AgentOptions.trace_storage` 配置
+- 实现：InMemory / SQLite / MongoDB
+- 存储通过配置注入，`StorageFactory` 创建实例，不依赖全局状态
+
+### Observability
+
+`TraceCollector` 以中间件模式包装 `StreamEvent` 流，自动构建 `Trace` + `Span`，不侵入核心执行逻辑。Span 模型兼容 OpenTelemetry，支持 OTLP 导出。
+
+## Code Style & Conventions
+
+- **Python 3.11+**，不使用 `from __future__ import annotations`
+- **所有 import 放在文件顶部**，禁止局部导入 / 延迟导入
+- 类型注解：所有公开方法和核心数据结构必须有类型注解
+- 命名：PascalCase 类名，snake_case 函数/变量，按意图命名 (`*_handler`, `*_builder`, `*_store`, `*_hook`)
+- `is not None` 做哨兵检查；truthy 检查仅在明确意图时使用
+- 避免可变默认参数：用 `None` + `__init__` 内初始化
+- async 代码保持显式，不在隐式 helper 中藏 await
+- 偏好小函数而非深层嵌套的大方法
+- SOLID + KISS，单一职责，不做不必要的抽象
+- **禁止向后兼容** (除非明确要求)，及时删除遗留代码
+- **循环依赖**：遇到时必须重构组件耦合关系，禁止延迟导入等绕行手段
+- 不要使用 `rm` 删除文件，用 `mv` 移动到 `trash/` 目录
+
+## Key Design Decisions
+
+1. **Agent 是具体类，不是 ABC**。扩展通过 Hooks + Tool 组合，不通过继承
+2. **Agent as Tools 而非多 Agent 编排**。SDK 不实现 orchestrator，嵌套通过 `AgentTool` 完成
+3. **Streaming-first**。`run()` 内部也走流式路径，只是自动 drain 事件流
+4. **StreamChannel 单消费者**。`read()` 只能被 claim 一次，避免竞争
+5. **存储通过配置注入**。`AgentOptions` 持有 `RunStepStorageConfig` + `TraceStorageConfig`，`StorageFactory` 负责创建。不使用全局 config 自动创建
+6. **TraceCollector 中间件模式**。包装事件流而非侵入执行逻辑，零耦合
+7. **Tool 注册用装饰器**。`@builtin_tool("name")` + `@default_enable` 自动注册，支持 entry_points 扩展
+8. **ToolResult 双内容字段**。`content` 给 LLM 消费，`content_for_user` 给前端展示
+9. **Skill 系统可选启用**。通过 `AgentOptions.enable_skill` 控制，不影响核心流程
+
+## Build & Test Commands
+
+```bash
+# 安装依赖 (使用 uv)
+uv sync
+
+# 运行单元测试 (mock, 不需要 API Key)
+uv run pytest tests/ -v
+
+# 运行集成测试 (需要 .env 中的 API Key)
+uv run python test_real_agent.py
+uv run python test_real_api.py
+
+# 类型检查 (如果配置了 mypy/pyright)
+uv run mypy agiwo/
+
+# 单独测试某个模块
+uv run pytest tests/llm/ -v
+uv run pytest tests/agent/ -v
+```
+
+## Development Notes
+
+### 添加新 LLM Provider
+
+1. OpenAI 兼容：继承 `OpenAIModel`，覆写 `_resolve_api_key()` 和 `_resolve_base_url()`
+2. 非兼容：继承 `Model`，实现 `arun_stream()`，确保输出标准化为 `StreamChunk`
+3. 在 `agiwo/llm/__init__.py` 中导出
+4. 在 `agiwo/config/settings.py` 中添加对应的环境变量配置
+
+### 添加新 Hook
+
+1. 在 `agiwo/agent/hooks.py` 中添加类型别名和字段
+2. 在 `Agent._execute_workflow` 或 `AgentExecutor._run_loop` / `_execute_tools` 中调用
+
+### 添加新 Builtin Tool
+
+1. 在 `agiwo/tool/builtin/` 下创建新 `.py` 文件
+2. 用 `@builtin_tool("name")` 装饰类
+3. 可选用 `@default_enable` 标记为默认启用 (Agent tools=None 时自动加载)
+
+### 注意事项
+
+- `agent/inner/` 下的模块是内部实现，不要在 `agiwo/__init__.py` 中导出
+- `TYPE_CHECKING` 仅用于解决 `agent_tool.py` 中 Agent 的前向引用 (已是唯一例外)
+- `StepRecord` 使用工厂方法 (`StepRecord.user()`, `.assistant()`, `.tool()`) 创建，不要直接构造
+- `ToolExecutor` 的 cache 功能尚未完全实现 (见 executor.py 中的 FIXME)
+- Anthropic provider 有独立的流式实现，不走 OpenAI 兼容路径
+
+## Maintaining CLAUDE.md
+
+当以下变更发生时，更新此文件：
+
+- **新增/删除/重命名顶层模块或包** -> 更新 Project Map
+- **核心组件 API 变更** (Agent, Model, BaseTool, AgentHooks) -> 更新 Core Components
+- **新增设计决策或推翻旧决策** -> 更新 Key Design Decisions
+- **新增编码约定** -> 更新 Code Style & Conventions
+- **构建/测试流程变更** -> 更新 Build & Test Commands
+
+原则：保持此文件简洁，只记录 AI 助手和新开发者需要的关键信息。不要在此文件中重复代码中已有的 docstring。

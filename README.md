@@ -1,130 +1,268 @@
-# Agiwo
+<h1 align="center">Agiwo</h1>
 
-Agiwo is a Python Agent SDK for building LLM-powered agents with tool calling, streaming, observability, and lifecycle hooks.
+<p align="center">
+  <em>A lightweight, streaming-first AI Agent SDK for Python</em>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/status-experimental-orange" alt="Status">
+</p>
+
+> **Warning**
+> Agiwo is a **personal toy project** for exploring AI Agent architecture patterns. It is NOT production-ready. APIs may change without notice. Use at your own risk.
+
+## What is Agiwo?
+
+Agiwo is an async-first Python SDK for building LLM-powered agents with tool calling, streaming output, observability, and nested agent composition. It prioritizes simplicity and explicitness over magic.
+
+## Highlights
+
+- **Streaming-first** -- Both `run()` and `run_stream()` use the same streaming pipeline internally. Real-time token-by-token output is a first-class citizen, not an afterthought.
+- **Agent as Tools** -- No complex multi-agent orchestration framework. Simply wrap any Agent as a Tool with `as_tool()`, and let the parent Agent call it naturally. Depth limits and circular reference detection are built in.
+- **Lifecycle Hooks** -- Inject custom behavior at 10 execution points (before/after run, LLM call, tool call, etc.) without subclassing. Just pass plain async functions.
+- **Pluggable Storage** -- Run/Step history and Trace data are persisted through abstract interfaces. Ships with InMemory, SQLite, and MongoDB implementations. Configure via `AgentOptions`, no global state.
+- **Built-in Observability** -- `TraceCollector` automatically builds OpenTelemetry-compatible Traces and Spans from the event stream as middleware. Optional OTLP export.
+- **Multi-Provider LLM Support** -- OpenAI, Anthropic, DeepSeek, NVIDIA out of the box. Adding an OpenAI-compatible provider is ~20 lines of code.
+- **Skill System** -- Optional file-based skill discovery. Agents can activate domain-specific skills at runtime via SKILL.md definitions.
 
 ## Quick Start
 
+### Installation
+
 ```bash
+# Clone and install with uv
+git clone https://github.com/xhwSkhizein/agiwo.git
+cd agiwo
 uv sync
-cp .env.example .env  # fill in your API keys
+
+# Copy env file and add your API keys
+cp .env.example .env
 ```
+
+### Minimal Example
+
+```python
+import asyncio
+from agiwo import Agent
+from agiwo.llm import DeepseekModel
+
+async def main():
+    agent = Agent(
+        id="my-agent",
+        description="A helpful assistant",
+        model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
+        system_prompt="You are a helpful assistant.",
+    )
+
+    # Blocking execution
+    result = await agent.run("What is 2 + 2?")
+    print(result.response)
+
+    # Streaming execution
+    async for event in agent.run_stream("Tell me a joke"):
+        if event.delta and event.delta.content:
+            print(event.delta.content, end="", flush=True)
+
+    await agent.close()
+
+asyncio.run(main())
+```
+
+## Core API
+
+### Agent
+
+The single entry point. No subclassing needed.
 
 ```python
 from agiwo import Agent, AgentOptions, AgentHooks
-from agiwo.llm import DeepseekModel
-from agiwo.tool import BaseTool, ToolResult
+from agiwo.llm import OpenAIModel
 
 agent = Agent(
-    id="my-agent",
+    id="assistant",
     description="A helpful assistant",
-    model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
-    tools=[MyTool()],
-    system_prompt="You are a helpful assistant.",
-    options=AgentOptions(max_steps=10),
-)
-
-# Synchronous execution
-result = await agent.run("What is 2+2?")
-print(result.response)
-
-# Streaming execution
-async for event in agent.run_stream("What is 2+2?"):
-    print(event)
-```
-
-## Requirements
-
-- Python >= 3.11
-- [uv](https://github.com/astral-sh/uv) for dependency management
-
-## Core Concepts
-
-- **Agent** - The primary entry point. Executes LLM loops with tool calling, streaming, and observability.
-- **Model** - Abstract LLM provider. Built-in: `OpenAIModel`, `AnthropicModel`, `DeepseekModel`, `NvidiaModel`.
-- **BaseTool** - Abstract tool interface. Implement `execute()` to create custom tools.
-- **AgentTool** - Wraps an Agent as a Tool for nested agent execution (Agent as Tool pattern).
-- **AgentHooks** - Lifecycle hooks for extensibility (see below).
-- **AgentOptions** - Execution configuration (max steps, timeout, etc.).
-- **RunStepStorage** - Persistence for runs and steps. Built-in: `InMemoryRunStepStorage`, `SQLiteRunStepStorage`, `MongoRunStepStorage`.
-- **BaseTraceStorage** - Observability storage with OTLP export support.
-- **SkillManager** - Discovers and loads SKILL.md-based agent skills.
-
-## Lifecycle Hooks
-
-All hooks are optional and async. Provide only what you need via `AgentHooks`:
-
-```python
-from agiwo import Agent, AgentHooks
-
-async def my_before_tool(tool_name, args):
-    print(f"Calling {tool_name} with {args}")
-    return None  # return modified args or None to keep original
-
-async def my_memory_write(session_id, content, metadata):
-    await my_vector_db.insert(session_id, content, metadata)
-
-async def my_memory_retrieve(session_id, query):
-    return await my_vector_db.search(session_id, query)
-
-agent = Agent(
-    id="my-agent",
-    model=my_model,
-    hooks=AgentHooks(
-        on_before_tool_call=my_before_tool,
-        on_after_tool_call=...,
-        on_before_llm_call=...,
-        on_after_llm_call=...,
-        on_before_run=...,
-        on_after_run=...,
-        on_memory_write=my_memory_write,
-        on_memory_retrieve=my_memory_retrieve,
-        on_step=...,
-        on_event=...,
+    model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+    tools=[MyTool()],               # list[BaseTool], optional
+    system_prompt="You are helpful.",
+    options=AgentOptions(            # execution config, optional
+        max_steps=10,
+        run_timeout=600,
+    ),
+    hooks=AgentHooks(                # lifecycle hooks, optional
+        on_before_run=my_hook,
+        on_after_tool_call=my_callback,
     ),
 )
 ```
 
-## Dependency Injection
+### Custom Tools
 
-Stores are injected via constructor, not global config:
+Implement `BaseTool` to create tools the agent can call:
 
 ```python
-from agiwo import Agent
-from agiwo.agent.storage import SQLiteRunStepStorage
-from agiwo.observability import SQLiteTraceStorage
+from agiwo import BaseTool, ToolResult
+from agiwo.agent import ExecutionContext
+
+class WeatherTool(BaseTool):
+    def get_name(self) -> str:
+        return "get_weather"
+
+    def get_description(self) -> str:
+        return "Get current weather for a city"
+
+    def get_parameters(self) -> dict:
+        return {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string", "description": "City name"},
+            },
+            "required": ["city"],
+        }
+
+    def is_concurrency_safe(self) -> bool:
+        return True
+
+    async def execute(self, parameters, context, abort_signal=None) -> ToolResult:
+        city = parameters["city"]
+        # ... fetch weather data ...
+        return ToolResult(
+            tool_name=self.name,
+            tool_call_id=parameters.get("tool_call_id", ""),
+            input_args=parameters,
+            content=f"Weather in {city}: 25C, sunny",       # for LLM
+            content_for_user=f"It's 25C and sunny in {city}", # for UI
+            output={"temp": 25, "condition": "sunny"},
+            start_time=0, end_time=0, duration=0,
+        )
+```
+
+### Agent as Tool (Nested Agents)
+
+```python
+from agiwo import Agent, as_tool
+from agiwo.llm import DeepseekModel
+
+researcher = Agent(
+    id="researcher",
+    description="Expert at research tasks",
+    model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
+    system_prompt="You are a research expert.",
+)
+
+orchestrator = Agent(
+    id="orchestrator",
+    description="Main agent that delegates tasks",
+    model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
+    tools=[as_tool(researcher)],  # researcher becomes a callable tool
+    system_prompt="Delegate research tasks to the researcher tool.",
+)
+
+result = await orchestrator.run("Research quantum computing trends")
+```
+
+### Persistent Storage
+
+```python
+from agiwo import Agent, AgentOptions
+from agiwo.agent import RunStepStorageConfig, TraceStorageConfig
 
 agent = Agent(
-    id="my-agent",
+    id="persistent-agent",
+    description="Agent with SQLite storage",
     model=my_model,
-    run_step_storage=SQLiteRunStepStorage(db_path="my.db"),
-    trace_storage=SQLiteTraceStorage(db_path="my.db"),
+    options=AgentOptions(
+        run_step_storage=RunStepStorageConfig(
+            storage_type="sqlite",
+            config={"db_path": "~/.agiwo/data.db"},
+        ),
+        trace_storage=TraceStorageConfig(
+            storage_type="sqlite",
+            config={"db_path": "~/.agiwo/data.db"},
+        ),
+    ),
 )
 ```
+
+### LLM Providers
+
+```python
+from agiwo.llm import OpenAIModel, AnthropicModel, DeepseekModel, NvidiaModel
+
+# OpenAI
+model = OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini")
+
+# Anthropic (independent implementation, not OpenAI-compatible)
+model = AnthropicModel(id="claude-3-5-sonnet-20240620", name="claude-3-5-sonnet")
+
+# DeepSeek (extends OpenAIModel, with thinking mode support)
+model = DeepseekModel(id="deepseek-chat", name="deepseek-chat")
+
+# NVIDIA (extends OpenAIModel)
+model = NvidiaModel(id="moonshotai/kimi-k2.5", name="kimi-k2.5")
+```
+
+API keys are resolved in order: constructor argument > `AgiwoSettings` > environment variable.
+
+## Architecture
+
+```
+User Input
+    |
+    v
+  Agent.run() / run_stream()
+    |
+    v
+  ExecutionContext + StreamChannel
+    |
+    v
+  AgentExecutor._run_loop()
+    |
+    +---> LLMStreamHandler.stream_assistant_step()
+    |         |
+    |         v
+    |     Model.arun_stream()  -->  StreamChunk
+    |
+    +---> ToolExecutor.execute_batch()  (parallel)
+    |         |
+    |         v
+    |     BaseTool.execute()  -->  ToolResult
+    |
+    +---> Loop until: completed / max_steps / timeout / max_tokens
+    |
+    v
+  RunOutput (response + metrics + termination_reason)
+    |
+    v
+  [Optional] TraceCollector wraps event stream --> Trace + Spans
+```
+
+Key principle: **Agent** owns the lifecycle, **AgentExecutor** owns the loop, **Model** and **Tools** are stateless collaborators.
+
+## Known Limitations
+
+This project is under active exploration. Known gaps include:
+
+- **No production hardening** -- Error recovery, rate limiting, and circuit breakers are minimal
+- **Limited test coverage** -- Unit tests exist but integration test coverage needs improvement
+- **Tool cache incomplete** -- `ToolExecutor` cache is declared but not fully wired (see FIXME in code)
+- **No structured output** -- No built-in JSON mode or schema-validated output from LLM
+- **Single-consumer streaming** -- `StreamChannel.read()` can only be claimed once per execution
+- **No conversation branching** -- Session history is append-only, no fork/rewind support yet
+- **Documentation sparse** -- Inline docstrings exist but no standalone user guide
+
+Contributions, ideas, and feedback are welcome.
 
 ## Project Structure
 
 ```
-agiwo/
-├── agent/           # Core agent: Agent, executor, hooks, schema, options
-│   └── storage/     # Run Step stores (in-memory, SQLite, MongoDB)
-├── llm/             # LLM providers (OpenAI, Anthropic, DeepSeek, NVIDIA)
-├── tool/            # Tool system (BaseTool, AgentTool, ToolExecutor)
-│   └── permission/  # Tool permission/consent system
-├── skill/           # Skill discovery, loading, and management
-├── observability/   # Tracing, OTLP export, trace stores
-├── config/          # Global settings (env-based)
-└── utils/           # Logging, retry, abort signal
-```
-
-## Testing
-
-```bash
-# Run all unit tests
-uv run pytest tests/ -v
-
-# Run real API integration tests (requires API keys in .env)
-uv run python test_real_api.py
-uv run python test_real_agent.py
+agiwo/          # SDK source
+tests/          # Unit tests (mock-based)
+test_real_agent.py  # Integration tests (requires API keys)
+test_real_api.py    # API-level integration tests
+pyproject.toml      # Project metadata and dependencies
+.env.example        # Environment variable template
 ```
 
 ## License
