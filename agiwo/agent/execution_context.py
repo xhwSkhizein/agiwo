@@ -1,6 +1,25 @@
+import asyncio
 from dataclasses import dataclass, field
 
 from agiwo.agent.stream_channel import StreamChannel
+
+
+class SessionSequenceCounter:
+    """Session-level thread-safe sequence counter shared across all agents in a session."""
+
+    def __init__(self, initial: int = 0) -> None:
+        self._counter = initial
+        self._lock = asyncio.Lock()
+
+    async def next(self) -> int:
+        async with self._lock:
+            seq = self._counter
+            self._counter += 1
+            return seq
+
+    @property
+    def current(self) -> int:
+        return self._counter
 
 
 @dataclass
@@ -18,10 +37,11 @@ class ExecutionContext:
     parent_run_id: str | None = None
     agent_id: str | None = None
 
+    # Session-level sequence counter (shared across nested agents)
+    sequence_counter: SessionSequenceCounter | None = None
+
     # Observability
     trace_id: str | None = None
-    parent_span_id: str | None = None
-    span_id: str | None = None
 
     # Timeout control
     timeout_at: float | None = None
@@ -38,9 +58,8 @@ class ExecutionContext:
             depth=self.depth + 1,
             parent_run_id=self.run_id,
             agent_id=agent_id or self.agent_id,
+            sequence_counter=self.sequence_counter,
             trace_id=self.trace_id,
-            parent_span_id=self.span_id,
-            span_id=None,
             timeout_at=self.timeout_at,
             metadata=dict(self.metadata),
         )

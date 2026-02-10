@@ -360,6 +360,9 @@ class SQLiteRunStepStorage(RunStepStorage):
         data.pop("llm_messages", None)
         data.pop("llm_tools", None)
         data.pop("llm_request_params", None)
+        data.pop("trace_id", None)
+        data.pop("span_id", None)
+        data.pop("parent_span_id", None)
 
         # Map database columns to Step model fields
         if "agent_id" in data:

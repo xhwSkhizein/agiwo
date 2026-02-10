@@ -225,10 +225,6 @@ class StepRecord:
     created_at: datetime = field(default_factory=datetime.now)
 
     parent_run_id: str | None = None
-
-    trace_id: str | None = None
-    parent_span_id: str | None = None
-    span_id: str | None = None
     depth: int = 0
 
     def is_assistant_step(self) -> bool:
@@ -314,9 +310,6 @@ def _build_step_context_attrs(
         "run_id": ctx.run_id,
         "agent_id": overrides.get("agent_id", ctx.agent_id),
         "parent_run_id": overrides.get("parent_run_id", ctx.parent_run_id),
-        "trace_id": overrides.get("trace_id", ctx.trace_id),
-        "span_id": overrides.get("span_id"),
-        "parent_span_id": overrides.get("parent_span_id", ctx.span_id),
         "depth": overrides.get("depth", ctx.depth),
     }
 

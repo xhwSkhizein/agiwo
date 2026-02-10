@@ -8,17 +8,18 @@
 agiwo/
 ├── agent/                    # Agent 核心
 │   ├── agent.py              # Agent 类：唯一公开入口 (run / run_stream)
-│   ├── execution_context.py  # ExecutionContext：执行上下文，嵌套层级传递
+│   ├── execution_context.py  # ExecutionContext + SessionSequenceCounter
 │   ├── hooks.py              # AgentHooks：生命周期钩子 (dataclass, 全部可选)
 │   ├── options.py            # AgentOptions + RunStepStorageConfig + TraceStorageConfig
 │   ├── schema.py             # 核心数据模型: Run, StepRecord, StreamEvent, RunOutput 等
 │   ├── stream_channel.py     # StreamChannel：asyncio.Queue 事件流通道
 │   ├── inner/                # 内部实现 (不对外暴露)
 │   │   ├── executor.py       # AgentExecutor：LLM + Tool 执行循环
+│   │   ├── event_emitter.py  # EventEmitter：纯事件发射 (不涉及 Storage)
 │   │   ├── llm_handler.py    # LLM 流式响应处理
 │   │   ├── message_assembler.py  # 消息组装 (system prompt + history + memory)
-│   │   ├── run_state.py      # 运行状态追踪
-│   │   ├── side_effect_io.py # 副作用 IO (事件发射 + 存储写入)
+│   │   ├── run_state.py      # 运行状态追踪 (序列号委托给 SessionSequenceCounter)
+│   │   ├── storage_sink.py   # StorageSink：事件流中间件，消费事件完成持久化
 │   │   ├── step_builder.py   # StepRecord 构建
 │   │   ├── summarizer.py     # 终止摘要生成
 │   │   └── system_prompt_builder.py  # System Prompt 动态构建
@@ -81,6 +82,8 @@ agiwo/
 
 `agent/inner/executor.py`。核心 `_run_loop`：LLM 调用 -> 检查 tool_calls -> 并行执行 Tools -> 追加消息 -> 循环直到完成或触发限制。
 
+核心执行只依赖 `EventEmitter`（纯事件发射），不涉及 Storage。序列号通过 `RunState.next_sequence()` 分配（内存计数器，`asyncio.Lock` 保证并发安全）。
+
 ### Model (LLM 抽象)
 
 `@dataclass` + ABC。子类必须实现 `arun_stream(messages, tools) -> AsyncIterator[StreamChunk]`。
@@ -111,9 +114,16 @@ ABC，子类实现 5 个方法：`get_name`, `get_description`, `get_parameters`
 - 实现：InMemory / SQLite / MongoDB
 - 存储通过配置注入，`StorageFactory` 创建实例，不依赖全局状态
 
-### Observability
+### Event Pipeline (事件管道)
 
-`TraceCollector` 以中间件模式包装 `StreamEvent` 流，自动构建 `Trace` + `Span`，不侵入核心执行逻辑。Span 模型兼容 OpenTelemetry，支持 OTLP 导出。
+核心执行通过 `EventEmitter` 发射事件到 `StreamChannel`，所有副作用在事件流下游处理：
+
+```
+Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollector(Trace) → User
+```
+
+- **StorageSink**：消费事件完成 Run/Step 持久化，支持嵌套 Agent 多 Run 追踪
+- **TraceCollector**：消费事件构建 Trace + Span，兼容 OpenTelemetry，支持 OTLP 导出
 
 ## Code Style & Conventions
 
@@ -137,7 +147,7 @@ ABC，子类实现 5 个方法：`get_name`, `get_description`, `get_parameters`
 3. **Streaming-first**。`run()` 内部也走流式路径，只是自动 drain 事件流
 4. **StreamChannel 单消费者**。`read()` 只能被 claim 一次，避免竞争
 5. **存储通过配置注入**。`AgentOptions` 持有 `RunStepStorageConfig` + `TraceStorageConfig`，`StorageFactory` 负责创建。不使用全局 config 自动创建
-6. **TraceCollector 中间件模式**。包装事件流而非侵入执行逻辑，零耦合
+6. **Event Pipeline 中间件模式**。Storage 和 Trace 都是事件流的下游消费者，核心执行只产生事件，不涉及任何 Storage 操作
 7. **Tool 注册用装饰器**。`@builtin_tool("name")` + `@default_enable` 自动注册，支持 entry_points 扩展
 8. **ToolResult 双内容字段**。`content` 给 LLM 消费，`content_for_user` 给前端展示
 9. **Skill 系统可选启用**。通过 `AgentOptions.enable_skill` 控制，不影响核心流程
@@ -191,7 +201,7 @@ uv run pytest tests/agent/ -v
 - `ToolExecutor` 的 cache 功能尚未完全实现 (见 executor.py 中的 FIXME)
 - Anthropic provider 有独立的流式实现，不走 OpenAI 兼容路径
 
-## Maintaining CLAUDE.md
+## Maintaining AGENTS.md
 
 当以下变更发生时，更新此文件：
 

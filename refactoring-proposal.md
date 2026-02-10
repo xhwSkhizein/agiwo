@@ -273,4 +273,31 @@ class LLMStreamHandler:
 
 ## 六、讨论记录
 
-（后续讨论内容将追加到这里）
+### Round 1 (2026-02-10)
+
+**用户反馈**：
+1. `_next_sequence` 需要线程安全 — 因为一个 Agent 可以派生多个子 Agent 同时运行，子 Agent 共享同一 session 的序列号
+2. 改动 6（清理 Trace 字段）一起做，前提是不影响现有 Trace 逻辑
+3. 没有其他问题，确认开始重构
+
+**最终决策**：
+- 序列号计数器使用 `asyncio.Lock` 保证并发安全
+- 改动 1-6 全部执行，包括 Trace 字段清理
+- TraceCollector 的 fallback 逻辑已足够，清理字段不影响功能
+
+### 实施完成 (2026-02-10)
+
+**已完成改动**：
+1. `SideEffectIO` → `EventEmitter` (纯事件发射)
+2. `RunState` 添加线程安全序列号计数器 (`asyncio.Lock`)
+3. `LLMStreamHandler` 移除 SideEffectIO 依赖，使用 `emit_delta` 回调 + `state.next_sequence()`
+4. `AgentExecutor` 使用 EventEmitter 替代 SideEffectIO
+5. 新建 `StorageSink` 中间件 (含嵌套 Agent 多 Run 追踪)
+6. `Agent` 组装统一 Pipeline: `Channel → StorageSink → TraceCollector → User`
+7. 清理 `StepRecord` 中 `trace_id`/`span_id`/`parent_span_id` 字段
+8. 清理 `ExecutionContext` 中 `span_id`/`parent_span_id` 字段 (保留 `trace_id`)
+9. 更新 `TraceCollector._resolve_parent_span` 移除对 `step.parent_span_id` 的引用
+10. 更新 SQLite `_deserialize_step` 忽略已移除字段
+11. `SideEffectIO` 移至 `trash/`
+
+**测试结果**: 38/38 通过

@@ -32,6 +32,9 @@ class RunState:
     pending_tool_calls: list[dict] | None = None
     response_content: str | None = None
 
+    async def next_sequence(self) -> int:
+        return await self.context.sequence_counter.next()
+
     @property
     def elapsed(self) -> float:
         return time.time() - self.start_time

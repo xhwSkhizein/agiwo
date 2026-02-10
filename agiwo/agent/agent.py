@@ -26,16 +26,17 @@ from agiwo.agent.schema import (
     normalize_input,
     to_message_content,
 )
+from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
+from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.message_assembler import MessageAssembler
+from agiwo.agent.inner.storage_sink import StorageSink
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.agent.inner.system_prompt_builder import DefaultSystemPromptBuilder
 from agiwo.llm.base import Model
 from agiwo.tool.base import BaseTool
 from agiwo.tool.builtin import DEFAULT_TOOLS
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.schema import Run, RunOutput, RunStatus, StreamEvent, StepRecord
-from agiwo.agent.inner.side_effect_io import SideEffectIO
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.factory import StorageFactory
 from agiwo.observability.base import BaseTraceStorage
@@ -141,17 +142,18 @@ class Agent:
         """
         is_root = context is None
         if is_root:
-            context = self._create_context(session_id, user_id, metadata)
+            context = await self._create_context(session_id, user_id, metadata)
 
         if not is_root:
             return await self._execute_workflow(user_input, context, abort_signal)
 
+        run = self._create_run(user_input, context)
         try:
             task = self._start_execution_task(
                 user_input, context, abort_signal, close_channel_on_complete=True
             )
             text_query = extract_text(user_input)
-            stream = self._build_observable_stream(context, text_query)
+            stream = self._build_stream_pipeline(context, run, text_query)
             drain_task = asyncio.create_task(self._drain_stream(stream))
 
             return await task
@@ -180,14 +182,15 @@ class Agent:
         Yields:
             StreamEvent objects for each execution step and delta.
         """
-        context = self._create_context(session_id, user_id, metadata)
+        context = await self._create_context(session_id, user_id, metadata)
 
         task = self._start_execution_task(
             user_input, context, abort_signal, close_channel_on_complete=True
         )
 
+        run = self._create_run(user_input, context)
         text_query = extract_text(user_input)
-        stream = self._build_observable_stream(context, text_query)
+        stream = self._build_stream_pipeline(context, run, text_query)
 
         try:
             async for event in stream:
@@ -204,18 +207,24 @@ class Agent:
     # Core Execution Workflow
     # ──────────────────────────────────────────────────────────────────────
 
-    def _create_context(
+    async def _create_context(
         self,
         session_id: str | None,
         user_id: str | None,
         metadata: dict | None,
     ) -> ExecutionContext:
+        resolved_session_id = session_id or str(uuid4())
+        all_steps = await self.run_step_storage.get_steps(
+            session_id=resolved_session_id,
+        )
+        initial_seq = max((s.sequence for s in all_steps), default=-1) + 1
         return ExecutionContext(
             run_id=str(uuid4()),
-            session_id=session_id or str(uuid4()),
+            session_id=resolved_session_id,
             channel=StreamChannel(),
             user_id=user_id,
             agent_id=self.id,
+            sequence_counter=SessionSequenceCounter(initial_seq),
             metadata=metadata or {},
         )
 
@@ -249,56 +258,51 @@ class Agent:
         context: ExecutionContext,
         abort_signal: AbortSignal | None,
     ) -> RunOutput:
-        run_io = SideEffectIO(context, self.run_step_storage)
+        emitter = EventEmitter(context)
 
-        # Record user step (with potentially enhanced input)
-        await self._record_user_step(user_input, context, run_io)
-
-        run = Run(
-            id=context.run_id,
-            agent_id=context.agent_id,
+        # Load agent-specific history
+        existing_steps = await self.run_step_storage.get_steps(
             session_id=context.session_id,
-            user_input=user_input,
-            status=RunStatus.RUNNING,
-            parent_run_id=context.parent_run_id,
+            agent_id=self.id,
         )
-        run.metrics.start_at = time.time()
 
-        await run_io.emit_run_started(run)
+        # Record user step and include in history
+        user_step = await self._record_user_step(user_input, context, emitter)
+        existing_steps.append(user_step)
+
+        # Emit RUN_STARTED
+        await emitter.emit_run_started(
+            {"query": user_input, "session_id": context.session_id}
+        )
 
         try:
-            # Execute loop
-            executor = AgentExecutor(
-                model=self.model,
-                tools=self.tools or [],
-                run_io=run_io,
-                options=self.options,
-                hooks=self.hooks,
-            )
-
             # Before-run hook
             before_run_hook_result = None
             if self.hooks.on_before_run:
                 before_run_hook_result = await self.hooks.on_before_run(
                     user_input, context
                 )
-            # Retrieve memories based on query
+
+            # Retrieve memories
             memories = []
             if self.hooks.on_memory_retrieve and user_input:
                 memories = await self.hooks.on_memory_retrieve(user_input, context)
 
-            # Check if this is first run by looking at history
-            existing_steps = await self.run_step_storage.get_steps(
-                session_id=context.session_id,
-                agent_id=self.id,
-            )
-
-            # Assemble messages using MessageAssembler
+            # Assemble messages
             messages = MessageAssembler.assemble(
                 self.system_prompt,
                 existing_steps,
                 memories,
                 before_run_hook_result,
+            )
+
+            # Execute core loop
+            executor = AgentExecutor(
+                model=self.model,
+                tools=self.tools or [],
+                emitter=emitter,
+                options=self.options,
+                hooks=self.hooks,
             )
             result = await executor.execute(
                 messages, context, abort_signal=abort_signal
@@ -312,13 +316,25 @@ class Agent:
             if self.hooks.on_memory_write and result.response:
                 await self.hooks.on_memory_write(user_input, result, context)
 
-            self._finalize_run(run, result)
-            await run_io.emit_run_completed(run, result)
+            # Emit RUN_COMPLETED
+            metrics = result.metrics
+            data: dict = {
+                "response": result.response or "",
+                "metrics": {
+                    "duration": metrics.duration_ms if metrics else 0,
+                    "total_tokens": metrics.total_tokens if metrics else 0,
+                    "input_tokens": metrics.input_tokens if metrics else 0,
+                    "output_tokens": metrics.output_tokens if metrics else 0,
+                    "tool_calls_count": metrics.tool_calls_count if metrics else 0,
+                },
+            }
+            if result.termination_reason:
+                data["termination_reason"] = result.termination_reason
+            await emitter.emit_run_completed(data)
             return result
 
         except Exception as e:
-            self._finalize_run(run, error=e)
-            await run_io.emit_run_failed(run, e)
+            await emitter.emit_run_failed(e)
             raise
 
     # ──────────────────────────────────────────────────────────────────────
@@ -326,38 +342,35 @@ class Agent:
     # ──────────────────────────────────────────────────────────────────────
 
     async def _record_user_step(
-        self, user_input: UserInput, context: ExecutionContext, run_io: SideEffectIO
-    ) -> None:
+        self,
+        user_input: UserInput,
+        context: ExecutionContext,
+        emitter: EventEmitter,
+    ) -> StepRecord:
+        seq = await context.sequence_counter.next()
         content = to_message_content(normalize_input(user_input))
-        seq = await run_io.allocate_sequence()
         user_step = StepRecord.user(
             context,
             sequence=seq,
             content=content,
             agent_id=self.id,
         )
-        await run_io.commit_step(user_step)
+        await emitter.emit_step_completed(user_step)
         if self.hooks.on_step:
             await self.hooks.on_step(user_step)
+        return user_step
 
-    def _finalize_run(
-        self, run: Run, result: RunOutput | None = None, error: Exception | None = None
-    ) -> None:
-        run.metrics.end_at = time.time()
-        run.metrics.duration_ms = (run.metrics.end_at - run.metrics.start_at) * 1000
-
-        if error:
-            run.status = RunStatus.FAILED
-        elif result:
-            run.status = RunStatus.COMPLETED
-            run.response_content = result.response
-            if result.metrics:
-                run.metrics.total_tokens = result.metrics.total_tokens
-                run.metrics.input_tokens = result.metrics.input_tokens
-                run.metrics.output_tokens = result.metrics.output_tokens
-                run.metrics.tool_calls_count = result.metrics.tool_calls_count
-        else:
-            run.status = RunStatus.FAILED
+    def _create_run(self, user_input: UserInput, context: ExecutionContext) -> Run:
+        run = Run(
+            id=context.run_id,
+            agent_id=context.agent_id,
+            session_id=context.session_id,
+            user_input=user_input,
+            status=RunStatus.RUNNING,
+            parent_run_id=context.parent_run_id,
+        )
+        run.metrics.start_at = time.time()
+        return run
 
     # ──────────────────────────────────────────────────────────────────────
     # Helpers: Observability & Stream
@@ -385,11 +398,15 @@ class Agent:
 
         return False
 
-    def _build_observable_stream(
-        self, context: ExecutionContext, user_input: str
+    def _build_stream_pipeline(
+        self, context: ExecutionContext, run: Run, user_input: str
     ) -> AsyncIterator[StreamEvent]:
         stream = context.channel.read()
 
+        # Layer 1: Storage persistence
+        stream = StorageSink(self.run_step_storage, run).wrap_stream(stream)
+
+        # Layer 2: Trace collection (optional)
         if self._should_trace(context) and self.trace_storage:
             collector = TraceCollector(store=self.trace_storage)
             stream = collector.wrap_stream(
@@ -416,15 +433,6 @@ class Agent:
         if task.done() and not task.cancelled():
             if exc := task.exception():
                 raise exc
-
-    def _start_stream_drain_task(
-        self,
-        *,
-        context: ExecutionContext,
-        user_input: str,
-    ) -> asyncio.Task[None]:
-        stream = self._build_observable_stream(context, user_input)
-        return asyncio.create_task(self._drain_stream(stream))
 
     async def _drain_stream(self, stream: AsyncIterator[StreamEvent]) -> None:
         async for event in stream:

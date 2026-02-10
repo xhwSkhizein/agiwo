@@ -515,19 +515,19 @@ class TraceCollector:
         span_stack: dict[str, Span],
         current_span: Span | None,
     ) -> tuple[str | None, Span | None, int]:
-        parent_span_id = step.parent_span_id
+        parent_span_id: str | None = None
+
+        if step.parent_run_id:
+            parent_agent_span = span_stack.get(step.parent_run_id)
+            if parent_agent_span:
+                parent_span_id = parent_agent_span.span_id
+
         if not parent_span_id:
-            if step.parent_run_id:
-                parent_agent_span = span_stack.get(step.parent_run_id)
-                if parent_agent_span:
-                    parent_span_id = parent_agent_span.span_id
+            run_span = span_stack.get(step.run_id)
+            parent_span_id = run_span.span_id if run_span else None
 
-            if not parent_span_id:
-                run_span = span_stack.get(step.run_id)
-                parent_span_id = run_span.span_id if run_span else None
-
-            if not parent_span_id and current_span:
-                parent_span_id = current_span.span_id
+        if not parent_span_id and current_span:
+            parent_span_id = current_span.span_id
 
         parent = None
         if parent_span_id:

@@ -4,14 +4,15 @@ LLM Stream Handler - Handles LLM streaming and Step building.
 
 import asyncio
 from datetime import datetime, timezone
+from typing import Awaitable, Callable
 
 from agiwo.agent.inner.step_builder import StepBuilder
 from agiwo.agent.inner.run_state import RunState
-from agiwo.agent.inner.side_effect_io import SideEffectIO
-
-from agiwo.agent.schema import StepMetrics, LLMCallContext, StepRecord
+from agiwo.agent.schema import StepDelta, StepMetrics, LLMCallContext, StepRecord
 from agiwo.llm.base import Model
 from agiwo.utils.abort_signal import AbortSignal
+
+EmitDeltaFn = Callable[[str, StepDelta], Awaitable[None]]
 
 
 class LLMStreamHandler:
@@ -23,7 +24,7 @@ class LLMStreamHandler:
     async def stream_assistant_step(
         self,
         state: RunState,
-        run_io: SideEffectIO,
+        emit_delta: EmitDeltaFn,
         abort_signal: AbortSignal | None,
         *,
         messages: list[dict] | None = None,
@@ -39,7 +40,7 @@ class LLMStreamHandler:
             request_params=self._get_request_params(),
         )
 
-        builder = await self._create_step_builder(run_io, state)
+        builder = await self._create_step_builder(state, emit_delta)
 
         async for chunk in self.model.arun_stream(messages, tools=tools):
             self._check_abort(abort_signal)
@@ -51,11 +52,11 @@ class LLMStreamHandler:
 
     async def _create_step_builder(
         self,
-        run_io: SideEffectIO,
         state: RunState,
+        emit_delta: EmitDeltaFn,
     ) -> StepBuilder:
         """Create StepBuilder."""
-        seq = await run_io.allocate_sequence()
+        seq = await state.next_sequence()
         step = StepRecord.assistant(
             state.context,
             sequence=seq,
@@ -67,7 +68,7 @@ class LLMStreamHandler:
                 provider=getattr(self.model, "provider", None),
             ),
         )
-        return StepBuilder(step=step, emit_delta=run_io.emit_step_delta)
+        return StepBuilder(step=step, emit_delta=emit_delta)
 
     def _get_request_params(self) -> dict:
         """Get LLM request parameters."""

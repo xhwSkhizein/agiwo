@@ -11,10 +11,10 @@ This module implements the core agent execution loop:
 import asyncio
 import time
 
+from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.llm_handler import LLMStreamHandler
 from agiwo.agent.inner.summarizer import build_termination_messages
 from agiwo.agent.inner.run_state import RunState
-from agiwo.agent.inner.side_effect_io import SideEffectIO
 from agiwo.agent.schema import RunOutput, StepRecord, TerminationReason
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.hooks import AgentHooks
@@ -60,11 +60,11 @@ class AgentExecutor:
         self,
         model: Model,
         tools: list[BaseTool],
-        run_io: SideEffectIO,
+        emitter: EventEmitter,
         options: AgentOptions | None = None,
         hooks: AgentHooks | None = None,
     ):
-        self.run_io = run_io
+        self.emitter = emitter
         self.options = options or AgentOptions()
         self.hooks = hooks or AgentHooks()
 
@@ -146,9 +146,9 @@ class AgentExecutor:
                     state.messages = modified
 
             step, llm_context = await self.llm_handler.stream_assistant_step(
-                state, self.run_io, abort_signal
+                state, self.emitter.emit_step_delta, abort_signal
             )
-            await self.run_io.commit_step(step, llm=llm_context)
+            await self.emitter.emit_step_completed(step, llm=llm_context)
             state.track_step(step)
 
             if self.hooks.on_after_llm_call:
@@ -201,7 +201,7 @@ class AgentExecutor:
                     result,
                 )
 
-            seq = await self.run_io.allocate_sequence()
+            seq = await state.next_sequence()
             step = StepRecord.tool(
                 state.context,
                 sequence=seq,
@@ -210,7 +210,7 @@ class AgentExecutor:
                 content=result.content,
                 content_for_user=result.content_for_user,
             )
-            await self.run_io.commit_step(step)
+            await self.emitter.emit_step_completed(step)
             state.track_step(step)
             if self.hooks.on_step:
                 await self.hooks.on_step(step)
@@ -254,12 +254,12 @@ class AgentExecutor:
 
         step, llm_context = await self.llm_handler.stream_assistant_step(
             state,
-            self.run_io,
+            self.emitter.emit_step_delta,
             abort_signal,
             messages=summary_messages,
             tools=None,
         )
-        await self.run_io.commit_step(step, llm=llm_context)
+        await self.emitter.emit_step_completed(step, llm=llm_context)
         state.track_step(step, append_message=False)
 
         logger.info(
