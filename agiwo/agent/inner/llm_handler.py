@@ -46,6 +46,7 @@ class LLMStreamHandler:
             await builder.process_chunk(chunk)
 
         step = builder.finalize()
+        llm_context.finish_reason = builder.finish_reason
         return step, llm_context
 
     async def _create_step_builder(
@@ -68,15 +69,17 @@ class LLMStreamHandler:
         )
         return StepBuilder(step=step, emit_delta=run_io.emit_step_delta)
 
-    def _get_request_params(self) -> dict | None:
+    def _get_request_params(self) -> dict:
         """Get LLM request parameters."""
+        params: dict = {
+            "model_id": getattr(self.model, "id", None),
+            "model_name": getattr(self.model, "name", None),
+        }
         if hasattr(self.model, "temperature"):
-            return {
-                "temperature": self.model.temperature,
-                "max_tokens": self.model.max_tokens,
-                "top_p": self.model.top_p,
-            }
-        return None
+            params["temperature"] = self.model.temperature
+            params["max_tokens"] = self.model.max_tokens
+            params["top_p"] = self.model.top_p
+        return params
 
     @staticmethod
     def _check_abort(abort_signal: AbortSignal | None) -> None:

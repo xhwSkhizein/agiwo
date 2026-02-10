@@ -348,7 +348,7 @@ class TraceCollector:
                     attributes={
                         "tool_name": step.name,
                         "tool_call_id": step.tool_call_id,
-                        "tool_id": step.name,
+                        "tool_id": step.tool_call_id,
                     },
                     tool_details=tool_details,
                     step_id=step.id,
@@ -550,7 +550,7 @@ class TraceCollector:
 
         details: dict[str, Any] = {
             "tool_name": tool_step.name,
-            "tool_id": tool_step.name,
+            "tool_id": tool_step.tool_call_id,
             "tool_call_id": tool_step.tool_call_id,
             "input_args": input_args,  # Complete arguments, not truncated
             "output": tool_step.content,  # Complete execution result, not truncated
@@ -580,7 +580,7 @@ class TraceCollector:
             "tools": llm.tools,
             "response_content": step.content,
             "response_tool_calls": step.tool_calls,
-            "finish_reason": getattr(step, "finish_reason", None),
+            "finish_reason": llm.finish_reason,
             "status": "completed",
         }
 

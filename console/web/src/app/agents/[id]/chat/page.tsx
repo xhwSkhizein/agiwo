@@ -7,6 +7,10 @@ import { ArrowLeft, Send, User, Bot, Wrench, Loader2 } from "lucide-react";
 import { getAgent, getSessionSteps, chatStreamUrl } from "@/lib/api";
 import type { AgentConfig, StepResponse } from "@/lib/api";
 
+function genId(): string {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "tool";
@@ -48,14 +52,14 @@ export default function AgentChatPage() {
     setIsStreaming(true);
 
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: genId(),
       role: "user",
       content: text,
     };
     setMessages((prev) => [...prev, userMsg]);
 
     const assistantMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: genId(),
       role: "assistant",
       content: "",
       isStreaming: true,
@@ -146,7 +150,7 @@ export default function AgentChatPage() {
               }
               if (step.role === "tool") {
                 const toolMsg: ChatMessage = {
-                  id: crypto.randomUUID(),
+                  id: genId(),
                   role: "tool",
                   content:
                     typeof step.content === "string"
@@ -159,7 +163,7 @@ export default function AgentChatPage() {
 
                 // New assistant message for next LLM response
                 const nextAssistant: ChatMessage = {
-                  id: crypto.randomUUID(),
+                  id: genId(),
                   role: "assistant",
                   content: "",
                   isStreaming: true,

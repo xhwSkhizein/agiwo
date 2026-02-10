@@ -175,6 +175,7 @@ class ToolExecutor:
             result: ToolResult = await tool.execute(
                 args, context=execution_context, abort_signal=abort_signal
             )
+            result.tool_call_id = call_id or ""
             logger.debug(
                 "tool_execution_completed",
                 tool_name=fn_name,

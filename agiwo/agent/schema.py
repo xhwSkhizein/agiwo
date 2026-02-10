@@ -195,6 +195,7 @@ class LLMCallContext:
     messages: list[dict[str, Any]]
     tools: list[dict[str, Any]] | None = None
     request_params: dict[str, Any] | None = None
+    finish_reason: str | None = None
 
 
 @dataclass

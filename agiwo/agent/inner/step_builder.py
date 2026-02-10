@@ -23,6 +23,7 @@ class StepBuilder:
     emit_delta: Callable[[str, StepDelta], Awaitable[None]]
     step_start_time: float = field(default_factory=time.time)
     first_token_received: bool = False
+    finish_reason: str | None = field(default=None, init=False)
     _tool_calls: dict[int, dict] = field(default_factory=dict, init=False, repr=False)
 
     async def process_chunk(self, chunk: StreamChunk) -> None:
@@ -46,6 +47,9 @@ class StepBuilder:
 
         if chunk.tool_calls:
             self._append_tool_calls(delta, chunk.tool_calls)
+
+        if chunk.finish_reason:
+            self.finish_reason = chunk.finish_reason
 
         # Usage (typically only in final chunk)
         if chunk.usage and self.step.metrics:
