@@ -160,9 +160,9 @@ export default function NewAgentPage() {
           />
         </div>
 
-        <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Tools</p>
+        <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Builtin Tools</p>
         <div className="flex flex-wrap gap-2">
-          {availableTools.map((tool) => (
+          {availableTools.filter((t) => t.type === "builtin").map((tool) => (
             <button
               key={tool.name}
               type="button"
@@ -177,8 +177,30 @@ export default function NewAgentPage() {
               {tool.name}
             </button>
           ))}
-          {availableTools.length === 0 && (
-            <span className="text-xs text-zinc-600">No tools available</span>
+          {availableTools.filter((t) => t.type === "builtin").length === 0 && (
+            <span className="text-xs text-zinc-600">No builtin tools available</span>
+          )}
+        </div>
+
+        <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Agent Tools</p>
+        <div className="flex flex-wrap gap-2">
+          {availableTools.filter((t) => t.type === "agent").map((tool) => (
+            <button
+              key={tool.name}
+              type="button"
+              onClick={() => toggleTool(tool.name)}
+              className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                selectedTools.includes(tool.name)
+                  ? "bg-blue-600 text-white border-blue-500"
+                  : "bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-zinc-500"
+              }`}
+              title={tool.description}
+            >
+              {tool.agent_name || tool.name}
+            </button>
+          ))}
+          {availableTools.filter((t) => t.type === "agent").length === 0 && (
+            <span className="text-xs text-zinc-600">No other agents available as tools</span>
           )}
         </div>
 

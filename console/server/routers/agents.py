@@ -2,20 +2,36 @@
 Agents CRUD API router.
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query as QueryParam
 
 from server.dependencies import get_agent_registry
 from server.schemas import AgentConfigCreate, AgentConfigUpdate, AgentConfigResponse
 from server.services.agent_registry import AgentConfigRecord
-from server.tools import get_available_tools
+from server.tools import get_available_builtin_tools
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
 
 @router.get("/tools/available")
-async def list_available_tools() -> list[dict[str, str]]:
-    """Return all built-in tools that can be assigned to agents."""
-    return get_available_tools()
+async def list_available_tools(
+    exclude: str | None = QueryParam(default=None, description="Agent ID to exclude from agent tools"),
+) -> list[dict[str, str]]:
+    """Return all available tools (builtin + agent-as-tool) that can be assigned to agents."""
+    tools = get_available_builtin_tools()
+
+    registry = get_agent_registry()
+    agents = await registry.list_agents()
+    for agent in agents:
+        if exclude and agent.id == exclude:
+            continue
+        tools.append({
+            "name": f"agent:{agent.id}",
+            "description": agent.description or f"Delegate tasks to {agent.name}",
+            "type": "agent",
+            "agent_name": agent.name,
+        })
+
+    return tools
 
 
 def _record_to_response(record: AgentConfigRecord) -> AgentConfigResponse:

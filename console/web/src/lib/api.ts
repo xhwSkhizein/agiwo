@@ -183,10 +183,13 @@ export interface AgentConfigCreate {
 export interface AvailableTool {
   name: string;
   description: string;
+  type: "builtin" | "agent";
+  agent_name?: string;
 }
 
-export function listAvailableTools() {
-  return fetchJSON<AvailableTool[]>("/api/agents/tools/available");
+export function listAvailableTools(exclude?: string) {
+  const q = exclude ? `?exclude=${encodeURIComponent(exclude)}` : "";
+  return fetchJSON<AvailableTool[]>(`/api/agents/tools/available${q}`);
 }
 
 export function listAgents() {

@@ -17,11 +17,13 @@ from agiwo.agent.schema import StreamEvent
 from agiwo.llm.openai import OpenAIModel
 from agiwo.llm.anthropic import AnthropicModel
 from agiwo.llm.deepseek import DeepseekModel
+from agiwo.tool.agent_tool import AgentTool
+from agiwo.tool.base import BaseTool
 
 from server.config import ConsoleConfig
 from server.dependencies import get_agent_registry, get_console_config, get_storage_manager
 from server.schemas import ChatRequest
-from server.services.agent_registry import AgentConfigRecord
+from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.tools import create_tools
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -113,11 +115,45 @@ def _serialize_event(event: StreamEvent) -> str:
     return json.dumps(data, default=str)
 
 
-def _build_agent(config: AgentConfigRecord, console_config: ConsoleConfig) -> Agent:
-    """Build an Agent instance from persisted config."""
+AGENT_TOOL_PREFIX = "agent:"
+
+
+async def _build_agent(
+    config: AgentConfigRecord,
+    console_config: ConsoleConfig,
+    registry: AgentRegistry,
+    _building: set[str] | None = None,
+) -> Agent:
+    """Build an Agent instance from persisted config.
+
+    Supports agent-as-tool references in the tools list via "agent:<agent_id>" syntax.
+    The _building set prevents circular agent references.
+    """
+    if _building is None:
+        _building = set()
+    if config.id in _building:
+        raise ValueError(f"Circular agent reference detected: {config.id}")
+    _building.add(config.id)
+
     model = _build_model(config)
     options = _build_agent_options(config, console_config)
-    tools = create_tools(config.tools or [])
+
+    builtin_names: list[str] = []
+    agent_refs: list[str] = []
+    for t in config.tools or []:
+        if t.startswith(AGENT_TOOL_PREFIX):
+            agent_refs.append(t[len(AGENT_TOOL_PREFIX):])
+        else:
+            builtin_names.append(t)
+
+    tools: list[BaseTool] = create_tools(builtin_names)
+
+    for ref_id in agent_refs:
+        child_config = await registry.get_agent(ref_id)
+        if child_config is None:
+            continue
+        child_agent = await _build_agent(child_config, console_config, registry, _building.copy())
+        tools.append(AgentTool(child_agent))
 
     return Agent(
         id=config.id,
@@ -145,8 +181,7 @@ async def chat(agent_id: str, body: ChatRequest) -> EventSourceResponse:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     console_config = get_console_config()
-
-    agent = _build_agent(agent_config, console_config)
+    agent = await _build_agent(agent_config, console_config, registry)
     session_id = body.session_id or str(uuid4())
 
     async def event_generator():

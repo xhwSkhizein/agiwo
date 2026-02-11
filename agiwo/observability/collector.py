@@ -344,7 +344,7 @@ class TraceCollector:
                     parent_span_id=parent_span_id,
                     kind=SpanKind.TOOL_CALL,
                     name=step.name or "tool",
-                    depth=step.depth if step.depth > 0 else (parent_depth + 1),
+                    depth=parent_depth + 1,
                     attributes={
                         "tool_name": step.name,
                         "tool_call_id": step.tool_call_id,
@@ -392,7 +392,7 @@ class TraceCollector:
                     parent_span_id=parent_span_id,
                     kind=SpanKind.LLM_CALL,
                     name=name,
-                    depth=step.depth if step.depth > 0 else (parent_depth + 1),
+                    depth=parent_depth + 1,
                     attributes={
                         "model_name": step.metrics.model_name if step.metrics else None,
                         "provider": step.metrics.provider if step.metrics else None,
@@ -517,14 +517,14 @@ class TraceCollector:
     ) -> tuple[str | None, Span | None, int]:
         parent_span_id: str | None = None
 
-        if step.parent_run_id:
+        run_span = span_stack.get(step.run_id)
+        if run_span:
+            parent_span_id = run_span.span_id
+
+        if not parent_span_id and step.parent_run_id:
             parent_agent_span = span_stack.get(step.parent_run_id)
             if parent_agent_span:
                 parent_span_id = parent_agent_span.span_id
-
-        if not parent_span_id:
-            run_span = span_stack.get(step.run_id)
-            parent_span_id = run_span.span_id if run_span else None
 
         if not parent_span_id and current_span:
             parent_span_id = current_span.span_id

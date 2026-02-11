@@ -13,10 +13,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def get_available_tools() -> list[dict[str, str]]:
-    """Return list of available tools with name + description."""
+def get_available_builtin_tools() -> list[dict[str, str]]:
+    """Return list of builtin tools with name, description, and type."""
     return [
-        {"name": name, "description": TOOL_DESCRIPTIONS.get(name, "")}
+        {"name": name, "description": TOOL_DESCRIPTIONS.get(name, ""), "type": "builtin"}
         for name in BUILTIN_TOOLS
     ]
 

@@ -91,10 +91,21 @@ export default function AgentsPage() {
                 </p>
               )}
 
-              {agent.system_prompt && (
-                <p className="text-xs text-zinc-600 mt-2 line-clamp-2 italic">
-                  {agent.system_prompt}
-                </p>
+              {agent.tools && agent.tools.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {agent.tools.map((t) => (
+                    <span
+                      key={t}
+                      className={`px-2 py-0.5 rounded text-xs ${
+                        t.startsWith("agent:")
+                          ? "bg-blue-900/40 text-blue-400 border border-blue-800"
+                          : "bg-zinc-800 text-zinc-500"
+                      }`}
+                    >
+                      {t.startsWith("agent:") ? `🤖 ${t.slice(6)}` : t}
+                    </span>
+                  ))}
+                </div>
               )}
 
               <div className="mt-auto pt-4 flex items-center gap-2">
