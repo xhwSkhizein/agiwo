@@ -121,6 +121,7 @@ class TerminationReason(str, Enum):
     ERROR_WITH_CONTEXT = "error_with_context"
     CANCELLED = "cancelled"
     TOOL_LIMIT = "tool_limit"
+    SLEEPING = "sleeping"
 
 
 class EventType(str, Enum):

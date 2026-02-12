@@ -30,6 +30,7 @@ class DeepseekModel(OpenAIModel):
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
         )
+        self.provider = "deepseek"
 
     def _resolve_api_key(self) -> str | None:
         if self.api_key:

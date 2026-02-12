@@ -219,8 +219,93 @@ export async function deleteAgent(agentId: string) {
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 }
 
+// ── Scheduler ─────────────────────────────────────────────────────────
+
+export interface WakeConditionResponse {
+  type: string;
+  time_value: number | null;
+  time_unit: string | null;
+  total_children: number;
+  completed_children: number;
+  wakeup_at: string | null;
+}
+
+export interface AgentStateListItem {
+  id: string;
+  agent_id: string;
+  status: string;
+  task: string;
+  parent_agent_id: string;
+  parent_state_id: string | null;
+  wake_condition: WakeConditionResponse | null;
+  result_summary: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AgentStateDetail {
+  id: string;
+  session_id: string;
+  agent_id: string;
+  parent_agent_id: string;
+  parent_state_id: string | null;
+  status: string;
+  task: string;
+  config_overrides: Record<string, unknown>;
+  wake_condition: WakeConditionResponse | null;
+  result_summary: string | null;
+  signal_propagated: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface SchedulerStats {
+  total: number;
+  pending: number;
+  running: number;
+  sleeping: number;
+  completed: number;
+  failed: number;
+}
+
+export function listAgentStates(params?: { status?: string; limit?: number; offset?: number }) {
+  const q = new URLSearchParams();
+  if (params?.status) q.set("status", params.status);
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.offset) q.set("offset", String(params.offset));
+  return fetchJSON<AgentStateListItem[]>(`/api/scheduler/states?${q}`);
+}
+
+export function getAgentState(stateId: string) {
+  return fetchJSON<AgentStateDetail>(`/api/scheduler/states/${stateId}`);
+}
+
+export function getAgentStateChildren(stateId: string) {
+  return fetchJSON<AgentStateListItem[]>(`/api/scheduler/states/${stateId}/children`);
+}
+
+export function getSchedulerStats() {
+  return fetchJSON<SchedulerStats>(`/api/scheduler/stats`);
+}
+
 // ── Chat ───────────────────────────────────────────────────────────────
 
 export function chatStreamUrl(agentId: string) {
   return `${API_BASE}/api/chat/${agentId}`;
+}
+
+// ── Scheduler Chat ────────────────────────────────────────────────────
+
+export function schedulerChatStreamUrl(agentId: string) {
+  return `${API_BASE}/api/scheduler/chat/${agentId}`;
+}
+
+export function cancelSchedulerChat(agentId: string, stateId: string) {
+  return fetchJSON<{ ok: boolean; state_id: string }>(
+    `/api/scheduler/chat/${agentId}/cancel`,
+    {
+      method: "POST",
+      body: JSON.stringify({ state_id: stateId }),
+    }
+  );
 }

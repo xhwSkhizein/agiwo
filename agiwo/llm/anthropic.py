@@ -48,6 +48,7 @@ class AnthropicModel(Model):
             name=name,
             api_key=api_key,
             base_url=base_url,
+            provider="anthropic",
             temperature=temperature,
             top_p=top_p,
             max_tokens=max_tokens,

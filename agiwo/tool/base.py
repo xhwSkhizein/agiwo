@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 import time
 
+from agiwo.agent.schema import TerminationReason
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.agent.execution_context import ExecutionContext
 
@@ -37,6 +38,7 @@ class ToolResult:
     )
     error: str | None = None
     is_success: bool = True
+    termination_reason: TerminationReason | None = None
 
     @classmethod
     def error(

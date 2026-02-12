@@ -7,15 +7,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from agiwo.scheduler.models import AgentStateStorageConfig, SchedulerConfig
+from agiwo.scheduler.scheduler import Scheduler
+
 from server.config import ConsoleConfig
 from server.dependencies import (
     set_console_config,
     set_storage_manager,
     set_agent_registry,
+    set_scheduler,
 )
 from server.services.storage_manager import StorageManager
 from server.services.agent_registry import AgentRegistry
-from server.routers import sessions, traces, agents, chat
+from server.routers import sessions, traces, agents, chat, scheduler, scheduler_chat
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -29,8 +33,19 @@ async def lifespan(app: FastAPI):
     await agent_registry.initialize()
     set_agent_registry(agent_registry)
 
+    scheduler_config = SchedulerConfig(
+        state_storage=AgentStateStorageConfig(
+            storage_type="sqlite",
+            config={"db_path": config.scheduler_sqlite_db_path},
+        ),
+    )
+    sched = Scheduler(scheduler_config)
+    await sched.start()
+    set_scheduler(sched)
+
     yield
 
+    await sched.stop()
     await agent_registry.close()
     await storage_manager.close()
 
@@ -57,6 +72,8 @@ def create_app() -> FastAPI:
     app.include_router(traces.router)
     app.include_router(agents.router)
     app.include_router(chat.router)
+    app.include_router(scheduler.router)
+    app.include_router(scheduler_chat.router)
 
     @app.get("/api/health")
     async def health():

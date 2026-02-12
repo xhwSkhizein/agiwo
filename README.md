@@ -25,6 +25,7 @@ Agiwo is an async-first Python SDK for building LLM-powered agents with tool cal
 - **Pluggable Storage** -- Run/Step history and Trace data are persisted through abstract interfaces. Ships with InMemory, SQLite, and MongoDB implementations. Configure via `AgentOptions`, no global state.
 - **Built-in Observability** -- `TraceCollector` automatically builds OpenTelemetry-compatible Traces and Spans from the event stream as middleware. Optional OTLP export.
 - **Multi-Provider LLM Support** -- OpenAI, Anthropic, DeepSeek, NVIDIA out of the box. Adding an OpenAI-compatible provider is ~20 lines of code.
+- **Scheduler** -- Orchestration layer for long-running, sleep/wake agent workflows. Spawn child agents, sleep until conditions are met, and resume automatically. Blocking and non-blocking APIs.
 - **Skill System** -- Optional file-based skill discovery. Agents can activate domain-specific skills at runtime via SKILL.md definitions.
 
 ## Quick Start
@@ -162,6 +163,58 @@ orchestrator = Agent(
 result = await orchestrator.run("Research quantum computing trends")
 ```
 
+### Scheduler (Agent Orchestration)
+
+The `Scheduler` sits above `Agent` and manages spawn, sleep, wake, and completion lifecycles. Agents have **zero knowledge** of the Scheduler -- scheduling tools are injected externally.
+
+```python
+import asyncio
+from agiwo import Agent, Scheduler, SchedulerConfig
+from agiwo.llm import DeepseekModel
+
+async def main():
+    model = DeepseekModel(id="deepseek-chat", name="deepseek-chat")
+    agent = Agent(
+        id="orchestrator",
+        description="An orchestrator that can spawn sub-agents",
+        model=model,
+        system_prompt="You can spawn child agents and sleep until they finish.",
+    )
+
+    # Blocking mode (simplest)
+    async with Scheduler() as scheduler:
+        result = await scheduler.run(agent, "Research and summarize AI trends")
+        print(result.response)
+
+asyncio.run(main())
+```
+
+With persistent state storage:
+
+```python
+from agiwo import Scheduler, SchedulerConfig
+from agiwo.scheduler import AgentStateStorageConfig
+
+config = SchedulerConfig(
+    state_storage=AgentStateStorageConfig(
+        storage_type="sqlite",
+        config={"db_path": "scheduler.db"},
+    ),
+    check_interval=5.0,
+    max_concurrent=10,
+)
+async with Scheduler(config) as scheduler:
+    # Non-blocking mode
+    state_id = await scheduler.submit(agent, "Long running task")
+    result = await scheduler.wait_for(state_id, timeout=300)
+```
+
+The Scheduler automatically injects three tools into managed agents:
+
+- **`spawn_agent`** -- Create child agents for sub-tasks
+- **`sleep_and_wait`** -- Sleep until a delay expires or all children complete
+- **`query_spawned_agent`** -- Check the status/result of spawned agents
+
 ### Persistent Storage
 
 ```python
@@ -229,7 +282,7 @@ User Input
     |         v
     |     BaseTool.execute()  -->  ToolResult
     |
-    +---> Loop until: completed / max_steps / timeout / max_tokens
+    +---> Loop until: completed / max_steps / timeout / sleeping
     |
     v
   RunOutput (response + metrics + termination_reason)
@@ -238,7 +291,21 @@ User Input
   [Optional] TraceCollector wraps event stream --> Trace + Spans
 ```
 
-Key principle: **Agent** owns the lifecycle, **AgentExecutor** owns the loop, **Model** and **Tools** are stateless collaborators.
+```
+Scheduler (orchestration layer, sits above Agent)
+    |
+    +---> submit(agent, input) --> AgentState (PENDING)
+    +---> _scheduling_loop:
+    |         |
+    |         +---> find PENDING --> run Agent
+    |         +---> find WAKEABLE --> resume Agent with wake message
+    |         +---> _propagate_signals: child COMPLETED --> parent.completed_children++
+    |
+    +---> Injected tools: spawn_agent / sleep_and_wait / query_spawned_agent
+    +---> Agent returns SLEEPING --> Scheduler persists state, resumes later
+```
+
+Key principle: **Agent** owns the lifecycle, **AgentExecutor** owns the loop, **Model** and **Tools** are stateless collaborators. **Scheduler** orchestrates multi-agent sleep/wake workflows from the outside.
 
 ## Known Limitations
 
@@ -257,12 +324,18 @@ Contributions, ideas, and feedback are welcome.
 ## Project Structure
 
 ```
-agiwo/          # SDK source
-tests/          # Unit tests (mock-based)
-test_real_agent.py  # Integration tests (requires API keys)
-test_real_api.py    # API-level integration tests
-pyproject.toml      # Project metadata and dependencies
-.env.example        # Environment variable template
+agiwo/
+  agent/          # Agent core (Agent, ExecutionContext, Hooks, Options, Schema)
+  llm/            # LLM providers (OpenAI, Anthropic, DeepSeek, NVIDIA)
+  tool/           # Tool system (BaseTool, AgentTool, ToolExecutor, builtins)
+  scheduler/      # Agent orchestration (Scheduler, AgentState, sleep/wake tools)
+  observability/  # Tracing (TraceCollector, OTLP exporter, storage)
+  skill/          # Optional skill system (SKILL.md discovery, hot-reload)
+  config/         # Settings (pydantic-settings)
+  utils/          # Shared utilities (logging, retry, abort signal)
+tests/            # Unit tests (mock-based)
+console/          # Control plane UI (FastAPI + Next.js)
+pyproject.toml    # Project metadata and dependencies
 ```
 
 ## License

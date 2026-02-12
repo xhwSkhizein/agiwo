@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { MessageSquare, Activity, Bot, Zap } from "lucide-react";
-import { listSessions, listTraces, listAgents } from "@/lib/api";
-import type { SessionSummary, TraceListItem, AgentConfig } from "@/lib/api";
+import { MessageSquare, Activity, Bot, Zap, CalendarClock } from "lucide-react";
+import { listSessions, listTraces, listAgents, getSchedulerStats } from "@/lib/api";
+import type { SessionSummary, TraceListItem, AgentConfig, SchedulerStats } from "@/lib/api";
 
 function StatCard({
   label,
@@ -35,6 +35,7 @@ export default function DashboardPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [traces, setTraces] = useState<TraceListItem[]>([]);
   const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [schedulerStats, setSchedulerStats] = useState<SchedulerStats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -42,10 +43,12 @@ export default function DashboardPage() {
       listSessions(5).catch(() => []),
       listTraces({ limit: 5 }).catch(() => []),
       listAgents().catch(() => []),
-    ]).then(([s, t, a]) => {
+      getSchedulerStats().catch(() => null),
+    ]).then(([s, t, a, ss]) => {
       setSessions(s);
       setTraces(t);
       setAgents(a);
+      setSchedulerStats(ss);
       setLoading(false);
     });
   }, []);
@@ -67,10 +70,16 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard label="Sessions" value={sessions.length} icon={MessageSquare} href="/sessions" />
         <StatCard label="Traces" value={traces.length} icon={Activity} href="/traces" />
         <StatCard label="Agents" value={agents.length} icon={Bot} href="/agents" />
+        <StatCard
+          label="Scheduled"
+          value={schedulerStats ? `${schedulerStats.running + schedulerStats.sleeping} active` : "0"}
+          icon={CalendarClock}
+          href="/scheduler"
+        />
         <StatCard
           label="Total Tokens"
           value={traces.reduce((sum, t) => sum + t.total_tokens, 0).toLocaleString()}

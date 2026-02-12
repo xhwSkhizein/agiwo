@@ -161,6 +161,8 @@ class AgentExecutor:
                 return  # Normal completion
 
             await self._execute_tools(state, step.tool_calls, abort_signal)
+            if state.termination_reason is not None:
+                return
 
     # ───────────────────────────────────────────────────────────────────
     # Helpers
@@ -214,6 +216,11 @@ class AgentExecutor:
             state.track_step(step)
             if self.hooks.on_step:
                 await self.hooks.on_step(step)
+
+        for result in results:
+            if result.termination_reason is not None:
+                state.termination_reason = result.termination_reason
+                return
 
     def _check_limits(self, state: RunState) -> TerminationReason | None:
         """Check all execution limits, return termination reason or None."""

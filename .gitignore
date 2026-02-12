@@ -34,6 +34,7 @@ ENV/
 # IDE
 .vscode/
 .idea/
+.windsurf/
 *.swp
 *.swo
 *~

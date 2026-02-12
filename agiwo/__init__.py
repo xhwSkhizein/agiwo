@@ -22,6 +22,7 @@ from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.schema import RunOutput, StreamEvent, TerminationReason
 from agiwo.agent.storage.base import RunStepStorage, InMemoryRunStepStorage
+from agiwo.scheduler.scheduler import Scheduler
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.tool.agent_tool import AgentTool, as_tool
 
@@ -31,10 +32,11 @@ __all__ = [
     "AgentOptions",
     "AgentTool",
     "BaseTool",
+    "InMemoryRunStepStorage",
     "RunOutput",
     "RunStepStorage",
     "RunStepStorageConfig",
-    "InMemoryRunStepStorage",
+    "Scheduler",
     "StreamEvent",
     "TerminationReason",
     "ToolResult",

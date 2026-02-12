@@ -53,6 +53,11 @@ agiwo/
 │   ├── otlp_exporter.py      # OTLP 导出器
 │   ├── store.py              # MongoDB TraceStorage
 │   └── sqlite_store.py       # SQLite TraceStorage
+├── scheduler/                # Agent 调度系统
+│   ├── models.py             # AgentState, WakeCondition, SchedulerConfig 等数据模型
+│   ├── store.py              # AgentStateStorage ABC + InMemory + SQLite 实现
+│   ├── tools.py              # SpawnAgentTool, SleepAndWaitTool, QuerySpawnedAgentTool
+│   └── scheduler.py          # Scheduler：编排层入口 (run / submit / wait_for)
 ├── skill/                    # Skill 系统 (可选)
 │   ├── manager.py            # SkillManager：发现、加载、热重载
 │   ├── registry.py           # SkillRegistry + SkillMetadata
@@ -114,6 +119,17 @@ ABC，子类实现 5 个方法：`get_name`, `get_description`, `get_parameters`
 - 实现：InMemory / SQLite / MongoDB
 - 存储通过配置注入，`StorageFactory` 创建实例，不依赖全局状态
 
+### Scheduler (编排层)
+
+`scheduler/scheduler.py`。Agent 之上的编排层，管理 Agent 的 sleep/wake 生命周期。
+
+- Agent **不感知** Scheduler（依赖方向：`scheduler/ → agent/`，单向）
+- Scheduler 从外部注入调度工具（`spawn_agent`, `sleep_and_wait`, `query_spawned_agent`）
+- 双模式 API：`run()` 阻塞等待 / `submit()` + `wait_for()` 非阻塞
+- `agent_id` 作为 `AgentState` 主键，同一 agent_id 不能并发运行
+- 工具通过 `context.agent_id`（已有字段）获取当前 Agent 身份，无需额外 metadata 注入
+- `ToolResult.termination_reason` 是通用的执行终止机制，Executor 在 `_execute_tools` 后检查
+
 ### Event Pipeline (事件管道)
 
 核心执行通过 `EventEmitter` 发射事件到 `StreamChannel`，所有副作用在事件流下游处理：
@@ -143,7 +159,7 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 ## Key Design Decisions
 
 1. **Agent 是具体类，不是 ABC**。扩展通过 Hooks + Tool 组合，不通过继承
-2. **Agent as Tools 而非多 Agent 编排**。SDK 不实现 orchestrator，嵌套通过 `AgentTool` 完成
+2. **Agent as Tools + Scheduler 编排**。同步嵌套通过 `AgentTool`，异步编排通过 `Scheduler`
 3. **Streaming-first**。`run()` 内部也走流式路径，只是自动 drain 事件流
 4. **StreamChannel 单消费者**。`read()` 只能被 claim 一次，避免竞争
 5. **存储通过配置注入**。`AgentOptions` 持有 `RunStepStorageConfig` + `TraceStorageConfig`，`StorageFactory` 负责创建。不使用全局 config 自动创建
@@ -151,6 +167,8 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 7. **Tool 注册用装饰器**。`@builtin_tool("name")` + `@default_enable` 自动注册，支持 entry_points 扩展
 8. **ToolResult 双内容字段**。`content` 给 LLM 消费，`content_for_user` 给前端展示
 9. **Skill 系统可选启用**。通过 `AgentOptions.enable_skill` 控制，不影响核心流程
+10. **Scheduler 是 Agent 之上的编排层**。Agent 不感知 Scheduler，无循环依赖。调度工具从外部注入
+11. **ToolResult.termination_reason 通用终止机制**。工具可通过返回 `termination_reason` 终止执行循环，不限于 Scheduler 场景
 
 ## Build & Test Commands
 
@@ -171,6 +189,7 @@ uv run mypy agiwo/
 # 单独测试某个模块
 uv run pytest tests/llm/ -v
 uv run pytest tests/agent/ -v
+uv run pytest tests/scheduler/ -v
 ```
 
 ## Development Notes

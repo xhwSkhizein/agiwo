@@ -155,6 +155,56 @@ class AgentConfigResponse(BaseModel):
     updated_at: str
 
 
+# ── Scheduler ──────────────────────────────────────────────────────────
+
+
+class WakeConditionResponse(BaseModel):
+    type: str
+    time_value: float | None = None
+    time_unit: str | None = None
+    total_children: int = 0
+    completed_children: int = 0
+    wakeup_at: str | None = None
+
+
+class AgentStateResponse(BaseModel):
+    id: str
+    session_id: str
+    agent_id: str
+    parent_agent_id: str
+    parent_state_id: str | None = None
+    status: str
+    task: str
+    config_overrides: dict[str, Any] = Field(default_factory=dict)
+    wake_condition: WakeConditionResponse | None = None
+    result_summary: str | None = None
+    signal_propagated: bool = False
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class AgentStateListItem(BaseModel):
+    id: str
+    agent_id: str
+    status: str
+    task: str
+    parent_agent_id: str
+    parent_state_id: str | None = None
+    wake_condition: WakeConditionResponse | None = None
+    result_summary: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class SchedulerStatsResponse(BaseModel):
+    total: int
+    pending: int
+    running: int
+    sleeping: int
+    completed: int
+    failed: int
+
+
 # ── Chat ────────────────────────────────────────────────────────────────
 
 

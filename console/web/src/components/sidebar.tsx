@@ -7,7 +7,7 @@ import {
   MessageSquare,
   Activity,
   Bot,
-  Settings,
+  CalendarClock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { href: "/sessions", label: "Sessions", icon: MessageSquare },
   { href: "/traces", label: "Traces", icon: Activity },
   { href: "/agents", label: "Agents", icon: Bot },
+  { href: "/scheduler", label: "Scheduler", icon: CalendarClock },
 ];
 
 export function Sidebar() {

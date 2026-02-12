@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, MessageSquare, Trash2 } from "lucide-react";
+import { Plus, MessageSquare, Trash2, Network } from "lucide-react";
 import { listAgents, deleteAgent } from "@/lib/api";
 import type { AgentConfig } from "@/lib/api";
 
@@ -115,6 +115,13 @@ export default function AgentsPage() {
                 >
                   <MessageSquare className="w-3.5 h-3.5" />
                   Chat
+                </Link>
+                <Link
+                  href={`/agents/${agent.id}/scheduler-chat`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-purple-900/30 text-purple-400 text-sm hover:bg-purple-900/50 transition-colors"
+                >
+                  <Network className="w-3.5 h-3.5" />
+                  Scheduler
                 </Link>
                 <Link
                   href={`/agents/${agent.id}/edit`}

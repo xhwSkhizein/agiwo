@@ -53,6 +53,7 @@ class OpenAIModel(Model):
             max_tokens=max_tokens,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            provider="openai",
         )
         self.client = self._create_client()
 

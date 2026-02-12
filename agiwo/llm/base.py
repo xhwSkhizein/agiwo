@@ -31,6 +31,7 @@ class Model(ABC):
     presence_penalty: float = 0.0
     api_key: str | None = None
     base_url: str | None = None
+    provider: str = ""
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.temperature <= 2.0):
