@@ -158,3 +158,4 @@ class SchedulerConfig:
     state_storage: AgentStateStorageConfig = field(default_factory=AgentStateStorageConfig)
     check_interval: float = 5.0
     max_concurrent: int = 10
+    graceful_shutdown_wait_seconds: int = 30

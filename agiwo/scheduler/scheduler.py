@@ -21,7 +21,11 @@ from agiwo.scheduler.models import (
     WakeType,
 )
 from agiwo.scheduler.store import AgentStateStorage, create_agent_state_storage
-from agiwo.scheduler.tools import QuerySpawnedAgentTool, SleepAndWaitTool, SpawnAgentTool
+from agiwo.scheduler.tools import (
+    QuerySpawnedAgentTool,
+    SleepAndWaitTool,
+    SpawnAgentTool,
+)
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -90,7 +94,9 @@ class Scheduler:
                 "scheduler_waiting_for_active_tasks",
                 count=len(self._active_tasks),
             )
-            done, pending = await asyncio.wait(self._active_tasks, timeout=30)
+            done, pending = await asyncio.wait(
+                self._active_tasks, timeout=self._config.graceful_shutdown_wait_seconds
+            )
             for t in pending:
                 t.cancel()
 
@@ -145,7 +151,9 @@ class Scheduler:
         Returns:
             RunOutput with the final result.
         """
-        state_id = await self.submit(agent, user_input, session_id=session_id, abort_signal=abort_signal)
+        state_id = await self.submit(
+            agent, user_input, session_id=session_id, abort_signal=abort_signal
+        )
         return await self.wait_for(state_id, timeout=timeout)
 
     # ──────────────────────────────────────────────────────────────────────
@@ -261,7 +269,11 @@ class Scheduler:
         state = await self._store.get_state(state_id)
         if state is None:
             return False
-        if state.status not in (AgentStateStatus.RUNNING, AgentStateStatus.SLEEPING, AgentStateStatus.PENDING):
+        if state.status not in (
+            AgentStateStatus.RUNNING,
+            AgentStateStatus.SLEEPING,
+            AgentStateStatus.PENDING,
+        ):
             return False
 
         signal = self._abort_signals.get(state_id)
@@ -270,7 +282,11 @@ class Scheduler:
 
         children = await self._store.get_states_by_parent(state_id)
         for child in children:
-            if child.status in (AgentStateStatus.RUNNING, AgentStateStatus.SLEEPING, AgentStateStatus.PENDING):
+            if child.status in (
+                AgentStateStatus.RUNNING,
+                AgentStateStatus.SLEEPING,
+                AgentStateStatus.PENDING,
+            ):
                 child_signal = self._abort_signals.get(child.id)
                 if child_signal is not None:
                     child_signal.abort(reason)
@@ -383,7 +399,9 @@ class Scheduler:
         """Run the root agent (submitted by user)."""
         abort_signal = self._abort_signals.get(state.id)
         try:
-            output = await agent.run(user_input, session_id=session_id, abort_signal=abort_signal)
+            output = await agent.run(
+                user_input, session_id=session_id, abort_signal=abort_signal
+            )
             await self._handle_agent_output(state, output)
         except Exception as e:
             logger.exception(
@@ -417,7 +435,9 @@ class Scheduler:
             try:
                 child = self._create_child_agent(state)
                 child_session_id = state.id
-                output = await child.run(state.task, session_id=child_session_id, abort_signal=abort_signal)
+                output = await child.run(
+                    state.task, session_id=child_session_id, abort_signal=abort_signal
+                )
                 await self._handle_agent_output(state, output)
             except Exception as e:
                 logger.exception(
@@ -451,7 +471,9 @@ class Scheduler:
             await self._store.update_status(state.id, AgentStateStatus.RUNNING)
             try:
                 wake_message = self._build_wake_message(state)
-                output = await agent.run(wake_message, session_id=state.session_id, abort_signal=abort_signal)
+                output = await agent.run(
+                    wake_message, session_id=state.session_id, abort_signal=abort_signal
+                )
                 await self._handle_agent_output(state, output)
             except Exception as e:
                 logger.exception(
@@ -468,9 +490,7 @@ class Scheduler:
                 self._abort_signals.pop(state.id, None)
                 self._maybe_cleanup_agent(state.id)
 
-    async def _handle_agent_output(
-        self, state: AgentState, output: RunOutput
-    ) -> None:
+    async def _handle_agent_output(self, state: AgentState, output: RunOutput) -> None:
         """Handle agent output: mark COMPLETED or leave as SLEEPING."""
         if output.termination_reason == TerminationReason.SLEEPING:
             pass
@@ -509,10 +529,7 @@ class Scheduler:
             )
 
         if wc.type == WakeType.DELAY:
-            return (
-                "The scheduled delay has elapsed. "
-                "Please continue your task."
-            )
+            return "The scheduled delay has elapsed. Please continue your task."
 
         if wc.type == WakeType.INTERVAL:
             return (
