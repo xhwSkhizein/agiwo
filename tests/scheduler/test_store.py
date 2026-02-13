@@ -8,6 +8,7 @@ from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     TimeUnit,
+    WaitMode,
     WakeCondition,
     WakeType,
 )
@@ -78,7 +79,10 @@ class TestInMemoryUpdateStatus:
     @pytest.mark.asyncio
     async def test_update_status_with_wake_condition(self, store):
         await store.save_state(_make_state())
-        wc = WakeCondition(type=WakeType.CHILDREN_COMPLETE, total_children=3)
+        wc = WakeCondition(
+            type=WakeType.WAITSET,
+            wait_for=["c1", "c2", "c3"],
+        )
         await store.update_status(
             "agent-1", AgentStateStatus.SLEEPING, wake_condition=wc
         )
@@ -86,7 +90,7 @@ class TestInMemoryUpdateStatus:
         assert state is not None
         assert state.status == AgentStateStatus.SLEEPING
         assert state.wake_condition is not None
-        assert state.wake_condition.total_children == 3
+        assert state.wake_condition.wait_for == ["c1", "c2", "c3"]
 
     @pytest.mark.asyncio
     async def test_update_status_with_result_summary(self, store):
@@ -123,12 +127,12 @@ class TestInMemoryQueries:
         assert len(pending) == 2
 
     @pytest.mark.asyncio
-    async def test_find_wakeable_children_complete(self, store):
+    async def test_find_wakeable_waitset(self, store):
         state = _make_state(id="sleeper", status=AgentStateStatus.SLEEPING)
         state.wake_condition = WakeCondition(
-            type=WakeType.CHILDREN_COMPLETE,
-            total_children=2,
-            completed_children=2,
+            type=WakeType.WAITSET,
+            wait_for=["c1", "c2"],
+            completed_ids=["c1", "c2"],
         )
         await store.save_state(state)
         wakeable = await store.find_wakeable(datetime.now(timezone.utc))
@@ -136,11 +140,11 @@ class TestInMemoryQueries:
         assert wakeable[0].id == "sleeper"
 
     @pytest.mark.asyncio
-    async def test_find_wakeable_delay(self, store):
+    async def test_find_wakeable_timer(self, store):
         past = datetime.now(timezone.utc) - timedelta(seconds=10)
         state = _make_state(id="delayed", status=AgentStateStatus.SLEEPING)
         state.wake_condition = WakeCondition(
-            type=WakeType.DELAY,
+            type=WakeType.TIMER,
             time_value=1,
             time_unit=TimeUnit.MINUTES,
             wakeup_at=past,
@@ -154,7 +158,7 @@ class TestInMemoryQueries:
         future = datetime.now(timezone.utc) + timedelta(hours=1)
         state = _make_state(id="waiting", status=AgentStateStatus.SLEEPING)
         state.wake_condition = WakeCondition(
-            type=WakeType.DELAY,
+            type=WakeType.TIMER,
             time_value=1,
             time_unit=TimeUnit.HOURS,
             wakeup_at=future,
@@ -162,6 +166,17 @@ class TestInMemoryQueries:
         await store.save_state(state)
         wakeable = await store.find_wakeable(datetime.now(timezone.utc))
         assert len(wakeable) == 0
+
+    @pytest.mark.asyncio
+    async def test_find_wakeable_task_submitted(self, store):
+        state = _make_state(id="persistent", status=AgentStateStatus.SLEEPING)
+        state.wake_condition = WakeCondition(
+            type=WakeType.TASK_SUBMITTED,
+            submitted_task="new work",
+        )
+        await store.save_state(state)
+        wakeable = await store.find_wakeable(datetime.now(timezone.utc))
+        assert len(wakeable) == 1
 
 
 class TestInMemorySignalPropagation:
@@ -191,20 +206,32 @@ class TestInMemorySignalPropagation:
         assert unprop[0].id == "done-1"
 
     @pytest.mark.asyncio
-    async def test_increment_completed_children(self, store):
+    async def test_find_unpropagated_includes_failed(self, store):
+        s = _make_state(
+            id="failed-1",
+            status=AgentStateStatus.FAILED,
+            parent_state_id="root",
+        )
+        await store.save_state(s)
+        unprop = await store.find_unpropagated_completed()
+        assert len(unprop) == 1
+
+    @pytest.mark.asyncio
+    async def test_mark_child_completed(self, store):
         parent = _make_state(id="root", status=AgentStateStatus.SLEEPING)
         parent.wake_condition = WakeCondition(
-            type=WakeType.CHILDREN_COMPLETE,
-            total_children=3,
-            completed_children=0,
+            type=WakeType.WAITSET,
+            wait_for=["c1", "c2", "c3"],
+            completed_ids=[],
         )
         await store.save_state(parent)
-        await store.increment_completed_children("root")
-        await store.increment_completed_children("root")
+        await store.mark_child_completed("root", "c1")
+        await store.mark_child_completed("root", "c2")
+        await store.mark_child_completed("root", "c1")  # duplicate should be ignored
         state = await store.get_state("root")
         assert state is not None
         assert state.wake_condition is not None
-        assert state.wake_condition.completed_children == 2
+        assert state.wake_condition.completed_ids == ["c1", "c2"]
 
     @pytest.mark.asyncio
     async def test_mark_propagated(self, store):
@@ -214,3 +241,44 @@ class TestInMemorySignalPropagation:
         state = await store.get_state("child")
         assert state is not None
         assert state.signal_propagated is True
+
+
+class TestInMemoryTimeout:
+    @pytest.mark.asyncio
+    async def test_find_timed_out(self, store):
+        past = datetime.now(timezone.utc) - timedelta(seconds=10)
+        state = _make_state(id="timed-out", status=AgentStateStatus.SLEEPING)
+        state.wake_condition = WakeCondition(
+            type=WakeType.WAITSET,
+            wait_for=["c1"],
+            timeout_at=past,
+        )
+        await store.save_state(state)
+        timed_out = await store.find_timed_out(datetime.now(timezone.utc))
+        assert len(timed_out) == 1
+        assert timed_out[0].id == "timed-out"
+
+    @pytest.mark.asyncio
+    async def test_find_timed_out_excludes_not_yet(self, store):
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        state = _make_state(id="not-yet", status=AgentStateStatus.SLEEPING)
+        state.wake_condition = WakeCondition(
+            type=WakeType.WAITSET,
+            wait_for=["c1"],
+            timeout_at=future,
+        )
+        await store.save_state(state)
+        timed_out = await store.find_timed_out(datetime.now(timezone.utc))
+        assert len(timed_out) == 0
+
+
+class TestInMemoryWakeCount:
+    @pytest.mark.asyncio
+    async def test_increment_wake_count(self, store):
+        state = _make_state(id="agent-1")
+        await store.save_state(state)
+        await store.increment_wake_count("agent-1")
+        await store.increment_wake_count("agent-1")
+        s = await store.get_state("agent-1")
+        assert s is not None
+        assert s.wake_count == 2

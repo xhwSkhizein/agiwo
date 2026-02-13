@@ -54,10 +54,11 @@ agiwo/
 │   ├── store.py              # MongoDB TraceStorage
 │   └── sqlite_store.py       # SQLite TraceStorage
 ├── scheduler/                # Agent 调度系统
-│   ├── models.py             # AgentState, WakeCondition, SchedulerConfig 等数据模型
+│   ├── models.py             # AgentState, WakeCondition, WakeType, WaitMode, TaskLimits, SchedulerConfig
 │   ├── store.py              # AgentStateStorage ABC + InMemory + SQLite 实现
+│   ├── guard.py              # TaskGuard：集中式护栏 (spawn/wake 限制, 超时检测)
 │   ├── tools.py              # SpawnAgentTool, SleepAndWaitTool, QuerySpawnedAgentTool
-│   └── scheduler.py          # Scheduler：编排层入口 (run / submit / wait_for)
+│   └── scheduler.py          # Scheduler：编排层入口 (run / submit / submit_task / shutdown / cancel)
 ├── skill/                    # Skill 系统 (可选)
 │   ├── manager.py            # SkillManager：发现、加载、热重载
 │   ├── registry.py           # SkillRegistry + SkillMetadata
@@ -121,7 +122,7 @@ ABC，子类实现 5 个方法：`get_name`, `get_description`, `get_parameters`
 
 ### Scheduler (编排层)
 
-`scheduler/scheduler.py`。Agent 之上的编排层，管理 Agent 的 sleep/wake 生命周期。
+`scheduler/scheduler.py`。Agent 之上的编排层，管理 Agent 的 spawn/sleep/wake/completion 生命周期。
 
 - Agent **不感知** Scheduler（依赖方向：`scheduler/ → agent/`，单向）
 - Scheduler 从外部注入调度工具（`spawn_agent`, `sleep_and_wait`, `query_spawned_agent`）
@@ -129,6 +130,13 @@ ABC，子类实现 5 个方法：`get_name`, `get_description`, `get_parameters`
 - `agent_id` 作为 `AgentState` 主键，同一 agent_id 不能并发运行
 - 工具通过 `context.agent_id`（已有字段）获取当前 Agent 身份，无需额外 metadata 注入
 - `ToolResult.termination_reason` 是通用的执行终止机制，Executor 在 `_execute_tools` 后检查
+- **Persistent Root Agent**：`submit(persistent=True)` 使 root agent 完成后保持 SLEEPING，通过 `submit_task()` 接收新任务
+- **TaskGuard**：集中式护栏，所有 spawn/wake 限制检查收敛于此（`check_spawn`, `check_wake`, `find_timed_out`）
+- **WakeCondition 类型**：`WAITSET`（等子 Agent）、`TIMER`（一次性延迟）、`PERIODIC`（周期唤醒）、`TASK_SUBMITTED`（新任务提交）
+- **WaitSet 语义**：`wait_for` 指定等待的子 Agent ID 列表，`wait_mode` 控制 ALL/ANY，`completed_ids` 追踪已完成的
+- **超时保护**：`timeout_at` 防止永久 sleep，超时后 Scheduler 唤醒 Agent 并注入已有结果让其生成摘要
+- **递归操作**：`cancel()` 硬取消整棵树，`shutdown()` 优雅关闭（让 Agent 生成最终报告）
+- **自动结果注入**：WAITSET 唤醒时 `_build_wake_message()` 自动收集子 Agent 结果注入 wake message
 
 ### Event Pipeline (事件管道)
 
@@ -169,6 +177,9 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 9. **Skill 系统可选启用**。通过 `AgentOptions.enable_skill` 控制，不影响核心流程
 10. **Scheduler 是 Agent 之上的编排层**。Agent 不感知 Scheduler，无循环依赖。调度工具从外部注入
 11. **ToolResult.termination_reason 通用终止机制**。工具可通过返回 `termination_reason` 终止执行循环，不限于 Scheduler 场景
+12. **TaskGuard 集中式护栏**。所有调度限制（spawn 深度、子 Agent 数量、唤醒次数、超时）收敛到 `TaskGuard`，Tools 和 Scheduler 不自行检查
+13. **Persistent Root Agent**。root agent 可通过 `persistent=True` 保持存活，完成后自动进入 SLEEPING 等待新任务
+14. **Guaranteed Summarize-on-Timeout**。`enable_termination_summary` 默认 True + 超时唤醒机制，确保子 Agent 即使超时也能产出摘要
 
 ## Build & Test Commands
 

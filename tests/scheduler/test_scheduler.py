@@ -10,15 +10,23 @@ from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCount
 from agiwo.agent.schema import RunOutput, TerminationReason
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model, StreamChunk
-from agiwo.scheduler.models import AgentState, AgentStateStatus, SchedulerConfig, WakeCondition, WakeType
+from agiwo.scheduler.models import (
+    AgentState,
+    AgentStateStatus,
+    SchedulerConfig,
+    TaskLimits,
+    WaitMode,
+    WakeCondition,
+    WakeType,
+)
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.scheduler.store import InMemoryAgentStateStorage
 from agiwo.tool.base import BaseTool, ToolResult
 
 
-def _fast_config() -> SchedulerConfig:
+def _fast_config(**kwargs) -> SchedulerConfig:
     """SchedulerConfig with short check_interval for tests."""
-    return SchedulerConfig(check_interval=0.1)
+    return SchedulerConfig(check_interval=0.1, **kwargs)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -130,6 +138,17 @@ class TestSchedulerPrepareAgent:
         assert "test" in scheduler._agents
         await scheduler.stop()
 
+    @pytest.mark.asyncio
+    async def test_prepare_enables_termination_summary(self):
+        from agiwo.agent.options import AgentOptions
+        scheduler = Scheduler()
+        model = MockModel()
+        opts = AgentOptions(enable_termination_summary=False)
+        agent = Agent(id="test", description="test", model=model, tools=[], options=opts)
+        scheduler._prepare_agent(agent)
+        assert agent.options.enable_termination_summary is True
+        await scheduler.stop()
+
 
 class TestSchedulerSubmit:
     @pytest.mark.asyncio
@@ -144,8 +163,21 @@ class TestSchedulerSubmit:
             state = await scheduler._store.get_state("test")
             assert state is not None
             assert state.task == "Hello"
+            assert state.depth == 0
 
-            # Wait for the task to complete
+            await asyncio.sleep(0.5)
+
+    @pytest.mark.asyncio
+    async def test_submit_persistent(self):
+        async with Scheduler(_fast_config()) as scheduler:
+            model = MockModel([_simple_completion("Hello")])
+            agent = Agent(id="persist", description="test", model=model, tools=[])
+
+            state_id = await scheduler.submit(agent, "Hello", persistent=True)
+            state = await scheduler._store.get_state(state_id)
+            assert state is not None
+            assert state.is_persistent is True
+
             await asyncio.sleep(0.5)
 
     @pytest.mark.asyncio
@@ -153,7 +185,6 @@ class TestSchedulerSubmit:
         scheduler = Scheduler(_fast_config())
         await scheduler.start()
 
-        # Manually create an active state
         state = AgentState(
             id="test",
             session_id="sess",
@@ -215,7 +246,6 @@ class TestSchedulerCreateChildAgent:
         assert child.id == "child-1"
         assert child.model is parent.model
         assert "Be helpful" in child.system_prompt
-        # Child should have scheduling tools (inherited from parent)
         child_tool_names = {t.get_name() for t in child.tools}
         assert "spawn_agent" in child_tool_names
         await scheduler.stop()
@@ -251,7 +281,75 @@ class TestSchedulerCreateChildAgent:
 
 
 class TestSchedulerWakeMessage:
-    def test_children_complete_message(self):
+    @pytest.mark.asyncio
+    async def test_waitset_message(self):
+        scheduler = Scheduler()
+        store = scheduler._store
+
+        child_state = AgentState(
+            id="child-1",
+            session_id="sess",
+            agent_id="child-1",
+            parent_agent_id="orch",
+            parent_state_id="orch",
+            status=AgentStateStatus.COMPLETED,
+            task="A",
+            result_summary="Result A",
+        )
+        await store.save_state(child_state)
+
+        state = AgentState(
+            id="orch",
+            session_id="sess",
+            agent_id="orch",
+            parent_agent_id="orch",
+            status=AgentStateStatus.SLEEPING,
+            task="root",
+            wake_condition=WakeCondition(
+                type=WakeType.WAITSET,
+                wait_for=["child-1"],
+                completed_ids=["child-1"],
+            ),
+        )
+        msg = await scheduler._build_wake_message(state)
+        assert "Child agents completed" in msg
+        assert "Result A" in msg
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_timer_message(self):
+        scheduler = Scheduler()
+        state = AgentState(
+            id="orch",
+            session_id="sess",
+            agent_id="orch",
+            parent_agent_id="orch",
+            status=AgentStateStatus.SLEEPING,
+            task="root",
+            wake_condition=WakeCondition(type=WakeType.TIMER),
+        )
+        msg = await scheduler._build_wake_message(state)
+        assert "delay" in msg.lower()
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_periodic_message(self):
+        scheduler = Scheduler()
+        state = AgentState(
+            id="orch",
+            session_id="sess",
+            agent_id="orch",
+            parent_agent_id="orch",
+            status=AgentStateStatus.SLEEPING,
+            task="root",
+            wake_condition=WakeCondition(type=WakeType.PERIODIC),
+        )
+        msg = await scheduler._build_wake_message(state)
+        assert "periodic" in msg.lower()
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_task_submitted_message(self):
         scheduler = Scheduler()
         state = AgentState(
             id="orch",
@@ -261,44 +359,16 @@ class TestSchedulerWakeMessage:
             status=AgentStateStatus.SLEEPING,
             task="root",
             wake_condition=WakeCondition(
-                type=WakeType.CHILDREN_COMPLETE,
-                total_children=3,
-                completed_children=3,
+                type=WakeType.TASK_SUBMITTED,
+                submitted_task="Do X",
             ),
         )
-        msg = scheduler._build_wake_message(state)
-        assert "3 child agents" in msg
-        assert "query_spawned_agent" in msg
+        msg = await scheduler._build_wake_message(state)
+        assert "Do X" in msg
+        await scheduler.stop()
 
-    def test_delay_message(self):
-        scheduler = Scheduler()
-        state = AgentState(
-            id="orch",
-            session_id="sess",
-            agent_id="orch",
-            parent_agent_id="orch",
-            status=AgentStateStatus.SLEEPING,
-            task="root",
-            wake_condition=WakeCondition(type=WakeType.DELAY),
-        )
-        msg = scheduler._build_wake_message(state)
-        assert "delay" in msg.lower()
-
-    def test_interval_message(self):
-        scheduler = Scheduler()
-        state = AgentState(
-            id="orch",
-            session_id="sess",
-            agent_id="orch",
-            parent_agent_id="orch",
-            status=AgentStateStatus.SLEEPING,
-            task="root",
-            wake_condition=WakeCondition(type=WakeType.INTERVAL),
-        )
-        msg = scheduler._build_wake_message(state)
-        assert "interval" in msg.lower()
-
-    def test_no_condition_message(self):
+    @pytest.mark.asyncio
+    async def test_no_condition_message(self):
         scheduler = Scheduler()
         state = AgentState(
             id="orch",
@@ -308,8 +378,9 @@ class TestSchedulerWakeMessage:
             status=AgentStateStatus.SLEEPING,
             task="root",
         )
-        msg = scheduler._build_wake_message(state)
+        msg = await scheduler._build_wake_message(state)
         assert "woken up" in msg.lower()
+        await scheduler.stop()
 
 
 class TestSchedulerSignalPropagation:
@@ -318,7 +389,6 @@ class TestSchedulerSignalPropagation:
         scheduler = Scheduler(_fast_config())
         store = scheduler._store
 
-        # Parent sleeping, waiting for children
         parent = AgentState(
             id="parent",
             session_id="sess",
@@ -328,14 +398,13 @@ class TestSchedulerSignalPropagation:
             status=AgentStateStatus.SLEEPING,
             task="root",
             wake_condition=WakeCondition(
-                type=WakeType.CHILDREN_COMPLETE,
-                total_children=2,
-                completed_children=0,
+                type=WakeType.WAITSET,
+                wait_for=["child-1", "child-2"],
+                completed_ids=[],
             ),
         )
         await store.save_state(parent)
 
-        # Child 1 completed but not propagated
         child1 = AgentState(
             id="child-1",
             session_id="sess",
@@ -350,15 +419,223 @@ class TestSchedulerSignalPropagation:
 
         await scheduler._propagate_signals()
 
-        # Parent should have 1 completed child
         parent_state = await store.get_state("parent")
         assert parent_state is not None
         assert parent_state.wake_condition is not None
-        assert parent_state.wake_condition.completed_children == 1
+        assert "child-1" in parent_state.wake_condition.completed_ids
 
-        # Child 1 should be marked as propagated
         child1_state = await store.get_state("child-1")
         assert child1_state is not None
         assert child1_state.signal_propagated is True
 
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_propagate_failed_child(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        parent = AgentState(
+            id="parent",
+            session_id="sess",
+            agent_id="parent",
+            parent_agent_id="parent",
+            parent_state_id=None,
+            status=AgentStateStatus.SLEEPING,
+            task="root",
+            wake_condition=WakeCondition(
+                type=WakeType.WAITSET,
+                wait_for=["child-1"],
+                completed_ids=[],
+            ),
+        )
+        await store.save_state(parent)
+
+        child1 = AgentState(
+            id="child-1",
+            session_id="sess",
+            agent_id="child-1",
+            parent_agent_id="parent",
+            parent_state_id="parent",
+            status=AgentStateStatus.FAILED,
+            task="A",
+            result_summary="Error",
+        )
+        await store.save_state(child1)
+
+        await scheduler._propagate_signals()
+
+        parent_state = await store.get_state("parent")
+        assert "child-1" in parent_state.wake_condition.completed_ids
+        await scheduler.stop()
+
+
+class TestSchedulerSubmitTask:
+    @pytest.mark.asyncio
+    async def test_submit_task_to_persistent(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        state = AgentState(
+            id="root",
+            session_id="sess",
+            agent_id="root",
+            parent_agent_id="root",
+            parent_state_id=None,
+            status=AgentStateStatus.SLEEPING,
+            task="initial",
+            is_persistent=True,
+            wake_condition=WakeCondition(type=WakeType.TASK_SUBMITTED),
+        )
+        await store.save_state(state)
+
+        await scheduler.submit_task("root", "New work")
+
+        updated = await store.get_state("root")
+        assert updated.wake_condition.type == WakeType.TASK_SUBMITTED
+        assert updated.wake_condition.submitted_task == "New work"
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_submit_task_rejects_non_persistent(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        state = AgentState(
+            id="root",
+            session_id="sess",
+            agent_id="root",
+            parent_agent_id="root",
+            parent_state_id=None,
+            status=AgentStateStatus.SLEEPING,
+            task="initial",
+            is_persistent=False,
+        )
+        await store.save_state(state)
+
+        with pytest.raises(RuntimeError, match="not persistent"):
+            await scheduler.submit_task("root", "New work")
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_submit_task_rejects_non_sleeping(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        state = AgentState(
+            id="root",
+            session_id="sess",
+            agent_id="root",
+            parent_agent_id="root",
+            parent_state_id=None,
+            status=AgentStateStatus.RUNNING,
+            task="initial",
+            is_persistent=True,
+        )
+        await store.save_state(state)
+
+        with pytest.raises(RuntimeError, match="not SLEEPING"):
+            await scheduler.submit_task("root", "New work")
+        await scheduler.stop()
+
+
+class TestSchedulerCancel:
+    @pytest.mark.asyncio
+    async def test_recursive_cancel(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        root = AgentState(
+            id="root",
+            session_id="sess",
+            agent_id="root",
+            parent_agent_id="root",
+            parent_state_id=None,
+            status=AgentStateStatus.RUNNING,
+            task="root",
+        )
+        child = AgentState(
+            id="child-1",
+            session_id="sess",
+            agent_id="child-1",
+            parent_agent_id="root",
+            parent_state_id="root",
+            status=AgentStateStatus.RUNNING,
+            task="child",
+        )
+        grandchild = AgentState(
+            id="gc-1",
+            session_id="sess",
+            agent_id="gc-1",
+            parent_agent_id="child-1",
+            parent_state_id="child-1",
+            status=AgentStateStatus.PENDING,
+            task="grandchild",
+        )
+        await store.save_state(root)
+        await store.save_state(child)
+        await store.save_state(grandchild)
+
+        result = await scheduler.cancel("root", "test cancel")
+        assert result is True
+
+        for sid in ["root", "child-1", "gc-1"]:
+            s = await store.get_state(sid)
+            assert s.status == AgentStateStatus.FAILED
+            assert s.result_summary == "test cancel"
+
+        await scheduler.stop()
+
+
+class TestSchedulerShutdown:
+    @pytest.mark.asyncio
+    async def test_shutdown_sleeping_agent(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        state = AgentState(
+            id="root",
+            session_id="sess",
+            agent_id="root",
+            parent_agent_id="root",
+            parent_state_id=None,
+            status=AgentStateStatus.SLEEPING,
+            task="root",
+            wake_condition=WakeCondition(
+                type=WakeType.WAITSET,
+                wait_for=["child-1"],
+            ),
+        )
+        await store.save_state(state)
+
+        result = await scheduler.shutdown("root")
+        assert result is True
+
+        updated = await store.get_state("root")
+        assert updated.wake_condition.type == WakeType.TASK_SUBMITTED
+        assert "shutdown" in updated.wake_condition.submitted_task.lower()
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_pending_agent(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        state = AgentState(
+            id="root",
+            session_id="sess",
+            agent_id="root",
+            parent_agent_id="root",
+            parent_state_id=None,
+            status=AgentStateStatus.PENDING,
+            task="root",
+        )
+        await store.save_state(state)
+
+        result = await scheduler.shutdown("root")
+        assert result is True
+
+        updated = await store.get_state("root")
+        assert updated.status == AgentStateStatus.FAILED
+        assert "Shutdown" in updated.result_summary
         await scheduler.stop()

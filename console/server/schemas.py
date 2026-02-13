@@ -160,11 +160,14 @@ class AgentConfigResponse(BaseModel):
 
 class WakeConditionResponse(BaseModel):
     type: str
+    wait_for: list[str] = Field(default_factory=list)
+    wait_mode: str = "all"
+    completed_ids: list[str] = Field(default_factory=list)
     time_value: float | None = None
     time_unit: str | None = None
-    total_children: int = 0
-    completed_children: int = 0
     wakeup_at: str | None = None
+    submitted_task: str | None = None
+    timeout_at: str | None = None
 
 
 class AgentStateResponse(BaseModel):
@@ -179,6 +182,9 @@ class AgentStateResponse(BaseModel):
     wake_condition: WakeConditionResponse | None = None
     result_summary: str | None = None
     signal_propagated: bool = False
+    is_persistent: bool = False
+    depth: int = 0
+    wake_count: int = 0
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -192,6 +198,9 @@ class AgentStateListItem(BaseModel):
     parent_state_id: str | None = None
     wake_condition: WakeConditionResponse | None = None
     result_summary: str | None = None
+    is_persistent: bool = False
+    depth: int = 0
+    wake_count: int = 0
     created_at: str | None = None
     updated_at: str | None = None
 

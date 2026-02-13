@@ -62,7 +62,7 @@ class AgentOptions:
     max_output_tokens: int = 8196
 
     # Termination summary
-    enable_termination_summary: bool = False
+    enable_termination_summary: bool = True
     termination_summary_prompt: str = ""
 
     # Skills

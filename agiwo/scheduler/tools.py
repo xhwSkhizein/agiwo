@@ -12,10 +12,12 @@ from uuid import uuid4
 
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.schema import TerminationReason
+from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     TimeUnit,
+    WaitMode,
     WakeCondition,
     WakeType,
     to_seconds,
@@ -28,8 +30,9 @@ from agiwo.utils.abort_signal import AbortSignal
 class SpawnAgentTool(BaseTool):
     """Spawn a child agent to handle a sub-task."""
 
-    def __init__(self, store: AgentStateStorage) -> None:
+    def __init__(self, store: AgentStateStorage, guard: TaskGuard) -> None:
         self._store = store
+        self._guard = guard
         super().__init__()
 
     def get_name(self) -> str:
@@ -82,6 +85,26 @@ class SpawnAgentTool(BaseTool):
                 start_time=start_time,
             )
 
+        parent_state = await self._store.get_state(parent_agent_id)
+        if parent_state is None:
+            return ToolResult.error(
+                tool_name=self.get_name(),
+                error=f"Parent agent state '{parent_agent_id}' not found",
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                start_time=start_time,
+            )
+
+        rejection = await self._guard.check_spawn(parent_state)
+        if rejection is not None:
+            return ToolResult.error(
+                tool_name=self.get_name(),
+                error=f"Spawn rejected: {rejection}",
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                start_time=start_time,
+            )
+
         task = parameters.get("task", "")
         system_prompt = parameters.get("system_prompt")
         child_id = parameters.get("child_id") or f"{parent_agent_id}_{uuid4().hex[:8]}"
@@ -99,6 +122,7 @@ class SpawnAgentTool(BaseTool):
             status=AgentStateStatus.PENDING,
             task=task,
             config_overrides=config_overrides,
+            depth=parent_state.depth + 1,
         )
         await self._store.save_state(state)
 
@@ -118,8 +142,9 @@ class SpawnAgentTool(BaseTool):
 class SleepAndWaitTool(BaseTool):
     """Put the current agent to sleep until a wake condition is met."""
 
-    def __init__(self, store: AgentStateStorage) -> None:
+    def __init__(self, store: AgentStateStorage, guard: TaskGuard) -> None:
         self._store = store
+        self._guard = guard
         super().__init__()
 
     def get_name(self) -> str:
@@ -128,9 +153,9 @@ class SleepAndWaitTool(BaseTool):
     def get_description(self) -> str:
         return (
             "Put the current agent to sleep and wait for a condition. "
-            "Use 'children_complete' to wait for all spawned child agents to finish. "
-            "Use 'delay' to sleep for a fixed duration. "
-            "Use 'interval' to periodically wake up and check."
+            "Use 'waitset' to wait for spawned child agents to finish. "
+            "Use 'timer' to sleep for a fixed duration. "
+            "Use 'periodic' to periodically wake up and check."
         )
 
     def get_parameters(self) -> dict[str, Any]:
@@ -139,12 +164,26 @@ class SleepAndWaitTool(BaseTool):
             "properties": {
                 "wake_type": {
                     "type": "string",
-                    "enum": ["children_complete", "delay", "interval"],
+                    "enum": ["waitset", "timer", "periodic"],
                     "description": "Type of wake condition",
+                },
+                "wait_mode": {
+                    "type": "string",
+                    "enum": ["all", "any"],
+                    "description": "For waitset: wait for ALL or ANY children (default: all)",
+                },
+                "wait_for": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of specific child agent IDs to wait for. If omitted, waits for all children.",
+                },
+                "timeout": {
+                    "type": "number",
+                    "description": "Optional timeout in seconds for the wait",
                 },
                 "delay_seconds": {
                     "type": "number",
-                    "description": "Delay/interval value (used with delay or interval wake_type)",
+                    "description": "Delay/interval value in time_unit (used with timer or periodic)",
                 },
                 "time_unit": {
                     "type": "string",
@@ -175,9 +214,12 @@ class SleepAndWaitTool(BaseTool):
                 start_time=start_time,
             )
 
-        wake_type_str = parameters.get("wake_type", "children_complete")
+        wake_type_str = parameters.get("wake_type", "waitset")
         delay_seconds = parameters.get("delay_seconds")
         time_unit_str = parameters.get("time_unit", "seconds")
+        wait_mode_str = parameters.get("wait_mode", "all")
+        explicit_wait_for: list[str] | None = parameters.get("wait_for")
+        timeout = parameters.get("timeout")
 
         try:
             wake_type = WakeType(wake_type_str)
@@ -193,19 +235,32 @@ class SleepAndWaitTool(BaseTool):
         now = datetime.now(timezone.utc)
         wc = WakeCondition(type=wake_type)
 
-        if wake_type == WakeType.CHILDREN_COMPLETE:
-            children = await self._store.get_states_by_parent(agent_id)
-            wc.total_children = len(children)
-            already_completed = sum(
-                1 for c in children if c.status == AgentStateStatus.COMPLETED
-            )
-            wc.completed_children = already_completed
+        if wake_type == WakeType.WAITSET:
+            if explicit_wait_for is not None:
+                wc.wait_for = explicit_wait_for
+            else:
+                children = await self._store.get_states_by_parent(agent_id)
+                wc.wait_for = [c.id for c in children]
+            try:
+                wc.wait_mode = WaitMode(wait_mode_str)
+            except ValueError:
+                wc.wait_mode = WaitMode.ALL
+            already_done = []
+            for cid in wc.wait_for:
+                child_state = await self._store.get_state(cid)
+                if child_state is not None and child_state.status in (
+                    AgentStateStatus.COMPLETED, AgentStateStatus.FAILED
+                ):
+                    already_done.append(cid)
+            wc.completed_ids = already_done
+            effective_timeout = timeout or self._guard.limits.default_wait_timeout
+            wc.timeout_at = now + timedelta(seconds=effective_timeout)
 
-        elif wake_type in (WakeType.DELAY, WakeType.INTERVAL):
+        elif wake_type in (WakeType.TIMER, WakeType.PERIODIC):
             if delay_seconds is None:
                 return ToolResult.error(
                     tool_name=self.get_name(),
-                    error="delay_seconds is required for delay/interval wake type",
+                    error="delay_seconds is required for timer/periodic wake type",
                     tool_call_id=parameters.get("tool_call_id", ""),
                     input_args=parameters,
                     start_time=start_time,
@@ -218,6 +273,8 @@ class SleepAndWaitTool(BaseTool):
             wc.time_unit = time_unit
             seconds = to_seconds(delay_seconds, time_unit)
             wc.wakeup_at = now + timedelta(seconds=seconds)
+            if wake_type == WakeType.PERIODIC and timeout is not None:
+                wc.timeout_at = now + timedelta(seconds=timeout)
 
         await self._store.update_status(
             agent_id,
@@ -227,8 +284,8 @@ class SleepAndWaitTool(BaseTool):
 
         end_time = time.time()
         summary = f"Agent '{agent_id}' entering sleep. Wake condition: {wake_type_str}"
-        if wake_type == WakeType.CHILDREN_COMPLETE:
-            summary += f" (total_children={wc.total_children}, already_completed={wc.completed_children})"
+        if wake_type == WakeType.WAITSET:
+            summary += f" (waiting_for={len(wc.wait_for)}, mode={wc.wait_mode.value}, already_done={len(wc.completed_ids)})"
         elif delay_seconds is not None:
             summary += f" (delay={delay_seconds} {time_unit_str})"
 

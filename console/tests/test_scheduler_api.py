@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
+    WaitMode,
     WakeCondition,
     WakeType,
     TimeUnit,
@@ -68,9 +69,9 @@ async def _seed_states(client: AsyncClient) -> None:
             status=AgentStateStatus.SLEEPING,
             task="Orchestrate research",
             wake_condition=WakeCondition(
-                type=WakeType.CHILDREN_COMPLETE,
-                total_children=2,
-                completed_children=1,
+                type=WakeType.WAITSET,
+                wait_for=["child-1", "child-2"],
+                completed_ids=["child-1"],
             ),
         ),
         AgentState(
@@ -101,7 +102,7 @@ async def _seed_states(client: AsyncClient) -> None:
             status=AgentStateStatus.SLEEPING,
             task="Wait and retry",
             wake_condition=WakeCondition(
-                type=WakeType.DELAY,
+                type=WakeType.TIMER,
                 time_value=30,
                 time_unit=TimeUnit.MINUTES,
                 wakeup_at=datetime(2025, 12, 31, 23, 59, 59, tzinfo=timezone.utc),
@@ -173,9 +174,9 @@ class TestGetAgentState:
         assert data["status"] == "sleeping"
         assert data["task"] == "Orchestrate research"
         assert data["wake_condition"] is not None
-        assert data["wake_condition"]["type"] == "children_complete"
-        assert data["wake_condition"]["total_children"] == 2
-        assert data["wake_condition"]["completed_children"] == 1
+        assert data["wake_condition"]["type"] == "waitset"
+        assert data["wake_condition"]["wait_for"] == ["child-1", "child-2"]
+        assert data["wake_condition"]["completed_ids"] == ["child-1"]
 
     @pytest.mark.asyncio
     async def test_get_with_delay_wake(self, client):
@@ -184,7 +185,7 @@ class TestGetAgentState:
         assert resp.status_code == 200
         data = resp.json()
         wc = data["wake_condition"]
-        assert wc["type"] == "delay"
+        assert wc["type"] == "timer"
         assert wc["time_value"] == 30
         assert wc["time_unit"] == "minutes"
         assert wc["wakeup_at"] is not None

@@ -24,11 +24,14 @@ def _wake_condition_to_response(wc: Any) -> WakeConditionResponse | None:
         return None
     return WakeConditionResponse(
         type=wc.type.value,
+        wait_for=wc.wait_for,
+        wait_mode=wc.wait_mode.value,
+        completed_ids=wc.completed_ids,
         time_value=wc.time_value,
         time_unit=wc.time_unit.value if wc.time_unit else None,
-        total_children=wc.total_children,
-        completed_children=wc.completed_children,
         wakeup_at=wc.wakeup_at.isoformat() if wc.wakeup_at else None,
+        submitted_task=wc.submitted_task,
+        timeout_at=wc.timeout_at.isoformat() if wc.timeout_at else None,
     )
 
 
@@ -50,6 +53,9 @@ def _state_to_list_item(state: AgentState) -> AgentStateListItem:
         parent_state_id=state.parent_state_id,
         wake_condition=_wake_condition_to_response(state.wake_condition),
         result_summary=state.result_summary[:200] if state.result_summary else None,
+        is_persistent=state.is_persistent,
+        depth=state.depth,
+        wake_count=state.wake_count,
         created_at=_fmt_dt(state.created_at),
         updated_at=_fmt_dt(state.updated_at),
     )
@@ -68,6 +74,9 @@ def _state_to_response(state: AgentState) -> AgentStateResponse:
         wake_condition=_wake_condition_to_response(state.wake_condition),
         result_summary=state.result_summary,
         signal_propagated=state.signal_propagated,
+        is_persistent=state.is_persistent,
+        depth=state.depth,
+        wake_count=state.wake_count,
         created_at=_fmt_dt(state.created_at),
         updated_at=_fmt_dt(state.updated_at),
     )

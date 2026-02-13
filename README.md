@@ -189,11 +189,11 @@ async def main():
 asyncio.run(main())
 ```
 
-With persistent state storage:
+With persistent state storage and task limits:
 
 ```python
 from agiwo import Scheduler, SchedulerConfig
-from agiwo.scheduler import AgentStateStorageConfig
+from agiwo.scheduler import AgentStateStorageConfig, TaskLimits
 
 config = SchedulerConfig(
     state_storage=AgentStateStorageConfig(
@@ -202,6 +202,12 @@ config = SchedulerConfig(
     ),
     check_interval=5.0,
     max_concurrent=10,
+    task_limits=TaskLimits(
+        max_depth=5,
+        max_children_per_agent=10,
+        default_wait_timeout=600,
+        max_wake_count=20,
+    ),
 )
 async with Scheduler(config) as scheduler:
     # Non-blocking mode
@@ -209,10 +215,26 @@ async with Scheduler(config) as scheduler:
     result = await scheduler.wait_for(state_id, timeout=300)
 ```
 
+Persistent root agents stay alive after completing a task and accept new tasks:
+
+```python
+async with Scheduler(config) as scheduler:
+    # Root agent persists after task completion
+    state_id = await scheduler.submit(agent, "Initial task", persistent=True)
+    result = await scheduler.wait_for(state_id)
+
+    # Submit a new task to the same persistent agent
+    await scheduler.submit_task(state_id, "Follow-up task")
+    result2 = await scheduler.wait_for(state_id)
+
+    # Graceful shutdown — agent produces a final summary
+    await scheduler.shutdown(state_id)
+```
+
 The Scheduler automatically injects three tools into managed agents:
 
-- **`spawn_agent`** -- Create child agents for sub-tasks
-- **`sleep_and_wait`** -- Sleep until a delay expires or all children complete
+- **`spawn_agent`** -- Create child agents for sub-tasks (with depth and children limits)
+- **`sleep_and_wait`** -- Sleep until a waitset of children completes, a timer fires, or periodically
 - **`query_spawned_agent`** -- Check the status/result of spawned agents
 
 ### Persistent Storage
@@ -294,18 +316,21 @@ User Input
 ```
 Scheduler (orchestration layer, sits above Agent)
     |
-    +---> submit(agent, input) --> AgentState (PENDING)
+    +---> submit(agent, input, persistent?) --> AgentState (RUNNING)
+    +---> submit_task(state_id, task) --> wake persistent agent
     +---> _scheduling_loop:
     |         |
-    |         +---> find PENDING --> run Agent
-    |         +---> find WAKEABLE --> resume Agent with wake message
-    |         +---> _propagate_signals: child COMPLETED --> parent.completed_children++
+    |         +---> _propagate_signals: child COMPLETED/FAILED --> parent.completed_ids
+    |         +---> _enforce_timeouts: timed-out SLEEPING --> wake for summary
+    |         +---> _start_pending: PENDING --> run Agent
+    |         +---> _wake_sleeping: satisfied WakeCondition --> resume with results
     |
+    +---> TaskGuard: centralized limit checks (depth, children, wake count, timeout)
     +---> Injected tools: spawn_agent / sleep_and_wait / query_spawned_agent
-    +---> Agent returns SLEEPING --> Scheduler persists state, resumes later
+    +---> cancel(state_id) / shutdown(state_id): recursive tree operations
 ```
 
-Key principle: **Agent** owns the lifecycle, **AgentExecutor** owns the loop, **Model** and **Tools** are stateless collaborators. **Scheduler** orchestrates multi-agent sleep/wake workflows from the outside.
+Key principle: **Agent** owns the lifecycle, **AgentExecutor** owns the loop, **Model** and **Tools** are stateless collaborators. **Scheduler** orchestrates multi-agent sleep/wake workflows from the outside. **TaskGuard** centralizes all limit enforcement.
 
 ## Known Limitations
 

@@ -1,8 +1,11 @@
+from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     AgentStateStorageConfig,
     SchedulerConfig,
+    TaskLimits,
+    WaitMode,
     WakeCondition,
     WakeType,
     TimeUnit,
@@ -17,7 +20,10 @@ __all__ = [
     "AgentStateStorageConfig",
     "Scheduler",
     "SchedulerConfig",
+    "TaskGuard",
+    "TaskLimits",
     "TimeUnit",
+    "WaitMode",
     "WakeCondition",
     "WakeType",
 ]

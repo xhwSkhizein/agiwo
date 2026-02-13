@@ -14,6 +14,7 @@ from agiwo.scheduler.models import (
     AgentStateStatus,
     AgentStateStorageConfig,
     TimeUnit,
+    WaitMode,
     WakeCondition,
     WakeType,
 )
@@ -61,17 +62,27 @@ class AgentStateStorage(ABC):
 
     @abstractmethod
     async def find_unpropagated_completed(self) -> list[AgentState]:
-        """Find COMPLETED states with signal_propagated=False and parent_state_id is not None."""
+        """Find COMPLETED/FAILED states with signal_propagated=False and parent_state_id is not None."""
         ...
 
     @abstractmethod
-    async def increment_completed_children(self, state_id: str) -> None:
-        """Atomically increment completed_children on the wake_condition."""
+    async def mark_child_completed(self, parent_state_id: str, child_id: str) -> None:
+        """Append child_id to parent's wake_condition.completed_ids."""
         ...
 
     @abstractmethod
     async def mark_propagated(self, state_id: str) -> None:
         """Mark a state's signal as propagated."""
+        ...
+
+    @abstractmethod
+    async def find_timed_out(self, now: datetime) -> list[AgentState]:
+        """Find SLEEPING states whose wake_condition has timed out."""
+        ...
+
+    @abstractmethod
+    async def increment_wake_count(self, state_id: str) -> None:
+        """Atomically increment wake_count for the given state."""
         ...
 
     @abstractmethod
@@ -153,17 +164,18 @@ class InMemoryAgentStateStorage(AgentStateStorage):
         return [
             s
             for s in self._states.values()
-            if s.status == AgentStateStatus.COMPLETED
+            if s.status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED)
             and not s.signal_propagated
             and s.parent_state_id is not None
         ]
 
-    async def increment_completed_children(self, state_id: str) -> None:
+    async def mark_child_completed(self, parent_state_id: str, child_id: str) -> None:
         async with self._lock:
-            state = self._states.get(state_id)
+            state = self._states.get(parent_state_id)
             if state is None or state.wake_condition is None:
                 return
-            state.wake_condition.completed_children += 1
+            if child_id not in state.wake_condition.completed_ids:
+                state.wake_condition.completed_ids.append(child_id)
             state.updated_at = datetime.now(timezone.utc)
 
     async def mark_propagated(self, state_id: str) -> None:
@@ -172,6 +184,23 @@ class InMemoryAgentStateStorage(AgentStateStorage):
             if state is None:
                 return
             state.signal_propagated = True
+            state.updated_at = datetime.now(timezone.utc)
+
+    async def find_timed_out(self, now: datetime) -> list[AgentState]:
+        results: list[AgentState] = []
+        for s in self._states.values():
+            if s.status != AgentStateStatus.SLEEPING:
+                continue
+            if s.wake_condition is not None and s.wake_condition.is_timed_out(now):
+                results.append(s)
+        return results
+
+    async def increment_wake_count(self, state_id: str) -> None:
+        async with self._lock:
+            state = self._states.get(state_id)
+            if state is None:
+                return
+            state.wake_count += 1
             state.updated_at = datetime.now(timezone.utc)
 
     async def list_all(
@@ -227,11 +256,17 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 wake_type TEXT,
                 wake_time_value REAL,
                 wake_time_unit TEXT,
-                wake_total_children INTEGER DEFAULT 0,
-                wake_completed_children INTEGER DEFAULT 0,
+                wake_wait_for TEXT DEFAULT '[]',
+                wake_wait_mode TEXT DEFAULT 'all',
+                wake_completed_ids TEXT DEFAULT '[]',
+                wake_submitted_task TEXT,
                 wakeup_at TEXT,
+                wake_timeout_at TEXT,
                 result_summary TEXT,
                 signal_propagated INTEGER DEFAULT 0,
+                is_persistent INTEGER DEFAULT 0,
+                depth INTEGER DEFAULT 0,
+                wake_count INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -250,18 +285,27 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         wake_condition = None
         if row["wake_type"]:
             wakeup_at = None
-            if row["wakeup_at"]:
+            if row.get("wakeup_at"):
                 wakeup_at = datetime.fromisoformat(row["wakeup_at"])
             time_unit = None
-            if row["wake_time_unit"]:
+            if row.get("wake_time_unit"):
                 time_unit = TimeUnit(row["wake_time_unit"])
+            timeout_at = None
+            if row.get("wake_timeout_at"):
+                timeout_at = datetime.fromisoformat(row["wake_timeout_at"])
+            wait_for = json.loads(row.get("wake_wait_for") or "[]")
+            wait_mode = WaitMode(row.get("wake_wait_mode") or "all")
+            completed_ids = json.loads(row.get("wake_completed_ids") or "[]")
             wake_condition = WakeCondition(
                 type=WakeType(row["wake_type"]),
-                time_value=row["wake_time_value"],
+                wait_for=wait_for,
+                wait_mode=wait_mode,
+                completed_ids=completed_ids,
+                time_value=row.get("wake_time_value"),
                 time_unit=time_unit,
-                total_children=row["wake_total_children"] or 0,
-                completed_children=row["wake_completed_children"] or 0,
                 wakeup_at=wakeup_at,
+                submitted_task=row.get("wake_submitted_task"),
+                timeout_at=timeout_at,
             )
 
         config_overrides = {}
@@ -278,24 +322,52 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             task=row["task"],
             config_overrides=config_overrides,
             wake_condition=wake_condition,
-            result_summary=row["result_summary"],
-            signal_propagated=bool(row["signal_propagated"]),
+            result_summary=row.get("result_summary"),
+            signal_propagated=bool(row.get("signal_propagated", 0)),
+            is_persistent=bool(row.get("is_persistent", 0)),
+            depth=row.get("depth", 0) or 0,
+            wake_count=row.get("wake_count", 0) or 0,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
+    def _wake_condition_columns(self) -> list[str]:
+        return [
+            "wake_type", "wake_time_value", "wake_time_unit",
+            "wake_wait_for", "wake_wait_mode", "wake_completed_ids",
+            "wake_submitted_task", "wakeup_at", "wake_timeout_at",
+        ]
+
+    def _wake_condition_values(self, wc: WakeCondition | None) -> list:
+        if wc is None:
+            return [None, None, None, "[]", "all", "[]", None, None, None]
+        return [
+            wc.type.value,
+            wc.time_value,
+            wc.time_unit.value if wc.time_unit else None,
+            json.dumps(wc.wait_for),
+            wc.wait_mode.value,
+            json.dumps(wc.completed_ids),
+            wc.submitted_task,
+            wc.wakeup_at.isoformat() if wc.wakeup_at else None,
+            wc.timeout_at.isoformat() if wc.timeout_at else None,
+        ]
+
     async def save_state(self, state: AgentState) -> None:
         conn = await self._get_conn()
-        wc = state.wake_condition
+        wc_vals = self._wake_condition_values(state.wake_condition)
         await conn.execute(
             """
             INSERT OR REPLACE INTO agent_states
                 (id, session_id, agent_id, parent_agent_id, parent_state_id,
                  status, task, config_overrides,
-                 wake_type, wake_time_value, wake_time_unit, wake_total_children,
-                 wake_completed_children, wakeup_at,
-                 result_summary, signal_propagated, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 wake_type, wake_time_value, wake_time_unit,
+                 wake_wait_for, wake_wait_mode, wake_completed_ids,
+                 wake_submitted_task, wakeup_at, wake_timeout_at,
+                 result_summary, signal_propagated,
+                 is_persistent, depth, wake_count,
+                 created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 state.id,
@@ -306,14 +378,12 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 state.status.value,
                 state.task,
                 json.dumps(state.config_overrides),
-                wc.type.value if wc else None,
-                wc.time_value if wc else None,
-                wc.time_unit.value if wc and wc.time_unit else None,
-                wc.total_children if wc else 0,
-                wc.completed_children if wc else 0,
-                wc.wakeup_at.isoformat() if wc and wc.wakeup_at else None,
+                *wc_vals,
                 state.result_summary,
                 1 if state.signal_propagated else 0,
+                1 if state.is_persistent else 0,
+                state.depth,
+                state.wake_count,
                 state.created_at.isoformat(),
                 state.updated_at.isoformat(),
             ),
@@ -345,33 +415,11 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         params: list = [status.value, now]
 
         if wake_condition is not ...:
-            if wake_condition is not None:
-                sets.extend([
-                    "wake_type = ?",
-                    "wake_time_value = ?",
-                    "wake_time_unit = ?",
-                    "wake_total_children = ?",
-                    "wake_completed_children = ?",
-                    "wakeup_at = ?",
-                ])
-                params.extend([
-                    wake_condition.type.value,
-                    wake_condition.time_value,
-                    wake_condition.time_unit.value if wake_condition.time_unit else None,
-                    wake_condition.total_children,
-                    wake_condition.completed_children,
-                    wake_condition.wakeup_at.isoformat() if wake_condition.wakeup_at else None,
-                ])
-            else:
-                sets.extend([
-                    "wake_type = ?",
-                    "wake_time_value = ?",
-                    "wake_time_unit = ?",
-                    "wake_total_children = ?",
-                    "wake_completed_children = ?",
-                    "wakeup_at = ?",
-                ])
-                params.extend([None, None, None, 0, 0, None])
+            wc_cols = self._wake_condition_columns()
+            wc_vals = self._wake_condition_values(wake_condition)
+            for col, val in zip(wc_cols, wc_vals):
+                sets.append(f"{col} = ?")
+                params.append(val)
 
         if result_summary is not ...:
             sets.append("result_summary = ?")
@@ -402,51 +450,48 @@ class SQLiteAgentStateStorage(AgentStateStorage):
 
     async def find_wakeable(self, now: datetime) -> list[AgentState]:
         conn = await self._get_conn()
-        now_iso = now.isoformat()
         cursor = await conn.execute(
-            """
-            SELECT * FROM agent_states
-            WHERE status = ?
-              AND (
-                (wake_type = 'children_complete'
-                 AND wake_total_children > 0
-                 AND wake_completed_children >= wake_total_children)
-                OR
-                (wake_type IN ('delay', 'interval')
-                 AND wakeup_at IS NOT NULL
-                 AND wakeup_at <= ?)
-              )
-            """,
-            (AgentStateStatus.SLEEPING.value, now_iso),
+            "SELECT * FROM agent_states WHERE status = ?",
+            (AgentStateStatus.SLEEPING.value,),
         )
         rows = await cursor.fetchall()
-        return [self._row_to_state(dict(r)) for r in rows]
+        results: list[AgentState] = []
+        for r in rows:
+            state = self._row_to_state(dict(r))
+            if state.wake_condition is not None and state.wake_condition.is_satisfied(now):
+                results.append(state)
+        return results
 
     async def find_unpropagated_completed(self) -> list[AgentState]:
         conn = await self._get_conn()
         cursor = await conn.execute(
             """
             SELECT * FROM agent_states
-            WHERE status = ?
+            WHERE status IN (?, ?)
               AND signal_propagated = 0
               AND parent_state_id IS NOT NULL
             """,
-            (AgentStateStatus.COMPLETED.value,),
+            (AgentStateStatus.COMPLETED.value, AgentStateStatus.FAILED.value),
         )
         rows = await cursor.fetchall()
         return [self._row_to_state(dict(r)) for r in rows]
 
-    async def increment_completed_children(self, state_id: str) -> None:
+    async def mark_child_completed(self, parent_state_id: str, child_id: str) -> None:
         conn = await self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
+        cursor = await conn.execute(
+            "SELECT wake_completed_ids FROM agent_states WHERE id = ?",
+            (parent_state_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return
+        completed_ids: list[str] = json.loads(row["wake_completed_ids"] or "[]")
+        if child_id not in completed_ids:
+            completed_ids.append(child_id)
         await conn.execute(
-            """
-            UPDATE agent_states
-            SET wake_completed_children = wake_completed_children + 1,
-                updated_at = ?
-            WHERE id = ?
-            """,
-            (now, state_id),
+            "UPDATE agent_states SET wake_completed_ids = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(completed_ids), now, parent_state_id),
         )
         await conn.commit()
 
@@ -455,6 +500,30 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         now = datetime.now(timezone.utc).isoformat()
         await conn.execute(
             "UPDATE agent_states SET signal_propagated = 1, updated_at = ? WHERE id = ?",
+            (now, state_id),
+        )
+        await conn.commit()
+
+    async def find_timed_out(self, now: datetime) -> list[AgentState]:
+        conn = await self._get_conn()
+        now_iso = now.isoformat()
+        cursor = await conn.execute(
+            """
+            SELECT * FROM agent_states
+            WHERE status = ?
+              AND wake_timeout_at IS NOT NULL
+              AND wake_timeout_at <= ?
+            """,
+            (AgentStateStatus.SLEEPING.value, now_iso),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_state(dict(r)) for r in rows]
+
+    async def increment_wake_count(self, state_id: str) -> None:
+        conn = await self._get_conn()
+        now = datetime.now(timezone.utc).isoformat()
+        await conn.execute(
+            "UPDATE agent_states SET wake_count = wake_count + 1, updated_at = ? WHERE id = ?",
             (now, state_id),
         )
         await conn.commit()
