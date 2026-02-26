@@ -163,7 +163,7 @@ class TestAgentIntegration:
         from agiwo import Agent, AgentOptions
 
         agent = Agent(
-            id="test-agent",
+            name="test-agent",
             description="Test",
             model=None,  # type: ignore
             options=AgentOptions(),
@@ -178,7 +178,7 @@ class TestAgentIntegration:
         from agiwo import Agent, AgentOptions
 
         agent = Agent(
-            id="test-agent",
+            name="test-agent",
             description="Test",
             model=None,  # type: ignore
             options=AgentOptions(
@@ -194,7 +194,7 @@ class TestAgentIntegration:
         from agiwo import Agent, AgentOptions
 
         agent = Agent(
-            id="test-agent",
+            name="test-agent",
             description="Test",
             model=None,  # type: ignore
             options=AgentOptions(),

@@ -55,6 +55,7 @@ class AgentOptions:
         trace_storage: Configuration for trace/observability persistence.
             Defaults to None (tracing disabled). Enable for observability features.
     """
+    config_root: str = ".agiwo/"
 
     # Execution limits
     max_steps: int = 10
@@ -67,7 +68,7 @@ class AgentOptions:
 
     # Skills
     enable_skill: bool = False
-    skills_dir: str | None = "~/.agent/skills"
+    skills_dir: str | None = ".agiwo/skills"
 
     # Memory
     relevant_memory_max_token: int = 2048  # max tokens for retrieved memories

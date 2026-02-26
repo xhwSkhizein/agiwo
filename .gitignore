@@ -58,7 +58,7 @@ htmlcov/
 *.db
 *.db-shm
 *.db-wal
-~/.agiwo/
+.agiwo/
 vector_db/
 
 # Trash

@@ -38,7 +38,7 @@ class AgentTool(BaseTool):
         max_depth: int = DEFAULT_MAX_DEPTH,
     ):
         self._agent = agent
-        self.name = name or agent.id
+        self.name = name or agent.name
         self.description = description or agent.description
         self.max_depth = max_depth
 
@@ -103,7 +103,7 @@ class AgentTool(BaseTool):
         if current_depth > self.max_depth:
             error_msg = (
                 f"Maximum nesting depth ({self.max_depth}) exceeded. "
-                f"Current call chain: {' -> '.join(call_stack)} -> {self._agent.id}"
+                f"Current call chain: {' -> '.join(call_stack)} -> {self._agent.name}"
             )
             return ToolResult.error(
                 tool_name=self.get_name(),
@@ -114,9 +114,9 @@ class AgentTool(BaseTool):
             )
 
         # Safety check 2: Circular reference
-        if self._agent.id in call_stack:
+        if self._agent.name in call_stack:
             error_msg = (
-                f"Circular reference detected: {self._agent.id} is in call stack. "
+                f"Circular reference detected: {self._agent.name} is in call stack. "
                 f"Current call chain: {' -> '.join(call_stack)}"
             )
             return ToolResult.error(
@@ -128,7 +128,7 @@ class AgentTool(BaseTool):
             )
 
         # Add current agent to call stack
-        call_stack.append(self._agent.id)
+        call_stack.append(self._agent.name)
 
         # Build input and child context
         input_query = task
@@ -156,7 +156,7 @@ class AgentTool(BaseTool):
             response_text = f"Max depth exceeded: {error}"
         except Exception as e:
             error = str(e)
-            response_text = f"Error executing {self._agent.id}: {error}"
+            response_text = f"Error executing {self._agent.name}: {error}"
 
         end_time = time.time()
 
@@ -192,7 +192,7 @@ def as_tool(
     Args:
         agent: Agent instance
         description: Tool description for LLM reference
-        name: Tool name, defaults to call_{agent.id}
+        name: Tool name, defaults to agent.name
         max_depth: Maximum nesting depth allowed (default: 5)
 
     Returns:

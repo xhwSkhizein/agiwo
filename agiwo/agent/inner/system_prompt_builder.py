@@ -35,8 +35,9 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
     3. Skills (if enabled)
     """
 
-    def __init__(self, base_prompt: str, agent_id: str, options: "AgentOptions"):
+    def __init__(self, base_prompt: str, agent_name: str, agent_id: str, options: "AgentOptions"):
         self.base_prompt = base_prompt
+        self.agent_name = agent_name
         self.agent_id = agent_id
         self.options = options
         self._skill_manager: SkillManager | None = None
@@ -50,6 +51,7 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
             self._build_base_section(),
             self._build_skills_section(),
             self._build_environment_section(),
+            self._build_soul_section(),
         ]
         return "\n\n".join(filter(None, sections))
 
@@ -62,7 +64,11 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
         if self.options.skills_dir:
             skills_dirs = [Path(self.options.skills_dir).expanduser().resolve()]
         else:
-            default_dir = Path(f"~/.agent/skills").expanduser().resolve()
+            default_dir = (
+                Path(f"{os.path.expanduser(self.options.config_root)}/skills")
+                .expanduser()
+                .resolve()
+            )
             default_dir.mkdir(parents=True, exist_ok=True)
             skills_dirs = [default_dir]
 
@@ -76,27 +82,28 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
 
     def _build_environment_section(self) -> str:
         """Build workspace and environment section."""
-        work_dir = f"{os.path.expanduser('~')}/.agiwo/{self.agent_id}"
-        work_dir = os.path.abspath(work_dir)
-        os.makedirs(work_dir + "/NOTES", exist_ok=True)
-        os.makedirs(work_dir + "/MEMORY", exist_ok=True)
-        os.makedirs(work_dir + "/USER", exist_ok=True)
-        os.makedirs(work_dir + "/WORK", exist_ok=True)
+        workspace = f"{os.path.expanduser(self.options.config_root)}/{self.agent_name}"
+        workspace = os.path.abspath(workspace)
+        instance_work_dir = f"{workspace}/WORK/{self.agent_id}"
+        os.makedirs(workspace + "/NOTES", exist_ok=True)
+        os.makedirs(workspace + "/MEMORY", exist_ok=True)
+        os.makedirs(instance_work_dir, exist_ok=True)
         current_date = datetime.now().strftime("%Y%m%d")
         current_time = datetime.now().strftime("%H:%M")
         timezone = datetime.now().astimezone().tzinfo
         return f"""## Workspace & Environment
 
-Your workspace is: **{work_dir}**
-Treat this directory as your home. Every file in this directory is accessible to you.
-- **NOTES/** — Record daily summaries and lessons learned (format: yyyy-mm-dd.md)
-- **MEMORY/** — Persistent memory logs for important & long-term information
-- **USER/** — User preferences, choices, and decisions
-- **WORK/** — Working directory for your tasks, **IMPORTANT**: After creating subdirectories under this directory, you must use Git for file state management and version control in the corresponding subdirectories if any modifications or changes are made to the files within them.
+Your workspace is: **{workspace}**
+Your instance ID is: **{self.agent_id}**
+Your instance work directory is: **{instance_work_dir}**
 
+- **NOTES/** — Shared knowledge base. Use format: `{self.agent_id}_<category>_<yyyy-mm-dd>.md`
+- **MEMORY/** — Shared persistent memory. Use format: `{self.agent_id}_<yyyy-mm-dd>.md`
+- **WORK/{self.agent_id}/** — Your private working directory. Store task plans, findings, progress notes and working files here. **IMPORTANT**: Use Git for version control in subdirectories where you modify files.
+
+Time-zone: {timezone}
 Current date: {current_date}
 Current time: {current_time}
-Time-zone: {timezone}
 """
 
     def _build_skills_section(self) -> str:
@@ -105,6 +112,14 @@ Time-zone: {timezone}
             return ""
         rendered = self._skill_manager.render_skills_section()
         return rendered.strip() if rendered else ""
+
+    def _build_soul_section(self) -> str:
+        """load bodhi/SOUL.md like openclaw, it's the core of 觉"""
+        soul = Path(
+            f"{os.path.expanduser(self.options.config_root)}/bodhi/SOUL.md"
+        ).read_text()
+
+        return soul.strip() if soul else ""
 
 
 __all__ = [

@@ -146,9 +146,10 @@ async def build_agent(
         tools.append(AgentTool(child_agent))
 
     return Agent(
-        id=config.id,
+        name=config.name,
         description=config.description,
         model=model,
+        id=config.id,
         tools=tools or None,
         system_prompt=config.system_prompt,
         options=options,

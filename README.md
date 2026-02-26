@@ -250,11 +250,11 @@ agent = Agent(
     options=AgentOptions(
         run_step_storage=RunStepStorageConfig(
             storage_type="sqlite",
-            config={"db_path": "~/.agiwo/data.db"},
+            config={"db_path": ".agiwo/data.db"},
         ),
         trace_storage=TraceStorageConfig(
             storage_type="sqlite",
-            config={"db_path": "~/.agiwo/data.db"},
+            config={"db_path": ".agiwo/data.db"},
         ),
     ),
 )

@@ -33,10 +33,10 @@ class AgiwoSettings(BaseSettings):
     # Storage settings
     mongo_uri: str | None = None
     mongo_db_name: str | None = "agiwo"
-    sqlite_db_path: str | None = "~/.agiwo/agiwo.db"
+    sqlite_db_path: str | None = ".agiwo/agiwo.db"
 
     # Vector DB settings
-    vector_db_path: str | None = "~/.agiwo/vector_db"
+    vector_db_path: str | None = ".agiwo/vector_db"
 
     # Repository and Storage settings
     default_session_store: str | None = None
@@ -76,7 +76,7 @@ class AgiwoSettings(BaseSettings):
 
     # Skills configuration
     skills_dirs: list[str] = Field(
-        default_factory=lambda: ["examples/skills", "~/.agiwo/skills"],
+        default_factory=lambda: ["examples/skills", ".agiwo/skills"],
         description="Skill directories to scan",
     )
     is_skills_enabled: bool = True

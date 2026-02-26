@@ -3,7 +3,7 @@ Agent - The primary entry point for the Agiwo Agent SDK.
 
 Usage:
     agent = Agent(
-        id="my-agent",
+        name="my-agent",
         description="A helpful assistant",
         model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
         tools=[MyTool()],
@@ -18,6 +18,7 @@ Usage:
 import time
 import asyncio
 from typing import AsyncIterator
+import secrets
 from uuid import uuid4
 
 from agiwo.agent.schema import (
@@ -61,7 +62,7 @@ class Agent:
 
     Example:
         agent = Agent(
-            id="assistant",
+            name="assistant",
             description="A helpful assistant",
             model=my_model,
             tools=[calculator],
@@ -73,15 +74,18 @@ class Agent:
 
     def __init__(
         self,
-        id: str,
+        name: str,
         description: str,
         model: Model,
+        *,
+        id: str | None = None,
         tools: list[BaseTool] | None = None,
         system_prompt: str = "",
         options: AgentOptions | None = None,
         hooks: AgentHooks | None = None,
     ):
-        self.id = id
+        self.name = name
+        self.id = id or self._generate_default_id()
         self.description = description
         self.model = model
         self.tools = tools if tools is not None else [cls() for cls in DEFAULT_TOOLS.values()]
@@ -99,10 +103,16 @@ class Agent:
         # Initialize prompt builder
         self._prompt_builder = DefaultSystemPromptBuilder(
             base_prompt=system_prompt,
+            agent_name=self.name,
             agent_id=self.id,
             options=self.options,
         )
         self.system_prompt = self._prompt_builder.build()
+
+    def _generate_default_id(self) -> str:
+        """Generate semantic default ID: name + 6-char random string."""
+        random_suffix = secrets.token_hex(3)  # 6 chars
+        return f"{self.name}-{random_suffix}"
 
     async def close(self) -> None:
         """Close agent and release all resources."""

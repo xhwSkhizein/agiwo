@@ -106,7 +106,7 @@ class TestSchedulerPrepareAgent:
     async def test_prepare_injects_tools(self):
         scheduler = Scheduler()
         model = MockModel()
-        agent = Agent(id="test", description="test", model=model, tools=[])
+        agent = Agent(name="test", description="test", model=model, id="test", tools=[])
 
         scheduler._prepare_agent(agent)
 
@@ -120,7 +120,7 @@ class TestSchedulerPrepareAgent:
     async def test_prepare_is_idempotent(self):
         scheduler = Scheduler()
         model = MockModel()
-        agent = Agent(id="test", description="test", model=model, tools=[])
+        agent = Agent(name="test", description="test", model=model, id="test", tools=[])
 
         scheduler._prepare_agent(agent)
         count_after_first = len(agent.tools)
@@ -132,7 +132,7 @@ class TestSchedulerPrepareAgent:
     async def test_prepare_registers_agent(self):
         scheduler = Scheduler()
         model = MockModel()
-        agent = Agent(id="test", description="test", model=model, tools=[])
+        agent = Agent(name="test", description="test", model=model, id="test", tools=[])
 
         scheduler._prepare_agent(agent)
         assert "test" in scheduler._agents
@@ -144,7 +144,7 @@ class TestSchedulerPrepareAgent:
         scheduler = Scheduler()
         model = MockModel()
         opts = AgentOptions(enable_termination_summary=False)
-        agent = Agent(id="test", description="test", model=model, tools=[], options=opts)
+        agent = Agent(name="test", description="test", model=model, id="test", tools=[], options=opts)
         scheduler._prepare_agent(agent)
         assert agent.options.enable_termination_summary is True
         await scheduler.stop()
@@ -155,7 +155,7 @@ class TestSchedulerSubmit:
     async def test_submit_creates_state(self):
         async with Scheduler(_fast_config()) as scheduler:
             model = MockModel([_simple_completion("Hello")])
-            agent = Agent(id="test", description="test", model=model, tools=[])
+            agent = Agent(name="test", description="test", model=model, id="test", tools=[])
 
             state_id = await scheduler.submit(agent, "Hello")
             assert state_id == "test"
@@ -171,7 +171,7 @@ class TestSchedulerSubmit:
     async def test_submit_persistent(self):
         async with Scheduler(_fast_config()) as scheduler:
             model = MockModel([_simple_completion("Hello")])
-            agent = Agent(id="persist", description="test", model=model, tools=[])
+            agent = Agent(name="persist", description="test", model=model, id="persist", tools=[])
 
             state_id = await scheduler.submit(agent, "Hello", persistent=True)
             state = await scheduler._store.get_state(state_id)
@@ -196,7 +196,7 @@ class TestSchedulerSubmit:
         await scheduler._store.save_state(state)
 
         model = MockModel()
-        agent = Agent(id="test", description="test", model=model, tools=[])
+        agent = Agent(name="test", description="test", model=model, id="test", tools=[])
 
         with pytest.raises(RuntimeError, match="already active"):
             await scheduler.submit(agent, "Another task")
@@ -209,7 +209,7 @@ class TestSchedulerSimpleCompletion:
     async def test_run_simple_agent(self):
         """Agent completes without sleeping — simplest case."""
         model = MockModel([_simple_completion("The answer is 42")])
-        agent = Agent(id="simple", description="test", model=model, tools=[])
+        agent = Agent(name="simple", description="test", model=model, id="simple", tools=[])
 
         async with Scheduler(_fast_config()) as scheduler:
             result = await scheduler.run(agent, "What is the answer?", timeout=5)
@@ -224,9 +224,10 @@ class TestSchedulerCreateChildAgent:
         scheduler = Scheduler()
         model = MockModel()
         parent = Agent(
-            id="parent",
+            name="parent",
             description="parent agent",
             model=model,
+            id="parent",
             tools=[],
             system_prompt="Be helpful",
         )
@@ -244,6 +245,7 @@ class TestSchedulerCreateChildAgent:
         child = scheduler._create_child_agent(state)
 
         assert child.id == "child-1"
+        assert child.name == "parent"
         assert child.model is parent.model
         assert "Be helpful" in child.system_prompt
         child_tool_names = {t.get_name() for t in child.tools}
@@ -255,9 +257,10 @@ class TestSchedulerCreateChildAgent:
         scheduler = Scheduler()
         model = MockModel()
         parent = Agent(
-            id="parent",
+            name="parent",
             description="parent agent",
             model=model,
+            id="parent",
             tools=[],
             system_prompt="Default prompt",
         )

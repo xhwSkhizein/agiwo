@@ -360,9 +360,10 @@ class Scheduler:
             child_options.enable_termination_summary = True
 
         child = Agent(
-            id=state.agent_id,
+            name=parent.name,
             description=parent.description,
             model=parent.model,
+            id=state.agent_id,
             tools=list(parent.tools),
             system_prompt=overrides.get("system_prompt", parent.system_prompt),
             options=child_options,

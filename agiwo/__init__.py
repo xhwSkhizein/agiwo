@@ -7,7 +7,7 @@ Usage:
     from agiwo.tool import BaseTool, ToolResult
 
     agent = Agent(
-        id="my-agent",
+        name="my-agent",
         description="A helpful assistant",
         model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
         tools=[MyTool()],
