@@ -123,7 +123,7 @@ function ChildrenTable({ children }: { children: AgentStateListItem[] }) {
                   href={`/scheduler/${c.id}`}
                   className="text-zinc-200 hover:text-white font-mono text-xs"
                 >
-                  {c.agent_id}
+                  {c.id}
                 </Link>
               </td>
               <td className="px-4 py-2.5 max-w-xs">
@@ -205,8 +205,8 @@ export default function SchedulerDetailPage() {
           </div>
         </div>
         <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          <p className="text-xs text-zinc-500">Agent ID</p>
-          <p className="text-sm font-mono mt-1 truncate">{state.agent_id}</p>
+          <p className="text-xs text-zinc-500">State ID</p>
+          <p className="text-sm font-mono mt-1 truncate">{state.id}</p>
         </div>
         <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
           <p className="text-xs text-zinc-500">Session</p>
@@ -223,16 +223,13 @@ export default function SchedulerDetailPage() {
         <InfoRow label="Task">
           <p className="whitespace-pre-wrap">{state.task}</p>
         </InfoRow>
-        <InfoRow label="Parent Agent">
-          <span className="font-mono text-xs">{state.parent_agent_id}</span>
-        </InfoRow>
-        {state.parent_state_id && (
-          <InfoRow label="Parent State">
+        {state.parent_id && (
+          <InfoRow label="Parent">
             <Link
-              href={`/scheduler/${state.parent_state_id}`}
+              href={`/scheduler/${state.parent_id}`}
               className="font-mono text-xs text-blue-400 hover:text-blue-300"
             >
-              {state.parent_state_id}
+              {state.parent_id}
             </Link>
           </InfoRow>
         )}

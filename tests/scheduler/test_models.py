@@ -192,14 +192,12 @@ class TestAgentState:
         state = AgentState(
             id="agent-1",
             session_id="sess-1",
-            agent_id="agent-1",
-            parent_agent_id="parent",
             status=AgentStateStatus.PENDING,
             task="do something",
         )
         assert state.id == "agent-1"
         assert state.status == AgentStateStatus.PENDING
-        assert state.parent_state_id is None
+        assert state.parent_id is None
         assert state.config_overrides == {}
         assert state.wake_condition is None
         assert state.result_summary is None

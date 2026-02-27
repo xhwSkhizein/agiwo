@@ -18,8 +18,9 @@ Usage:
 import time
 import asyncio
 from typing import AsyncIterator
-import secrets
 from uuid import uuid4
+
+import itertools
 
 from agiwo.agent.schema import (
     UserInput,
@@ -100,19 +101,28 @@ class Agent:
             self.options.trace_storage
         )
 
-        # Initialize prompt builder
+        # Initialize prompt builder (lazy build on first execution)
         self._prompt_builder = DefaultSystemPromptBuilder(
             base_prompt=system_prompt,
             agent_name=self.name,
             agent_id=self.id,
             options=self.options,
         )
-        self.system_prompt = self._prompt_builder.build()
+        self._system_prompt: str | None = None
+
+    @property
+    def system_prompt(self) -> str | None:
+        """Get the built system prompt (available after first execution)."""
+        return self._system_prompt
+
+    # Class-level counter for generating sequential agent IDs per name
+    _instance_counters: dict[str, itertools.count] = {}
 
     def _generate_default_id(self) -> str:
-        """Generate semantic default ID: name + 6-char random string."""
-        random_suffix = secrets.token_hex(3)  # 6 chars
-        return f"{self.name}-{random_suffix}"
+        """Generate semantic default ID: name + counter sequence for readability."""
+        counter = Agent._instance_counters.setdefault(self.name, itertools.count(1))
+        seq = next(counter)
+        return f"{self.name}-{seq:03d}"
 
     async def close(self) -> None:
         """Close agent and release all resources."""
@@ -268,6 +278,9 @@ class Agent:
         context: ExecutionContext,
         abort_signal: AbortSignal | None,
     ) -> RunOutput:
+        # Get system prompt (auto-refreshes if SOUL.md or skills changed)
+        system_prompt = await self._prompt_builder.get_system_prompt()
+
         emitter = EventEmitter(context)
 
         # Load agent-specific history
@@ -300,7 +313,7 @@ class Agent:
 
             # Assemble messages
             messages = MessageAssembler.assemble(
-                self.system_prompt,
+                system_prompt,
                 existing_steps,
                 memories,
                 before_run_hook_result,

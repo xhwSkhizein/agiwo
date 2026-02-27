@@ -28,8 +28,5 @@ class ConsoleConfig(BaseSettings):
     mongodb_db_name: str = "agiwo"
     mongodb_trace_collection: str = "traces"
 
-    # Scheduler state storage (uses same backend as main storage by default)
-    scheduler_sqlite_db_path: str = "agiwo.db"
-
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]

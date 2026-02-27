@@ -94,7 +94,6 @@ def _format_termination_reason(reason: TerminationReason | str) -> str:
 
     reason_mapping = {
         TerminationReason.MAX_STEPS.value: "reaching the maximum number of execution steps",
-        "max_iterations": "reaching the maximum number of iterations",  # legacy
         TerminationReason.TIMEOUT.value: "execution timeout",
         TerminationReason.CANCELLED.value: "user cancellation",
         TerminationReason.TOOL_LIMIT.value: "reaching the tool call limit",

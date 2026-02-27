@@ -24,17 +24,15 @@ def _make_state(
     depth: int = 0,
     wake_count: int = 0,
     status: AgentStateStatus = AgentStateStatus.RUNNING,
-    parent_state_id: str | None = None,
+    parent_id: str | None = None,
     **kwargs,
 ) -> AgentState:
     return AgentState(
         id=id,
         session_id="sess",
-        agent_id=id,
-        parent_agent_id=id,
-        parent_state_id=parent_state_id,
         status=status,
         task="task",
+        parent_id=parent_id,
         depth=depth,
         wake_count=wake_count,
         **kwargs,
@@ -64,8 +62,8 @@ class TestCheckSpawn:
         guard = TaskGuard(TaskLimits(max_children_per_agent=2), store)
         parent = _make_state(id="parent", depth=0)
         await store.save_state(parent)
-        c1 = _make_state(id="c1", parent_state_id="parent", status=AgentStateStatus.RUNNING)
-        c2 = _make_state(id="c2", parent_state_id="parent", status=AgentStateStatus.PENDING)
+        c1 = _make_state(id="c1", parent_id="parent", status=AgentStateStatus.RUNNING)
+        c2 = _make_state(id="c2", parent_id="parent", status=AgentStateStatus.PENDING)
         await store.save_state(c1)
         await store.save_state(c2)
 
@@ -78,8 +76,8 @@ class TestCheckSpawn:
         guard = TaskGuard(TaskLimits(max_children_per_agent=2), store)
         parent = _make_state(id="parent", depth=0)
         await store.save_state(parent)
-        c1 = _make_state(id="c1", parent_state_id="parent", status=AgentStateStatus.COMPLETED)
-        c2 = _make_state(id="c2", parent_state_id="parent", status=AgentStateStatus.RUNNING)
+        c1 = _make_state(id="c1", parent_id="parent", status=AgentStateStatus.COMPLETED)
+        c2 = _make_state(id="c2", parent_id="parent", status=AgentStateStatus.RUNNING)
         await store.save_state(c1)
         await store.save_state(c2)
 

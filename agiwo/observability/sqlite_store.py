@@ -30,8 +30,8 @@ class SQLiteTraceStorage(BaseTraceStorage):
 
     def __init__(
         self,
-        db_path: str = "agiwo.db",
-        collection_name: str = "agiwo_traces",
+        db_path: str,
+        collection_name: str,
         buffer_size: int = 200,
     ) -> None:
         self.db_path = os.path.expanduser(db_path)

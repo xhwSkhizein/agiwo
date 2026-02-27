@@ -46,11 +46,9 @@ async def _register_parent(store, agent_id="orch", depth=0):
     parent_state = AgentState(
         id=agent_id,
         session_id="sess-1",
-        agent_id=agent_id,
-        parent_agent_id=agent_id,
-        parent_state_id=None,
         status=AgentStateStatus.RUNNING,
         task="root task",
+        parent_id=None,
         depth=depth,
     )
     await store.save_state(parent_state)
@@ -73,8 +71,7 @@ class TestSpawnAgentTool:
         state = await store.get_state(child_id)
         assert state is not None
         assert state.status == AgentStateStatus.PENDING
-        assert state.parent_agent_id == "orch"
-        assert state.parent_state_id == "orch"
+        assert state.parent_id == "orch"
         assert state.task == "Research topic A"
         assert state.session_id == "sess-1"
         assert state.depth == 1
@@ -308,11 +305,9 @@ class TestQuerySpawnedAgentTool:
         state = AgentState(
             id="child-1",
             session_id="sess-1",
-            agent_id="child-1",
-            parent_agent_id="orch",
-            parent_state_id="orch",
             status=AgentStateStatus.COMPLETED,
             task="Do research",
+            parent_id="orch",
             result_summary="Research results: ...",
         )
         await store.save_state(state)

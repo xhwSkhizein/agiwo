@@ -66,7 +66,7 @@ export default function TracesPage() {
                   <td className="px-4 py-3 max-w-xs">
                     <Link
                       href={`/traces/${t.trace_id}`}
-                      className="text-zinc-200 hover:text-white truncate block"
+                      className="text-zinc-200 hover:text-white block"
                     >
                       {t.input_query || t.trace_id.slice(0, 12)}
                     </Link>

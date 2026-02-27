@@ -38,17 +38,18 @@ class AgentTool(BaseTool):
         max_depth: int = DEFAULT_MAX_DEPTH,
     ):
         self._agent = agent
-        self.name = name or agent.name
-        self.description = description or agent.description
+        self._name = name or agent.name
+        self._description = description or agent.description
         self.max_depth = max_depth
+        super().__init__()
 
     def get_name(self) -> str:
         """Return the tool name."""
-        return self.name
+        return self._name
 
     def get_description(self) -> str:
         """Return the tool description."""
-        return self.description
+        return self._description
 
     def get_parameters(self) -> dict[str, Any]:
         """Return the JSON schema for tool parameters."""
@@ -176,8 +177,8 @@ class AgentTool(BaseTool):
 
 def as_tool(
     agent: "Agent",
-    description: str | None = None,
     name: str | None = None,
+    description: str | None = None,
     max_depth: int = DEFAULT_MAX_DEPTH,
 ) -> AgentTool:
     """
@@ -186,21 +187,21 @@ def as_tool(
     This is a convenience factory function.
 
     Usage:
-        research_tool = as_tool(research_agent, "Expert at research tasks")
+        research_tool = as_tool(research_agent, description="Expert at research tasks")
         orchestra = Agent(model=gpt4, tools=[research_tool])
 
     Args:
         agent: Agent instance
-        description: Tool description for LLM reference
         name: Tool name, defaults to agent.name
+        description: Tool description for LLM reference
         max_depth: Maximum nesting depth allowed (default: 5)
 
     Returns:
         AgentTool instance
     """
     return AgentTool(
-        agent,
-        description,
-        name,
+        agent=agent,
+        name=name,
+        description=description,
         max_depth=max_depth,
     )

@@ -232,13 +232,14 @@ export interface WakeConditionResponse {
 
 export interface AgentStateListItem {
   id: string;
-  agent_id: string;
   status: string;
   task: string;
-  parent_agent_id: string;
-  parent_state_id: string | null;
+  parent_id: string | null;
   wake_condition: WakeConditionResponse | null;
   result_summary: string | null;
+  is_persistent: boolean;
+  depth: number;
+  wake_count: number;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -246,15 +247,16 @@ export interface AgentStateListItem {
 export interface AgentStateDetail {
   id: string;
   session_id: string;
-  agent_id: string;
-  parent_agent_id: string;
-  parent_state_id: string | null;
   status: string;
   task: string;
+  parent_id: string | null;
   config_overrides: Record<string, unknown>;
   wake_condition: WakeConditionResponse | null;
   result_summary: string | null;
   signal_propagated: boolean;
+  is_persistent: boolean;
+  depth: number;
+  wake_count: number;
   created_at: string | null;
   updated_at: string | null;
 }

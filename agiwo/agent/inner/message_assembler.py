@@ -13,8 +13,8 @@ class MessageAssembler:
     @staticmethod
     def assemble(
         system_prompt: str,
-        existing_steps: list[StepRecord] = [],
-        memories: list[MemoryRecord] = [],
+        existing_steps: list[StepRecord] | None = None,
+        memories: list[MemoryRecord] | None = None,
         before_run_hook_result: str | None = None,
     ) -> list[dict]:
         """
@@ -30,6 +30,11 @@ class MessageAssembler:
         Returns:
             List of message dicts ready for the LLM.
         """
+        if existing_steps is None:
+            existing_steps = []
+        if memories is None:
+            memories = []
+
         # use step is include in messages
         messages: list[dict] = steps_to_messages(existing_steps)
 

@@ -34,7 +34,7 @@ class TaskGuard:
             )
             logger.warning(
                 "spawn_rejected_max_depth",
-                agent_id=parent_state.agent_id,
+                state_id=parent_state.id,
                 depth=parent_state.depth,
                 max_depth=self._limits.max_depth,
             )
@@ -44,6 +44,7 @@ class TaskGuard:
         active_children = [
             c for c in children
             if c.status in (AgentStateStatus.PENDING, AgentStateStatus.RUNNING, AgentStateStatus.SLEEPING)
+            and c.session_id == parent_state.session_id
         ]
         if len(active_children) >= self._limits.max_children_per_agent:
             reason = (
@@ -52,7 +53,7 @@ class TaskGuard:
             )
             logger.warning(
                 "spawn_rejected_max_children",
-                agent_id=parent_state.agent_id,
+                state_id=parent_state.id,
                 active_children=len(active_children),
                 max_children=self._limits.max_children_per_agent,
             )
@@ -69,7 +70,7 @@ class TaskGuard:
             )
             logger.warning(
                 "wake_rejected_max_count",
-                agent_id=state.agent_id,
+                state_id=state.id,
                 wake_count=state.wake_count,
                 max_wake_count=self._limits.max_wake_count,
             )

@@ -161,11 +161,11 @@ export default function SchedulerPage() {
                       href={`/scheduler/${s.id}`}
                       className="text-zinc-200 hover:text-white font-mono text-xs"
                     >
-                      {s.agent_id}
+                      {s.id}
                     </Link>
                   </td>
                   <td className="px-4 py-3 max-w-xs">
-                    <span className="truncate block text-zinc-300">
+                    <span className="block text-zinc-300">
                       {s.task}
                     </span>
                   </td>
@@ -176,7 +176,7 @@ export default function SchedulerPage() {
                     <WakeInfo wc={s.wake_condition} />
                   </td>
                   <td className="px-4 py-3 text-zinc-500 text-xs font-mono">
-                    {s.parent_state_id || "-"}
+                    {s.parent_id || "-"}
                   </td>
                   <td className="px-4 py-3 text-right text-zinc-500 text-xs">
                     {s.updated_at

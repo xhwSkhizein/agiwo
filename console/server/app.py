@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     scheduler_config = SchedulerConfig(
         state_storage=AgentStateStorageConfig(
             storage_type="sqlite",
-            config={"db_path": config.scheduler_sqlite_db_path},
+            config={"db_path": config.sqlite_db_path},
         ),
     )
     sched = Scheduler(scheduler_config)

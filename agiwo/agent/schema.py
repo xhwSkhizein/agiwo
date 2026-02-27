@@ -2,12 +2,10 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from agiwo.utils.tojson import to_json
-
-if TYPE_CHECKING:
-    from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.execution_context import ExecutionContext
 
 
 class ContentType(str, Enum):

@@ -9,6 +9,8 @@ import json
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 
+import aiosqlite
+
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -18,6 +20,9 @@ from agiwo.scheduler.models import (
     WakeCondition,
     WakeType,
 )
+from agiwo.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class AgentStateStorage(ABC):
@@ -46,8 +51,8 @@ class AgentStateStorage(ABC):
         ...
 
     @abstractmethod
-    async def get_states_by_parent(self, parent_state_id: str) -> list[AgentState]:
-        """Get all child states for a given parent state id."""
+    async def get_states_by_parent(self, parent_id: str) -> list[AgentState]:
+        """Get all child states for a given parent id."""
         ...
 
     @abstractmethod
@@ -62,11 +67,11 @@ class AgentStateStorage(ABC):
 
     @abstractmethod
     async def find_unpropagated_completed(self) -> list[AgentState]:
-        """Find COMPLETED/FAILED states with signal_propagated=False and parent_state_id is not None."""
+        """Find COMPLETED/FAILED states with signal_propagated=False and parent_id is not None."""
         ...
 
     @abstractmethod
-    async def mark_child_completed(self, parent_state_id: str, child_id: str) -> None:
+    async def mark_child_completed(self, parent_id: str, child_id: str) -> None:
         """Append child_id to parent's wake_condition.completed_ids."""
         ...
 
@@ -139,9 +144,9 @@ class InMemoryAgentStateStorage(AgentStateStorage):
             if result_summary is not ...:
                 state.result_summary = result_summary
 
-    async def get_states_by_parent(self, parent_state_id: str) -> list[AgentState]:
+    async def get_states_by_parent(self, parent_id: str) -> list[AgentState]:
         return [
-            s for s in self._states.values() if s.parent_state_id == parent_state_id
+            s for s in self._states.values() if s.parent_id == parent_id
         ]
 
     async def find_pending(self) -> list[AgentState]:
@@ -166,12 +171,12 @@ class InMemoryAgentStateStorage(AgentStateStorage):
             for s in self._states.values()
             if s.status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED)
             and not s.signal_propagated
-            and s.parent_state_id is not None
+            and s.parent_id is not None
         ]
 
-    async def mark_child_completed(self, parent_state_id: str, child_id: str) -> None:
+    async def mark_child_completed(self, parent_id: str, child_id: str) -> None:
         async with self._lock:
-            state = self._states.get(parent_state_id)
+            state = self._states.get(parent_id)
             if state is None or state.wake_condition is None:
                 return
             if child_id not in state.wake_condition.completed_ids:
@@ -227,12 +232,10 @@ class SQLiteAgentStateStorage(AgentStateStorage):
 
     def __init__(self, db_path: str = "scheduler.db") -> None:
         self._db_path = db_path
-        self._conn: "aiosqlite.Connection | None" = None
+        self._conn: aiosqlite.Connection | None = None
 
-    async def _get_conn(self) -> "aiosqlite.Connection":
+    async def _get_conn(self) -> aiosqlite.Connection:
         if self._conn is None:
-            import aiosqlite
-
             self._conn = await aiosqlite.connect(self._db_path)
             self._conn.row_factory = aiosqlite.Row
             await self._conn.execute("PRAGMA journal_mode=WAL")
@@ -247,9 +250,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             CREATE TABLE IF NOT EXISTS agent_states (
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
-                agent_id TEXT NOT NULL,
-                parent_agent_id TEXT NOT NULL,
-                parent_state_id TEXT,
+                parent_id TEXT,
                 status TEXT NOT NULL DEFAULT 'pending',
                 task TEXT NOT NULL,
                 config_overrides TEXT DEFAULT '{}',
@@ -276,7 +277,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             "CREATE INDEX IF NOT EXISTS idx_agent_states_status ON agent_states(status)"
         )
         await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_agent_states_parent ON agent_states(parent_state_id)"
+            "CREATE INDEX IF NOT EXISTS idx_agent_states_parent ON agent_states(parent_id)"
         )
         await conn.commit()
 
@@ -284,28 +285,19 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         """Convert a database row to an AgentState."""
         wake_condition = None
         if row["wake_type"]:
-            wakeup_at = None
-            if row.get("wakeup_at"):
-                wakeup_at = datetime.fromisoformat(row["wakeup_at"])
             time_unit = None
-            if row.get("wake_time_unit"):
+            if row["wake_time_unit"]:
                 time_unit = TimeUnit(row["wake_time_unit"])
-            timeout_at = None
-            if row.get("wake_timeout_at"):
-                timeout_at = datetime.fromisoformat(row["wake_timeout_at"])
-            wait_for = json.loads(row.get("wake_wait_for") or "[]")
-            wait_mode = WaitMode(row.get("wake_wait_mode") or "all")
-            completed_ids = json.loads(row.get("wake_completed_ids") or "[]")
             wake_condition = WakeCondition(
                 type=WakeType(row["wake_type"]),
-                wait_for=wait_for,
-                wait_mode=wait_mode,
-                completed_ids=completed_ids,
-                time_value=row.get("wake_time_value"),
+                wait_for=json.loads(row["wake_wait_for"]),
+                wait_mode=WaitMode(row["wake_wait_mode"]),
+                completed_ids=json.loads(row["wake_completed_ids"]),
+                time_value=row["wake_time_value"],
                 time_unit=time_unit,
-                wakeup_at=wakeup_at,
-                submitted_task=row.get("wake_submitted_task"),
-                timeout_at=timeout_at,
+                wakeup_at=datetime.fromisoformat(row["wakeup_at"]) if row["wakeup_at"] else None,
+                submitted_task=row["wake_submitted_task"],
+                timeout_at=datetime.fromisoformat(row["wake_timeout_at"]) if row["wake_timeout_at"] else None,
             )
 
         config_overrides = {}
@@ -315,11 +307,9 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         return AgentState(
             id=row["id"],
             session_id=row["session_id"],
-            agent_id=row["agent_id"],
-            parent_agent_id=row["parent_agent_id"],
-            parent_state_id=row["parent_state_id"],
             status=AgentStateStatus(row["status"]),
             task=row["task"],
+            parent_id=row.get("parent_id"),
             config_overrides=config_overrides,
             wake_condition=wake_condition,
             result_summary=row.get("result_summary"),
@@ -359,7 +349,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         await conn.execute(
             """
             INSERT OR REPLACE INTO agent_states
-                (id, session_id, agent_id, parent_agent_id, parent_state_id,
+                (id, session_id, parent_id,
                  status, task, config_overrides,
                  wake_type, wake_time_value, wake_time_unit,
                  wake_wait_for, wake_wait_mode, wake_completed_ids,
@@ -367,14 +357,12 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                  result_summary, signal_propagated,
                  is_persistent, depth, wake_count,
                  created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 state.id,
                 state.session_id,
-                state.agent_id,
-                state.parent_agent_id,
-                state.parent_state_id,
+                state.parent_id,
                 state.status.value,
                 state.task,
                 json.dumps(state.config_overrides),
@@ -430,11 +418,11 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         await conn.execute(sql, params)
         await conn.commit()
 
-    async def get_states_by_parent(self, parent_state_id: str) -> list[AgentState]:
+    async def get_states_by_parent(self, parent_id: str) -> list[AgentState]:
         conn = await self._get_conn()
         cursor = await conn.execute(
-            "SELECT * FROM agent_states WHERE parent_state_id = ?",
-            (parent_state_id,),
+            "SELECT * FROM agent_states WHERE parent_id = ?",
+            (parent_id,),
         )
         rows = await cursor.fetchall()
         return [self._row_to_state(dict(r)) for r in rows]
@@ -469,19 +457,19 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             SELECT * FROM agent_states
             WHERE status IN (?, ?)
               AND signal_propagated = 0
-              AND parent_state_id IS NOT NULL
+              AND parent_id IS NOT NULL
             """,
             (AgentStateStatus.COMPLETED.value, AgentStateStatus.FAILED.value),
         )
         rows = await cursor.fetchall()
         return [self._row_to_state(dict(r)) for r in rows]
 
-    async def mark_child_completed(self, parent_state_id: str, child_id: str) -> None:
+    async def mark_child_completed(self, parent_id: str, child_id: str) -> None:
         conn = await self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
         cursor = await conn.execute(
             "SELECT wake_completed_ids FROM agent_states WHERE id = ?",
-            (parent_state_id,),
+            (parent_id,),
         )
         row = await cursor.fetchone()
         if row is None:
@@ -491,7 +479,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             completed_ids.append(child_id)
         await conn.execute(
             "UPDATE agent_states SET wake_completed_ids = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(completed_ids), now, parent_state_id),
+            (json.dumps(completed_ids), now, parent_id),
         )
         await conn.commit()
 

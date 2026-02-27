@@ -23,8 +23,7 @@ def store():
 def _make_state(
     id: str = "agent-1",
     session_id: str = "sess-1",
-    parent_agent_id: str = "parent",
-    parent_state_id: str | None = "parent",
+    parent_id: str | None = "parent",
     status: AgentStateStatus = AgentStateStatus.PENDING,
     task: str = "do something",
     **kwargs,
@@ -32,11 +31,9 @@ def _make_state(
     return AgentState(
         id=id,
         session_id=session_id,
-        agent_id=id,
-        parent_agent_id=parent_agent_id,
-        parent_state_id=parent_state_id,
         status=status,
         task=task,
+        parent_id=parent_id,
         **kwargs,
     )
 
@@ -112,9 +109,9 @@ class TestInMemoryUpdateStatus:
 class TestInMemoryQueries:
     @pytest.mark.asyncio
     async def test_get_states_by_parent(self, store):
-        await store.save_state(_make_state(id="child-1", parent_state_id="root"))
-        await store.save_state(_make_state(id="child-2", parent_state_id="root"))
-        await store.save_state(_make_state(id="child-3", parent_state_id="other"))
+        await store.save_state(_make_state(id="child-1", parent_id="root"))
+        await store.save_state(_make_state(id="child-2", parent_id="root"))
+        await store.save_state(_make_state(id="child-3", parent_id="other"))
         children = await store.get_states_by_parent("root")
         assert len(children) == 2
 
@@ -185,18 +182,18 @@ class TestInMemorySignalPropagation:
         s1 = _make_state(
             id="done-1",
             status=AgentStateStatus.COMPLETED,
-            parent_state_id="root",
+            parent_id="root",
         )
         s2 = _make_state(
             id="done-2",
             status=AgentStateStatus.COMPLETED,
-            parent_state_id="root",
+            parent_id="root",
         )
         s2.signal_propagated = True
         s3 = _make_state(
             id="done-3",
             status=AgentStateStatus.COMPLETED,
-            parent_state_id=None,
+            parent_id=None,
         )
         await store.save_state(s1)
         await store.save_state(s2)
@@ -210,7 +207,7 @@ class TestInMemorySignalPropagation:
         s = _make_state(
             id="failed-1",
             status=AgentStateStatus.FAILED,
-            parent_state_id="root",
+            parent_id="root",
         )
         await store.save_state(s)
         unprop = await store.find_unpropagated_completed()
@@ -235,7 +232,7 @@ class TestInMemorySignalPropagation:
 
     @pytest.mark.asyncio
     async def test_mark_propagated(self, store):
-        s = _make_state(id="child", status=AgentStateStatus.COMPLETED, parent_state_id="root")
+        s = _make_state(id="child", status=AgentStateStatus.COMPLETED, parent_id="root")
         await store.save_state(s)
         await store.mark_propagated("child")
         state = await store.get_state("child")

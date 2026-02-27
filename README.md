@@ -51,7 +51,7 @@ from agiwo.llm import DeepseekModel
 
 async def main():
     agent = Agent(
-        id="my-agent",
+        name="my-agent",
         description="A helpful assistant",
         model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
         system_prompt="You are a helpful assistant.",
@@ -82,7 +82,7 @@ from agiwo import Agent, AgentOptions, AgentHooks
 from agiwo.llm import OpenAIModel
 
 agent = Agent(
-    id="assistant",
+    name="assistant",
     description="A helpful assistant",
     model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
     tools=[MyTool()],               # list[BaseTool], optional
@@ -146,14 +146,14 @@ from agiwo import Agent, as_tool
 from agiwo.llm import DeepseekModel
 
 researcher = Agent(
-    id="researcher",
+    name="researcher",
     description="Expert at research tasks",
     model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
     system_prompt="You are a research expert.",
 )
 
 orchestrator = Agent(
-    id="orchestrator",
+    name="orchestrator",
     description="Main agent that delegates tasks",
     model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
     tools=[as_tool(researcher)],  # researcher becomes a callable tool
@@ -175,7 +175,7 @@ from agiwo.llm import DeepseekModel
 async def main():
     model = DeepseekModel(id="deepseek-chat", name="deepseek-chat")
     agent = Agent(
-        id="orchestrator",
+        name="orchestrator",
         description="An orchestrator that can spawn sub-agents",
         model=model,
         system_prompt="You can spawn child agents and sleep until they finish.",
@@ -237,6 +237,35 @@ The Scheduler automatically injects three tools into managed agents:
 - **`sleep_and_wait`** -- Sleep until a waitset of children completes, a timer fires, or periodically
 - **`query_spawned_agent`** -- Check the status/result of spawned agents
 
+### System Prompt & Skills
+
+The `DefaultSystemPromptBuilder` assembles the final system prompt from modular sections:
+
+1. **SOUL.md** -- Identity/personality from `.agiwo/bodhi/SOUL.md` (optional)
+2. **Base prompt** -- User-provided system prompt from Agent constructor
+3. **Skills section** -- Available skills if `enable_skill=True`
+4. **Environment** -- Workspace paths, current time, timezone
+
+The builder automatically detects file changes:
+- SOUL.md mtime tracking -- prompt refreshes when identity file is modified
+- Skills fingerprint tracking -- detects new/deleted/changed skills in the directory
+
+```python
+from agiwo import Agent, AgentOptions
+
+agent = Agent(
+    name="my-agent",
+    description="A helpful assistant",
+    model=my_model,
+    system_prompt="You are a helpful coding assistant.",  # Base section
+    options=AgentOptions(
+        enable_skill=True,                    # Enable skills section
+        skills_dir="~/.agiwo/skills",        # Custom skills directory
+    ),
+)
+# SOUL.md and skills changes are automatically picked up on next execution
+```
+
 ### Persistent Storage
 
 ```python
@@ -244,7 +273,7 @@ from agiwo import Agent, AgentOptions
 from agiwo.agent import RunStepStorageConfig, TraceStorageConfig
 
 agent = Agent(
-    id="persistent-agent",
+    name="persistent-agent",
     description="Agent with SQLite storage",
     model=my_model,
     options=AgentOptions(

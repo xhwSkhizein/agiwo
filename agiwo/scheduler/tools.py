@@ -40,9 +40,12 @@ class SpawnAgentTool(BaseTool):
 
     def get_description(self) -> str:
         return (
-            "Spawn a child agent to handle a sub-task asynchronously. "
-            "The child agent will be scheduled and executed by the scheduler. "
-            "After spawning all children, call sleep_and_wait to wait for them."
+            "Spawn a child agent to handle a truly independent sub-task asynchronously. "
+            "ONLY use this when the task genuinely requires parallel execution or delegation "
+            "(e.g., concurrent data fetching, parallel analysis). "
+            "Do NOT spawn a child agent just to perform a simple action you can do directly. "
+            "The spawned child agent will NOT be able to spawn further child agents. "
+            "After spawning, call sleep_and_wait to wait for the child to complete if needed."
         )
 
     def get_parameters(self) -> dict[str, Any]:
@@ -51,15 +54,15 @@ class SpawnAgentTool(BaseTool):
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": "The task to delegate to the child agent",
+                    "description": (
+                        "The task for the child agent to complete directly. Keep it brief but thorough, covering necessary context (e.g., background, dependencies, goal, expected outcome) depending on task needs."
+                        "Describe what outcome you need (not what process to follow). "
+                        "Do NOT instruct the child to spawn more agents — it will complete the task itself."
+                    ),
                 },
-                "system_prompt": {
+                "instruction": {
                     "type": "string",
-                    "description": "Optional system prompt override for the child agent",
-                },
-                "child_id": {
-                    "type": "string",
-                    "description": "Optional explicit child agent ID. Auto-generated if not provided.",
+                    "description": "Optional instruction: guide the child agent to finish the task in a more efficient, elegant, and effective way.",
                 },
             },
             "required": ["task"],
@@ -106,21 +109,23 @@ class SpawnAgentTool(BaseTool):
             )
 
         task = parameters.get("task", "")
-        system_prompt = parameters.get("system_prompt")
-        child_id = parameters.get("child_id") or f"{parent_agent_id}_{uuid4().hex[:8]}"
+        instruction = parameters.get("instruction")
+        custom_child_id = parameters.get("child_id")
+        child_id = custom_child_id or f"{parent_agent_id}_{uuid4().hex[:5]}"
 
         config_overrides: dict[str, Any] = {}
+        if instruction:
+            config_overrides["instruction"] = instruction
+        system_prompt = parameters.get("system_prompt")
         if system_prompt:
             config_overrides["system_prompt"] = system_prompt
 
         state = AgentState(
             id=child_id,
             session_id=context.session_id,
-            agent_id=child_id,
-            parent_agent_id=parent_agent_id,
-            parent_state_id=parent_agent_id,
             status=AgentStateStatus.PENDING,
             task=task,
+            parent_id=parent_agent_id,
             config_overrides=config_overrides,
             depth=parent_state.depth + 1,
         )
@@ -240,7 +245,7 @@ class SleepAndWaitTool(BaseTool):
                 wc.wait_for = explicit_wait_for
             else:
                 children = await self._store.get_states_by_parent(agent_id)
-                wc.wait_for = [c.id for c in children]
+                wc.wait_for = [c.id for c in children if c.session_id == context.session_id]
             try:
                 wc.wait_mode = WaitMode(wait_mode_str)
             except ValueError:
@@ -249,7 +254,8 @@ class SleepAndWaitTool(BaseTool):
             for cid in wc.wait_for:
                 child_state = await self._store.get_state(cid)
                 if child_state is not None and child_state.status in (
-                    AgentStateStatus.COMPLETED, AgentStateStatus.FAILED
+                    AgentStateStatus.COMPLETED,
+                    AgentStateStatus.FAILED,
                 ):
                     already_done.append(cid)
             wc.completed_ids = already_done
@@ -359,14 +365,14 @@ class QuerySpawnedAgentTool(BaseTool):
             )
 
         result_info = {
-            "agent_id": state.agent_id,
+            "agent_id": state.id,
             "status": state.status.value,
             "task": state.task,
             "result_summary": state.result_summary,
         }
 
         content_parts = [
-            f"Agent: {state.agent_id}",
+            f"Agent: {state.id}",
             f"Status: {state.status.value}",
             f"Task: {state.task}",
         ]

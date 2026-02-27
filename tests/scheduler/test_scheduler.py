@@ -188,8 +188,6 @@ class TestSchedulerSubmit:
         state = AgentState(
             id="test",
             session_id="sess",
-            agent_id="test",
-            parent_agent_id="test",
             status=AgentStateStatus.RUNNING,
             task="busy",
         )
@@ -236,11 +234,9 @@ class TestSchedulerCreateChildAgent:
         state = AgentState(
             id="child-1",
             session_id="sess",
-            agent_id="child-1",
-            parent_agent_id="parent",
-            parent_state_id="parent",
             status=AgentStateStatus.PENDING,
             task="sub-task",
+            parent_id="parent",
         )
         child = scheduler._create_child_agent(state)
 
@@ -249,7 +245,9 @@ class TestSchedulerCreateChildAgent:
         assert child.model is parent.model
         assert "Be helpful" in child.system_prompt
         child_tool_names = {t.get_name() for t in child.tools}
-        assert "spawn_agent" in child_tool_names
+        assert "spawn_agent" not in child_tool_names
+        assert "sleep_and_wait" in child_tool_names
+        assert "query_spawned_agent" in child_tool_names
         await scheduler.stop()
 
     @pytest.mark.asyncio
@@ -269,17 +267,19 @@ class TestSchedulerCreateChildAgent:
         state = AgentState(
             id="child-1",
             session_id="sess",
-            agent_id="child-1",
-            parent_agent_id="parent",
-            parent_state_id="parent",
             status=AgentStateStatus.PENDING,
             task="sub-task",
-            config_overrides={"system_prompt": "Specialized prompt"},
+            parent_id="parent",
+            config_overrides={"instruction": "Focus on specialized area."},
         )
         child = scheduler._create_child_agent(state)
 
-        assert child.system_prompt != parent.system_prompt
-        assert "Specialized" in child.system_prompt
+        # Child inherits parent's base system_prompt (before environment section)
+        # but has its own workspace paths due to different agent_id
+        assert "Default prompt" in child.system_prompt
+        assert "child-1" in child.system_prompt  # Child's own ID in workspace paths
+        # Instruction is stored for runtime injection via <system-instruction> tag
+        assert state.config_overrides["instruction"] == "Focus on specialized area."
         await scheduler.stop()
 
 
@@ -292,11 +292,9 @@ class TestSchedulerWakeMessage:
         child_state = AgentState(
             id="child-1",
             session_id="sess",
-            agent_id="child-1",
-            parent_agent_id="orch",
-            parent_state_id="orch",
             status=AgentStateStatus.COMPLETED,
             task="A",
+            parent_id="orch",
             result_summary="Result A",
         )
         await store.save_state(child_state)
@@ -304,8 +302,6 @@ class TestSchedulerWakeMessage:
         state = AgentState(
             id="orch",
             session_id="sess",
-            agent_id="orch",
-            parent_agent_id="orch",
             status=AgentStateStatus.SLEEPING,
             task="root",
             wake_condition=WakeCondition(
@@ -325,8 +321,6 @@ class TestSchedulerWakeMessage:
         state = AgentState(
             id="orch",
             session_id="sess",
-            agent_id="orch",
-            parent_agent_id="orch",
             status=AgentStateStatus.SLEEPING,
             task="root",
             wake_condition=WakeCondition(type=WakeType.TIMER),
@@ -341,8 +335,6 @@ class TestSchedulerWakeMessage:
         state = AgentState(
             id="orch",
             session_id="sess",
-            agent_id="orch",
-            parent_agent_id="orch",
             status=AgentStateStatus.SLEEPING,
             task="root",
             wake_condition=WakeCondition(type=WakeType.PERIODIC),
@@ -357,8 +349,6 @@ class TestSchedulerWakeMessage:
         state = AgentState(
             id="orch",
             session_id="sess",
-            agent_id="orch",
-            parent_agent_id="orch",
             status=AgentStateStatus.SLEEPING,
             task="root",
             wake_condition=WakeCondition(
@@ -376,8 +366,6 @@ class TestSchedulerWakeMessage:
         state = AgentState(
             id="orch",
             session_id="sess",
-            agent_id="orch",
-            parent_agent_id="orch",
             status=AgentStateStatus.SLEEPING,
             task="root",
         )
@@ -395,11 +383,9 @@ class TestSchedulerSignalPropagation:
         parent = AgentState(
             id="parent",
             session_id="sess",
-            agent_id="parent",
-            parent_agent_id="parent",
-            parent_state_id=None,
             status=AgentStateStatus.SLEEPING,
             task="root",
+            parent_id=None,
             wake_condition=WakeCondition(
                 type=WakeType.WAITSET,
                 wait_for=["child-1", "child-2"],
@@ -411,11 +397,9 @@ class TestSchedulerSignalPropagation:
         child1 = AgentState(
             id="child-1",
             session_id="sess",
-            agent_id="child-1",
-            parent_agent_id="parent",
-            parent_state_id="parent",
             status=AgentStateStatus.COMPLETED,
             task="A",
+            parent_id="parent",
             result_summary="Done A",
         )
         await store.save_state(child1)
@@ -441,11 +425,9 @@ class TestSchedulerSignalPropagation:
         parent = AgentState(
             id="parent",
             session_id="sess",
-            agent_id="parent",
-            parent_agent_id="parent",
-            parent_state_id=None,
             status=AgentStateStatus.SLEEPING,
             task="root",
+            parent_id=None,
             wake_condition=WakeCondition(
                 type=WakeType.WAITSET,
                 wait_for=["child-1"],
@@ -457,11 +439,9 @@ class TestSchedulerSignalPropagation:
         child1 = AgentState(
             id="child-1",
             session_id="sess",
-            agent_id="child-1",
-            parent_agent_id="parent",
-            parent_state_id="parent",
             status=AgentStateStatus.FAILED,
             task="A",
+            parent_id="parent",
             result_summary="Error",
         )
         await store.save_state(child1)
@@ -482,11 +462,9 @@ class TestSchedulerSubmitTask:
         state = AgentState(
             id="root",
             session_id="sess",
-            agent_id="root",
-            parent_agent_id="root",
-            parent_state_id=None,
             status=AgentStateStatus.SLEEPING,
             task="initial",
+            parent_id=None,
             is_persistent=True,
             wake_condition=WakeCondition(type=WakeType.TASK_SUBMITTED),
         )
@@ -507,11 +485,9 @@ class TestSchedulerSubmitTask:
         state = AgentState(
             id="root",
             session_id="sess",
-            agent_id="root",
-            parent_agent_id="root",
-            parent_state_id=None,
             status=AgentStateStatus.SLEEPING,
             task="initial",
+            parent_id=None,
             is_persistent=False,
         )
         await store.save_state(state)
@@ -528,11 +504,9 @@ class TestSchedulerSubmitTask:
         state = AgentState(
             id="root",
             session_id="sess",
-            agent_id="root",
-            parent_agent_id="root",
-            parent_state_id=None,
             status=AgentStateStatus.RUNNING,
             task="initial",
+            parent_id=None,
             is_persistent=True,
         )
         await store.save_state(state)
@@ -551,29 +525,23 @@ class TestSchedulerCancel:
         root = AgentState(
             id="root",
             session_id="sess",
-            agent_id="root",
-            parent_agent_id="root",
-            parent_state_id=None,
             status=AgentStateStatus.RUNNING,
             task="root",
+            parent_id=None,
         )
         child = AgentState(
             id="child-1",
             session_id="sess",
-            agent_id="child-1",
-            parent_agent_id="root",
-            parent_state_id="root",
             status=AgentStateStatus.RUNNING,
             task="child",
+            parent_id="root",
         )
         grandchild = AgentState(
             id="gc-1",
             session_id="sess",
-            agent_id="gc-1",
-            parent_agent_id="child-1",
-            parent_state_id="child-1",
             status=AgentStateStatus.PENDING,
             task="grandchild",
+            parent_id="child-1",
         )
         await store.save_state(root)
         await store.save_state(child)
@@ -599,11 +567,9 @@ class TestSchedulerShutdown:
         state = AgentState(
             id="root",
             session_id="sess",
-            agent_id="root",
-            parent_agent_id="root",
-            parent_state_id=None,
             status=AgentStateStatus.SLEEPING,
             task="root",
+            parent_id=None,
             wake_condition=WakeCondition(
                 type=WakeType.WAITSET,
                 wait_for=["child-1"],
@@ -627,11 +593,9 @@ class TestSchedulerShutdown:
         state = AgentState(
             id="root",
             session_id="sess",
-            agent_id="root",
-            parent_agent_id="root",
-            parent_state_id=None,
             status=AgentStateStatus.PENDING,
             task="root",
+            parent_id=None,
         )
         await store.save_state(state)
 

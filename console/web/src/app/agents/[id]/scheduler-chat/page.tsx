@@ -637,9 +637,9 @@ export default function SchedulerChatPage() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono text-zinc-300 truncate">
-                          {child.agent_id.length > 20
-                            ? "..." + child.agent_id.slice(-16)
-                            : child.agent_id}
+                          {child.id.length > 20
+                            ? "..." + child.id.slice(-16)
+                            : child.id}
                         </span>
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${childStatusBadge[child.status] || "bg-zinc-700 text-zinc-300"}`}>
                           {child.status}

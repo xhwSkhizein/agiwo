@@ -51,7 +51,7 @@ class StorageManager:
         if self._config.storage_type == "sqlite":
             cfg = AgentStateStorageConfig(
                 storage_type="sqlite",
-                config={"db_path": self._config.scheduler_sqlite_db_path},
+                config={"db_path": self._config.sqlite_db_path},
             )
         else:
             cfg = AgentStateStorageConfig(storage_type="memory")

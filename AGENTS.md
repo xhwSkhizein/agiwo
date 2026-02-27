@@ -205,6 +205,33 @@ uv run pytest tests/scheduler/ -v
 
 ## Development Notes
 
+### RecentChanges
+
+**2025-02-27 (System Prompt Auto-Refresh)**
+
+- **Lazy System Prompt Building**: `SystemPromptBuilder.build()` is now called lazily in `initialize()` at first execution, not during Agent construction.
+- **Auto-refresh on Change**: `get_system_prompt()` automatically detects changes to SOUL.md (mtime check) and skills directory (fingerprint check), refreshing the prompt when needed.
+- **Change Tracking**: Builder tracks `_soul_mtime` and `_skills_fingerprint` to detect modifications without unnecessary rebuilds.
+- **Agent Delegation**: Agent no longer caches `system_prompt` locally; it delegates to `SystemPromptBuilder.get_system_prompt()` on each execution, ensuring fresh prompts when files change.
+- **Manual Refresh**: `SkillManager.reload()` available for explicit skill refresh; builder's `_refresh_prompt()` handles the full rebuild cycle.
+
+**2025-02-27 (Scheduler Hardening)**
+
+- **Scheduler session isolation**: `SleepAndWaitTool` and `TaskGuard.check_spawn()` now filter children by `session_id`, preventing cross-session pollution.
+- **Child agent no spawn**: `create_child_agent()` filters out `spawn_agent` tool from parent — child agents cannot cascade spawn grandchildren.
+- **Fix wake_agent_not_found**: `_maybe_cleanup_agent()` now async-checks actual state before cleanup; SLEEPING agents remain in registry for wake.
+- **Dedup scheduling**: `_dispatched_state_ids` prevents duplicate scheduling of same state across ticks.
+- **Wake message clarity**: `_build_wake_message()` separates "## Successful Results" from "## Failed Agents", preventing LLM from treating errors as results.
+- **Spawn tool guidance**: Improved `SpawnAgentTool` description to discourage unnecessary spawning.
+
+**2025-02-27**
+
+- **AgentId Counter**: `Agent._generate_default_id()` now uses `{name}-{seq:03d}` format (e.g., `bodhi-001`) instead of random UUID. Console `build_agent()` no longer passes `id` to use SDK auto-generation.
+- **Lazy Workspace Init**: Directory creation and system prompt building moved to `initialize()`, called at execution time. Agents created but never run no longer create side-effect directories or build prompts.
+- **System Prompt Auto-refresh**: `DefaultSystemPromptBuilder` now tracks SOUL.md mtime and skills directory fingerprint, automatically refreshing when files change. Agent retrieves fresh prompts via `get_system_prompt()` on each execution.
+- **Child Agent Instruction**: `config_overrides["instruction"]` is now injected into task via `<system-instruction>` tag at runtime, instead of overriding `system_prompt` at creation time.
+- **Name/Id Separation**: `Agent(name, description, model, *, id=None...)` — `name` is first positional param (config identifier), `id` is keyword-only optional (runtime identity, auto-generated if not provided).
+
 ### 添加新 LLM Provider
 
 1. OpenAI 兼容：继承 `OpenAIModel`，覆写 `_resolve_api_key()` 和 `_resolve_base_url()`

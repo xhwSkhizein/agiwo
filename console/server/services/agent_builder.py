@@ -82,6 +82,8 @@ def build_agent_options(config: AgentConfigRecord, console_config: ConsoleConfig
         max_output_tokens=opts.get("max_output_tokens", 8196),
         run_step_storage=run_step_cfg,
         trace_storage=trace_cfg,
+        enable_skill=opts.get("enable_skill", True),
+        skills_dir=opts.get("skills_dir", None),
     )
 
 
@@ -149,7 +151,6 @@ async def build_agent(
         name=config.name,
         description=config.description,
         model=model,
-        id=config.id,
         tools=tools or None,
         system_prompt=config.system_prompt,
         options=options,

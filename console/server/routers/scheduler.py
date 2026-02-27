@@ -46,11 +46,9 @@ def _fmt_dt(dt: Any) -> str | None:
 def _state_to_list_item(state: AgentState) -> AgentStateListItem:
     return AgentStateListItem(
         id=state.id,
-        agent_id=state.agent_id,
         status=state.status.value,
         task=state.task[:200] if state.task else "",
-        parent_agent_id=state.parent_agent_id,
-        parent_state_id=state.parent_state_id,
+        parent_id=state.parent_id,
         wake_condition=_wake_condition_to_response(state.wake_condition),
         result_summary=state.result_summary[:200] if state.result_summary else None,
         is_persistent=state.is_persistent,
@@ -65,11 +63,9 @@ def _state_to_response(state: AgentState) -> AgentStateResponse:
     return AgentStateResponse(
         id=state.id,
         session_id=state.session_id,
-        agent_id=state.agent_id,
-        parent_agent_id=state.parent_agent_id,
-        parent_state_id=state.parent_state_id,
         status=state.status.value,
         task=state.task,
+        parent_id=state.parent_id,
         config_overrides=state.config_overrides,
         wake_condition=_wake_condition_to_response(state.wake_condition),
         result_summary=state.result_summary,

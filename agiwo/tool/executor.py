@@ -25,10 +25,9 @@ class ToolExecutor:
     """
     ToolExecutor is responsible for executing tools and returning ToolResult.
 
-    FIXME:
-    1. cache is not implemented yet
-    2. more options support
-
+    Cache is implemented but must be explicitly passed to the constructor.
+    Use ToolResultCache from agiwo.tool.cache for session-scoped caching.
+    Tools must set `cacheable = True` to enable caching.
     """
 
     def __init__(

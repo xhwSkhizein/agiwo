@@ -150,16 +150,18 @@ class AgentState:
     """
     Persistent state of a scheduled agent.
 
-    The `id` field is the agent_id and serves as the primary key.
+    ID Design:
+    - `id`: Primary key, equals Agent.id (1:1 relationship)
+    - `parent_id`: Parent state's id (None for root agent)
+
+    The `_agents` registry uses `id` directly for lookup.
     """
 
     id: str
     session_id: str
-    agent_id: str
-    parent_agent_id: str
     status: AgentStateStatus
     task: str
-    parent_state_id: str | None = None
+    parent_id: str | None = None
     config_overrides: dict = field(default_factory=dict)
     wake_condition: WakeCondition | None = None
     result_summary: str | None = None
