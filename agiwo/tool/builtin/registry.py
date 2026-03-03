@@ -14,7 +14,9 @@ External packages can register tools via entry points in pyproject.toml:
     my_tool = "my_package.tools:MyCustomTool"
 """
 
+import importlib
 import importlib.metadata
+import pkgutil
 from typing import Type
 
 from agiwo.tool.base import BaseTool
@@ -26,6 +28,7 @@ BUILTIN_TOOLS: dict[str, Type[BaseTool]] = {}
 DEFAULT_TOOLS: dict[str, Type[BaseTool]] = {}
 
 _ENTRY_POINT_GROUP = "agiwo.tools"
+_BUILTIN_PACKAGE = "agiwo.tool.builtin"
 
 
 def builtin_tool(name: str):
@@ -51,6 +54,55 @@ def default_enable(cls: Type[BaseTool]) -> Type[BaseTool]:
         )
     DEFAULT_TOOLS[name] = cls
     return cls
+
+
+def load_builtin_tools() -> None:
+    """Auto-discover and import all builtin tool modules.
+
+    Recursively searches the builtin package for modules named 'tool.py'
+    and imports them to trigger @builtin_tool decorator registration.
+    Each module is wrapped in try/except so optional-dependency tools
+    don't block others from loading.
+    """
+    import agiwo.tool.builtin as builtin_pkg
+
+    for _, name, ispkg in pkgutil.iter_modules(builtin_pkg.__path__, prefix=""):
+        if ispkg:
+            # Check for {subpackage}/tool.py pattern
+            tool_module = f"{_BUILTIN_PACKAGE}.{name}.tool"
+            try:
+                importlib.import_module(tool_module)
+                logger.debug("builtin_tool_loaded", module=tool_module)
+            except ModuleNotFoundError:
+                # No tool.py in this subpackage, skip silently
+                pass
+            except Exception as e:
+                logger.warning("builtin_tool_load_failed", module=tool_module, error=str(e))
+
+            # Also check for flat modules inside subpackages like web_surfing/web_search_api_tool.py
+            try:
+                subpkg = importlib.import_module(f"{_BUILTIN_PACKAGE}.{name}")
+                if hasattr(subpkg, '__path__'):
+                    for _, subname, _ in pkgutil.iter_modules(subpkg.__path__, prefix=""):
+                        if subname.endswith("_tool"):
+                            sub_module = f"{_BUILTIN_PACKAGE}.{name}.{subname}"
+                            try:
+                                importlib.import_module(sub_module)
+                                logger.debug("builtin_tool_loaded", module=sub_module)
+                            except Exception as e:
+                                logger.warning("builtin_tool_load_failed", module=sub_module, error=str(e))
+            except Exception:
+                logger.warning("subpackage has issue, skip import_module", subpkg=subpkg, name=name)
+                pass  # Subpackage has issues, skip
+        else:
+            # Check for flat modules directly under builtin/ with _tool suffix
+            if name.endswith("_tool"):
+                module_path = f"{_BUILTIN_PACKAGE}.{name}"
+                try:
+                    importlib.import_module(module_path)
+                    logger.debug("builtin_tool_loaded", module=module_path)
+                except Exception as e:
+                    logger.warning("builtin_tool_load_failed", module=module_path, error=str(e))
 
 
 def discover_entry_point_tools() -> None:

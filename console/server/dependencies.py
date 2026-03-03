@@ -7,6 +7,7 @@ Initialized during app lifespan, accessed by routers.
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.config import ConsoleConfig
+from server.channels.feishu import FeishuChannelService
 from server.services.storage_manager import StorageManager
 from server.services.agent_registry import AgentRegistry
 
@@ -14,6 +15,7 @@ _storage_manager: StorageManager | None = None
 _agent_registry: AgentRegistry | None = None
 _console_config: ConsoleConfig | None = None
 _scheduler: Scheduler | None = None
+_feishu_channel_service: FeishuChannelService | None = None
 
 
 def set_console_config(config: ConsoleConfig) -> None:
@@ -58,3 +60,12 @@ def get_scheduler() -> Scheduler:
     if _scheduler is None:
         raise RuntimeError("Scheduler not initialized")
     return _scheduler
+
+
+def set_feishu_channel_service(service: FeishuChannelService | None) -> None:
+    global _feishu_channel_service
+    _feishu_channel_service = service
+
+
+def get_feishu_channel_service() -> FeishuChannelService | None:
+    return _feishu_channel_service

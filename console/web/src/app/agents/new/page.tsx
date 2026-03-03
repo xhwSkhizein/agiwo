@@ -24,8 +24,13 @@ export default function NewAgentPage() {
   const [systemPrompt, setSystemPrompt] = useState("");
   const [maxSteps, setMaxSteps] = useState(10);
   const [runTimeout, setRunTimeout] = useState(600);
-  const [maxOutputTokens, setMaxOutputTokens] = useState(8196);
-  const [maxTokens, setMaxTokens] = useState(4096);
+  const [maxContextWindowTokens, setMaxContextWindowTokens] = useState(32768);
+  const [maxTokensPerRun, setMaxTokensPerRun] = useState(131072);
+  const [maxRunTokenCost, setMaxRunTokenCost] = useState("");
+  const [maxOutputTokensPerCall, setMaxOutputTokensPerCall] = useState(4096);
+  const [cacheHitPrice, setCacheHitPrice] = useState(0);
+  const [inputPrice, setInputPrice] = useState(0);
+  const [outputPrice, setOutputPrice] = useState(0);
   const [temperature, setTemperature] = useState(0.7);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
@@ -62,12 +67,17 @@ export default function NewAgentPage() {
         options: {
           max_steps: maxSteps,
           run_timeout: runTimeout,
-          max_output_tokens: maxOutputTokens,
+          max_context_window_tokens: maxContextWindowTokens,
+          max_tokens_per_run: maxTokensPerRun,
+          max_run_token_cost: maxRunTokenCost.trim() === "" ? undefined : Number(maxRunTokenCost),
           enable_skill: enableSkill,
           skills_dir: skillsDir || undefined,
         },
         model_params: {
-          max_tokens: maxTokens,
+          max_output_tokens_per_call: maxOutputTokensPerCall,
+          cache_hit_price: cacheHitPrice,
+          input_price: inputPrice,
+          output_price: outputPrice,
           temperature,
         },
       });
@@ -227,7 +237,7 @@ export default function NewAgentPage() {
         </div>
 
         <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Agent Options</p>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm text-zinc-400 mb-1.5">Max Steps</label>
             <input
@@ -251,13 +261,36 @@ export default function NewAgentPage() {
             />
           </div>
           <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Max Output Tokens</label>
+            <label className="block text-sm text-zinc-400 mb-1.5">Model max context window size</label>
             <input
               type="number"
-              value={maxOutputTokens}
-              onChange={(e) => setMaxOutputTokens(Number(e.target.value))}
+              value={maxContextWindowTokens}
+              onChange={(e) => setMaxContextWindowTokens(Number(e.target.value))}
               min={256}
               max={128000}
+              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-zinc-400 mb-1.5">Max tokens per run</label>
+            <input
+              type="number"
+              value={maxTokensPerRun}
+              onChange={(e) => setMaxTokensPerRun(Number(e.target.value))}
+              min={256}
+              max={512000}
+              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-zinc-400 mb-1.5">Max run token cost (USD)</label>
+            <input
+              type="number"
+              value={maxRunTokenCost}
+              onChange={(e) => setMaxRunTokenCost(e.target.value)}
+              min={0}
+              step={0.000001}
+              placeholder="Optional"
               className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
             />
           </div>
@@ -266,11 +299,11 @@ export default function NewAgentPage() {
         <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Model Parameters</p>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Max Tokens</label>
+            <label className="block text-sm text-zinc-400 mb-1.5">Model max output tokens per call</label>
             <input
               type="number"
-              value={maxTokens}
-              onChange={(e) => setMaxTokens(Number(e.target.value))}
+              value={maxOutputTokensPerCall}
+              onChange={(e) => setMaxOutputTokensPerCall(Number(e.target.value))}
               min={256}
               max={128000}
               className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
@@ -285,6 +318,39 @@ export default function NewAgentPage() {
               min={0}
               max={2}
               step={0.1}
+              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-zinc-400 mb-1.5">Cache-hit price (USD / 1M tokens)</label>
+            <input
+              type="number"
+              value={cacheHitPrice}
+              onChange={(e) => setCacheHitPrice(Number(e.target.value))}
+              min={0}
+              step={0.000001}
+              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-zinc-400 mb-1.5">Input price (USD / 1M tokens)</label>
+            <input
+              type="number"
+              value={inputPrice}
+              onChange={(e) => setInputPrice(Number(e.target.value))}
+              min={0}
+              step={0.000001}
+              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
+            />
+          </div>
+          <div>
+            <label className="block text-sm text-zinc-400 mb-1.5">Output price (USD / 1M tokens)</label>
+            <input
+              type="number"
+              value={outputPrice}
+              onChange={(e) => setOutputPrice(Number(e.target.value))}
+              min={0}
+              step={0.000001}
               className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
             />
           </div>

@@ -73,6 +73,11 @@ class AgentRegistry:
             return await self._sqlite_get(agent_id)
         return await self._mongo_get(agent_id)
 
+    async def get_agent_by_name(self, agent_name: str) -> AgentConfigRecord | None:
+        if self._config.storage_type == "sqlite":
+            return await self._sqlite_get_by_name(agent_name)
+        return await self._mongo_get_by_name(agent_name)
+
     async def create_agent(self, record: AgentConfigRecord) -> AgentConfigRecord:
         if self._config.storage_type == "sqlite":
             await self._sqlite_upsert(record)
@@ -157,6 +162,25 @@ class AgentRegistry:
                 return self._sqlite_deserialize(row)
         return None
 
+    async def _sqlite_get_by_name(self, agent_name: str) -> AgentConfigRecord | None:
+        if self._sqlite_conn is None:
+            return None
+
+        async with self._sqlite_conn.execute(
+            """
+            SELECT *
+            FROM agent_configs
+            WHERE name = ?
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (agent_name,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row is not None:
+                return self._sqlite_deserialize(row)
+        return None
+
     async def _sqlite_upsert(self, record: AgentConfigRecord) -> None:
         if self._sqlite_conn is None:
             return
@@ -235,6 +259,23 @@ class AgentRegistry:
             doc.pop("_id", None)
             return AgentConfigRecord.model_validate(doc)
         return None
+
+    async def _mongo_get_by_name(self, agent_name: str) -> AgentConfigRecord | None:
+        if self._mongo_collection is None:
+            return None
+
+        doc = (
+            await self._mongo_collection.find({"name": agent_name})
+            .sort("updated_at", -1)
+            .limit(1)
+            .to_list(length=1)
+        )
+        if not doc:
+            return None
+
+        item = doc[0]
+        item.pop("_id", None)
+        return AgentConfigRecord.model_validate(item)
 
     async def _mongo_upsert(self, record: AgentConfigRecord) -> None:
         if self._mongo_collection is None:

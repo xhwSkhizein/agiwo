@@ -103,6 +103,7 @@ def _make_context() -> ExecutionContext:
         run_id="run-1",
         channel=StreamChannel(),
         agent_id="test-agent",
+        agent_name="test-agent",
         sequence_counter=SessionSequenceCounter(0),
     )
 

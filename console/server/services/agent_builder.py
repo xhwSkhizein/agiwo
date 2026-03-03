@@ -3,13 +3,17 @@ Agent building utilities — shared between chat and scheduler_chat routers.
 """
 
 import json
+import os
 from dataclasses import asdict
 from typing import Any
+
+from pydantic import SecretStr
 
 from agiwo.agent.agent import Agent
 from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.schema import StreamEvent
 from agiwo.llm.anthropic import AnthropicModel
+from agiwo.llm.bedrock_anthropic import BedrockAnthropicModel
 from agiwo.llm.deepseek import DeepseekModel
 from agiwo.llm.openai import OpenAIModel
 from agiwo.tool.agent_tool import AgentTool
@@ -23,6 +27,9 @@ MODEL_PROVIDER_MAP: dict[str, type] = {
     "openai": OpenAIModel,
     "deepseek": DeepseekModel,
     "anthropic": AnthropicModel,
+    "bedrock-anthropic": BedrockAnthropicModel,
+    "generic": OpenAIModel,  # Generic OpenAI-compatible API
+    "anthropic-generic": AnthropicModel,  # Generic Anthropic-compatible API
 }
 
 AGENT_TOOL_PREFIX = "agent:"
@@ -38,7 +45,12 @@ def build_model(config: AgentConfigRecord) -> Any:
         "id": config.model_name,
         "name": config.model_name,
     }
-    params.update(config.model_params)
+    model_params = dict(config.model_params or {})
+    if "max_output_tokens_per_call" in model_params:
+        model_params["max_tokens"] = model_params.pop("max_output_tokens_per_call")
+    else:
+        model_params.pop("max_tokens", None)
+    params.update(model_params)
 
     return provider_cls(**params)
 
@@ -79,7 +91,9 @@ def build_agent_options(config: AgentConfigRecord, console_config: ConsoleConfig
     return AgentOptions(
         max_steps=opts.get("max_steps", 10),
         run_timeout=opts.get("run_timeout", 600),
-        max_output_tokens=opts.get("max_output_tokens", 8196),
+        max_context_window_tokens=opts.get("max_context_window_tokens", 32768),
+        max_tokens_per_run=opts.get("max_tokens_per_run", 131072),
+        max_run_token_cost=opts.get("max_run_token_cost", None),
         run_step_storage=run_step_cfg,
         trace_storage=trace_cfg,
         enable_skill=opts.get("enable_skill", True),
@@ -115,6 +129,9 @@ async def build_agent(
     console_config: ConsoleConfig,
     registry: AgentRegistry,
     _building: set[str] | None = None,
+    anthropic_api_key: SecretStr | None = SecretStr(os.getenv("ANTHROPIC_API_KEY")),
+    anthropic_base_url: str | None = "https://api.anthropic.com/v1",
+    anthropic_model_name: str | None = "claude-3-5-sonnet-20240620",
 ) -> Agent:
     """Build an Agent instance from persisted config.
 
@@ -151,6 +168,7 @@ async def build_agent(
         name=config.name,
         description=config.description,
         model=model,
+        id=config.id,
         tools=tools or None,
         system_prompt=config.system_prompt,
         options=options,

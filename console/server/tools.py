@@ -2,14 +2,15 @@
 Tool registry for the console — maps tool names to instances.
 """
 
+import agiwo.tool.builtin  # noqa: F401 — triggers load_builtin_tools() registration
 from agiwo.tool.base import BaseTool
-from agiwo.tool.builtin import BUILTIN_TOOLS
+from agiwo.tool.builtin.registry import BUILTIN_TOOLS
 
 
 TOOL_DESCRIPTIONS: dict[str, str] = {
-    "current_time": "Get current date, time, and timezone",
-    "calculator": "Evaluate mathematical expressions safely",
-    "http_request": "Make HTTP GET/POST requests to URLs",
+    "bash": "Execute shell commands in a terminal-style sandbox",
+    "web_search": "Search the web for information",
+    "web_reader": "Fetch and extract content from web URLs",
 }
 
 

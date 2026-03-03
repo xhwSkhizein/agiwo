@@ -1,27 +1,60 @@
 """Integration tests for the Scheduler class."""
 
 import asyncio
+import shutil
 import time
+from pathlib import Path
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from agiwo.agent.agent import Agent
-from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
-from agiwo.agent.schema import RunOutput, TerminationReason
-from agiwo.agent.stream_channel import StreamChannel
+from agiwo.agent.schema import TerminationReason
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     SchedulerConfig,
-    TaskLimits,
-    WaitMode,
     WakeCondition,
     WakeType,
 )
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.scheduler.store import InMemoryAgentStateStorage
-from agiwo.tool.base import BaseTool, ToolResult
+
+
+def _cleanup_agiwo_workspace(agent_names: list[str]) -> None:
+    """Move agent workspace folders from .agiwo/ to trash directory.
+
+    Per user rules: never use rm, always mv to trash.
+    Note: config_root is relative path ".agiwo/", so workspaces are created
+    in project directory, not home directory.
+    """
+    # Get project root (parent of tests/ directory = tests/scheduler/ -> tests/ -> project_root)
+    project_dir = Path(__file__).parent.parent.parent
+    agiwo_dir = project_dir / ".agiwo"
+    trash_dir = project_dir / "trash" / "agiwo_test_cleanup"
+
+    for name in agent_names:
+        workspace = agiwo_dir / name
+        if workspace.exists():
+            # Create trash subdirectory if needed
+            trash_dir.mkdir(parents=True, exist_ok=True)
+            # Move to trash with timestamp to avoid conflicts
+            dest = trash_dir / f"{name}_{int(time.time())}"
+            shutil.move(str(workspace), str(dest))
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_agiwo_folders():
+    """Automatically cleanup .agiwo folders after each test."""
+    yield
+    # Wait for any async Agent initialization to complete
+    await asyncio.sleep(1.0)
+    # List of agent names used in tests that create workspaces
+    agent_names = ["test", "persist", "simple", "parent", "child-1"]
+    _cleanup_agiwo_workspace(agent_names)
+    # Second cleanup after short delay for any stragglers
+    await asyncio.sleep(0.5)
+    _cleanup_agiwo_workspace(agent_names)
 
 
 def _fast_config(**kwargs) -> SchedulerConfig:
@@ -238,12 +271,14 @@ class TestSchedulerCreateChildAgent:
             task="sub-task",
             parent_id="parent",
         )
-        child = scheduler._create_child_agent(state)
+        child = await scheduler._create_child_agent(state)
 
         assert child.id == "child-1"
         assert child.name == "parent"
         assert child.model is parent.model
-        assert "Be helpful" in child.system_prompt
+        # Check child inherited parent's system prompt (get_effective_system_prompt triggers build)
+        child_prompt = await child.get_effective_system_prompt()
+        assert "Be helpful" in child_prompt
         child_tool_names = {t.get_name() for t in child.tools}
         assert "spawn_agent" not in child_tool_names
         assert "sleep_and_wait" in child_tool_names
@@ -272,12 +307,11 @@ class TestSchedulerCreateChildAgent:
             parent_id="parent",
             config_overrides={"instruction": "Focus on specialized area."},
         )
-        child = scheduler._create_child_agent(state)
+        child = await scheduler._create_child_agent(state)
 
-        # Child inherits parent's base system_prompt (before environment section)
-        # but has its own workspace paths due to different agent_id
-        assert "Default prompt" in child.system_prompt
-        assert "child-1" in child.system_prompt  # Child's own ID in workspace paths
+        # Check child inherited parent's fully built system_prompt
+        child_prompt = await child.get_effective_system_prompt()
+        assert "Default prompt" in child_prompt
         # Instruction is stored for runtime injection via <system-instruction> tag
         assert state.config_overrides["instruction"] == "Focus on specialized area."
         await scheduler.stop()

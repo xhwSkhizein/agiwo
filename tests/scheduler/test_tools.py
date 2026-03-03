@@ -37,6 +37,7 @@ def context():
         run_id="run-1",
         channel=StreamChannel(),
         agent_id="orch",
+        agent_name="orchestrator",
         sequence_counter=SessionSequenceCounter(0),
     )
 
@@ -111,7 +112,8 @@ class TestSpawnAgentTool:
             session_id="sess-1",
             run_id="run-1",
             channel=StreamChannel(),
-            agent_id=None,
+            agent_id="",
+            agent_name="",
             sequence_counter=SessionSequenceCounter(0),
         )
         tool = SpawnAgentTool(store, guard)

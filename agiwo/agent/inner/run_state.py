@@ -26,6 +26,7 @@ class RunState:
     total_tokens: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    token_cost: float = 0.0
     steps_count: int = 0
     tool_calls_count: int = 0
     assistant_steps_count: int = 0
@@ -55,11 +56,16 @@ class RunState:
                 total_tokens=self.total_tokens,
                 input_tokens=self.input_tokens,
                 output_tokens=self.output_tokens,
+                token_cost=self.token_cost,
                 steps_count=self.steps_count,
                 tool_calls_count=self.tool_calls_count,
             ),
             termination_reason=self.termination_reason,
         )
+
+    def add_token_cost(self, cost: float) -> None:
+        if cost > 0:
+            self.token_cost += cost
 
     def _track_step(self, step: StepRecord) -> None:
         self.steps_count += 1

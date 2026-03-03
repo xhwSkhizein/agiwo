@@ -109,6 +109,9 @@ class BaseTool(ABC):
     @abstractmethod
     def get_description(self) -> str:
         """Return the tool description used for prompting."""
+    
+    def get_short_description(self) -> str:
+        return self.get_description()
 
     @abstractmethod
     def get_parameters(self) -> dict[str, Any]:
@@ -158,3 +161,44 @@ class BaseTool(ABC):
                 "parameters": self.get_parameters(),
             },
         }
+
+    def _create_error_result(
+        self,
+        parameters: dict,
+        error: str,
+        start_time: float,
+    ) -> "ToolResult":
+        """Create error result helper method."""
+
+        return ToolResult(
+            tool_name=self.name,
+            tool_call_id=parameters.get("tool_call_id", ""),
+            input_args=parameters,
+            content=f"Error: {error}",
+            output=None,
+            error=error,
+            start_time=start_time,
+            end_time=time.time(),
+            duration=time.time() - start_time,
+            is_success=False,
+        )
+
+    def _create_abort_result(
+        self,
+        parameters: dict,
+        start_time: float,
+    ) -> "ToolResult":
+        """Create abort result helper method."""
+
+        return ToolResult(
+            tool_name=self.name,
+            tool_call_id=parameters.get("tool_call_id", ""),
+            input_args=parameters,
+            content="Operation was aborted",
+            output=None,
+            error="Aborted",
+            start_time=start_time,
+            end_time=time.time(),
+            duration=time.time() - start_time,
+            is_success=False,
+        )

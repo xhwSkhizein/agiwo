@@ -18,6 +18,9 @@ class NvidiaModel(OpenAIModel):
         max_tokens: int = 4096,
         frequency_penalty: float = 0.0,
         presence_penalty: float = 0.0,
+        cache_hit_price: float = 0.0,
+        input_price: float = 0.0,
+        output_price: float = 0.0,
     ):
         super().__init__(
             id=id,
@@ -29,6 +32,9 @@ class NvidiaModel(OpenAIModel):
             max_tokens=max_tokens,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            cache_hit_price=cache_hit_price,
+            input_price=input_price,
+            output_price=output_price,
         )
         self.provider = "nvidia"
 

@@ -137,7 +137,7 @@ class AgentTool(BaseTool):
             input_query += f"\nAdditional context: {extra_context}"
 
         run_id = str(uuid4())
-        child_ctx = context.new_child(run_id=run_id, agent_id=self._agent.id)
+        child_ctx = context.new_child(run_id=run_id, agent_id=self._agent.id, agent_name=self._agent.name)
         child_ctx.metadata["_call_stack"] = call_stack
 
         response_text = ""

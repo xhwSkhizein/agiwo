@@ -27,6 +27,11 @@ class ExecutionContext:
     # Execution identity
     session_id: str
     run_id: str
+
+    # Agent identity
+    agent_id: str
+    agent_name: str
+
     # Session-level resources
     channel: StreamChannel
     # User Context
@@ -35,7 +40,6 @@ class ExecutionContext:
     # Hierarchy information
     depth: int = 0
     parent_run_id: str | None = None
-    agent_id: str | None = None
 
     # Session-level sequence counter (shared across nested agents)
     sequence_counter: SessionSequenceCounter | None = None
@@ -49,15 +53,16 @@ class ExecutionContext:
     # Metadata
     metadata: dict = field(default_factory=dict)
 
-    def new_child(self, run_id: str, agent_id: str | None = None) -> "ExecutionContext":
+    def new_child(self, run_id: str, agent_id: str | None = None, agent_name: str | None = None) -> "ExecutionContext":
         return ExecutionContext(
             session_id=self.session_id,
             run_id=run_id,
             channel=self.channel,
             user_id=self.user_id,
+            agent_id=agent_id or self.agent_id,
+            agent_name=agent_name or self.agent_name,
             depth=self.depth + 1,
             parent_run_id=self.run_id,
-            agent_id=agent_id or self.agent_id,
             sequence_counter=self.sequence_counter,
             trace_id=self.trace_id,
             timeout_at=self.timeout_at,

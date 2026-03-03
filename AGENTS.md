@@ -54,16 +54,17 @@ agiwo/
 │   ├── store.py              # MongoDB TraceStorage
 │   └── sqlite_store.py       # SQLite TraceStorage
 ├── scheduler/                # Agent 调度系统
-│   ├── models.py             # AgentState, WakeCondition, WakeType, WaitMode, TaskLimits, SchedulerConfig
+│   ├── models.py             # AgentState, WakeCondition, SchedulerOutput, OutputChannelState, SchedulerConfig
+│   ├── executor.py           # SchedulerExecutor：Agent 执行 + 输出事件发射
 │   ├── store.py              # AgentStateStorage ABC + InMemory + SQLite 实现
 │   ├── guard.py              # TaskGuard：集中式护栏 (spawn/wake 限制, 超时检测)
 │   ├── tools.py              # SpawnAgentTool, SleepAndWaitTool, QuerySpawnedAgentTool
-│   └── scheduler.py          # Scheduler：编排层入口 (run / submit / submit_task / shutdown / cancel)
+│   └── scheduler.py          # Scheduler：编排层入口 (run / submit / submit_task / subscribe / shutdown / cancel)
 ├── skill/                    # Skill 系统 (可选)
 │   ├── manager.py            # SkillManager：发现、加载、热重载
 │   ├── registry.py           # SkillRegistry + SkillMetadata
 │   ├── loader.py             # SkillLoader：SKILL.md 解析
-│   └── tool.py               # SkillTool：将 Skill 暴露为 Tool
+│   └── skill_tool.py         # SkillTool：将 Skill 暴露为 Tool
 ├── config/
 │   └── settings.py           # AgiwoSettings (pydantic-settings, env prefix: agiwo_)
 └── utils/
@@ -126,7 +127,10 @@ ABC，子类实现 5 个方法：`get_name`, `get_description`, `get_parameters`
 
 - Agent **不感知** Scheduler（依赖方向：`scheduler/ → agent/`，单向）
 - Scheduler 从外部注入调度工具（`spawn_agent`, `sleep_and_wait`, `query_spawned_agent`）
-- 双模式 API：`run()` 阻塞等待 / `submit()` + `wait_for()` 非阻塞
+- **三种 API 模式**：
+  - `run()` 阻塞等待
+  - `submit()` + `wait_for()` 非阻塞，获取最终结果
+  - `submit_and_subscribe()` / `submit_task_and_subscribe()` 输出流，逐条接收 Agent 文本产出
 - `agent_id` 作为 `AgentState` 主键，同一 agent_id 不能并发运行
 - 工具通过 `context.agent_id`（已有字段）获取当前 Agent 身份，无需额外 metadata 注入
 - `ToolResult.termination_reason` 是通用的执行终止机制，Executor 在 `_execute_tools` 后检查
@@ -137,6 +141,7 @@ ABC，子类实现 5 个方法：`get_name`, `get_description`, `get_parameters`
 - **超时保护**：`timeout_at` 防止永久 sleep，超时后 Scheduler 唤醒 Agent 并注入已有结果让其生成摘要
 - **递归操作**：`cancel()` 硬取消整棵树，`shutdown()` 优雅关闭（让 Agent 生成最终报告）
 - **自动结果注入**：WAITSET 唤醒时 `_build_wake_message()` 自动收集子 Agent 结果注入 wake message
+- **Output Streaming**：`SchedulerExecutor._emit_output()` 将 Agent 文本产出推送到 `OutputChannelState` 队列，消费者通过 `subscribe` API 逐条接收 `SchedulerOutput`。`include_child_outputs` 控制是否推送子 Agent 输出（默认 True）
 
 ### Event Pipeline (事件管道)
 
@@ -180,6 +185,7 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 12. **TaskGuard 集中式护栏**。所有调度限制（spawn 深度、子 Agent 数量、唤醒次数、超时）收敛到 `TaskGuard`，Tools 和 Scheduler 不自行检查
 13. **Persistent Root Agent**。root agent 可通过 `persistent=True` 保持存活，完成后自动进入 SLEEPING 等待新任务
 14. **Guaranteed Summarize-on-Timeout**。`enable_termination_summary` 默认 True + 超时唤醒机制，确保子 Agent 即使超时也能产出摘要
+15. **Scheduler Output Streaming**。Agent 文本产出（而非 SLEEPING 状态）驱动消息投递。`submit_and_subscribe` / `submit_task_and_subscribe` 返回 `AsyncIterator[SchedulerOutput]`，每当 Agent 产出文本就 yield 一次，消费者（如飞书 Channel）逐条发送给用户
 
 ## Build & Test Commands
 
@@ -206,6 +212,29 @@ uv run pytest tests/scheduler/ -v
 ## Development Notes
 
 ### RecentChanges
+
+**2026-03-02 (Scheduler Output Streaming)**
+
+- **Output-driven message delivery**: Agent text output (not SLEEPING state) triggers message delivery to users. `SchedulerExecutor._handle_agent_output()` emits `SchedulerOutput` via `_emit_output()` on every branch (SLEEPING, persistent idle, child completion, periodic).
+- **New subscribe API**: `submit_and_subscribe()` and `submit_task_and_subscribe()` combine task submission with output consumption, returning `AsyncIterator[SchedulerOutput]`. Channel is created before execution starts to prevent output loss.
+- **`include_child_outputs` config**: Controls whether child agent outputs are pushed to the output channel (default True).
+- **`wait_for()` race fix**: Persistent agent in SLEEPING state with a pending `submitted_task` no longer causes `wait_for()` to return stale results.
+- **Feishu Channel streaming**: `_run_batch_with_scheduler()` rewritten to consume `subscribe` output stream; each output is sent as a separate Feishu message (first as reply, subsequent as new messages).
+
+**2026-03-01 (Token Limits Refactor)**
+
+- **Limit Names Clarified**:
+  - `max_context_window_tokens`: single LLM call `input + output` limit
+  - `max_tokens_per_run`: accumulated `input + output` across a run
+  - `max_output_tokens_per_call`: model parameter name in console, mapped to provider `max_tokens`
+- **Cost Guardrail Added**: `max_run_token_cost` in `AgentOptions`, with model pricing params (`cache_hit_price`, `input_price`, `output_price`, USD per 1M tokens).
+- **Termination Reasons Split**:
+  - `MAX_OUTPUT_TOKENS_PER_CALL`
+  - `MAX_CONTEXT_WINDOW_TOKENS`
+  - `MAX_TOKENS_PER_RUN`
+  - `MAX_RUN_TOKEN_COST`
+- **Executor Flow Updated**: one loop now performs `pre-check -> LLM -> tools -> post-check`, ensuring tool calls for the current step execute before token-limit stop and fixing the previous `no tool_calls -> COMPLETED` precedence bug.
+- **Summary Policy Tightened**: token/cost limit terminations do not auto-generate termination summaries.
 
 **2025-02-27 (System Prompt Auto-Refresh)**
 

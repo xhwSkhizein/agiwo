@@ -119,6 +119,31 @@ class TraceListItem(BaseModel):
 # ── Agent Config ────────────────────────────────────────────────────────
 
 
+class AgentOptionsPayload(BaseModel):
+    max_steps: int = Field(default=10, ge=1)
+    run_timeout: int = Field(default=600, ge=1)
+    max_context_window_tokens: int = Field(default=32768, ge=1)
+    max_tokens_per_run: int = Field(default=131072, ge=1)
+    max_run_token_cost: float | None = Field(default=None, ge=0)
+    enable_skill: bool = False
+    skills_dir: str | None = None
+
+    model_config = {"extra": "ignore"}
+
+
+class ModelParamsPayload(BaseModel):
+    max_output_tokens_per_call: int = Field(default=4096, ge=1)
+    temperature: float = Field(default=0.7, ge=0, le=2)
+    top_p: float = Field(default=1.0, ge=0, le=1)
+    frequency_penalty: float = Field(default=0.0, ge=-2, le=2)
+    presence_penalty: float = Field(default=0.0, ge=-2, le=2)
+    cache_hit_price: float = Field(default=0.0, ge=0)
+    input_price: float = Field(default=0.0, ge=0)
+    output_price: float = Field(default=0.0, ge=0)
+
+    model_config = {"extra": "ignore"}
+
+
 class AgentConfigCreate(BaseModel):
     name: str
     description: str = ""
@@ -126,8 +151,8 @@ class AgentConfigCreate(BaseModel):
     model_name: str  # "gpt-4o" | "deepseek-chat" | ...
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
-    options: dict[str, Any] = Field(default_factory=dict)
-    model_params: dict[str, Any] = Field(default_factory=dict)
+    options: AgentOptionsPayload = Field(default_factory=AgentOptionsPayload)
+    model_params: ModelParamsPayload = Field(default_factory=ModelParamsPayload)
 
 
 class AgentConfigUpdate(BaseModel):
@@ -137,8 +162,8 @@ class AgentConfigUpdate(BaseModel):
     model_name: str | None = None
     system_prompt: str | None = None
     tools: list[str] | None = None
-    options: dict[str, Any] | None = None
-    model_params: dict[str, Any] | None = None
+    options: AgentOptionsPayload | None = None
+    model_params: ModelParamsPayload | None = None
 
 
 class AgentConfigResponse(BaseModel):
@@ -149,8 +174,8 @@ class AgentConfigResponse(BaseModel):
     model_name: str
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
-    options: dict[str, Any] = Field(default_factory=dict)
-    model_params: dict[str, Any] = Field(default_factory=dict)
+    options: AgentOptionsPayload = Field(default_factory=AgentOptionsPayload)
+    model_params: ModelParamsPayload = Field(default_factory=ModelParamsPayload)
     created_at: str
     updated_at: str
 

@@ -2,12 +2,12 @@
 Global settings from environment variables.
 """
 
+import os
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-import os
 
 
 class AgiwoSettings(BaseSettings):
@@ -30,13 +30,16 @@ class AgiwoSettings(BaseSettings):
     debug: bool = False
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
-    # Storage settings
+    # Root path - all other paths are relative to this unless absolute
+    root_path: str = ".agiwo"
+
+    # Storage settings (relative to root_path if not absolute)
     mongo_uri: str | None = None
     mongo_db_name: str | None = "agiwo"
-    sqlite_db_path: str | None = ".agiwo/agiwo.db"
+    sqlite_db_path: str | None = "agiwo.db"
 
-    # Vector DB settings
-    vector_db_path: str | None = ".agiwo/vector_db"
+    # Vector DB settings (relative to root_path if not absolute)
+    vector_db_path: str | None = "vector_db"
 
     # Repository and Storage settings
     default_session_store: str | None = None
@@ -74,12 +77,45 @@ class AgiwoSettings(BaseSettings):
         default=1.0, ge=0.0, le=1.0
     )  # 1.0 = 100% sampling
 
-    # Skills configuration
+    # Embedding settings
+    embedding_provider: str = "auto"  # openai | openai-like | local | auto | disabled
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+    embedding_api_key: str | None = None  # Falls back to OPENAI_API_KEY
+    embedding_base_url: str | None = None  # For openai-like providers
+    local_embedding_model_path: str | None = None  # Path to GGUF model
+
+    # Skills configuration (paths relative to root_path if not absolute)
     skills_dirs: list[str] = Field(
-        default_factory=lambda: ["examples/skills", ".agiwo/skills"],
-        description="Skill directories to scan",
+        default_factory=lambda: ["examples/skills", "skills"],
+        description="Skill directories to scan (relative to root_path if not absolute)",
     )
     is_skills_enabled: bool = True
+
+    def resolve_path(self, path: str | None) -> Path | None:
+        """Resolve a path relative to root_path if it's not absolute.
+        
+        Args:
+            path: The path to resolve. If None, returns None.
+                  If absolute, returns as-is. If relative, joins with root_path.
+        
+        Returns:
+            Resolved Path object or None if input was None.
+        """
+        if path is None:
+            return None
+        p = Path(path)
+        if p.is_absolute():
+            return p
+        return Path(self.root_path) / p
+
+    def get_root_path(self) -> Path:
+        """Get the root path as a Path object.
+        
+        Returns:
+            Path object for root_path (expanded user and absolute).
+        """
+        return Path(self.root_path).expanduser().resolve()
 
 
 # Global settings instance (singleton)

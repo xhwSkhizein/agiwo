@@ -8,7 +8,7 @@ Dependency direction: scheduler → agent (one-way). Agent has no knowledge of S
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, AsyncIterator
 from uuid import uuid4
 
 from agiwo.agent.agent import Agent
@@ -18,7 +18,9 @@ from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
+    OutputChannelState,
     SchedulerConfig,
+    SchedulerOutput,
     WakeCondition,
     WakeType,
 )
@@ -68,6 +70,7 @@ class Scheduler:
         self._abort_signals: dict[str, AbortSignal] = {}
         self._state_events: dict[str, asyncio.Event] = {}
         self._dispatched_state_ids: set[str] = set()
+        self._output_channels: dict[str, OutputChannelState] = {}
         self._scheduling_tools: list = self._create_scheduling_tools()
         self._executor = SchedulerExecutor(
             scheduler=self,
@@ -77,6 +80,7 @@ class Scheduler:
             state_events=self._state_events,
             semaphore=self._semaphore,
             dispatched_state_ids=self._dispatched_state_ids,
+            output_channels=self._output_channels,
         )
 
     def _create_scheduling_tools(self) -> list:
@@ -227,7 +231,13 @@ class Scheduler:
         task.add_done_callback(self._active_tasks.discard)
         return state.id
 
-    async def submit_task(self, state_id: str, task: str) -> None:
+    async def submit_task(
+        self,
+        state_id: str,
+        task: str,
+        *,
+        agent: Agent | None = None,
+    ) -> None:
         """
         Submit a new task to a persistent root agent that is SLEEPING.
 
@@ -236,6 +246,9 @@ class Scheduler:
         Args:
             state_id: The state_id of the persistent root agent.
             task: The new task content.
+            agent: Optional agent object to (re-)register in memory.  Required
+                after a server restart when the state is persisted but the
+                in-memory agent registry is empty.
 
         Raises:
             RuntimeError: If the agent is not persistent or not SLEEPING.
@@ -251,11 +264,113 @@ class Scheduler:
                 f"Cannot submit task."
             )
 
+        if agent is not None:
+            self._prepare_agent(agent)
+
         wc = WakeCondition(type=WakeType.TASK_SUBMITTED, submitted_task=task)
         await self._store.update_status(
             state_id, AgentStateStatus.SLEEPING, wake_condition=wc
         )
         logger.info("task_submitted_to_persistent_agent", state_id=state_id)
+
+    async def submit_and_subscribe(
+        self,
+        agent: Agent,
+        user_input: str,
+        *,
+        session_id: str | None = None,
+        abort_signal: AbortSignal | None = None,
+        persistent: bool = False,
+        timeout: float | None = None,
+        include_child_outputs: bool = True,
+    ) -> AsyncIterator[SchedulerOutput]:
+        """Submit a new agent and yield text outputs as they are produced.
+
+        Combines submit() with an output subscription so that the channel is
+        created before execution starts — no outputs are lost.
+        """
+        channel_state = OutputChannelState(
+            queue=asyncio.Queue(),
+            include_child_outputs=include_child_outputs,
+        )
+        self._output_channels[agent.id] = channel_state
+
+        try:
+            await self.submit(
+                agent,
+                user_input,
+                session_id=session_id,
+                abort_signal=abort_signal,
+                persistent=persistent,
+            )
+            async for output in self._consume_output_channel(
+                agent.id, channel_state, timeout
+            ):
+                yield output
+        finally:
+            self._output_channels.pop(agent.id, None)
+
+    async def submit_task_and_subscribe(
+        self,
+        state_id: str,
+        task: str,
+        *,
+        agent: Agent | None = None,
+        timeout: float | None = None,
+        include_child_outputs: bool = True,
+    ) -> AsyncIterator[SchedulerOutput]:
+        """Submit a new task to a persistent agent and yield outputs as they arrive.
+
+        Combines submit_task() with an output subscription so that the channel
+        is created before the scheduler tick wakes the agent.
+
+        Pass ``agent`` to ensure the agent object is registered in memory
+        (required after server restart when persistent state survives but the
+        in-memory registry is empty).
+        """
+        channel_state = OutputChannelState(
+            queue=asyncio.Queue(),
+            include_child_outputs=include_child_outputs,
+        )
+        self._output_channels[state_id] = channel_state
+
+        try:
+            await self.submit_task(state_id, task, agent=agent)
+            async for output in self._consume_output_channel(
+                state_id, channel_state, timeout
+            ):
+                yield output
+        finally:
+            self._output_channels.pop(state_id, None)
+
+    async def _consume_output_channel(
+        self,
+        state_id: str,
+        channel_state: OutputChannelState,
+        timeout: float | None,
+    ) -> AsyncIterator[SchedulerOutput]:
+        """Read from an output channel until ``is_final`` or timeout."""
+        start = time.time()
+        while True:
+            remaining = None
+            if timeout is not None:
+                elapsed = time.time() - start
+                if elapsed >= timeout:
+                    return
+                remaining = timeout - elapsed
+
+            try:
+                item = await asyncio.wait_for(
+                    channel_state.queue.get(), timeout=remaining
+                )
+            except asyncio.TimeoutError:
+                return
+
+            if item is None:
+                return
+            yield item
+            if item.is_final:
+                return
 
     async def wait_for(
         self,
@@ -291,10 +406,17 @@ class Scheduler:
                             termination_reason=TerminationReason.ERROR,
                         )
                     if is_persistent and state.status == AgentStateStatus.SLEEPING:
-                        return RunOutput(
-                            response=state.result_summary,
-                            termination_reason=TerminationReason.COMPLETED,
+                        wc = state.wake_condition
+                        has_pending_task = (
+                            wc is not None
+                            and wc.type == WakeType.TASK_SUBMITTED
+                            and wc.submitted_task is not None
                         )
+                        if not has_pending_task:
+                            return RunOutput(
+                                response=state.result_summary,
+                                termination_reason=TerminationReason.COMPLETED,
+                            )
 
                 remaining = None
                 if timeout is not None:
@@ -372,9 +494,9 @@ class Scheduler:
             agent.options.enable_termination_summary = True
         self._agents[agent.id] = agent
 
-    def _create_child_agent(self, state: AgentState) -> Agent:
+    async def _create_child_agent(self, state: AgentState) -> Agent:
         """Create a child Agent by copying the parent's configuration."""
-        return self._executor.create_child_agent(state)
+        return await self._executor.create_child_agent(state)
 
     # ──────────────────────────────────────────────────────────────────────
     # Scheduling Loop

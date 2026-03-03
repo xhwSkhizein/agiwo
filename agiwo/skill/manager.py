@@ -12,7 +12,7 @@ from pathlib import Path
 
 from agiwo.skill.loader import SkillLoader
 from agiwo.skill.registry import SkillMetadata, SkillRegistry
-from agiwo.skill.tool import SkillTool
+from agiwo.skill.skill_tool import SkillTool
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -86,6 +86,8 @@ class SkillManager:
             return ""
 
         lines = ["## Available Skills"]
+        lines.append("\n")
+        lines.append("Skills are tools. Use them quietly. The user doesn't need to see the machinery.")
         lines.append(
             "These skills are discovered at startup. Each entry includes a name and description. "
             "Use the Skill tool to activate a skill when needed."

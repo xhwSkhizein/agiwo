@@ -15,6 +15,8 @@ from agiwo.agent.schema import RunOutput, TerminationReason
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
+    OutputChannelState,
+    SchedulerOutput,
     WakeCondition,
     WakeType,
 )
@@ -48,6 +50,7 @@ class SchedulerExecutor:
         state_events: dict[str, asyncio.Event],
         semaphore: asyncio.Semaphore,
         dispatched_state_ids: set[str],
+        output_channels: dict[str, OutputChannelState],
     ) -> None:
         self._scheduler = scheduler
         self._store = store
@@ -56,8 +59,9 @@ class SchedulerExecutor:
         self._state_events = state_events
         self._semaphore = semaphore
         self._dispatched_state_ids = dispatched_state_ids
+        self._output_channels = output_channels
 
-    def create_child_agent(self, state: AgentState) -> Agent:
+    async def create_child_agent(self, state: AgentState) -> Agent:
         """Create a child Agent by copying the parent's configuration."""
         parent = self._agents.get(state.parent_id)
         if parent is None:
@@ -70,13 +74,16 @@ class SchedulerExecutor:
         if child_options is not None:
             child_options.enable_termination_summary = True
 
+        # Get parent's fully built system prompt
+        parent_system_prompt = await parent.get_effective_system_prompt()
+
         child = Agent(
             name=parent.name,
             description=parent.description,
             model=parent.model,
             id=state.id,
             tools=[t for t in parent.tools if t.get_name() != "spawn_agent"],
-            system_prompt=parent.system_prompt,
+            system_prompt=parent_system_prompt,
             options=child_options,
             hooks=parent.hooks,
         )
@@ -109,6 +116,7 @@ class SchedulerExecutor:
             await self._update_status_and_notify(
                 state.id, AgentStateStatus.FAILED, result_summary=str(e)
             )
+            await self._emit_output(state, str(e), is_final=True)
         finally:
             self._abort_signals.pop(state.id, None)
             await self._maybe_cleanup_agent(state)
@@ -128,10 +136,9 @@ class SchedulerExecutor:
 
             await self._store.update_status(state.id, AgentStateStatus.RUNNING)
             try:
-                child = self.create_child_agent(state)
+                child = await self.create_child_agent(state)
                 child_session_id = state.id
 
-                # Inject instruction into task via <system-instruction> tag
                 task = state.task
                 overrides = state.config_overrides or {}
                 instruction = overrides.get("instruction")
@@ -163,11 +170,13 @@ class SchedulerExecutor:
         agent = self._agents.get(state.id)
         if agent is None:
             logger.error("wake_agent_not_found", state_id=state.id)
+            error_msg = f"Agent '{state.id}' not found in scheduler for wake"
             await self._update_status_and_notify(
                 state.id,
                 AgentStateStatus.FAILED,
-                result_summary=f"Agent '{state.id}' not found in scheduler for wake",
+                result_summary=error_msg,
             )
+            await self._emit_output(state, error_msg, is_final=state.parent_id is None)
             return
 
         await self._store.increment_wake_count(state.id)
@@ -191,6 +200,7 @@ class SchedulerExecutor:
                 await self._update_status_and_notify(
                     state.id, AgentStateStatus.FAILED, result_summary=str(e)
                 )
+                await self._emit_output(state, str(e), is_final=state.parent_id is None)
             finally:
                 self._abort_signals.pop(state.id, None)
                 await self._maybe_cleanup_agent(state)
@@ -200,11 +210,13 @@ class SchedulerExecutor:
         agent = self._agents.get(state.id)
         if agent is None:
             logger.error("timeout_wake_agent_not_found", state_id=state.id)
+            error_msg = f"Agent '{state.id}' not found for timeout wake"
             await self._update_status_and_notify(
                 state.id,
                 AgentStateStatus.FAILED,
-                result_summary=f"Agent '{state.id}' not found for timeout wake",
+                result_summary=error_msg,
             )
+            await self._emit_output(state, error_msg, is_final=state.parent_id is None)
             return
 
         succeeded, failed = await self._collect_child_results(state)
@@ -247,10 +259,17 @@ class SchedulerExecutor:
                 await self._update_status_and_notify(
                     state.id, AgentStateStatus.FAILED, result_summary=str(e)
                 )
+                await self._emit_output(state, str(e), is_final=state.parent_id is None)
 
     async def _handle_agent_output(self, state: AgentState, output: RunOutput) -> None:
-        """Handle agent output: SLEEPING, persistent idle, PERIODIC reschedule, or COMPLETED."""
+        """Handle agent output: SLEEPING, persistent idle, PERIODIC reschedule, or COMPLETED.
+
+        Each branch emits text to the output channel when the agent produced content.
+        """
+        text = output.response
+
         if output.termination_reason == TerminationReason.SLEEPING:
+            await self._emit_output(state, text, is_final=False)
             return
 
         refreshed = await self._store.get_state(state.id)
@@ -272,22 +291,57 @@ class SchedulerExecutor:
                     state.id,
                     AgentStateStatus.SLEEPING,
                     wake_condition=new_wc,
-                    result_summary=output.response,
+                    result_summary=text,
                 )
+                await self._emit_output(state, text, is_final=False)
                 return
+
+        is_root = state.parent_id is None
 
         if is_persistent:
             await self._update_status_and_notify(
                 state.id,
                 AgentStateStatus.SLEEPING,
                 wake_condition=WakeCondition(type=WakeType.TASK_SUBMITTED),
-                result_summary=output.response,
+                result_summary=text,
             )
+            await self._emit_output(state, text, is_final=is_root)
             return
 
         await self._update_status_and_notify(
-            state.id, AgentStateStatus.COMPLETED, result_summary=output.response
+            state.id, AgentStateStatus.COMPLETED, result_summary=text
         )
+        await self._emit_output(state, text, is_final=is_root)
+
+    async def _emit_output(
+        self, state: AgentState, text: str | None, *, is_final: bool
+    ) -> None:
+        """Push agent text output to the root agent's output channel.
+
+        For child agents, the output is routed to the root's channel.
+        If ``include_child_outputs`` is False on the channel, child outputs are skipped.
+        When ``is_final`` is True and there is no text, a ``None`` sentinel is pushed
+        so that consumers unblock.
+        """
+        root_id = state.id if state.parent_id is None else state.parent_id
+        channel_state = self._output_channels.get(root_id)
+        if channel_state is None:
+            return
+
+        is_child = state.parent_id is not None
+        if is_child and not channel_state.include_child_outputs:
+            return
+
+        if text:
+            await channel_state.queue.put(
+                SchedulerOutput(state_id=state.id, text=text, is_final=is_final)
+            )
+        elif is_final:
+            await channel_state.queue.put(None)
+
+    def _close_output_channel(self, root_state_id: str) -> None:
+        """Remove the output channel for a root agent (called by Scheduler after consume)."""
+        self._output_channels.pop(root_state_id, None)
 
     async def _maybe_cleanup_agent(self, state: AgentState) -> None:
         """Remove agent from registry only when truly done (COMPLETED or FAILED, non-root only).
@@ -365,7 +419,7 @@ class SchedulerExecutor:
 
         if wc.type == WakeType.TASK_SUBMITTED:
             task = wc.submitted_task or ""
-            return f"New task submitted:\n\n{task}"
+            return f"{task}"
 
         return "You have been woken up. Please continue your task."
 

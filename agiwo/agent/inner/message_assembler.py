@@ -45,7 +45,7 @@ class MessageAssembler:
         if momos:
             if last_user_input["role"] == "user":
                 last_user_input["content"] += (
-                    "\n\n<relevant_memories>" + momos + "</relevant_memories>"
+                    "\n\n<inject-memories>" + momos + "</inject-memories>"
                 )
 
         # re-think about this

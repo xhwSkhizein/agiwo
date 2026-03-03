@@ -1,9 +1,75 @@
 import os
+import re
+import uuid
 from typing import AsyncIterator
+import json
 
 from agiwo.config.settings import settings
 from agiwo.llm.base import StreamChunk
 from agiwo.llm.openai import OpenAIModel
+
+
+# DSML function_calls pattern
+DSML_FUNCTION_CALLS_PATTERN = re.compile(
+    r'<｜DSML｜function_calls>\s*'
+    r'(<｜DSML｜invoke[^>]*>.*?</｜DSML｜invoke>)\s*'
+    r'</｜DSML｜function_calls>',
+    re.DOTALL
+)
+
+DSML_INVOKE_PATTERN = re.compile(
+    r'<｜DSML｜invoke\s+name="([^"]+)">'
+    r'(.*?)</｜DSML｜invoke>',
+    re.DOTALL
+)
+
+DSML_PARAMETER_PATTERN = re.compile(
+    r'<｜DSML｜parameter\s+name="([^"]+)"\s+[^>]*>(.*?)</｜DSML｜parameter>',
+    re.DOTALL
+)
+
+
+def parse_dsml_function_calls(content: str) -> list[dict] | None:
+    """
+    Parse DSML function_calls format from content.
+    
+    Example input:
+        <｜DSML｜function_calls>
+        <｜DSML｜invoke name="bash">
+        <｜DSML｜parameter name="command" string="true">ls -la</｜DSML｜parameter>
+        </｜DSML｜invoke>
+        </｜DSML｜function_calls>
+    
+    Returns list of tool_calls in OpenAI format, or None if no DSML found.
+    """
+    if '<｜DSML｜function_calls>' not in content:
+        return None
+    
+    match = DSML_FUNCTION_CALLS_PATTERN.search(content)
+    if not match:
+        return None
+    
+    tool_calls = []
+    invoke_blocks = DSML_INVOKE_PATTERN.findall(match.group(0))
+    
+    for idx, (func_name, invoke_content) in enumerate(invoke_blocks):
+        # Parse parameters
+        arguments: dict[str, str] = {}
+        for param_name, param_value in DSML_PARAMETER_PATTERN.findall(invoke_content):
+            arguments[param_name] = param_value.strip()
+        
+        tool_call = {
+            "index": idx,
+            "id": f"call_{uuid.uuid4().hex[:24]}",
+            "type": "function",
+            "function": {
+                "name": func_name,
+                "arguments": json.dumps(arguments),
+            },
+        }
+        tool_calls.append(tool_call)
+    
+    return tool_calls if tool_calls else None
 
 
 class DeepseekModel(OpenAIModel):
@@ -18,6 +84,9 @@ class DeepseekModel(OpenAIModel):
         max_tokens: int = 4096,
         frequency_penalty: float = 0.0,
         presence_penalty: float = 0.0,
+        cache_hit_price: float = 0.0,
+        input_price: float = 0.0,
+        output_price: float = 0.0,
     ):
         super().__init__(
             id=id,
@@ -29,6 +98,9 @@ class DeepseekModel(OpenAIModel):
             max_tokens=max_tokens,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            cache_hit_price=cache_hit_price,
+            input_price=input_price,
+            output_price=output_price,
         )
         self.provider = "deepseek"
 
@@ -70,7 +142,6 @@ class DeepseekModel(OpenAIModel):
         model_name = getattr(self, "model_name", None) or self.name
         is_thinking_mode = (
             "reasoner" in model_name.lower()
-            or "deepseek-reasoner" in model_name.lower()
         )
 
         # Check if last message is a user message (new conversation turn)
@@ -112,6 +183,9 @@ class DeepseekModel(OpenAIModel):
         - If last message is user (new turn), removes reasoning_content from history
         - If using deepseek-reasoner, ensures all assistant messages have reasoning_content field
 
+        Also handles DSML function_calls format from deepseek-reasoner model,
+        converting it to standard tool_calls when necessary.
+
         Args:
             messages: OpenAI format message list
             tools: Tool definition list, OpenAI format
@@ -122,9 +196,26 @@ class DeepseekModel(OpenAIModel):
         # Preprocess messages for thinking mode
         processed_messages = self._preprocess_messages_for_thinking_mode(messages)
 
+        # Track accumulated content and whether we have tool_calls
+        accumulated_content: list[str] = []
+        has_tool_calls = False
+
         # Call parent's arun_stream with processed messages
         async for chunk in super().arun_stream(processed_messages, tools=tools):
+            if chunk.content:
+                accumulated_content.append(chunk.content)
+            if chunk.tool_calls:
+                has_tool_calls = True
+
             yield chunk
+
+        # Post-process: check if content contains DSML function_calls but no tool_calls
+        if tools and not has_tool_calls and accumulated_content:
+            full_content = "".join(accumulated_content)
+            dsml_tool_calls = parse_dsml_function_calls(full_content)
+            if dsml_tool_calls:
+                # Yield an additional chunk with parsed tool_calls
+                yield StreamChunk(tool_calls=dsml_tool_calls)
 
 
 __all__ = ["DeepseekModel"]

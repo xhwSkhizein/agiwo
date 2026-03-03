@@ -32,12 +32,17 @@ class Model(ABC):
     api_key: str | None = None
     base_url: str | None = None
     provider: str = ""
+    cache_hit_price: float = 0.0
+    input_price: float = 0.0
+    output_price: float = 0.0
 
     def __post_init__(self) -> None:
         if not (0.0 <= self.temperature <= 2.0):
             raise ValueError("temperature must be between 0.0 and 2.0")
         if self.max_tokens is not None and self.max_tokens < 1:
             raise ValueError("max_tokens must be at least 1")
+        if self.cache_hit_price < 0 or self.input_price < 0 or self.output_price < 0:
+            raise ValueError("token prices must be non-negative")
 
     @abstractmethod
     async def arun_stream(

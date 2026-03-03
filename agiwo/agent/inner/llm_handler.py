@@ -78,7 +78,7 @@ class LLMStreamHandler:
         }
         if hasattr(self.model, "temperature"):
             params["temperature"] = self.model.temperature
-            params["max_tokens"] = self.model.max_tokens
+            params["max_output_tokens_per_call"] = self.model.max_tokens
             params["top_p"] = self.model.top_p
         return params
 

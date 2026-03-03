@@ -155,6 +155,27 @@ export function getTrace(traceId: string) {
 
 // ── Agents ─────────────────────────────────────────────────────────────
 
+export interface AgentOptionsPayload {
+  max_steps: number;
+  run_timeout: number;
+  max_context_window_tokens: number;
+  max_tokens_per_run: number;
+  max_run_token_cost: number | null;
+  enable_skill: boolean;
+  skills_dir: string | null;
+}
+
+export interface ModelParamsPayload {
+  max_output_tokens_per_call: number;
+  temperature: number;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  cache_hit_price: number;
+  input_price: number;
+  output_price: number;
+}
+
 export interface AgentConfig {
   id: string;
   name: string;
@@ -163,8 +184,8 @@ export interface AgentConfig {
   model_name: string;
   system_prompt: string;
   tools: string[];
-  options: Record<string, unknown>;
-  model_params: Record<string, unknown>;
+  options: AgentOptionsPayload;
+  model_params: ModelParamsPayload;
   created_at: string;
   updated_at: string;
 }
@@ -176,8 +197,8 @@ export interface AgentConfigCreate {
   model_name: string;
   system_prompt?: string;
   tools?: string[];
-  options?: Record<string, unknown>;
-  model_params?: Record<string, unknown>;
+  options?: Partial<AgentOptionsPayload>;
+  model_params?: Partial<ModelParamsPayload>;
 }
 
 export interface AvailableTool {

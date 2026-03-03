@@ -3,8 +3,9 @@ Agent configuration options.
 """
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Literal
+
+from agiwo.config.settings import settings
 
 
 @dataclass
@@ -55,12 +56,15 @@ class AgentOptions:
         trace_storage: Configuration for trace/observability persistence.
             Defaults to None (tracing disabled). Enable for observability features.
     """
-    config_root: str = ".agiwo/"
+    # Root path for agent data - if empty, uses AgiwoSettings.root_path
+    config_root: str = ""
 
     # Execution limits
     max_steps: int = 10
     run_timeout: int = 600  # seconds
-    max_output_tokens: int = 8196
+    max_context_window_tokens: int = 32768
+    max_tokens_per_run: int = 131072
+    max_run_token_cost: float | None = None
 
     # Termination summary
     enable_termination_summary: bool = True
@@ -68,7 +72,7 @@ class AgentOptions:
 
     # Skills
     enable_skill: bool = False
-    skills_dir: str | None = ".agiwo/skills"
+    skills_dir: str | None = None  # None means use {root_path}/skills
 
     # Memory
     relevant_memory_max_token: int = 2048  # max tokens for retrieved memories
@@ -79,3 +83,12 @@ class AgentOptions:
     # Storage (new - replaces manual storage injection)
     run_step_storage: RunStepStorageConfig = field(default_factory=RunStepStorageConfig)
     trace_storage: TraceStorageConfig = field(default_factory=TraceStorageConfig)
+
+    def get_effective_root_path(self) -> str:
+        """Get the effective root path.
+        
+        Returns config_root if set, otherwise falls back to AgiwoSettings.root_path.
+        """
+        if self.config_root:
+            return self.config_root
+        return settings.root_path

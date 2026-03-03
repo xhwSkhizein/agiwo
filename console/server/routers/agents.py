@@ -5,7 +5,13 @@ Agents CRUD API router.
 from fastapi import APIRouter, HTTPException, Query as QueryParam
 
 from server.dependencies import get_agent_registry
-from server.schemas import AgentConfigCreate, AgentConfigUpdate, AgentConfigResponse
+from server.schemas import (
+    AgentConfigCreate,
+    AgentConfigUpdate,
+    AgentConfigResponse,
+    AgentOptionsPayload,
+    ModelParamsPayload,
+)
 from server.services.agent_registry import AgentConfigRecord
 from server.tools import get_available_builtin_tools
 
@@ -43,8 +49,8 @@ def _record_to_response(record: AgentConfigRecord) -> AgentConfigResponse:
         model_name=record.model_name,
         system_prompt=record.system_prompt,
         tools=record.tools,
-        options=record.options,
-        model_params=record.model_params,
+        options=AgentOptionsPayload.model_validate(record.options or {}),
+        model_params=ModelParamsPayload.model_validate(record.model_params or {}),
         created_at=record.created_at.isoformat() if hasattr(record.created_at, "isoformat") else str(record.created_at),
         updated_at=record.updated_at.isoformat() if hasattr(record.updated_at, "isoformat") else str(record.updated_at),
     )
@@ -69,8 +75,8 @@ async def create_agent(body: AgentConfigCreate) -> AgentConfigResponse:
         model_name=body.model_name,
         system_prompt=body.system_prompt,
         tools=body.tools,
-        options=body.options,
-        model_params=body.model_params,
+        options=body.options.model_dump(exclude_none=True),
+        model_params=body.model_params.model_dump(exclude_none=True),
     )
     created = await registry.create_agent(record)
     return _record_to_response(created)
@@ -91,6 +97,10 @@ async def update_agent(agent_id: str, body: AgentConfigUpdate) -> AgentConfigRes
     """Update an existing agent configuration."""
     registry = get_agent_registry()
     updates = body.model_dump(exclude_none=True)
+    if body.options is not None:
+        updates["options"] = body.options.model_dump(exclude_none=True)
+    if body.model_params is not None:
+        updates["model_params"] = body.model_params.model_dump(exclude_none=True)
     record = await registry.update_agent(agent_id, updates)
     if record is None:
         raise HTTPException(status_code=404, detail="Agent not found")

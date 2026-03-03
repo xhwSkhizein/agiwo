@@ -2,9 +2,11 @@
 Scheduler data models.
 
 Defines the core data structures for agent scheduling:
-AgentState, AgentStateStatus, WakeCondition, WakeType, WaitMode, TimeUnit, TaskLimits.
+AgentState, AgentStateStatus, WakeCondition, WakeType, WaitMode, TimeUnit, TaskLimits,
+SchedulerOutput.
 """
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -171,6 +173,32 @@ class AgentState:
     wake_count: int = 0
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
+class SchedulerOutput:
+    """An output from a scheduled agent intended for the end user.
+
+    Emitted whenever an agent (root or child) produces text content during
+    a scheduler-managed task cycle.
+
+    Attributes:
+        state_id: The agent state that produced this text.
+        text: Text content to deliver.
+        is_final: True when the current task cycle is done; consumers should stop listening.
+    """
+
+    state_id: str
+    text: str
+    is_final: bool
+
+
+@dataclass
+class OutputChannelState:
+    """Per-root-agent output channel for streaming results to consumers."""
+
+    queue: asyncio.Queue  # Queue[SchedulerOutput | None]
+    include_child_outputs: bool = True
 
 
 @dataclass

@@ -114,7 +114,10 @@ class TerminationReason(str, Enum):
     COMPLETED = "completed"
     MAX_STEPS = "max_steps"
     TIMEOUT = "timeout"
-    MAX_TOKENS = "max_tokens"
+    MAX_OUTPUT_TOKENS_PER_CALL = "max_output_tokens_per_call"
+    MAX_CONTEXT_WINDOW_TOKENS = "max_context_window_tokens"
+    MAX_TOKENS_PER_RUN = "max_tokens_per_run"
+    MAX_RUN_TOKEN_COST = "max_run_token_cost"
     ERROR = "error"
     ERROR_WITH_CONTEXT = "error_with_context"
     CANCELLED = "cancelled"
@@ -178,6 +181,7 @@ class RunMetrics:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    token_cost: float = 0.0
 
     steps_count: int = 0
     tool_calls_count: int = 0

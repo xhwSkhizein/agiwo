@@ -51,7 +51,6 @@ class AgentExecutor:
         {
             TerminationReason.MAX_STEPS,
             TerminationReason.TIMEOUT,
-            TerminationReason.MAX_TOKENS,
             TerminationReason.ERROR_WITH_CONTEXT,
         }
     )
@@ -64,9 +63,13 @@ class AgentExecutor:
         options: AgentOptions | None = None,
         hooks: AgentHooks | None = None,
     ):
+        self.model = model
         self.emitter = emitter
         self.options = options or AgentOptions()
         self.hooks = hooks or AgentHooks()
+        self.cache_hit_price = float(getattr(model, "cache_hit_price", 0.0) or 0.0)
+        self.input_price = float(getattr(model, "input_price", 0.0) or 0.0)
+        self.output_price = float(getattr(model, "output_price", 0.0) or 0.0)
 
         self.llm_handler = LLMStreamHandler(model)
         self.tool_executor = ToolExecutor(tools=tools)
@@ -133,8 +136,7 @@ class AgentExecutor:
 
         # Main agent loop
         while True:
-            # Check limits
-            if reason := self._check_limits(state):
+            if reason := self._check_pre_limits(state):
                 state.termination_reason = reason
                 break
 
@@ -150,19 +152,26 @@ class AgentExecutor:
             )
             await self.emitter.emit_step_completed(step, llm=llm_context)
             state.track_step(step)
+            state.add_token_cost(self._estimate_token_cost(step))
 
             if self.hooks.on_after_llm_call:
                 await self.hooks.on_after_llm_call(step)
             if self.hooks.on_step:
                 await self.hooks.on_step(step)
 
-            if not step.tool_calls:
+            had_tool_calls = bool(step.tool_calls)
+            if had_tool_calls:
+                await self._execute_tools(state, step.tool_calls or [], abort_signal)
+                if state.termination_reason is not None:
+                    return
+
+            if reason := self._check_post_limits(state, llm_context.finish_reason, step):
+                state.termination_reason = reason
+                return
+
+            if not had_tool_calls:
                 state.termination_reason = TerminationReason.COMPLETED
                 return  # Normal completion
-
-            await self._execute_tools(state, step.tool_calls, abort_signal)
-            if state.termination_reason is not None:
-                return
 
     # ───────────────────────────────────────────────────────────────────
     # Helpers
@@ -222,24 +231,141 @@ class AgentExecutor:
                 state.termination_reason = result.termination_reason
                 return
 
-    def _check_limits(self, state: RunState) -> TerminationReason | None:
-        """Check all execution limits, return termination reason or None."""
+    def _check_pre_limits(self, state: RunState) -> TerminationReason | None:
+        """Check limits before making a new LLM request."""
         if state.current_step >= self.options.max_steps:
+            logger.warning(
+                "limit_hit_max_steps",
+                current_step=state.current_step,
+                max_steps=self.options.max_steps,
+                run_id=state.context.run_id,
+            )
             return TerminationReason.MAX_STEPS
 
         if self.options.run_timeout and state.elapsed > self.options.run_timeout:
+            logger.warning(
+                "limit_hit_timeout",
+                elapsed=state.elapsed,
+                run_timeout=self.options.run_timeout,
+                run_id=state.context.run_id,
+            )
             return TerminationReason.TIMEOUT
 
         if state.context.timeout_at and time.time() >= state.context.timeout_at:
+            logger.warning(
+                "limit_hit_context_timeout",
+                timeout_at=state.context.timeout_at,
+                run_id=state.context.run_id,
+            )
             return TerminationReason.TIMEOUT
 
         if (
-            self.options.max_output_tokens
-            and state.total_tokens >= self.options.max_output_tokens
+            self.options.max_tokens_per_run is not None
+            and state.total_tokens >= self.options.max_tokens_per_run
         ):
-            return TerminationReason.MAX_TOKENS
+            logger.warning(
+                "limit_hit_max_tokens_per_run",
+                total_tokens=state.total_tokens,
+                max_tokens=self.options.max_tokens_per_run,
+                run_id=state.context.run_id,
+            )
+            return TerminationReason.MAX_TOKENS_PER_RUN
+
+        if (
+            self.options.max_run_token_cost is not None
+            and state.token_cost >= self.options.max_run_token_cost
+        ):
+            logger.warning(
+                "limit_hit_max_run_token_cost",
+                token_cost=state.token_cost,
+                max_cost=self.options.max_run_token_cost,
+                run_id=state.context.run_id,
+            )
+            return TerminationReason.MAX_RUN_TOKEN_COST
 
         return None
+
+    def _check_post_limits(
+        self,
+        state: RunState,
+        finish_reason: str | None,
+        step: StepRecord,
+    ) -> TerminationReason | None:
+        """Check limits after one LLM step and any tool execution for that step."""
+        if self._is_model_output_limit_hit(finish_reason):
+            logger.warning(
+                "limit_hit_max_output_tokens_per_call",
+                finish_reason=finish_reason,
+                run_id=state.context.run_id,
+            )
+            return TerminationReason.MAX_OUTPUT_TOKENS_PER_CALL
+
+        if (
+            self.options.max_context_window_tokens is not None
+            and step.metrics
+            and step.metrics.total_tokens is not None
+            and step.metrics.total_tokens >= self.options.max_context_window_tokens
+        ):
+            logger.warning(
+                "limit_hit_max_context_window_tokens",
+                total_tokens=step.metrics.total_tokens,
+                max_tokens=self.options.max_context_window_tokens,
+                run_id=state.context.run_id,
+            )
+            return TerminationReason.MAX_CONTEXT_WINDOW_TOKENS
+
+        if (
+            self.options.max_tokens_per_run is not None
+            and state.total_tokens >= self.options.max_tokens_per_run
+        ):
+            logger.warning(
+                "limit_hit_max_tokens_per_run_post",
+                total_tokens=state.total_tokens,
+                max_tokens=self.options.max_tokens_per_run,
+                run_id=state.context.run_id,
+            )
+            return TerminationReason.MAX_TOKENS_PER_RUN
+
+        if (
+            self.options.max_run_token_cost is not None
+            and state.token_cost >= self.options.max_run_token_cost
+        ):
+            logger.warning(
+                "limit_hit_max_run_token_cost_post",
+                token_cost=state.token_cost,
+                max_cost=self.options.max_run_token_cost,
+                run_id=state.context.run_id,
+            )
+            return TerminationReason.MAX_RUN_TOKEN_COST
+
+        return None
+
+    @staticmethod
+    def _is_model_output_limit_hit(finish_reason: str | None) -> bool:
+        if finish_reason is None:
+            return False
+
+        normalized = finish_reason.strip().lower()
+        return normalized in {"length", "max_tokens"}
+
+    def _estimate_token_cost(self, step: StepRecord) -> float:
+        """Estimate step cost in USD from token usage and model prices (per 1M tokens)."""
+        if not step.metrics:
+            return 0.0
+
+        input_tokens = step.metrics.input_tokens or 0
+        output_tokens = step.metrics.output_tokens or 0
+        cache_hit_tokens = step.metrics.cache_read_tokens or 0
+        cache_miss_tokens = max(input_tokens - cache_hit_tokens, 0)
+
+        if input_tokens == 0 and output_tokens == 0:
+            return 0.0
+
+        return (
+            (cache_hit_tokens * self.cache_hit_price)
+            + (cache_miss_tokens * self.input_price)
+            + (output_tokens * self.output_price)
+        ) / 1_000_000.0
 
     async def _maybe_generate_summary(
         self,

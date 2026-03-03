@@ -17,6 +17,7 @@ Usage:
 
 import time
 import asyncio
+from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
 
@@ -34,9 +35,12 @@ from agiwo.agent.inner.message_assembler import MessageAssembler
 from agiwo.agent.inner.storage_sink import StorageSink
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.agent.inner.system_prompt_builder import DefaultSystemPromptBuilder
+from agiwo.agent.memory_hooks import DefaultMemoryHook
 from agiwo.llm.base import Model
+from agiwo.skill.manager import SkillManager
 from agiwo.tool.base import BaseTool
-from agiwo.tool.builtin import DEFAULT_TOOLS
+from agiwo.tool.builtin.registry import DEFAULT_TOOLS
+from agiwo.tool.builtin.config import MemoryConfig
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.schema import Run, RunOutput, RunStatus, StreamEvent, StepRecord
 from agiwo.agent.storage.base import RunStepStorage
@@ -49,6 +53,25 @@ from agiwo.agent.options import AgentOptions
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _resolve_skills_dirs(options: AgentOptions, config_root: str) -> list[Path]:
+    """Resolve skill directories from options."""
+    if options.skills_dir:
+        return [Path(options.skills_dir).expanduser().resolve()]
+    
+    default_dir = Path(f"{Path(config_root).expanduser()}/skills").expanduser().resolve()
+    if default_dir.exists():
+        return [default_dir]
+    return []
+
+
+def _create_skill_manager(options: AgentOptions, agent_name: str, config_root: str) -> SkillManager:
+    """Create SkillManager from options configuration."""
+    skills_dirs = _resolve_skills_dirs(options, config_root)
+    manager = SkillManager(skills_dirs=skills_dirs)
+    logger.info("skill_manager_created", agent_name=agent_name, skills_dirs=[str(d) for d in skills_dirs])
+    return manager
 
 
 class Agent:
@@ -89,9 +112,33 @@ class Agent:
         self.id = id or self._generate_default_id()
         self.description = description
         self.model = model
-        self.tools = tools if tools is not None else [cls() for cls in DEFAULT_TOOLS.values()]
+        # 合并传入的 tools 和 DEFAULT_TOOLS，用户传入的优先，同名工具不重复
+        tools = tools or []
+        user_tool_names = {t.get_name() for t in tools}
+        default_tools = [cls() for name, cls in DEFAULT_TOOLS.items() if name not in user_tool_names]
+        self.tools = tools + default_tools
         self.options = options or AgentOptions()
         self.hooks = hooks or AgentHooks()
+
+        # 自动注入默认 memory retrieve hook（如果用户未提供）
+        if self.hooks.on_memory_retrieve is None:
+            memory_config = MemoryConfig(
+                embedding_provider="auto",
+                top_k=5,
+            )
+            memory_hook = DefaultMemoryHook(memory_config)
+            self.hooks.on_memory_retrieve = memory_hook.retrieve_memories
+            logger.debug("default_memory_hook_injected", agent_id=self.id)
+
+        # 如果启用 skill，创建 skill_manager 并添加 skill_tool
+        self._skill_manager: SkillManager | None = None
+        if self.options.enable_skill:
+            self._skill_manager = _create_skill_manager(
+                self.options, self.name, self.options.config_root
+            )
+            skill_tool = self._skill_manager.get_skill_tool()
+            self.tools.append(skill_tool)
+            logger.debug("skill_tool_added", agent_id=self.id, tool_name=skill_tool.get_name())
 
         # Storage instances (created synchronously, connect lazily on first use)
         self.run_step_storage: RunStepStorage = StorageFactory.create_run_step_storage(
@@ -107,8 +154,19 @@ class Agent:
             agent_name=self.name,
             agent_id=self.id,
             options=self.options,
+            tools=self.tools,
+            skill_manager=self._skill_manager,
         )
         self._system_prompt: str | None = None
+
+    async def get_effective_system_prompt(self) -> str:
+        """Get the fully built system prompt (triggers build if needed).
+
+        Used by Scheduler to inherit parent's complete system configuration.
+        """
+        if self._system_prompt is not None:
+            return self._system_prompt
+        return await self._prompt_builder.get_system_prompt()
 
     @property
     def system_prompt(self) -> str | None:
@@ -244,6 +302,7 @@ class Agent:
             channel=StreamChannel(),
             user_id=user_id,
             agent_id=self.id,
+            agent_name=self.name,
             sequence_counter=SessionSequenceCounter(initial_seq),
             metadata=metadata or {},
         )
