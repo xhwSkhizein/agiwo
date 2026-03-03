@@ -60,10 +60,10 @@ class AgentOptions:
     config_root: str = ""
 
     # Execution limits
-    max_steps: int = 10
+    max_steps: int = 50
     run_timeout: int = 600  # seconds
-    max_context_window_tokens: int = 32768
-    max_tokens_per_run: int = 131072
+    max_context_window_tokens: int = 200000
+    max_tokens_per_run: int = 200000
     max_run_token_cost: float | None = None
 
     # Termination summary

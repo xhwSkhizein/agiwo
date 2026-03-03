@@ -4,8 +4,9 @@ Console server configuration.
 Loaded from environment variables with AGIWO_CONSOLE_ prefix.
 """
 
-from typing import Literal
+from typing import Literal, Any
 
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -30,6 +31,16 @@ class ConsoleConfig(BaseSettings):
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
+
+    # Default Agent Configuration
+    default_agent_id: str = "default-agent"
+    default_agent_name: str = "Default Agent"
+    default_agent_description: str = ""
+    default_agent_model_provider: str = "generic"
+    default_agent_model_name: str = "gpt-4o"
+    default_agent_system_prompt: str = ""
+    default_agent_options: dict[str, Any] = Field(default_factory=dict)
+    default_agent_model_params: dict[str, Any] = Field(default_factory=dict)
 
     # Feishu channel
     feishu_enabled: bool = False

@@ -32,14 +32,14 @@ from server.routers import (
     scheduler_chat,
     feishu,
 )
+from agiwo.utils.logging import get_logger
 
-DEFAULT_AGENT_CONFIG = AgentConfigRecord(
-    id="Walaha000",
-    name="Walaha",
-    description="",
-    model_provider="deepseek",
-    model_name="deepseek-reasoner",
-    options={
+logger = get_logger("app")
+
+
+def _build_default_agent_config(config: ConsoleConfig) -> AgentConfigRecord:
+    """Build default agent config from ConsoleConfig."""
+    default_options = {
         "max_steps": 20,
         "run_timeout": 600,
         "max_context_window_tokens": 128000,
@@ -48,12 +48,23 @@ DEFAULT_AGENT_CONFIG = AgentConfigRecord(
         "enable_termination_summary": True,
         "termination_summary_prompt": "",
         "enable_skill": False,
-        "skills_dir": None,  # None means use {root_path}/skills
-        "relevant_memory_max_token": 2048,  # max tokens for retrieved memories
-        "stream_cleanup_timeout": 300.0,  # seconds),
-    },
-    model_params={},
-)
+        "skills_dir": None,
+        "relevant_memory_max_token": 2048,
+        "stream_cleanup_timeout": 300.0,
+    }
+    # Override with env-provided options
+    default_options.update(config.default_agent_options)
+
+    return AgentConfigRecord(
+        id=config.default_agent_id,
+        name=config.default_agent_name,
+        description=config.default_agent_description,
+        model_provider=config.default_agent_model_provider,
+        model_name=config.default_agent_model_name,
+        system_prompt=config.default_agent_system_prompt,
+        options=default_options,
+        model_params=config.default_agent_model_params,
+    )
 
 
 @asynccontextmanager
@@ -96,7 +107,11 @@ async def lifespan(app: FastAPI):
             config.feishu_default_agent_name
         )
         if base_agent is None:
-            base_agent = DEFAULT_AGENT_CONFIG
+            base_agent = _build_default_agent_config(config)
+            await agent_registry.create_agent(base_agent)
+            logger.info(
+                "create Default Agent Config", name=config.feishu_default_agent_name
+            )
 
         feishu_channel_service = FeishuChannelService(
             config=config,
