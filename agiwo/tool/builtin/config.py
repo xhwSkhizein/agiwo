@@ -57,11 +57,11 @@ class MemoryConfig:
 
 @dataclass
 class WebSearchApiConfig:
-    """Configuration for WebSearchApiTool."""
+    """Configuration for WebSearchTool."""
 
     base_url: str = field(default_factory=lambda: settings.web_search_api_base_url)
 
-    serper_api_key: SecretStr = field(
+    serper_api_key: SecretStr | None = field(
         default_factory=lambda: settings.web_search_serper_api_key
     )
 
@@ -81,18 +81,46 @@ class WebSearchApiConfig:
 
 @dataclass
 class WebReaderApiConfig:
-    """Configuration for WebReaderApiTool."""
+    """Configuration for WebReaderTool and its browser fallback."""
 
-    base_url: str = field(default_factory=lambda: settings.web_reader_api_base_url)
     timeout_seconds: int = field(
         default_factory=lambda: settings.web_reader_api_timeout
     )
     max_content_length: int = field(
         default_factory=lambda: settings.web_reader_api_max_content_length
     )
-    max_retries: int = field(
-        default_factory=lambda: settings.web_reader_api_max_retries
+    model_provider: str = field(
+        default_factory=lambda: settings.get_tool_model_provider("web_reader")
     )
+    model_name: str = field(
+        default_factory=lambda: settings.get_tool_model_name("web_reader")
+    )
+    model_base_url: str | None = field(
+        default_factory=lambda: settings.get_tool_model_base_url("web_reader")
+    )
+    api_key_env_name: str | None = field(
+        default_factory=lambda: settings.get_tool_model_api_key_env_name(
+            "web_reader"
+        )
+    )
+    model_temperature: float = field(
+        default_factory=lambda: settings.get_tool_model_temperature("web_reader")
+    )
+    model_top_p: float = field(
+        default_factory=lambda: settings.get_tool_model_top_p("web_reader")
+    )
+    model_max_tokens: int = field(
+        default_factory=lambda: settings.get_tool_model_max_tokens("web_reader")
+    )
+    headless: bool = False
+    wait_strategy: str = "domcontentloaded"
+    max_browsers: int = 1
+    browser_idle_ttl_seconds: int = 300
+    browser_max_uses: int = 20
+    save_login_state: bool = True
+    user_data_dir: str = "browser_data"
+    browser_launch_timeout: int = 30
+    auto_close_browser: bool = True
 
 
 def create_config_from_dict(config_class: type, data: dict) -> Any:

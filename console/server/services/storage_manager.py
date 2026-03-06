@@ -44,7 +44,7 @@ class StorageManager:
         return RunStepStorageConfig(
             storage_type="mongodb",
             config={
-                "uri": self._config.mongodb_uri,
+                "mongo_uri": self._config.mongodb_uri,
                 "db_name": self._config.mongodb_db_name,
             },
         )

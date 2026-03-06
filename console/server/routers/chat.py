@@ -32,7 +32,10 @@ async def chat(agent_id: str, body: ChatRequest) -> EventSourceResponse:
         raise HTTPException(status_code=404, detail="Agent not found")
 
     console_config = get_console_config()
-    agent = await build_agent(agent_config, console_config, registry)
+    try:
+        agent = await build_agent(agent_config, console_config, registry)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     session_id = body.session_id or str(uuid4())
 
     async def event_generator():

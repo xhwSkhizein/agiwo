@@ -6,11 +6,12 @@ import asyncio
 from collections import deque
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
+from motor.motor_asyncio import AsyncIOMotorCollection
 
 from agiwo.observability.base import BaseTraceStorage, TraceQuery
 from agiwo.observability.trace import Trace
 from agiwo.utils.logging import get_logger
+from agiwo.utils.mongo_pool import get_shared_mongo_client, release_shared_mongo_client
 
 logger = get_logger(__name__)
 
@@ -44,7 +45,7 @@ class MongoTraceStorage(BaseTraceStorage):
         self._subscribers: list[asyncio.Queue] = []
 
         # MongoDB client (lazy init)
-        self._client: AsyncIOMotorClient[Any] | None = None
+        self._client: Any = None
         self._collection: AsyncIOMotorCollection[Any] | None = None
         self._initialized = False
 
@@ -55,7 +56,7 @@ class MongoTraceStorage(BaseTraceStorage):
 
         if self.mongo_uri:
             try:
-                self._client = AsyncIOMotorClient(self.mongo_uri)
+                self._client = await get_shared_mongo_client(self.mongo_uri)
                 if self._client is None:
                     raise RuntimeError("Failed to create MongoDB client")
                 db = self._client[self.db_name]
@@ -85,6 +86,13 @@ class MongoTraceStorage(BaseTraceStorage):
                 logger.error("trace_storage_init_failed", error=str(e))
 
         self._initialized = True
+
+    async def disconnect(self) -> None:
+        if self._client is not None and self.mongo_uri:
+            await release_shared_mongo_client(self.mongo_uri)
+            self._client = None
+            self._collection = None
+            self._initialized = False
 
     async def save_trace(self, trace: Trace) -> None:
         """Save trace"""
@@ -221,11 +229,8 @@ class MongoTraceStorage(BaseTraceStorage):
 
     async def close(self) -> None:
         """Close MongoDB connection"""
-        if self._client:
-            self._client.close()
-            self._client = None
-            self._collection = None
-            self._initialized = False
+        if self._client is not None:
+            await self.disconnect()
             logger.info("trace_storage_closed")
 
 

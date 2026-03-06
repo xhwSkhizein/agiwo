@@ -3,11 +3,13 @@ API-layer Pydantic models for request/response serialization.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from agiwo.agent.options import normalize_skills_dirs
+from agiwo.agent.schema import UserInput
 from agiwo.config.settings import settings
 
 
@@ -24,7 +26,7 @@ class StepResponse(BaseModel):
     content: Any | None = None
     content_for_user: str | None = None
     reasoning_content: str | None = None
-    user_input: Any | None = None
+    user_input: UserInput | None = None
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     name: str | None = None
@@ -39,7 +41,7 @@ class RunResponse(BaseModel):
     agent_id: str
     session_id: str
     user_id: str | None = None
-    user_input: Any
+    user_input: UserInput
     status: str
     response_content: str | None = None
     metrics: dict | None = None
@@ -51,7 +53,7 @@ class RunResponse(BaseModel):
 class SessionSummary(BaseModel):
     session_id: str
     agent_id: str | None = None
-    last_user_input: Any | None = None  # 结构化 UserInput
+    last_user_input: UserInput | None = None  # 结构化 UserInput
     last_response: str | None = None
     run_count: int = 0
     step_count: int = 0
@@ -157,6 +159,8 @@ class AgentOptionsPayload(BaseModel):
 
 
 class ModelParamsPayload(BaseModel):
+    base_url: str | None = None
+    api_key_env_name: str | None = None
     max_output_tokens_per_call: int = Field(default=4096, ge=1)
     temperature: float = Field(default=0.7, ge=0, le=2)
     top_p: float = Field(default=1.0, ge=0, le=1)
@@ -168,27 +172,94 @@ class ModelParamsPayload(BaseModel):
 
     model_config = {"extra": "ignore"}
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_plain_api_key(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "api_key" in data:
+            raise ValueError(
+                "api_key is not supported in model_params; use api_key_env_name"
+            )
+        return data
+
+    @field_validator("base_url", "api_key_env_name", mode="before")
+    @classmethod
+    def _normalize_optional_strings(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
+    @field_validator("base_url")
+    @classmethod
+    def _validate_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"}:
+            raise ValueError("base_url must start with http:// or https://")
+        return value
+
+
+def _validate_compatible_provider_params(
+    provider: str | None,
+    model_params: ModelParamsPayload | None,
+) -> None:
+    if provider not in {"openai-compatible", "anthropic-compatible"}:
+        return
+    if model_params is None or model_params.base_url is None:
+        raise ValueError(f"{provider} models require base_url")
+    if model_params.api_key_env_name is None:
+        raise ValueError(f"{provider} models require api_key_env_name")
+
 
 class AgentConfigCreate(BaseModel):
     name: str
     description: str = ""
-    model_provider: str  # "openai" | "deepseek" | "anthropic"
+    model_provider: Literal[
+        "openai",
+        "openai-compatible",
+        "deepseek",
+        "anthropic",
+        "anthropic-compatible",
+        "nvidia",
+        "bedrock-anthropic",
+    ]
     model_name: str  # "gpt-4o" | "deepseek-chat" | ...
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
     options: AgentOptionsPayload = Field(default_factory=AgentOptionsPayload)
     model_params: ModelParamsPayload = Field(default_factory=ModelParamsPayload)
 
+    @model_validator(mode="after")
+    def _validate_model_connection(self) -> "AgentConfigCreate":
+        _validate_compatible_provider_params(self.model_provider, self.model_params)
+        return self
+
 
 class AgentConfigUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
-    model_provider: str | None = None
+    model_provider: Literal[
+        "openai",
+        "openai-compatible",
+        "deepseek",
+        "anthropic",
+        "anthropic-compatible",
+        "nvidia",
+        "bedrock-anthropic",
+    ] | None = None
     model_name: str | None = None
     system_prompt: str | None = None
     tools: list[str] | None = None
     options: AgentOptionsPayload | None = None
     model_params: ModelParamsPayload | None = None
+
+    @model_validator(mode="after")
+    def _validate_model_connection(self) -> "AgentConfigUpdate":
+        _validate_compatible_provider_params(self.model_provider, self.model_params)
+        return self
 
 
 class AgentConfigResponse(BaseModel):
@@ -216,7 +287,7 @@ class WakeConditionResponse(BaseModel):
     time_value: float | None = None
     time_unit: str | None = None
     wakeup_at: str | None = None
-    submitted_task: str | None = None
+    submitted_task: UserInput | None = None
     timeout_at: str | None = None
 
 
@@ -224,7 +295,7 @@ class AgentStateResponse(BaseModel):
     id: str
     session_id: str
     status: str
-    task: str
+    task: UserInput
     parent_id: str | None = None
     config_overrides: dict[str, Any] = Field(default_factory=dict)
     wake_condition: WakeConditionResponse | None = None
@@ -240,7 +311,7 @@ class AgentStateResponse(BaseModel):
 class AgentStateListItem(BaseModel):
     id: str
     status: str
-    task: str
+    task: UserInput
     parent_id: str | None = None
     wake_condition: WakeConditionResponse | None = None
     result_summary: str | None = None

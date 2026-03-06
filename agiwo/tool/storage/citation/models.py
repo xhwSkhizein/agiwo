@@ -1,7 +1,7 @@
 """
 Citation system data models.
 
-Used for citation management in web_search and web_fetch tools,
+Used for citation management in web_search and web_reader tools,
 reducing token usage.
 """
 
@@ -60,7 +60,7 @@ class CitationSourceRaw(BaseModel):
     )
     index: int | None = Field(
         default=None,
-        description="Numeric index (for search results, used in web_fetch(index=N))",
+        description="Numeric index (for search results, used in web_reader(index=N))",
     )
     created_at: datetime = Field(
         default_factory=datetime.now, description="Creation timestamp"
@@ -75,7 +75,7 @@ class CitationSourceSimplified(BaseModel):
     url: str = Field(description="Web page URL")
     index: int | None = Field(
         default=None,
-        description="Numeric index (for search results, used in web_fetch(index=N))",
+        description="Numeric index (for search results, used in web_reader(index=N))",
     )
     title: str | None = Field(default=None, description="Title")
     snippet: str | None = Field(default=None, description="Snippet")

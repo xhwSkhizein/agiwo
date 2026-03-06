@@ -55,8 +55,27 @@ Environment variable namespaces:
 - Console-owned keys: `AGIWO_CONSOLE_*`
 - Provider credentials: canonical external names (for example `OPENAI_API_KEY`)
 
+Builtin tools that need their own `Model` read:
+
+- global defaults from `AGIWO_TOOL_DEFAULT_MODEL_*`
+- per-tool overrides from `AGIWO_TOOL_<TOOL_NAME>_MODEL_*`
+
+For example, `web_reader` can use a different model than the main Agent via
+`AGIWO_TOOL_WEB_READER_MODEL_PROVIDER` and `AGIWO_TOOL_WEB_READER_MODEL_NAME`.
+If you use a compatible provider, also set its explicit
+`*_MODEL_BASE_URL` and `*_MODEL_API_KEY_ENV_NAME`.
+
+Console Agent configs follow the same split:
+
+- official providers (`openai`, `anthropic`, `deepseek`, `nvidia`) may use
+  provider-level env defaults
+- compatible providers (`openai-compatible`, `anthropic-compatible`) must persist their own
+  `base_url` and `api_key_env_name`
+
 Detailed inventory and the full cleanup/refactor plan are documented in
 [`docs/CONFIGURATION_REFACTOR_PLAN.md`](docs/CONFIGURATION_REFACTOR_PLAN.md).
+The end-to-end model/agent configuration guide is documented in
+[`docs/MODEL_AGENT_CONFIGURATION.md`](docs/MODEL_AGENT_CONFIGURATION.md).
 
 ### Minimal Example
 

@@ -33,6 +33,7 @@ dependencies = [
     { name = "structlog" },
     { name = "tenacity" },
     { name = "tiktoken" },
+    { name = "trafilatura" },
 ]
 
 [package.metadata]
@@ -63,6 +64,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "tenacity", specifier = ">=8.0.0" },
     { name = "tiktoken", specifier = ">=0.7.0" },
+    { name = "trafilatura", specifier = ">=2.0.0" },
 ]
 provides-extras = ["dev"]
 

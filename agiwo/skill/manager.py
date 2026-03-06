@@ -93,14 +93,16 @@ class SkillManager:
             "Use the Skill tool to activate a skill when needed."
         )
         lines.append("")
-
+        
+        lines.append("<avaliable_skills>")
         for metadata in self._metadata_cache:
             lines.append("  <skill>")
             lines.append(f"    <name>{metadata.name}</name>")
             lines.append(f"    <description>{metadata.description}</description>")
             lines.append(f"    <location>{metadata.path}</location>")
             lines.append("  </skill>")
-
+        lines.append("</avaliable_skills>")
+        
         lines.append("")
         lines.append("### How to use skills:")
         lines.append(

@@ -9,7 +9,16 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    let detail = res.statusText;
+    try {
+      const errorBody = await res.json();
+      if (typeof errorBody?.detail === "string") {
+        detail = errorBody.detail;
+      }
+    } catch {
+      // Ignore non-JSON error bodies and keep the HTTP status text.
+    }
+    throw new Error(`API error: ${res.status} ${detail}`);
   }
   return res.json();
 }
@@ -60,7 +69,7 @@ export interface RunResponse {
   agent_id: string;
   session_id: string;
   user_id: string | null;
-  user_input: unknown;
+  user_input: UserInput;
   status: string;
   response_content: string | null;
   metrics: Record<string, unknown> | null;
@@ -201,6 +210,8 @@ export interface AgentOptionsPayload {
 }
 
 export interface ModelParamsPayload {
+  base_url: string | null;
+  api_key_env_name: string | null;
   max_output_tokens_per_call: number;
   temperature: number;
   top_p: number;
@@ -284,6 +295,7 @@ export interface WakeConditionResponse {
   total_children: number;
   completed_children: number;
   wakeup_at: string | null;
+  submitted_task: UserInput | null;
 }
 
 export interface AgentStateListItem {
@@ -372,7 +384,7 @@ export function cancelSchedulerChat(agentId: string, stateId: string) {
  * Extract readable text from UserInput for display.
  * Handles:
  * - string: returns as-is
- * - UserMessage (__type=user_message): extracts text from content array
+ * - UserMessage (__type=user_message or has content+context): extracts text from content array
  * - ContentParts (__type=content_parts): extracts text from parts array
  * - other: returns JSON.stringify (fallback)
  */
@@ -386,12 +398,12 @@ export function formatUserInput(input: UserInput): string {
     return input;
   }
 
-  // Object with __type
+  // Object type
   if (typeof input === "object" && input !== null) {
     const typed = input as Record<string, unknown>;
     const type = typed.__type;
 
-    // UserMessage format
+    // UserMessage format (with __type)
     if (type === "user_message") {
       const content = typed.content as Array<Record<string, unknown>> | undefined;
       if (Array.isArray(content)) {
@@ -405,7 +417,7 @@ export function formatUserInput(input: UserInput): string {
       }
     }
 
-    // ContentParts format
+    // ContentParts format (with __type)
     if (type === "content_parts") {
       const parts = typed.parts as Array<Record<string, unknown>> | undefined;
       if (Array.isArray(parts)) {
@@ -415,6 +427,33 @@ export function formatUserInput(input: UserInput): string {
             texts.push(part.text);
           }
         }
+        return texts.join("\n");
+      }
+    }
+
+    // UserMessage format (without __type, Pydantic serialized)
+    // Detect by presence of content array and context object
+    const content = typed.content as Array<Record<string, unknown>> | undefined;
+    const context = typed.context as Record<string, unknown> | undefined;
+    if (Array.isArray(content) && typeof context === "object" && context !== null) {
+      const texts: string[] = [];
+      for (const part of content) {
+        if (part.type === "text" && typeof part.text === "string") {
+          texts.push(part.text);
+        }
+      }
+      return texts.join("\n");
+    }
+
+    // Simple content array (no context)
+    if (Array.isArray(content)) {
+      const texts: string[] = [];
+      for (const part of content) {
+        if (part.type === "text" && typeof part.text === "string") {
+          texts.push(part.text);
+        }
+      }
+      if (texts.length > 0) {
         return texts.join("\n");
       }
     }

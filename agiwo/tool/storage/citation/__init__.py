@@ -1,9 +1,10 @@
 """Citation storage module.
 
-Citation storage implementations for web_search and web_fetch tools.
+Citation storage implementations for web_search and web_reader tools.
 """
 
 from .memory_store import InMemoryCitationStore
+from .factory import CitationStoreConfig, create_citation_store
 from .models import (
     CitationSourceRaw,
     CitationSourceSimplified,
@@ -23,6 +24,8 @@ __all__ = [
     "CitationSourceSimplified",
     "CitationSourceType",
     "CitationSourceRepository",
+    "CitationStoreConfig",
+    "create_citation_store",
     "generate_citation_id",
     "InMemoryCitationStore",
     "MongoCitationStore",

@@ -104,6 +104,93 @@ class AgiwoSettings(BaseSettings):
         validation_alias=AliasChoices("AWS_PROFILE"),
     )
 
+    # Tool model defaults
+    tool_default_model_provider: Literal[
+        "openai",
+        "openai-compatible",
+        "deepseek",
+        "anthropic",
+        "anthropic-compatible",
+        "nvidia",
+    ] = Field(
+        default="deepseek",
+        validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_PROVIDER"),
+    )
+    tool_default_model_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_NAME"),
+    )
+    tool_default_model_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_BASE_URL"),
+    )
+    tool_default_model_api_key_env_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGIWO_TOOL_DEFAULT_MODEL_API_KEY_ENV_NAME"
+        ),
+    )
+    tool_default_model_temperature: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=2.0,
+        validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_TEMPERATURE"),
+    )
+    tool_default_model_top_p: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_TOP_P"),
+    )
+    tool_default_model_max_tokens: int = Field(
+        default=2048,
+        ge=1,
+        validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_MAX_TOKENS"),
+    )
+    web_reader_model_provider: Literal[
+        "openai",
+        "openai-compatible",
+        "deepseek",
+        "anthropic",
+        "anthropic-compatible",
+        "nvidia",
+        "bedrock-anthropic",
+    ] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_PROVIDER"),
+    )
+    web_reader_model_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_NAME"),
+    )
+    web_reader_model_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_BASE_URL"),
+    )
+    web_reader_model_api_key_env_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "AGIWO_TOOL_WEB_READER_MODEL_API_KEY_ENV_NAME"
+        ),
+    )
+    web_reader_model_temperature: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_TEMPERATURE"),
+    )
+    web_reader_model_top_p: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_TOP_P"),
+    )
+    web_reader_model_max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_MAX_TOKENS"),
+    )
+
     # Observability - OTLP Export
     otlp_enabled: bool = False
     otlp_endpoint: str | None = None  # e.g., "http://localhost:4317" for gRPC
@@ -143,7 +230,7 @@ class AgiwoSettings(BaseSettings):
 
     # Builtin tools settings
     web_search_api_base_url: str = Field(
-        default="https://oaiaiai.space.z.ai",
+        default="https://google.serper.dev",
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_SEARCH_API_BASE_URL"),
     )
     
@@ -168,10 +255,6 @@ class AgiwoSettings(BaseSettings):
         default=3,
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_SEARCH_API_MAX_RETRIES"),
     )
-    web_reader_api_base_url: str = Field(
-        default="https://oaiaiai.space.z.ai",
-        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_API_BASE_URL"),
-    )
     web_reader_api_timeout: int = Field(
         default=30,
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_API_TIMEOUT"),
@@ -179,10 +262,6 @@ class AgiwoSettings(BaseSettings):
     web_reader_api_max_content_length: int = Field(
         default=4096,
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_API_MAX_CONTENT_LENGTH"),
-    )
-    web_reader_api_max_retries: int = Field(
-        default=3,
-        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_API_MAX_RETRIES"),
     )
     vlm_api_base_url: str = Field(
         default="https://oaiaiai.space.z.ai",
@@ -389,6 +468,73 @@ class AgiwoSettings(BaseSettings):
 
     def get_anthropic_api_key(self) -> str | None:
         return self._secret_to_str(self.anthropic_api_key)
+
+    def get_default_model_name_for_provider(self, provider: str) -> str | None:
+        if provider == "openai":
+            return self.openai_model_name
+        if provider == "deepseek":
+            return self.deepseek_model_name
+        if provider == "anthropic":
+            return self.anthropic_model_name
+        if provider == "nvidia":
+            return self.nvidia_model_name
+        return None
+
+    def get_tool_model_provider(self, tool_name: str) -> str:
+        override = getattr(self, f"{tool_name}_model_provider", None)
+        if override:
+            return override
+        return self.tool_default_model_provider
+
+    def get_tool_model_name(self, tool_name: str) -> str:
+        override = getattr(self, f"{tool_name}_model_name", None)
+        if override:
+            return override
+        if self.tool_default_model_name:
+            return self.tool_default_model_name
+
+        provider = self.get_tool_model_provider(tool_name)
+        default_name = self.get_default_model_name_for_provider(provider)
+        if default_name:
+            return default_name
+        raise ValueError(
+            f"No default model_name configured for tool '{tool_name}' with provider '{provider}'"
+        )
+
+    def get_tool_model_base_url(self, tool_name: str) -> str | None:
+        override = getattr(self, f"{tool_name}_model_base_url", None)
+        if override:
+            return override
+        return self.tool_default_model_base_url
+
+    def get_tool_model_api_key_env_name(self, tool_name: str) -> str | None:
+        override = getattr(self, f"{tool_name}_model_api_key_env_name", None)
+        if isinstance(override, str) and override.strip():
+            return override.strip()
+        if (
+            isinstance(self.tool_default_model_api_key_env_name, str)
+            and self.tool_default_model_api_key_env_name.strip()
+        ):
+            return self.tool_default_model_api_key_env_name.strip()
+        return None
+
+    def get_tool_model_temperature(self, tool_name: str) -> float:
+        override = getattr(self, f"{tool_name}_model_temperature", None)
+        if override is not None:
+            return override
+        return self.tool_default_model_temperature
+
+    def get_tool_model_top_p(self, tool_name: str) -> float:
+        override = getattr(self, f"{tool_name}_model_top_p", None)
+        if override is not None:
+            return override
+        return self.tool_default_model_top_p
+
+    def get_tool_model_max_tokens(self, tool_name: str) -> int:
+        override = getattr(self, f"{tool_name}_model_max_tokens", None)
+        if override is not None:
+            return override
+        return self.tool_default_model_max_tokens
 
     def get_embedding_api_key(self) -> str | None:
         if self.embedding_api_key:

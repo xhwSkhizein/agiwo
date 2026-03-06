@@ -165,6 +165,8 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 - async 代码保持显式，不在隐式 helper 中藏 await
 - 偏好小函数而非深层嵌套的大方法
 - SOLID + KISS，单一职责，不做不必要的抽象
+- **Builtin Tool 依赖自构建**：内置工具需要的 Model、HTTP Client、Storage 等基础设施依赖应由 Tool 在构造函数内根据配置创建；不要从 Agent / Console builder 注入 live client、live model、store 实例。例外仅限必须包装宿主运行时对象的 Tool（如 `AgentTool`、`SkillTool`、Scheduler tools、`BashTool` 的 sandbox/hook）。
+- **Model 构建走统一工厂**：无论 Agent 还是 Tool，需要创建 LLM `Model` 时都应走共享的 model factory / config，不要新增绕过 `agiwo.llm` 抽象的专用 HTTP client。
 - **禁止向后兼容** (除非明确要求)，及时删除遗留代码
 - **循环依赖**：遇到时必须重构组件耦合关系，禁止延迟导入等绕行手段
 - 不要使用 `rm` 删除文件，用 `mv` 移动到 `trash/` 目录
@@ -175,6 +177,7 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 - **命名空间统一**：项目自有环境变量仅允许 `AGIWO_*`（SDK）和 `AGIWO_CONSOLE_*`（Console）
 - **读取单一入口**：仅配置模块允许读取环境变量；业务模块禁止新增 `os.getenv(...)`
 - **外部 Provider 键保留标准名**：如 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `AWS_REGION`
+- **兼容 Provider 显式配置**：`openai-compatible` / `anthropic-compatible` 视为协议适配器，不复用 `OPENAI_*` / `ANTHROPIC_*` 的默认凭证；必须显式提供 `base_url` 和 `api_key_env_name`
 - **每个配置项必须有 owner**：新增配置前先判断归属（SDK 核心、Console 服务、或 Agent 持久化配置）
 - **Console 不承载通用 SDK 运行参数**：Agent 行为参数应存入 `agent_configs.options/model_params`，不应长期堆在全局 `.env`
 - **文档同步**：新增/删除/重命名配置项必须同步更新 `.env.example`、`README.md`、`docs/CONFIGURATION_REFACTOR_PLAN.md`
@@ -201,6 +204,7 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 18. **Health Check**。`TaskGuard.find_unhealthy()` 检测 RUNNING 状态超过阈值无活动的 Agent（`last_activity_at` 追踪），Scheduler 每 tick 检查并向父 Agent 投递 `HEALTH_WARNING` 事件（带去重）
 19. **管理工具 cancel_agent + list_agents**。父 Agent 可通过工具主动取消子 Agent（含 force 保护）和查看所有子 Agent 详情，解决子 Agent 卡死无法管理的问题
 20. **配置治理采用“单一读取入口 + 分层命名空间”**。环境变量只在配置层读取，SDK 与 Console 通过命名空间分离，避免业务模块散落 `os.getenv` 和跨层配置污染
+21. **Builtin Tool 自行创建基础设施依赖**。内置工具通过 config 创建 Model/HTTP/Storage 等依赖；只有包装宿主运行时对象的 Tool（如 Bash sandbox、Agent/Skill/Scheduler wrappers）才接受外部 live 依赖注入
 
 ## Build & Test Commands
 

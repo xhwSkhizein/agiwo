@@ -227,17 +227,25 @@ class AgentExecutor:
 
         # Main agent loop
         while True:
-            if reason := self._check_pre_limits(state):
+            # Check non-recoverable limits first (steps, timeout)
+            if reason := self._check_non_recoverable_limits(state):
                 state.termination_reason = reason
                 break
 
-            # Check if compact is needed
+            # Try compact before checking token limits (compact reduces tokens)
             if await self._maybe_compact(state, abort_signal):
                 logger.info(
                     "compact_triggered",
                     run_id=state.context.run_id,
                     before_messages=len(state.messages),
                 )
+                # After compact, continue loop to re-check limits
+                continue
+
+            # Check token limits after compact attempt
+            if reason := self._check_run_token_limits(state):
+                state.termination_reason = reason
+                break
 
             # Drain steering queue before LLM call
             self._drain_steering_queue(state)
@@ -369,8 +377,8 @@ class AgentExecutor:
                 state.termination_reason = result.termination_reason
                 return
 
-    def _check_pre_limits(self, state: RunState) -> TerminationReason | None:
-        """Check limits before making a new LLM request."""
+    def _check_non_recoverable_limits(self, state: RunState) -> TerminationReason | None:
+        """Check limits that cannot be recovered by compact (steps, timeout)."""
         if state.current_step >= self.options.max_steps:
             logger.warning(
                 "limit_hit_max_steps",
@@ -397,7 +405,7 @@ class AgentExecutor:
             )
             return TerminationReason.TIMEOUT
 
-        return self._check_run_token_limits(state)
+        return None
 
     def _check_run_token_limits(self, state: RunState) -> TerminationReason | None:
         """Check max_tokens_per_run and max_run_token_cost limits."""

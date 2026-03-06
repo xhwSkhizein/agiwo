@@ -2,13 +2,12 @@
 MongoDB implementation of RunStepStorage.
 """
 
-from motor.motor_asyncio import AsyncIOMotorClient
-
 from dataclasses import asdict
 
 from agiwo.agent.schema import Run, StepRecord, MessageRole, RunMetrics, StepMetrics
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.utils.logging import get_logger
+from agiwo.utils.mongo_pool import get_shared_mongo_client, release_shared_mongo_client
 
 logger = get_logger(__name__)
 
@@ -51,7 +50,7 @@ class MongoRunStepStorage(RunStepStorage):
     ):
         self.uri = uri
         self.db_name = db_name
-        self.client: AsyncIOMotorClient | None = None
+        self.client = None
         self.db = None
         self.runs_collection = None
         self.steps_collection = None
@@ -60,7 +59,7 @@ class MongoRunStepStorage(RunStepStorage):
     async def _ensure_connection(self):
         """Ensure database connection is established."""
         if self.client is None:
-            self.client = AsyncIOMotorClient(self.uri)
+            self.client = await get_shared_mongo_client(self.uri)
             self.db = self.client[self.db_name]
             self.runs_collection = self.db["runs"]
             self.steps_collection = self.db["steps"]
@@ -138,7 +137,7 @@ class MongoRunStepStorage(RunStepStorage):
     async def disconnect(self) -> None:
         """Close MongoDB connection."""
         if self.client:
-            self.client.close()
+            await release_shared_mongo_client(self.uri)
             self.client = None
             self.db = None
             self.runs_collection = None

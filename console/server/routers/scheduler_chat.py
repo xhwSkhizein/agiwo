@@ -47,7 +47,10 @@ async def scheduler_chat(agent_id: str, body: ChatRequest) -> EventSourceRespons
     console_config = get_console_config()
     scheduler = get_scheduler()
 
-    agent = await build_agent(agent_config, console_config, registry)
+    try:
+        agent = await build_agent(agent_config, console_config, registry)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     session_id = body.session_id or str(uuid4())
 
     event_queue: asyncio.Queue[StreamEvent | object] = asyncio.Queue()

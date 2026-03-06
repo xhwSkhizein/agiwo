@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { ArrowLeft, User, Bot, Wrench, FileImage, FileAudio, FileVideo, FileText, Paperclip } from "lucide-react";
 import Link from "next/link";
-import { getSessionSteps, formatUserInput } from "@/lib/api";
+import { getSessionSteps } from "@/lib/api";
 import type { StepResponse, UserMessage, UserInput } from "@/lib/api";
 
 function ContentPartItem({ part }: { part: { type: string; text?: string; url?: string; mime_type?: string } }) {
@@ -99,7 +99,7 @@ function ContentPartItem({ part }: { part: { type: string; text?: string; url?: 
 function UserMessageContent({ content }: { content: unknown }) {
   // Try to parse as UserMessage
   if (typeof content !== "object" || content === null) {
-    return <div className="text-sm text-zinc-200">{formatUserInput(content as UserInput)}</div>;
+    return <div className="text-sm text-zinc-200">{typeof content === "string" ? content : String(content)}</div>;
   }
 
   const typed = content as Record<string, unknown>;
@@ -169,7 +169,7 @@ function UserMessageContent({ content }: { content: unknown }) {
   }
 
   // Fallback to string representation
-  return <div className="text-sm text-zinc-200">{formatUserInput(content as UserInput)}</div>;
+  return <div className="text-sm text-zinc-200">{JSON.stringify(content, null, 2)}</div>;
 }
 
 function StepCard({ step }: { step: StepResponse }) {

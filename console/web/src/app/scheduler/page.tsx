@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { UserInputCompact } from "@/components/user-input-detail";
 import {
   listAgentStates,
   getSchedulerStats,
-  formatUserInput,
 } from "@/lib/api";
 import type { AgentStateListItem, SchedulerStats } from "@/lib/api";
 
@@ -166,9 +166,7 @@ export default function SchedulerPage() {
                     </Link>
                   </td>
                   <td className="px-4 py-3 max-w-xs">
-                    <span className="block text-zinc-300 truncate">
-                      {formatUserInput(s.task)}
-                    </span>
+                    <UserInputCompact input={s.task} maxLength={60} />
                   </td>
                   <td className="px-4 py-3 text-center">
                     <StatusBadge status={s.status} />

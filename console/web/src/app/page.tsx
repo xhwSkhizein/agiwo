@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { MessageSquare, Activity, Bot, Zap, CalendarClock } from "lucide-react";
-import { listSessions, listTraces, listAgents, getSchedulerStats, formatUserInput } from "@/lib/api";
+import { listSessions, listTraces, listAgents, getSchedulerStats } from "@/lib/api";
+import { UserInputCompact } from "@/components/user-input-detail";
 import type { SessionSummary, TraceListItem, AgentConfig, SchedulerStats } from "@/lib/api";
 
 function StatCard({
@@ -107,7 +108,7 @@ export default function DashboardPage() {
                   className="block px-4 py-3 hover:bg-zinc-800/50 transition-colors"
                 >
                   <p className="text-sm truncate">
-                    {s.last_user_input ? formatUserInput(s.last_user_input) : s.session_id}
+                  <UserInputCompact input={s.last_user_input} maxLength={80} />
                   </p>
                   <p className="text-xs text-zinc-500 mt-1">
                     {s.run_count} runs &middot; {s.agent_id || "unknown"}

@@ -10,9 +10,36 @@ from typing import Any
 from uuid import uuid4
 
 import aiosqlite
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from agiwo.utils.mongo_pool import (
+    get_shared_mongo_client,
+    release_shared_mongo_client,
+)
+from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 
 from server.config import ConsoleConfig
+
+
+def sanitize_model_params(params: Any) -> dict[str, Any]:
+    if not isinstance(params, dict):
+        return {}
+    normalized = dict(params)
+    normalized.pop("api_key", None)
+    base_url = normalized.get("base_url")
+    if isinstance(base_url, str):
+        cleaned = base_url.strip()
+        if cleaned:
+            normalized["base_url"] = cleaned
+        else:
+            normalized.pop("base_url", None)
+    api_key_env_name = normalized.get("api_key_env_name")
+    if isinstance(api_key_env_name, str):
+        cleaned = api_key_env_name.strip()
+        if cleaned:
+            normalized["api_key_env_name"] = cleaned
+        else:
+            normalized.pop("api_key_env_name", None)
+    return normalized
 
 
 class AgentConfigRecord(BaseModel):
@@ -29,6 +56,17 @@ class AgentConfigRecord(BaseModel):
     model_params: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_record_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        normalized["model_params"] = sanitize_model_params(
+            normalized.get("model_params")
+        )
+        return normalized
 
 
 class AgentRegistry:
@@ -60,8 +98,11 @@ class AgentRegistry:
 
     async def close(self) -> None:
         if self._sqlite_conn is not None:
-            await self._sqlite_conn.close()
+            await release_shared_connection(self._config.sqlite_db_path)
             self._sqlite_conn = None
+        if self._mongo_collection is not None:
+            await release_shared_mongo_client(self._config.mongodb_uri)
+            self._mongo_collection = None
         self._initialized = False
 
     # ── CRUD ────────────────────────────────────────────────────────────
@@ -91,6 +132,7 @@ class AgentRegistry:
         return await self._mongo_get_by_name(agent_name)
 
     async def create_agent(self, record: AgentConfigRecord) -> AgentConfigRecord:
+        record = AgentConfigRecord.model_validate(record.model_dump(mode="python"))
         if self._config.metadata_storage_type == "sqlite":
             await self._sqlite_upsert(record)
         elif self._config.metadata_storage_type == "memory":
@@ -104,10 +146,12 @@ class AgentRegistry:
         if existing is None:
             return None
 
+        merged = existing.model_dump(mode="python")
         for key, value in updates.items():
-            if value is not None and hasattr(existing, key):
-                setattr(existing, key, value)
-        existing.updated_at = datetime.now()
+            if value is not None and key in merged:
+                merged[key] = value
+        merged["updated_at"] = datetime.now()
+        existing = AgentConfigRecord.model_validate(merged)
 
         if self._config.metadata_storage_type == "sqlite":
             await self._sqlite_upsert(existing)
@@ -127,14 +171,7 @@ class AgentRegistry:
     # ── SQLite ──────────────────────────────────────────────────────────
 
     async def _init_sqlite(self) -> None:
-        from pathlib import Path
-        import os
-
-        db_path = os.path.expanduser(self._config.sqlite_db_path)
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-
-        self._sqlite_conn = await aiosqlite.connect(db_path)
-        self._sqlite_conn.row_factory = aiosqlite.Row
+        self._sqlite_conn = await get_shared_connection(self._config.sqlite_db_path)
 
         await self._sqlite_conn.execute(
             """
@@ -245,9 +282,7 @@ class AgentRegistry:
     # ── MongoDB ─────────────────────────────────────────────────────────
 
     async def _init_mongodb(self) -> None:
-        from motor.motor_asyncio import AsyncIOMotorClient
-
-        client = AsyncIOMotorClient(self._config.mongodb_uri)
+        client = await get_shared_mongo_client(self._config.mongodb_uri)
         db = client[self._config.mongodb_db_name]
         self._mongo_collection = db["agent_configs"]
         await self._mongo_collection.create_index("id", unique=True)

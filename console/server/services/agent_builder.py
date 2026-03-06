@@ -13,65 +13,44 @@ from agiwo.agent.agent import Agent
 from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig, normalize_skills_dirs
 from agiwo.agent.schema import StreamEvent
 from agiwo.config.settings import settings
-from agiwo.llm.anthropic import AnthropicModel
-from agiwo.llm.bedrock_anthropic import BedrockAnthropicModel
-from agiwo.llm.deepseek import DeepseekModel
-from agiwo.llm.openai import OpenAIModel
+from agiwo.llm import create_model_from_dict
 from agiwo.tool.agent_tool import AgentTool
 from agiwo.tool.base import BaseTool
 from agiwo.tool.storage.citation import (
-    InMemoryCitationStore,
-    MongoCitationStore,
-    SQLiteCitationStore,
+    CitationStoreConfig,
 )
 
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.tools import create_tools
 
-MODEL_PROVIDER_MAP: dict[str, type] = {
-    "openai": OpenAIModel,
-    "deepseek": DeepseekModel,
-    "anthropic": AnthropicModel,
-    "bedrock-anthropic": BedrockAnthropicModel,
-    "generic": OpenAIModel,  # Generic OpenAI-compatible API
-    "anthropic-generic": AnthropicModel,  # Generic Anthropic-compatible API
-}
-
 AGENT_TOOL_PREFIX = "agent:"
 
 
-def _create_citation_store(console_config: ConsoleConfig) -> Any:
-    """Create citation store based on console metadata storage config."""
+def _create_citation_store_config(console_config: ConsoleConfig) -> CitationStoreConfig:
+    """Create citation store config based on console metadata storage config."""
     if console_config.metadata_storage_type == "sqlite":
-        return SQLiteCitationStore(db_path=console_config.sqlite_db_path)
+        return CitationStoreConfig(
+            storage_type="sqlite",
+            sqlite_db_path=console_config.sqlite_db_path,
+        )
     if console_config.metadata_storage_type == "memory":
-        return InMemoryCitationStore()
-    return MongoCitationStore(
-        uri=console_config.mongodb_uri,
-        db_name=console_config.mongodb_db_name,
+        return CitationStoreConfig(storage_type="memory")
+    return CitationStoreConfig(
+        storage_type="mongodb",
+        mongo_uri=console_config.mongodb_uri,
+        mongo_db_name=console_config.mongodb_db_name,
         collection_name="citation_sources",
     )
 
 
 def build_model(config: AgentConfigRecord) -> Any:
     """Build a Model instance from agent config."""
-    provider_cls = MODEL_PROVIDER_MAP.get(config.model_provider)
-    if provider_cls is None:
-        raise ValueError(f"Unknown model provider: {config.model_provider}")
-
-    params: dict[str, Any] = {
-        "id": config.model_name,
-        "name": config.model_name,
-    }
-    model_params = dict(config.model_params or {})
-    if "max_output_tokens_per_call" in model_params:
-        model_params["max_tokens"] = model_params.pop("max_output_tokens_per_call")
-    else:
-        model_params.pop("max_tokens", None)
-    params.update(model_params)
-
-    return provider_cls(**params)
+    return create_model_from_dict(
+        provider=config.model_provider,
+        model_name=config.model_name,
+        params=dict(config.model_params or {}),
+    )
 
 
 def build_agent_options(config: AgentConfigRecord, console_config: ConsoleConfig) -> AgentOptions:
@@ -93,7 +72,7 @@ def build_agent_options(config: AgentConfigRecord, console_config: ConsoleConfig
         run_step_cfg = RunStepStorageConfig(
             storage_type="mongodb",
             config={
-                "uri": console_config.mongodb_uri,
+                "mongo_uri": console_config.mongodb_uri,
                 "db_name": console_config.mongodb_db_name,
             },
         )
@@ -190,8 +169,15 @@ async def build_agent(
         else:
             builtin_names.append(t)
 
-    citation_store = _create_citation_store(console_config)
-    tools: list[BaseTool] = create_tools(builtin_names, citation_source_store=citation_store)
+    citation_store_config = _create_citation_store_config(console_config)
+    tool_config_overrides = {
+        "web_search": {"citation_store_config": citation_store_config},
+        "web_reader": {"citation_store_config": citation_store_config},
+    }
+    tools: list[BaseTool] = create_tools(
+        builtin_names,
+        tool_config_overrides=tool_config_overrides,
+    )
 
     for ref_id in agent_refs:
         child_config = await registry.get_agent(ref_id)

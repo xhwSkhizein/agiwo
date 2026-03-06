@@ -61,6 +61,8 @@ htmlcov/
 .agiwo/
 vector_db/
 .web-surfing/
+browser_data/
+console/browser_data/
 
 # Trash
 trash/

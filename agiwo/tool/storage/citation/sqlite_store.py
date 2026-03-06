@@ -1,6 +1,7 @@
 """SQLite implementation of CitationSourceRepository."""
 
 import json
+import os
 from datetime import datetime
 from typing import Any
 
@@ -11,35 +12,35 @@ from agiwo.tool.storage.citation.models import (
     CitationSourceSimplified,
 )
 from agiwo.utils.logging import get_logger
+from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 
 logger = get_logger(__name__)
+_INDEX_COLUMN = "citation_index"
 
 
 class SQLiteCitationStore:
     """SQLite implementation of Citation Store."""
 
     def __init__(self, db_path: str = "agiwo.db") -> None:
-        self.db_path = db_path
+        self.db_path = os.path.expanduser(db_path)
         self._connection: aiosqlite.Connection | None = None
         self._initialized = False
 
     async def connect(self) -> None:
-        """Initialize database connection and create tables."""
+        """Initialize database connection using shared pool."""
         if self._initialized:
             return
 
-        self._connection = await aiosqlite.connect(self.db_path)
-        self._connection.row_factory = aiosqlite.Row
-
+        self._connection = await get_shared_connection(self.db_path)
         await self._create_tables()
         self._initialized = True
 
         logger.info("sqlite_citation_store_connected", db_path=self.db_path)
 
     async def disconnect(self) -> None:
-        """Close database connection."""
+        """Release database connection back to pool."""
         if self._connection:
-            await self._connection.close()
+            await release_shared_connection(self.db_path)
             self._connection = None
             self._initialized = False
 
@@ -66,7 +67,7 @@ class SQLiteCitationStore:
                 related_index INTEGER,
                 query TEXT,
                 parameters TEXT,
-                index INTEGER,
+                citation_index INTEGER,
                 created_at TEXT NOT NULL
             )
         """
@@ -77,7 +78,7 @@ class SQLiteCitationStore:
         )
         await self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_citation_session_index "
-            "ON citation_sources(session_id, index)"
+            f"ON citation_sources(session_id, {_INDEX_COLUMN})"
         )
         await self._connection.execute(
             "CREATE INDEX IF NOT EXISTS idx_citation_created_at ON citation_sources(created_at)"
@@ -94,15 +95,14 @@ class SQLiteCitationStore:
         """Serialize CitationSourceRaw to dict for database storage."""
         data = source.model_dump(mode="json", exclude_none=True)
 
-        # Convert complex fields to JSON strings
-        if data.get("original_content"):
-            data["original_content"] = json.dumps(data["original_content"])
-        if data.get("parameters"):
-            data["parameters"] = json.dumps(data["parameters"])
+        # Recursively convert dict/list values to JSON strings for SQLite
+        for key, value in list(data.items()):
+            if isinstance(value, (dict, list)):
+                data[key] = json.dumps(value)
 
-        # Convert datetime to ISO format string
-        if "created_at" in data and isinstance(data["created_at"], str) is False:
-            data["created_at"] = data["created_at"].isoformat()
+        # Rename index column
+        if "index" in data:
+            data[_INDEX_COLUMN] = data.pop("index")
 
         return data
 
@@ -115,6 +115,8 @@ class SQLiteCitationStore:
             data["original_content"] = json.loads(data["original_content"])
         if data.get("parameters"):
             data["parameters"] = json.loads(data["parameters"])
+        if _INDEX_COLUMN in data:
+            data["index"] = data.pop(_INDEX_COLUMN)
 
         return CitationSourceRaw.model_validate(data)
 
@@ -147,7 +149,7 @@ class SQLiteCitationStore:
                 await self._connection.execute(query, values)
                 citation_ids.append(source.citation_id)
             except Exception as e:
-                logger.error(
+                logger.exception(
                     "store_citation_source_failed",
                     error=str(e),
                     citation_id=source.citation_id,
@@ -206,7 +208,7 @@ class SQLiteCitationStore:
 
             placeholders = ", ".join(["?" for _ in citation_ids])
             query = f"""
-                SELECT citation_id, source_type, url, index, title, snippet, 
+                SELECT citation_id, source_type, url, {_INDEX_COLUMN} AS "index", title, snippet,
                        date_published, source, created_at
                 FROM citation_sources
                 WHERE citation_id IN ({placeholders}) AND session_id = ?
@@ -250,7 +252,7 @@ class SQLiteCitationStore:
 
         try:
             query = """
-                SELECT citation_id, source_type, url, index, title, snippet, 
+                SELECT citation_id, source_type, url, citation_index AS "index", title, snippet,
                        date_published, source, created_at
                 FROM citation_sources
                 WHERE session_id = ?
@@ -297,6 +299,8 @@ class SQLiteCitationStore:
             # Convert complex fields to JSON strings
             update_data = {}
             for key, value in updates.items():
+                if key == "index":
+                    key = _INDEX_COLUMN
                 if isinstance(value, (dict, list)):
                     update_data[key] = json.dumps(value)
                 elif isinstance(value, datetime):
@@ -342,7 +346,7 @@ class SQLiteCitationStore:
             if self._connection is None:
                 raise RuntimeError("Database connection not established")
             async with self._connection.execute(
-                "SELECT * FROM citation_sources WHERE session_id = ? AND index = ?",
+                f"SELECT * FROM citation_sources WHERE session_id = ? AND {_INDEX_COLUMN} = ?",
                 (session_id, index),
             ) as cursor:
                 row = await cursor.fetchone()

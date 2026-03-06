@@ -107,7 +107,7 @@ class CitationSourceRepository(Protocol):
         session_id: str,
         index: int,
     ) -> CitationSourceRaw | None:
-        """Get citation source by index (for web_fetch(index=N)).
+        """Get citation source by index (for web_reader(index=N)).
 
         Args:
             session_id: Session ID

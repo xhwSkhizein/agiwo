@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { getAgentState, getAgentStateChildren, formatUserInput } from "@/lib/api";
+import { getAgentState, getAgentStateChildren } from "@/lib/api";
+import { UserInputDetail, UserInputCompact } from "@/components/user-input-detail";
 import type { AgentStateDetail, AgentStateListItem } from "@/lib/api";
 
 const STATUS_STYLES: Record<string, string> = {
@@ -77,6 +78,14 @@ function WakeConditionCard({ wc }: { wc: AgentStateDetail["wake_condition"] }) {
             )}
           </>
         )}
+        {wc.type === "task_submitted" && wc.submitted_task !== null && wc.submitted_task !== undefined && (
+          <div className="col-span-2 sm:col-span-3">
+            <span className="text-zinc-500">Submitted Task: </span>
+            <div className="mt-1 p-2 rounded bg-zinc-800/50">
+              <UserInputCompact input={wc.submitted_task} maxLength={100} />
+            </div>
+          </div>
+        )}
       </div>
       {wc.type === "children_complete" && wc.total_children > 0 && (
         <div className="mt-2">
@@ -127,9 +136,7 @@ function ChildrenTable({ children }: { children: AgentStateListItem[] }) {
                 </Link>
               </td>
               <td className="px-4 py-2.5 max-w-xs">
-                <span className="truncate block text-zinc-300 text-xs">
-                  {formatUserInput(c.task)}
-                </span>
+                <UserInputCompact input={c.task} maxLength={50} />
               </td>
               <td className="px-4 py-2.5 text-center">
                 <StatusBadge status={c.status} />
@@ -221,7 +228,7 @@ export default function SchedulerDetailPage() {
       <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
         <h3 className="text-sm font-medium mb-2">Details</h3>
         <InfoRow label="Task">
-          <p className="whitespace-pre-wrap">{formatUserInput(state.task)}</p>
+          <UserInputDetail input={state.task} showContext={true} />
         </InfoRow>
         {state.parent_id && (
           <InfoRow label="Parent">

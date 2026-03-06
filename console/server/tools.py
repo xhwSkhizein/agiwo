@@ -15,8 +15,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "web_reader": "Fetch and extract content from web URLs",
 }
 
-TOOLS_REQUIRING_CITATION_STORE = frozenset({"web_search", "web_reader"})
-
 
 def get_available_builtin_tools() -> list[dict[str, str]]:
     """Return list of builtin tools with name, description, and type."""
@@ -28,15 +26,14 @@ def get_available_builtin_tools() -> list[dict[str, str]]:
 
 def create_tools(
     tool_names: list[str],
-    citation_source_store: Any = None,
+    tool_config_overrides: dict[str, dict[str, Any]] | None = None,
 ) -> list[BaseTool]:
     """Instantiate tool objects from a list of tool names."""
     tools: list[BaseTool] = []
+    overrides = tool_config_overrides or {}
     for name in tool_names:
         cls = BUILTIN_TOOLS.get(name)
         if cls is not None:
-            kwargs: dict[str, Any] = {}
-            if name in TOOLS_REQUIRING_CITATION_STORE and citation_source_store is not None:
-                kwargs["citation_source_store"] = citation_source_store
+            kwargs = dict(overrides.get(name, {}))
             tools.append(cls(**kwargs))
     return tools

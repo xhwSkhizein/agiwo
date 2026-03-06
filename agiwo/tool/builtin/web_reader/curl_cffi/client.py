@@ -4,6 +4,7 @@ Curl-cffi HTTP client module.
 Provides lightweight HTTP client for web content fetching using curl_cffi.
 """
 
+import asyncio
 from urllib.parse import urlparse
 
 from curl_cffi import requests
@@ -26,10 +27,9 @@ class SimpleAsyncClient:
     session lifecycle management, custom configuration, and context management.
     """
 
-    def __init__(self) -> None:
-        # Timeout in seconds
-        self.timeout = 10
-        self.impersonate = "chrome"
+    def __init__(self, *, timeout: int = 10, impersonate: str = "chrome") -> None:
+        self.timeout = timeout
+        self.impersonate = impersonate
 
     async def fetch(self, url: str, **kwargs) -> HtmlContent | None:
         """
@@ -43,7 +43,8 @@ class SimpleAsyncClient:
         """
         try:
             referer: str = f"https://{urlparse(url).netloc}/"
-            response: Response = requests.get(
+            response: Response = await asyncio.to_thread(
+                requests.get,
                 url,
                 timeout=self.timeout,
                 impersonate=self.impersonate,

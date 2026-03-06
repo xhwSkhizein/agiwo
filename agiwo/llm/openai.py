@@ -35,7 +35,8 @@ class OpenAIModel(Model):
         id: str,
         name: str,
         api_key: str | None = None,
-        base_url: str = "https://api.openai.com/v1",
+        base_url: str | None = "https://api.openai.com/v1",
+        allow_env_fallback: bool = True,
         temperature: float = 0.7,
         top_p: float = 1.0,
         max_tokens: int = 4096,
@@ -60,17 +61,22 @@ class OpenAIModel(Model):
             input_price=input_price,
             output_price=output_price,
         )
+        self.allow_env_fallback = allow_env_fallback
         self.client = self._create_client()
 
     def _resolve_api_key(self) -> str | None:
         if self.api_key:
             return self.api_key
-        if settings.openai_api_key:
+        if self.allow_env_fallback and settings.openai_api_key:
             return settings.openai_api_key.get_secret_value()
         return None
 
     def _resolve_base_url(self) -> str | None:
-        return self.base_url or settings.openai_base_url
+        if self.base_url:
+            return self.base_url
+        if self.allow_env_fallback:
+            return settings.openai_base_url
+        return None
 
     def _create_client(self) -> AsyncOpenAI:
         return AsyncOpenAI(

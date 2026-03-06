@@ -32,7 +32,7 @@ class StorageFactory:
             db_path = cfg.get("db_path", "agiwo.db")
             return SQLiteRunStepStorage(db_path=db_path)
         elif storage_type == "mongodb":
-            uri = cfg.get("uri", "mongodb://localhost:27017")
+            uri = cfg.get("mongo_uri") or cfg.get("uri", "mongodb://localhost:27017")
             db_name = cfg.get("db_name", "agiwo")
             return MongoRunStepStorage(uri=uri, db_name=db_name)
         else:

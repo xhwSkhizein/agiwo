@@ -1,8 +1,8 @@
 from datetime import datetime, timezone
 import os
-from pathlib import Path
 
 import aiosqlite
+from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 
 from server.channels.models import SessionRuntime
 
@@ -22,15 +22,12 @@ class FeishuChannelStore:
         if self._conn is not None:
             return
 
-        db_path = Path(self._db_path)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = await aiosqlite.connect(self._db_path)
-        self._conn.row_factory = aiosqlite.Row
+        self._conn = await get_shared_connection(self._db_path)
         await self._create_tables()
 
     async def close(self) -> None:
         if self._conn is not None:
-            await self._conn.close()
+            await release_shared_connection(self._db_path)
             self._conn = None
 
     async def claim_event(self, channel_instance_id: str, event_id: str) -> bool:

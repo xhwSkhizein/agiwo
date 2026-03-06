@@ -47,7 +47,7 @@ def _state_to_list_item(state: AgentState) -> AgentStateListItem:
     return AgentStateListItem(
         id=state.id,
         status=state.status.value,
-        task=state.task[:200] if state.task else "",
+        task=state.task,
         parent_id=state.parent_id,
         wake_condition=_wake_condition_to_response(state.wake_condition),
         result_summary=state.result_summary[:200] if state.result_summary else None,

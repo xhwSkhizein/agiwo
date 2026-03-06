@@ -14,7 +14,16 @@ const PROVIDERS = [
   { value: "openai", label: "OpenAI" },
   { value: "deepseek", label: "DeepSeek" },
   { value: "anthropic", label: "Anthropic" },
+  { value: "openai-compatible", label: "OpenAI-compatible" },
+  { value: "anthropic-compatible", label: "Anthropic-compatible" },
+  { value: "nvidia", label: "Nvidia" },
+  { value: "bedrock-anthropic", label: "Bedrock-anthropic" },
 ];
+
+const COMPATIBLE_PROVIDERS = new Set([
+  "openai-compatible",
+  "anthropic-compatible",
+]);
 
 type AgentFormProps = {
   initialAgent?: AgentConfig | null;
@@ -30,6 +39,8 @@ type AgentFormState = {
   description: string;
   modelProvider: string;
   modelName: string;
+  baseUrl: string;
+  apiKeyEnvName: string;
   systemPrompt: string;
   configRoot: string;
   maxSteps: number;
@@ -60,6 +71,8 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   description: "",
   modelProvider: "deepseek",
   modelName: "deepseek-chat",
+  baseUrl: "",
+  apiKeyEnvName: "",
   systemPrompt: "",
   configRoot: "",
   maxSteps: 10,
@@ -107,6 +120,8 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     description: agent.description,
     modelProvider: agent.model_provider,
     modelName: agent.model_name,
+    baseUrl: agent.model_params?.base_url ?? "",
+    apiKeyEnvName: agent.model_params?.api_key_env_name ?? "",
     systemPrompt: agent.system_prompt,
     configRoot: agent.options?.config_root ?? "",
     maxSteps: agent.options?.max_steps ?? 10,
@@ -155,7 +170,7 @@ export function AgentForm({
   }, [initialAgent]);
 
   useEffect(() => {
-    listAvailableTools(excludeAgentId).then(setAvailableTools).catch(() => {});
+    listAvailableTools(excludeAgentId).then(setAvailableTools).catch(() => { });
   }, [excludeAgentId]);
 
   const builtinTools = useMemo(
@@ -193,6 +208,20 @@ export function AgentForm({
       setLocalError("Name is required");
       return;
     }
+    if (
+      COMPATIBLE_PROVIDERS.has(form.modelProvider) &&
+      form.baseUrl.trim() === ""
+    ) {
+      setLocalError("Compatible providers require a Base URL");
+      return;
+    }
+    if (
+      COMPATIBLE_PROVIDERS.has(form.modelProvider) &&
+      form.apiKeyEnvName.trim() === ""
+    ) {
+      setLocalError("Compatible providers require an API Key Env Name");
+      return;
+    }
 
     await onSubmit({
       name: form.name.trim(),
@@ -220,6 +249,11 @@ export function AgentForm({
         compact_prompt: form.compactPrompt,
       },
       model_params: {
+        base_url: form.baseUrl.trim() === "" ? undefined : form.baseUrl.trim(),
+        api_key_env_name:
+          form.apiKeyEnvName.trim() === ""
+            ? undefined
+            : form.apiKeyEnvName.trim(),
         max_output_tokens_per_call: form.maxOutputTokensPerCall,
         temperature: form.temperature,
         top_p: form.topP,
@@ -289,6 +323,38 @@ export function AgentForm({
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm text-zinc-400 mb-1.5">
+            Base URL
+          </label>
+          <input
+            type="text"
+            value={form.baseUrl}
+            onChange={(e) => setField("baseUrl", e.target.value)}
+            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
+            placeholder="https://api.example.com/v1"
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-zinc-400 mb-1.5">
+            API Key Env Name
+          </label>
+          <input
+            type="text"
+            value={form.apiKeyEnvName}
+            onChange={(e) => setField("apiKeyEnvName", e.target.value)}
+            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
+            placeholder="MINIMAX_API_KEY"
+          />
+        </div>
+      </div>
+      <p className="text-xs text-zinc-500">
+        `openai-compatible` / `anthropic-compatible` should set both Base URL
+        and API Key Env Name. Official providers can leave them empty to use
+        provider defaults.
+      </p>
+
       <div>
         <label className="block text-sm text-zinc-400 mb-1.5">
           System Prompt
@@ -311,11 +377,10 @@ export function AgentForm({
             key={tool.name}
             type="button"
             onClick={() => toggleTool(tool.name)}
-            className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
-              form.selectedTools.includes(tool.name)
+            className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${form.selectedTools.includes(tool.name)
                 ? "bg-white text-black border-white"
                 : "bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-zinc-500"
-            }`}
+              }`}
             title={tool.description}
           >
             {tool.name}
@@ -335,11 +400,10 @@ export function AgentForm({
             key={tool.name}
             type="button"
             onClick={() => toggleTool(tool.name)}
-            className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
-              form.selectedTools.includes(tool.name)
+            className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${form.selectedTools.includes(tool.name)
                 ? "bg-blue-600 text-white border-blue-500"
                 : "bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-zinc-500"
-            }`}
+              }`}
             title={tool.description}
           >
             {tool.agent_name || tool.name}

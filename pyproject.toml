@@ -26,6 +26,7 @@ dependencies = [
     "curl-cffi>=0.14.0",
     "lark-oapi>=1.5.3",
     "bs4>=0.0.2",
+    "trafilatura>=2.0.0",
     "playwright>=1.58.0",
 ]
 

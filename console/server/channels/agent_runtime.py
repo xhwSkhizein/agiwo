@@ -7,6 +7,7 @@ provides a unified interface for submitting tasks to the Scheduler.
 
 import asyncio
 import hashlib
+import json
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from uuid import NAMESPACE_URL, uuid5
@@ -44,6 +45,7 @@ class AgentRuntimeManager:
         self._scheduler_wait_timeout = scheduler_wait_timeout
 
         self._runtime_agents: dict[str, Agent] = {}
+        self._runtime_agent_config_fingerprints: dict[str, str] = {}
 
     @property
     def runtime_agents(self) -> dict[str, Agent]:
@@ -79,17 +81,42 @@ class AgentRuntimeManager:
         return runtime
 
     async def get_or_create_runtime_agent(self, runtime: SessionRuntime) -> Agent:
-        existing = self._runtime_agents.get(runtime.runtime_agent_id)
-        if existing is not None:
-            return existing
-
         base_config = await self._agent_registry.get_agent(runtime.base_agent_id)
         if base_config is None:
             raise RuntimeError(f"base_agent_not_found: {runtime.base_agent_id}")
 
+        expected_fingerprint = self._build_runtime_config_fingerprint(base_config)
+        existing = self._runtime_agents.get(runtime.runtime_agent_id)
+        if existing is not None:
+            current_fingerprint = self._runtime_agent_config_fingerprints.get(
+                runtime.runtime_agent_id
+            )
+            if current_fingerprint == expected_fingerprint:
+                return existing
+
+            state = await self._scheduler.get_state(runtime.scheduler_state_id)
+            if state is not None and state.status == AgentStateStatus.RUNNING:
+                logger.info(
+                    "runtime_agent_refresh_deferred",
+                    runtime_agent_id=runtime.runtime_agent_id,
+                    base_agent_id=runtime.base_agent_id,
+                    reason="state_running",
+                )
+                return existing
+
+            logger.info(
+                "runtime_agent_refresh_on_config_change",
+                runtime_agent_id=runtime.runtime_agent_id,
+                base_agent_id=runtime.base_agent_id,
+            )
+            await self.close_runtime_agent(runtime.runtime_agent_id)
+
         runtime_config = self._to_runtime_config(base_config, runtime.runtime_agent_id)
         agent = await build_agent(runtime_config, self._console_config, self._agent_registry)
         self._runtime_agents[runtime.runtime_agent_id] = agent
+        self._runtime_agent_config_fingerprints[runtime.runtime_agent_id] = (
+            expected_fingerprint
+        )
         return agent
 
     async def submit_to_scheduler(
@@ -144,6 +171,7 @@ class AgentRuntimeManager:
 
     async def close_runtime_agent(self, agent_id: str) -> None:
         cached = self._runtime_agents.pop(agent_id, None)
+        self._runtime_agent_config_fingerprints.pop(agent_id, None)
         if cached is not None:
             await cached.close()
 
@@ -152,6 +180,7 @@ class AgentRuntimeManager:
         if close_tasks:
             await asyncio.gather(*close_tasks, return_exceptions=True)
         self._runtime_agents.clear()
+        self._runtime_agent_config_fingerprints.clear()
 
     # -- Internal ------------------------------------------------------------
 
@@ -275,3 +304,17 @@ class AgentRuntimeManager:
             created_at=base_config.created_at,
             updated_at=datetime.now(),
         )
+
+    def _build_runtime_config_fingerprint(self, base_config: AgentConfigRecord) -> str:
+        payload = {
+            "name": base_config.name,
+            "description": base_config.description,
+            "model_provider": base_config.model_provider,
+            "model_name": base_config.model_name,
+            "system_prompt": base_config.system_prompt,
+            "tools": list(base_config.tools),
+            "options": dict(base_config.options),
+            "model_params": dict(base_config.model_params),
+        }
+        serialized = json.dumps(payload, sort_keys=True, ensure_ascii=True)
+        return hashlib.sha1(serialized.encode("utf-8")).hexdigest()

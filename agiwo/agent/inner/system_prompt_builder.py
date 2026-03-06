@@ -65,11 +65,11 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
         sections = [
             self._build_soul_section(),
             self._build_base_section(),
-            self._build_skills_section(),
+            self._build_environment_section(),
             self._build_tools_section(),
+            self._build_skills_section(),
             self._build_identity_section(),
             self._build_user_section(),
-            self._build_environment_section(),
         ]
         return "\n\n".join(filter(None, sections))
 
@@ -279,9 +279,10 @@ Current date: {current_date}
         if not self.tools or len(self.tools) == 0:
             return ""
         tool_section = "# Tools you can use\n"
+        tool_section += "<tools>\n"
         for tool in self.tools:
-            tool_section += f"<tool>\n<name>\n{tool.name}\n</name>\n<description>\n{tool.get_short_description()}\n</description>\n</tool>\n\n"
-
+            tool_section += f"<tool>\n  <name>{tool.name}</name>\n  <description>{tool.get_short_description()}</description>\n</tool>\n"
+        tool_section += "</tools>\n"
         return f"---\n\n{tool_section.strip()}" if tool_section else ""
 
     def _build_skills_section(self) -> str:

@@ -5,9 +5,9 @@ Console-specific settings use AGIWO_CONSOLE_ prefix.
 Storage/LLM settings are inherited from SDK's AgiwoSettings (AGIWO_ prefix).
 """
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agiwo.config.settings import settings as sdk_settings
@@ -55,9 +55,17 @@ class ConsoleConfig(BaseSettings):
     default_agent_id: str = "Walaha000"
     default_agent_name: str = "Walaha"
     default_agent_description: str = ""
-    default_agent_model_provider: str = "generic"
+    default_agent_model_provider: Literal[
+        "openai",
+        "openai-compatible",
+        "deepseek",
+        "anthropic",
+        "anthropic-compatible",
+        "nvidia",
+        "bedrock-anthropic",
+    ] = "openai-compatible"
     default_agent_model_name: str = "codex-5.3"
-    default_agent_model_params: dict = Field(default_factory=dict)
+    default_agent_model_params: dict[str, Any] = Field(default_factory=dict)
     default_agent_system_prompt: str = ""
 
     # Feishu channel
@@ -104,3 +112,16 @@ class ConsoleConfig(BaseSettings):
         if self.metadata_storage_type == "sqlite":
             return "sqlite"
         return "memory"
+
+    @field_validator("default_agent_model_params", mode="before")
+    @classmethod
+    def _normalize_default_agent_model_params(cls, value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        normalized = dict(value)
+        if "api_key" in normalized:
+            raise ValueError(
+                "AGIWO_CONSOLE_DEFAULT_AGENT_MODEL_PARAMS does not support api_key; "
+                "use api_key_env_name"
+            )
+        return normalized

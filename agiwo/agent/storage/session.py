@@ -6,11 +6,11 @@ import asyncio
 import json
 from abc import ABC, abstractmethod
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from agiwo.agent.schema import CompactMetadata
 from agiwo.utils.logging import get_logger
+from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 
 logger = get_logger(__name__)
 
@@ -92,15 +92,7 @@ class SQLiteSessionStorage(SessionStorage):
 
     async def _ensure_connection(self) -> Any:
         if self._conn is None:
-            import aiosqlite
-
-            # Ensure parent directory exists
-            db_dir = Path(self.db_path).parent
-            db_dir.mkdir(parents=True, exist_ok=True)
-
-            self._conn = await aiosqlite.connect(self.db_path)
-            # Enable WAL mode for better concurrency
-            await self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn = await get_shared_connection(self.db_path)
             await self._conn.execute("""
                 CREATE TABLE IF NOT EXISTS compact_metadata (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,7 +119,7 @@ class SQLiteSessionStorage(SessionStorage):
 
     async def close(self) -> None:
         if self._conn is not None:
-            await self._conn.close()
+            await release_shared_connection(self.db_path)
             self._conn = None
 
     async def save_compact_metadata(

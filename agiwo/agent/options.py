@@ -19,7 +19,7 @@ class RunStepStorageConfig:
         - mongodb: MongoDB storage
     config: storage-specific configuration
         - sqlite: {"db_path": str}
-        - mongodb: {"uri": str, "db_name": str}
+        - mongodb: {"mongo_uri": str, "db_name": str}
     """
 
     storage_type: Literal["memory", "sqlite", "mongodb"] = "memory"

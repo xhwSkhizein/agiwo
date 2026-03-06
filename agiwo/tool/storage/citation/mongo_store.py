@@ -2,8 +2,6 @@
 
 from typing import TYPE_CHECKING, Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
-
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 
@@ -12,6 +10,7 @@ from agiwo.tool.storage.citation.models import (
     CitationSourceSimplified,
 )
 from agiwo.utils.logging import get_logger
+from agiwo.utils.mongo_pool import get_shared_mongo_client, release_shared_mongo_client
 
 logger = get_logger(__name__)
 
@@ -28,20 +27,14 @@ class MongoCitationStore:
         self.uri = uri
         self.db_name = db_name
         self.collection_name = collection_name or "citation_sources"
-        self.client: AsyncIOMotorClient[Any] | None = None
+        self.client: Any = None
         self.db: AsyncIOMotorDatabase[Any] | None = None
         self.citations_collection: AsyncIOMotorCollection[Any] | None = None
 
     async def _ensure_connection(self):
         """Ensure database connection is established."""
         if self.client is None:
-            from motor.motor_asyncio import (
-                AsyncIOMotorClient,
-                AsyncIOMotorCollection,
-                AsyncIOMotorDatabase,
-            )
-
-            self.client = AsyncIOMotorClient(self.uri)
+            self.client = await get_shared_mongo_client(self.uri)
             self.db = self.client[self.db_name]
             self.citations_collection = self.db[self.collection_name]
 
@@ -92,7 +85,7 @@ class MongoCitationStore:
                 )
                 citation_ids.append(source.citation_id)
             except Exception as e:
-                logger.error(
+                logger.exception(
                     "store_citation_source_failed",
                     error=str(e),
                     citation_id=source.citation_id,
@@ -283,9 +276,9 @@ class MongoCitationStore:
             raise
 
     async def disconnect(self) -> None:
-        """Close MongoDB connection."""
-        if self.client:
-            self.client.close()
+        """Release MongoDB connection back to the shared pool."""
+        if self.client is not None:
+            await release_shared_mongo_client(self.uri)
             self.client = None
             self.db = None
             self.citations_collection = None
