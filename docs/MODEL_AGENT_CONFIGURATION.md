@@ -112,7 +112,7 @@ The expected pattern is:
 
 ### Tool path (`web_reader`)
 
-1. Tool config reads defaults from `AGIWO_TOOL_DEFAULT_MODEL_*` and per-tool overrides.
+1. Tool config reads defaults from `AGIWO_TOOL_DEFAULT_MODEL_*`.
 2. Tool builds `ModelConfig` with `model_provider`, `model_name`, `base_url`, `api_key_env_name`, and sampling params.
 3. Tool creates model through the same shared model factory as Agent.
 
@@ -143,7 +143,7 @@ MINIMAX_API_KEY=your_real_key
 
 ### 8.2 Tool side (`web_reader`)
 
-Tool defaults:
+Tool model uses only global defaults:
 
 - `AGIWO_TOOL_DEFAULT_MODEL_PROVIDER`
 - `AGIWO_TOOL_DEFAULT_MODEL_NAME`
@@ -152,16 +152,6 @@ Tool defaults:
 - `AGIWO_TOOL_DEFAULT_MODEL_TEMPERATURE`
 - `AGIWO_TOOL_DEFAULT_MODEL_TOP_P`
 - `AGIWO_TOOL_DEFAULT_MODEL_MAX_TOKENS`
-
-Per-tool override:
-
-- `AGIWO_TOOL_WEB_READER_MODEL_PROVIDER`
-- `AGIWO_TOOL_WEB_READER_MODEL_NAME`
-- `AGIWO_TOOL_WEB_READER_MODEL_BASE_URL`
-- `AGIWO_TOOL_WEB_READER_MODEL_API_KEY_ENV_NAME`
-- `AGIWO_TOOL_WEB_READER_MODEL_TEMPERATURE`
-- `AGIWO_TOOL_WEB_READER_MODEL_TOP_P`
-- `AGIWO_TOOL_WEB_READER_MODEL_MAX_TOKENS`
 
 Example:
 

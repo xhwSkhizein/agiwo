@@ -112,6 +112,7 @@ class AgiwoSettings(BaseSettings):
         "anthropic",
         "anthropic-compatible",
         "nvidia",
+        "bedrock-anthropic",
     ] = Field(
         default="deepseek",
         validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_PROVIDER"),
@@ -144,50 +145,6 @@ class AgiwoSettings(BaseSettings):
         default=2048,
         ge=1,
         validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_MAX_TOKENS"),
-    )
-    web_reader_model_provider: (
-        Literal[
-            "openai",
-            "openai-compatible",
-            "deepseek",
-            "anthropic",
-            "anthropic-compatible",
-            "nvidia",
-            "bedrock-anthropic",
-        ]
-        | None
-    ) = Field(
-        default=None,
-        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_PROVIDER"),
-    )
-    web_reader_model_name: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_NAME"),
-    )
-    web_reader_model_base_url: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_BASE_URL"),
-    )
-    web_reader_model_api_key_env_name: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_API_KEY_ENV_NAME"),
-    )
-    web_reader_model_temperature: float | None = Field(
-        default=None,
-        ge=0.0,
-        le=2.0,
-        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_TEMPERATURE"),
-    )
-    web_reader_model_top_p: float | None = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_TOP_P"),
-    )
-    web_reader_model_max_tokens: int | None = Field(
-        default=None,
-        ge=1,
-        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_MAX_TOKENS"),
     )
 
     # Observability - OTLP Export
@@ -359,37 +316,25 @@ class AgiwoSettings(BaseSettings):
             return self.nvidia_model_name
         return None
 
-    def get_tool_model_provider(self, tool_name: str) -> str:
-        override = getattr(self, f"{tool_name}_model_provider", None)
-        if override:
-            return override
+    def get_tool_model_provider(self) -> str:
         return self.tool_default_model_provider
 
-    def get_tool_model_name(self, tool_name: str) -> str:
-        override = getattr(self, f"{tool_name}_model_name", None)
-        if override:
-            return override
+    def get_tool_model_name(self) -> str:
         if self.tool_default_model_name:
             return self.tool_default_model_name
 
-        provider = self.get_tool_model_provider(tool_name)
+        provider = self.get_tool_model_provider()
         default_name = self.get_default_model_name_for_provider(provider)
         if default_name:
             return default_name
         raise ValueError(
-            f"No default model_name configured for tool '{tool_name}' with provider '{provider}'"
+            f"No default tool model_name configured for provider '{provider}'"
         )
 
-    def get_tool_model_base_url(self, tool_name: str) -> str | None:
-        override = getattr(self, f"{tool_name}_model_base_url", None)
-        if override:
-            return override
+    def get_tool_model_base_url(self) -> str | None:
         return self.tool_default_model_base_url
 
-    def get_tool_model_api_key_env_name(self, tool_name: str) -> str | None:
-        override = getattr(self, f"{tool_name}_model_api_key_env_name", None)
-        if isinstance(override, str) and override.strip():
-            return override.strip()
+    def get_tool_model_api_key_env_name(self) -> str | None:
         if (
             isinstance(self.tool_default_model_api_key_env_name, str)
             and self.tool_default_model_api_key_env_name.strip()
@@ -397,22 +342,13 @@ class AgiwoSettings(BaseSettings):
             return self.tool_default_model_api_key_env_name.strip()
         return None
 
-    def get_tool_model_temperature(self, tool_name: str) -> float:
-        override = getattr(self, f"{tool_name}_model_temperature", None)
-        if override is not None:
-            return override
+    def get_tool_model_temperature(self) -> float:
         return self.tool_default_model_temperature
 
-    def get_tool_model_top_p(self, tool_name: str) -> float:
-        override = getattr(self, f"{tool_name}_model_top_p", None)
-        if override is not None:
-            return override
+    def get_tool_model_top_p(self) -> float:
         return self.tool_default_model_top_p
 
-    def get_tool_model_max_tokens(self, tool_name: str) -> int:
-        override = getattr(self, f"{tool_name}_model_max_tokens", None)
-        if override is not None:
-            return override
+    def get_tool_model_max_tokens(self) -> int:
         return self.tool_default_model_max_tokens
 
     def get_embedding_api_key(self) -> str | None:

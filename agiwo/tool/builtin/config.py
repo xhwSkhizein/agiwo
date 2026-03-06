@@ -90,25 +90,25 @@ class WebReaderApiConfig:
         default_factory=lambda: settings.web_reader_api_max_content_length
     )
     model_provider: str = field(
-        default_factory=lambda: settings.get_tool_model_provider("web_reader")
+        default_factory=lambda: settings.get_tool_model_provider()
     )
     model_name: str = field(
-        default_factory=lambda: settings.get_tool_model_name("web_reader")
+        default_factory=lambda: settings.get_tool_model_name()
     )
     model_base_url: str | None = field(
-        default_factory=lambda: settings.get_tool_model_base_url("web_reader")
+        default_factory=lambda: settings.get_tool_model_base_url()
     )
     api_key_env_name: str | None = field(
-        default_factory=lambda: settings.get_tool_model_api_key_env_name("web_reader")
+        default_factory=lambda: settings.get_tool_model_api_key_env_name()
     )
     model_temperature: float = field(
-        default_factory=lambda: settings.get_tool_model_temperature("web_reader")
+        default_factory=lambda: settings.get_tool_model_temperature()
     )
     model_top_p: float = field(
-        default_factory=lambda: settings.get_tool_model_top_p("web_reader")
+        default_factory=lambda: settings.get_tool_model_top_p()
     )
     model_max_tokens: int = field(
-        default_factory=lambda: settings.get_tool_model_max_tokens("web_reader")
+        default_factory=lambda: settings.get_tool_model_max_tokens()
     )
     headless: bool = False
     wait_strategy: str = "domcontentloaded"
