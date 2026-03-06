@@ -28,10 +28,13 @@ agiwo/
 │       ├── factory.py        # StorageFactory：根据配置创建存储实例
 │       ├── sqlite.py         # SQLite 实现
 │       └── mongo.py          # MongoDB 实现
+├── embedding/                # Embedding 抽象层与工厂
 ├── llm/                      # LLM Provider 抽象层
 │   ├── base.py               # Model ABC + StreamChunk
+│   ├── factory.py            # ModelFactory：统一构建入口
 │   ├── openai.py             # OpenAIModel (其他 OpenAI 兼容 Provider 的基类)
 │   ├── anthropic.py          # AnthropicModel (独立实现，非 OpenAI 兼容)
+│   ├── bedrock_anthropic.py  # Bedrock Anthropic 实现
 │   ├── deepseek.py           # DeepseekModel (继承 OpenAIModel)
 │   ├── nvidia.py             # NvidiaModel (继承 OpenAIModel)
 │   └── helper.py             # 工具函数: JSON 解析, usage 标准化
@@ -42,10 +45,13 @@ agiwo/
 │   ├── cache.py              # ToolResultCache
 │   ├── builtin/              # 内置工具 (装饰器自动注册)
 │   │   ├── registry.py       # @builtin_tool + @default_enable 装饰器
-│   │   ├── calculator.py     # 计算器
-│   │   ├── current_time.py   # 当前时间
-│   │   └── http_request.py   # HTTP 请求
+│   │   ├── config.py         # 内置工具配置聚合
+│   │   ├── bash_tool/        # Bash 工具
+│   │   ├── retrieval_tool/   # 记忆检索工具
+│   │   ├── web_search/       # 网页搜索工具
+│   │   └── web_reader/       # 网页阅读/抽取工具
 │   └── permission/           # 工具权限管理
+├── tool/storage/             # Tool 存储实现（如 citation）
 ├── observability/            # 可观测性
 │   ├── base.py               # BaseTraceStorage ABC
 │   ├── trace.py              # Trace + Span 模型 (兼容 OpenTelemetry)
@@ -58,7 +64,7 @@ agiwo/
 │   ├── executor.py           # SchedulerExecutor：Agent 执行 + 输出事件发射
 │   ├── store.py              # AgentStateStorage ABC + InMemory + SQLite 实现
 │   ├── guard.py              # TaskGuard：集中式护栏 (spawn/wake 限制, 超时检测)
-│   ├── tools.py              # SpawnAgentTool, SleepAndWaitTool, QuerySpawnedAgentTool
+│   ├── tools.py              # Spawn/Sleep/Query/Cancel/List 等调度工具
 │   └── scheduler.py          # Scheduler：编排层入口 (run / submit / submit_task / subscribe / shutdown / cancel)
 ├── skill/                    # Skill 系统 (可选)
 │   ├── manager.py            # SkillManager：发现、加载、热重载
@@ -70,8 +76,15 @@ agiwo/
 └── utils/
     ├── abort_signal.py       # AbortSignal：优雅取消
     ├── logging.py            # structlog 日志配置
+    ├── sqlite_pool.py        # SQLite 连接池
+    ├── mongo_pool.py         # MongoDB 连接池
     ├── retry.py              # 异步重试装饰器
     └── tojson.py             # JSON 序列化工具
+
+console/
+├── server/                   # Console API 与 Agent runtime 管理
+├── web/                      # Console 前端
+└── tests/                    # Console 后端测试
 ```
 
 ## Core Components
@@ -97,6 +110,7 @@ agiwo/
 
 - OpenAI 兼容 API：继承 `OpenAIModel`，仅覆写 `_resolve_api_key` / `_resolve_base_url`
 - 非兼容 API (如 Anthropic)：直接继承 `Model`，完整实现 `arun_stream`
+- Agent 和 Tool 的模型实例都通过 `agiwo.llm.factory` 统一构建
 
 ### BaseTool (Tool 抽象)
 
@@ -126,7 +140,7 @@ ABC，子类实现 5 个方法：`get_name`, `get_description`, `get_parameters`
 `scheduler/scheduler.py`。Agent 之上的编排层，管理 Agent 的 spawn/sleep/wake/completion 生命周期。
 
 - Agent **不感知** Scheduler（依赖方向：`scheduler/ → agent/`，单向）
-- Scheduler 从外部注入调度工具（`spawn_agent`, `sleep_and_wait`, `query_spawned_agent`）
+- Scheduler 从外部注入调度工具（`spawn_agent`, `sleep_and_wait`, `query_spawned_agent`, `cancel_agent`, `list_agents`）
 - **三种 API 模式**：
   - `run()` 阻塞等待
   - `submit()` + `wait_for()` 非阻塞，获取最终结果
@@ -165,6 +179,7 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 - async 代码保持显式，不在隐式 helper 中藏 await
 - 偏好小函数而非深层嵌套的大方法
 - SOLID + KISS，单一职责，不做不必要的抽象
+- **DRY 强约束**：同一语义逻辑出现第 2 次时就要评估抽象；出现第 3 次必须收敛为共享实现（helper / spec table / strategy map），禁止继续复制分支代码
 - **Builtin Tool 依赖自构建**：内置工具需要的 Model、HTTP Client、Storage 等基础设施依赖应由 Tool 在构造函数内根据配置创建；不要从 Agent / Console builder 注入 live client、live model、store 实例。例外仅限必须包装宿主运行时对象的 Tool（如 `AgentTool`、`SkillTool`、Scheduler tools、`BashTool` 的 sandbox/hook）。
 - **Model 构建走统一工厂**：无论 Agent 还是 Tool，需要创建 LLM `Model` 时都应走共享的 model factory / config，不要新增绕过 `agiwo.llm` 抽象的专用 HTTP client。
 - **禁止向后兼容** (除非明确要求)，及时删除遗留代码
@@ -175,7 +190,7 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 
 - **分层归属明确**：SDK 能力配置放 `agiwo/config/settings.py`；Console 部署/渠道配置放 `console/server/config.py`
 - **命名空间统一**：项目自有环境变量仅允许 `AGIWO_*`（SDK）和 `AGIWO_CONSOLE_*`（Console）
-- **读取单一入口**：仅配置模块允许读取环境变量；业务模块禁止新增 `os.getenv(...)`
+- **读取单一入口**：配置模块是主入口；业务模块禁止新增散落 `os.getenv(...)`。唯一例外是 `agiwo.llm.factory` 基于 `api_key_env_name` 做运行时密钥解析
 - **外部 Provider 键保留标准名**：如 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `AWS_REGION`
 - **兼容 Provider 显式配置**：`openai-compatible` / `anthropic-compatible` 视为协议适配器，不复用 `OPENAI_*` / `ANTHROPIC_*` 的默认凭证；必须显式提供 `base_url` 和 `api_key_env_name`
 - **每个配置项必须有 owner**：新增配置前先判断归属（SDK 核心、Console 服务、或 Agent 持久化配置）
@@ -215,9 +230,8 @@ uv sync
 # 运行单元测试 (mock, 不需要 API Key)
 uv run pytest tests/ -v
 
-# 运行集成测试 (需要 .env 中的 API Key)
-uv run python test_real_agent.py
-uv run python test_real_api.py
+# 运行 Console 服务测试
+(cd console && uv run pytest tests/ -v)
 
 # 类型检查 (如果配置了 mypy/pyright)
 uv run mypy agiwo/
@@ -232,109 +246,32 @@ uv run pytest tests/scheduler/ -v
 
 ### RecentChanges
 
-**2026-03-06 (Skills Directories + Console Agent Config UI)**
+只保留最近且影响开发决策的变更，历史细节请查 Git 记录。
 
-- **`skills_dirs` Unified**: `AgentOptions` skills path config is now `skills_dirs`, accepting either a single string or a list; single values are normalized to a one-item list.
-- **Relative Path Resolution Fixed**: Agent-level `skills_dirs` resolve relative to `config_root` / effective root path; env-level `AGIWO_SKILLS_DIRS` resolve relative to `AgiwoSettings.root_path`.
-- **Legacy Console Data Normalized**: Console API schema and builder normalize legacy `skills_dir` payloads/records into `skills_dirs` so existing saved agents can be edited and resaved cleanly.
-- **Console Agent Form Expanded**: Web create/edit pages now expose all currently supported persisted agent options and model params, including config root, termination summary settings, memory/stream limits, compact prompt, and sampling penalties.
+**2026-03-06 (Model/Tool 配置收敛)**
+- Provider 命名统一为 `openai-compatible` / `anthropic-compatible`，移除 `generic` 兼容逻辑。
+- Agent/Tool 模型配置统一为：`provider + model_name + base_url + api_key_env_name + sampling params`。
+- 禁止在 Agent 记录或默认配置里存明文 `api_key`，统一使用 `api_key_env_name`。
+- `web_reader` / `web_search` 改为内置工具自构建依赖，模型创建统一走 `agiwo.llm.factory`。
 
-**2026-03-05 (Configuration Namespace Cleanup — Phase 3)**
+**2026-03-06 (连接池与存储复用)**
+- SQLite / Mongo 相关存储统一使用共享连接池（`agiwo/utils/sqlite_pool.py`、`agiwo/utils/mongo_pool.py`）。
+- Citation store 与 Console/SDK 持久化复用同一类连接资源，避免重复连接实例。
 
-- **SDK Prefix Standardized**: `AgiwoSettings` env prefix switched to `AGIWO_` (`case_sensitive=False`)
-- **Legacy Env Aliases Removed**: 移除 `AGIO_*` 工具配置别名与混合大小写 skills 环境变量兼容
-- **Console Env Cleanup**: 移除 `default_agent_options` / `default_agent_model_params` 环境变量注入入口
-- **Env Templates Unified**: 根目录与 `console/.env.example` 已统一为 `AGIWO_* / AGIWO_CONSOLE_*` 规范
+**2026-03-04 ~ 2026-03-02 (Scheduler 能力增强)**
+- 增加 Pending Events + Debounce、Steering、Health Check、子 Agent 管理工具（cancel/list）。
+- 输出流 API `submit_and_subscribe` / `submit_task_and_subscribe` 成为 channel 推送主路径。
 
-**2026-03-05 (Configuration Governance Plan — SDK + Console)**
-
-- **Configuration Inventory Added**: 新增 `docs/CONFIGURATION_REFACTOR_PLAN.md`，完整盘点 SDK/Console/散落 env 读取点与问题根因
-- **Layered Ownership Defined**: 明确 Provider 凭证、SDK 运行配置、Console 服务配置、Agent 持久化配置四层边界
-- **Single-Read Rule Defined**: 约束环境变量仅在配置模块读取，业务模块禁止新增 `os.getenv` 直读
-- **Namespace Cleanup Plan**: 规划 `AGIWO_*` / `AGIWO_CONSOLE_*` 主命名空间，逐步收敛历史 `AGIO_*` 与混合命名
-
-**2026-03-04 (Scheduler Redesign — Health Check, Pending Events, Steering)**
-
-- **Pending Events System**: `PendingEvent` dataclass + `SchedulerEventType` enum added to `models.py`. Events saved to `pending_events` table (SQLite) or in-memory dict. Consumed via debounce: `find_agents_with_debounced_events(min_count, max_wait, now)`.
-- **Debounce Config**: `SchedulerConfig.event_debounce_min_count` and `event_debounce_max_wait_seconds` (also in `AgiwoSettings`). Default: wake on first event, max wait 30s.
-- **AgentState New Fields**: `explain: str | None` (set by `sleep_and_wait`), `last_activity_at: datetime | None` (updated each step), `recent_steps: list[dict] | None` (rolling 10-entry window of step summaries).
-- **Steering Mechanism**: `ExecutionContext.steering_queue: asyncio.Queue | None` — each execution gets its own queue. `AgentExecutor._drain_steering_queue()` injects pending messages into the next LLM call. `Agent.get_steering_queue()` exposes queue for external callers. `Scheduler.steer(state_id, message)` puts message in queue + saves as `USER_HINT` pending event.
-- **on_step Hook Wrapping**: `SchedulerExecutor._wrap_on_step_hook()` wraps existing hook to call `_sync_step_to_state()`, updating `last_activity_at` and `recent_steps` after each step.
-- **Pending Event Generation**: `SchedulerExecutor._emit_event_to_parent()` creates events on child sleep (`CHILD_SLEEP_RESULT`), completion (`CHILD_COMPLETED`), and failure (`CHILD_FAILED`).
-- **Health Check**: `TaskGuard.find_unhealthy(now, threshold_seconds)` finds RUNNING agents with stale activity. `Scheduler._check_health()` runs each tick, emitting `HEALTH_WARNING` events to parent agents with deduplication.
-- **Pending Events Processing**: `Scheduler._process_pending_events()` runs each tick — finds agents meeting debounce threshold, wakes them via `SchedulerExecutor.wake_agent_for_events()` with formatted event context.
-- **New Tools**: `CancelAgentTool` (cancel child + subtree, requires `force=true` for RUNNING agents), `ListAgentsTool` (list direct children with status/explain/recent_steps/result).
-- **Enhanced Tools**: `SleepAndWaitTool` — new `explain` parameter stored in `AgentState.explain`. `QuerySpawnedAgentTool` — returns `explain`, `last_activity_at`, `recent_steps`.
-- **Channel Layer Steering**: `AgentRuntimeManager._handle_running_state()` now calls `Scheduler.steer()` instead of blocking on `wait_for()`, enabling non-blocking real-time hints to running agents.
-- **BashTool Agent Tracking**: `ProcessRecord.agent_id` field. `ProcessRegistry.start_process()` accepts `agent_id`. `ProcessRegistry.list_processes_by_agent()` for per-agent process lookup. `LocalSandbox` and `Sandbox` protocol updated.
-- **`_tick` Extension**: Order is now `propagate_signals → enforce_timeouts → check_health → process_pending_events → start_pending → wake_sleeping`.
-- **`AgentStateStorage` New Abstracts**: `find_running()`, `save_event()`, `get_pending_events()`, `delete_events()`, `find_agents_with_debounced_events()`, `has_recent_health_warning()` added to ABC + both implementations.
-- **`update_status` Extended**: Now accepts `explain`, `last_activity_at`, `recent_steps` sentinel kwargs.
-
-**2026-03-03 (Structured UserMessage Input)**
-
-- **Structured Input Model**: Introduced `UserMessage` dataclass with `content: list[ContentPart]` + optional `ChannelContext`. `UserInput = str | list[ContentPart] | UserMessage`. Normalize via `normalize_to_message()`.
-- **KV Cache Protection**: Dynamic context (channel metadata, memories, hook results) remains in user message content via `MessageAssembler._prepend_to_user_message()`. System prompt stays static.
-- **MessageAssembler Refactor**: `assemble()` now accepts `channel_context: ChannelContext | None` kwarg. Renders context/memories/hook as structured text blocks prepended to last user message.
-- **Scheduler UserInput**: All Scheduler APIs (`run`, `submit`, `submit_task`, `submit_and_subscribe`, `submit_task_and_subscribe`) accept `UserInput` instead of `str`. `AgentState.task` and `WakeCondition.submitted_task` are `UserInput`, serialized via `serialize_user_input`/`deserialize_user_input` in SQLite store.
-- **System Instruction Migration**: `<system-instruction>` no longer prepended to task string. Now appended to child agent's system prompt as `<task-instruction>` block (set once per child, KV cache friendly).
-- **Feishu Multimodal**: `FeishuApiClient` gains `download_image()`, `download_message_resource()`, `_authorized_binary_request()`. Service downloads attachments to local tmp dir, builds `ContentPart(url=local_path, mime_type, metadata={name, size})`. `to_message_content()` renders local-path resources as text placeholders with file info + path for Agent tool use.
-- **Channel Infra**: `BatchPayload.rendered_user_input: str` → `user_message: UserMessage`. `BaseChannelService._render_batch_prompt()` → `async _build_user_message()`. `AgentRuntimeManager.submit_to_scheduler()` accepts `UserInput`.
-
-**2026-03-02 (Scheduler Output Streaming)**
-
-- **Output-driven message delivery**: Agent text output (not SLEEPING state) triggers message delivery to users. `SchedulerExecutor._handle_agent_output()` emits `SchedulerOutput` via `_emit_output()` on every branch (SLEEPING, persistent idle, child completion, periodic).
-- **New subscribe API**: `submit_and_subscribe()` and `submit_task_and_subscribe()` combine task submission with output consumption, returning `AsyncIterator[SchedulerOutput]`. Channel is created before execution starts to prevent output loss.
-- **`include_child_outputs` config**: Controls whether child agent outputs are pushed to the output channel (default True).
-- **`wait_for()` race fix**: Persistent agent in SLEEPING state with a pending `submitted_task` no longer causes `wait_for()` to return stale results.
-- **Feishu Channel streaming**: `_run_batch_with_scheduler()` rewritten to consume `subscribe` output stream; each output is sent as a separate Feishu message (first as reply, subsequent as new messages).
-
-**2026-03-01 (Token Limits Refactor)**
-
-- **Limit Names Clarified**:
-  - `max_context_window_tokens`: single LLM call `input + output` limit
-  - `max_tokens_per_run`: accumulated `input + output` across a run
-  - `max_output_tokens_per_call`: model parameter name in console, mapped to provider `max_tokens`
-- **Cost Guardrail Added**: `max_run_token_cost` in `AgentOptions`, with model pricing params (`cache_hit_price`, `input_price`, `output_price`, USD per 1M tokens).
-- **Termination Reasons Split**:
-  - `MAX_OUTPUT_TOKENS_PER_CALL`
-  - `MAX_CONTEXT_WINDOW_TOKENS`
-  - `MAX_TOKENS_PER_RUN`
-  - `MAX_RUN_TOKEN_COST`
-- **Executor Flow Updated**: one loop now performs `pre-check -> LLM -> tools -> post-check`, ensuring tool calls for the current step execute before token-limit stop and fixing the previous `no tool_calls -> COMPLETED` precedence bug.
-- **Summary Policy Tightened**: token/cost limit terminations do not auto-generate termination summaries.
-
-**2025-02-27 (System Prompt Auto-Refresh)**
-
-- **Lazy System Prompt Building**: `SystemPromptBuilder.build()` is now called lazily in `initialize()` at first execution, not during Agent construction.
-- **Auto-refresh on Change**: `get_system_prompt()` automatically detects changes to SOUL.md (mtime check) and skills directory (fingerprint check), refreshing the prompt when needed.
-- **Change Tracking**: Builder tracks `_soul_mtime` and `_skills_fingerprint` to detect modifications without unnecessary rebuilds.
-- **Agent Delegation**: Agent no longer caches `system_prompt` locally; it delegates to `SystemPromptBuilder.get_system_prompt()` on each execution, ensuring fresh prompts when files change.
-- **Manual Refresh**: `SkillManager.reload()` available for explicit skill refresh; builder's `_refresh_prompt()` handles the full rebuild cycle.
-
-**2025-02-27 (Scheduler Hardening)**
-
-- **Scheduler session isolation**: `SleepAndWaitTool` and `TaskGuard.check_spawn()` now filter children by `session_id`, preventing cross-session pollution.
-- **Child agent no spawn**: `create_child_agent()` filters out `spawn_agent` tool from parent — child agents cannot cascade spawn grandchildren.
-- **Fix wake_agent_not_found**: `_maybe_cleanup_agent()` now async-checks actual state before cleanup; SLEEPING agents remain in registry for wake.
-- **Dedup scheduling**: `_dispatched_state_ids` prevents duplicate scheduling of same state across ticks.
-- **Wake message clarity**: `_build_wake_message()` separates "## Successful Results" from "## Failed Agents", preventing LLM from treating errors as results.
-- **Spawn tool guidance**: Improved `SpawnAgentTool` description to discourage unnecessary spawning.
-
-**2025-02-27**
-
-- **AgentId Counter**: `Agent._generate_default_id()` now uses `{name}-{seq:03d}` format (e.g., `bodhi-001`) instead of random UUID. Console `build_agent()` no longer passes `id` to use SDK auto-generation.
-- **Lazy Workspace Init**: Directory creation and system prompt building moved to `initialize()`, called at execution time. Agents created but never run no longer create side-effect directories or build prompts.
-- **System Prompt Auto-refresh**: `DefaultSystemPromptBuilder` now tracks SOUL.md mtime and skills directory fingerprint, automatically refreshing when files change. Agent retrieves fresh prompts via `get_system_prompt()` on each execution.
-- **Child Agent Instruction**: `config_overrides["instruction"]` is now injected into task via `<system-instruction>` tag at runtime, instead of overriding `system_prompt` at creation time.
-- **Name/Id Separation**: `Agent(name, description, model, *, id=None...)` — `name` is first positional param (config identifier), `id` is keyword-only optional (runtime identity, auto-generated if not provided).
+**2026-03-03 (输入结构化)**
+- `UserInput` 升级为 `str | list[ContentPart] | UserMessage`，调度与通道链路统一支持结构化输入。
 
 ### 添加新 LLM Provider
 
-1. OpenAI 兼容：继承 `OpenAIModel`，覆写 `_resolve_api_key()` 和 `_resolve_base_url()`
-2. 非兼容：继承 `Model`，实现 `arun_stream()`，确保输出标准化为 `StreamChunk`
+1. 实现 Provider 类：OpenAI 兼容建议继承 `OpenAIModel`；非兼容继承 `Model` 并实现 `arun_stream()`
+2. 在 `agiwo/llm/factory.py` 的 `ModelProvider` 和 `PROVIDER_SPECS` 中注册
 3. 在 `agiwo/llm/__init__.py` 中导出
-4. 在 `agiwo/config/settings.py` 中添加对应的环境变量配置
+4. 如需 provider 级默认配置，在 `agiwo/config/settings.py` 新增字段
+5. 补充 `tests/llm/test_factory.py` 与相关集成测试
 
 ### 添加新 Hook
 
@@ -350,9 +287,9 @@ uv run pytest tests/scheduler/ -v
 ### 注意事项
 
 - `agent/inner/` 下的模块是内部实现，不要在 `agiwo/__init__.py` 中导出
-- `TYPE_CHECKING` 仅用于解决 `agent_tool.py` 中 Agent 的前向引用 (已是唯一例外)
+- `TYPE_CHECKING` 仅用于打断类型环依赖或隔离重依赖；新增前应确认不能通过重构依赖关系解决
 - `StepRecord` 使用工厂方法 (`StepRecord.user()`, `.assistant()`, `.tool()`) 创建，不要直接构造
-- `ToolExecutor` 的 cache 功能尚未完全实现 (见 executor.py 中的 FIXME)
+- `ToolExecutor` 的缓存是会话级缓存（`ToolResultCache`），仅 `tool.cacheable=True` 时生效
 - Anthropic provider 有独立的流式实现，不走 OpenAI 兼容路径
 
 ## Maintaining AGENTS.md
