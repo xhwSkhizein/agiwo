@@ -126,9 +126,7 @@ class AgiwoSettings(BaseSettings):
     )
     tool_default_model_api_key_env_name: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "AGIWO_TOOL_DEFAULT_MODEL_API_KEY_ENV_NAME"
-        ),
+        validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_API_KEY_ENV_NAME"),
     )
     tool_default_model_temperature: float = Field(
         default=0.2,
@@ -147,15 +145,18 @@ class AgiwoSettings(BaseSettings):
         ge=1,
         validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_MAX_TOKENS"),
     )
-    web_reader_model_provider: Literal[
-        "openai",
-        "openai-compatible",
-        "deepseek",
-        "anthropic",
-        "anthropic-compatible",
-        "nvidia",
-        "bedrock-anthropic",
-    ] | None = Field(
+    web_reader_model_provider: (
+        Literal[
+            "openai",
+            "openai-compatible",
+            "deepseek",
+            "anthropic",
+            "anthropic-compatible",
+            "nvidia",
+            "bedrock-anthropic",
+        ]
+        | None
+    ) = Field(
         default=None,
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_PROVIDER"),
     )
@@ -169,9 +170,7 @@ class AgiwoSettings(BaseSettings):
     )
     web_reader_model_api_key_env_name: str | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "AGIWO_TOOL_WEB_READER_MODEL_API_KEY_ENV_NAME"
-        ),
+        validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_MODEL_API_KEY_ENV_NAME"),
     )
     web_reader_model_temperature: float | None = Field(
         default=None,
@@ -233,12 +232,12 @@ class AgiwoSettings(BaseSettings):
         default="https://google.serper.dev",
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_SEARCH_API_BASE_URL"),
     )
-    
+
     web_search_serper_api_key: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("SERPER_API_KEY"),
     )
-    
+
     web_search_api_timeout: int = Field(
         default=30,
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_SEARCH_API_TIMEOUT"),
@@ -262,126 +261,6 @@ class AgiwoSettings(BaseSettings):
     web_reader_api_max_content_length: int = Field(
         default=4096,
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_API_MAX_CONTENT_LENGTH"),
-    )
-    vlm_api_base_url: str = Field(
-        default="https://oaiaiai.space.z.ai",
-        validation_alias=AliasChoices("AGIWO_TOOL_VLM_API_BASE_URL"),
-    )
-    vlm_api_timeout: int = Field(
-        default=60,
-        validation_alias=AliasChoices("AGIWO_TOOL_VLM_API_TIMEOUT"),
-    )
-    vlm_image_fetch_timeout: int = Field(
-        default=30,
-        validation_alias=AliasChoices("AGIWO_TOOL_VLM_IMAGE_FETCH_TIMEOUT"),
-    )
-    vlm_api_max_retries: int = Field(
-        default=3,
-        validation_alias=AliasChoices("AGIWO_TOOL_VLM_API_MAX_RETRIES"),
-    )
-    image_gen_api_base_url: str = Field(
-        default="https://oaiaiai.space.z.ai",
-        validation_alias=AliasChoices("AGIWO_TOOL_IMAGE_GEN_API_BASE_URL"),
-    )
-    image_gen_api_timeout: int = Field(
-        default=120,
-        validation_alias=AliasChoices("AGIWO_TOOL_IMAGE_GEN_API_TIMEOUT"),
-    )
-    image_gen_output_dir: str = Field(
-        default="./generated_images",
-        validation_alias=AliasChoices("AGIWO_TOOL_IMAGE_GEN_OUTPUT_DIR"),
-    )
-    image_gen_default_size: str = Field(
-        default="1024x1024",
-        validation_alias=AliasChoices("AGIWO_TOOL_IMAGE_GEN_DEFAULT_SIZE"),
-    )
-    image_gen_max_retries: int = Field(
-        default=3,
-        validation_alias=AliasChoices("AGIWO_TOOL_IMAGE_GEN_MAX_RETRIES"),
-    )
-    tts_api_base_url: str = Field(
-        default="https://oaiaiai.space.z.ai",
-        validation_alias=AliasChoices("AGIWO_TOOL_TTS_API_BASE_URL"),
-    )
-    tts_api_timeout: int = Field(
-        default=60,
-        validation_alias=AliasChoices("AGIWO_TOOL_TTS_API_TIMEOUT"),
-    )
-    tts_output_dir: str = Field(
-        default="./generated_audio",
-        validation_alias=AliasChoices("AGIWO_TOOL_TTS_OUTPUT_DIR"),
-    )
-    tts_default_voice: str = Field(
-        default="tongtong",
-        validation_alias=AliasChoices("AGIWO_TOOL_TTS_DEFAULT_VOICE"),
-    )
-    tts_default_speed: float = Field(
-        default=1.0,
-        validation_alias=AliasChoices("AGIWO_TOOL_TTS_DEFAULT_SPEED"),
-    )
-    tts_default_volume: float = Field(
-        default=1.0,
-        validation_alias=AliasChoices("AGIWO_TOOL_TTS_DEFAULT_VOLUME"),
-    )
-    asr_api_base_url: str = Field(
-        default="https://oaiaiai.space.z.ai",
-        validation_alias=AliasChoices("AGIWO_TOOL_ASR_API_BASE_URL"),
-    )
-    asr_api_timeout: int = Field(
-        default=60,
-        validation_alias=AliasChoices("AGIWO_TOOL_ASR_API_TIMEOUT"),
-    )
-    asr_audio_fetch_timeout: int = Field(
-        default=30,
-        validation_alias=AliasChoices("AGIWO_TOOL_ASR_AUDIO_FETCH_TIMEOUT"),
-    )
-    video_gen_api_base_url: str = Field(
-        default="https://oaiaiai.space.z.ai",
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_API_BASE_URL"),
-    )
-    video_gen_api_timeout: int = Field(
-        default=60,
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_API_TIMEOUT"),
-    )
-    video_gen_output_dir: str = Field(
-        default="./generated_videos",
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_OUTPUT_DIR"),
-    )
-    video_gen_default_quality: str = Field(
-        default="speed",
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_DEFAULT_QUALITY"),
-    )
-    video_gen_default_with_audio: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_DEFAULT_WITH_AUDIO"),
-    )
-    video_gen_default_size: str = Field(
-        default="1920x1080",
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_DEFAULT_SIZE"),
-    )
-    video_gen_default_fps: int = Field(
-        default=30,
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_DEFAULT_FPS"),
-    )
-    video_gen_default_duration: int = Field(
-        default=5,
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_DEFAULT_DURATION"),
-    )
-    video_gen_poll_interval: int = Field(
-        default=5,
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_POLL_INTERVAL"),
-    )
-    video_gen_max_poll_count: int = Field(
-        default=120,
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_MAX_POLL_COUNT"),
-    )
-    video_gen_download_video: bool = Field(
-        default=True,
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_DOWNLOAD_VIDEO"),
-    )
-    video_gen_download_timeout: int = Field(
-        default=120,
-        validation_alias=AliasChoices("AGIWO_TOOL_VIDEO_GEN_DOWNLOAD_TIMEOUT"),
     )
 
     # Skills configuration (paths relative to root_path if not absolute)
@@ -428,11 +307,11 @@ class AgiwoSettings(BaseSettings):
 
     def resolve_path(self, path: str | None) -> Path | None:
         """Resolve a path relative to root_path if it's not absolute.
-        
+
         Args:
             path: The path to resolve. If None, returns None.
                   If absolute, returns as-is. If relative, joins with root_path.
-        
+
         Returns:
             Resolved Path object or None if input was None.
         """
@@ -445,7 +324,7 @@ class AgiwoSettings(BaseSettings):
 
     def get_root_path(self) -> Path:
         """Get the root path as a Path object.
-        
+
         Returns:
             Path object for root_path (expanded user and absolute).
         """

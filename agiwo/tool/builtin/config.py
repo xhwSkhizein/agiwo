@@ -99,9 +99,7 @@ class WebReaderApiConfig:
         default_factory=lambda: settings.get_tool_model_base_url("web_reader")
     )
     api_key_env_name: str | None = field(
-        default_factory=lambda: settings.get_tool_model_api_key_env_name(
-            "web_reader"
-        )
+        default_factory=lambda: settings.get_tool_model_api_key_env_name("web_reader")
     )
     model_temperature: float = field(
         default_factory=lambda: settings.get_tool_model_temperature("web_reader")
@@ -150,93 +148,10 @@ def filter_config_kwargs(config_class: type, kwargs: dict) -> dict:
     return kwargs
 
 
-@dataclass
-class VlmConfig:
-    """Configuration for VlmTool."""
-
-    base_url: str = field(default_factory=lambda: settings.vlm_api_base_url)
-    timeout_seconds: int = field(default_factory=lambda: settings.vlm_api_timeout)
-    image_fetch_timeout: int = field(
-        default_factory=lambda: settings.vlm_image_fetch_timeout
-    )
-    max_retries: int = field(default_factory=lambda: settings.vlm_api_max_retries)
-
-
-@dataclass
-class ImageGenConfig:
-    """Configuration for ImageGenTool."""
-
-    base_url: str = field(default_factory=lambda: settings.image_gen_api_base_url)
-    timeout_seconds: int = field(default_factory=lambda: settings.image_gen_api_timeout)
-    output_dir: str = field(default_factory=lambda: settings.image_gen_output_dir)
-    default_size: str = field(default_factory=lambda: settings.image_gen_default_size)
-    max_retries: int = field(default_factory=lambda: settings.image_gen_max_retries)
-
-
-@dataclass
-class TtsConfig:
-    """Configuration for TtsTool."""
-
-    base_url: str = field(default_factory=lambda: settings.tts_api_base_url)
-    timeout_seconds: int = field(default_factory=lambda: settings.tts_api_timeout)
-    output_dir: str = field(default_factory=lambda: settings.tts_output_dir)
-    default_voice: str = field(default_factory=lambda: settings.tts_default_voice)
-    default_speed: float = field(default_factory=lambda: settings.tts_default_speed)
-    default_volume: float = field(default_factory=lambda: settings.tts_default_volume)
-
-
-@dataclass
-class AsrConfig:
-    """Configuration for AsrTool."""
-
-    base_url: str = field(default_factory=lambda: settings.asr_api_base_url)
-    timeout_seconds: int = field(default_factory=lambda: settings.asr_api_timeout)
-    audio_fetch_timeout: int = field(
-        default_factory=lambda: settings.asr_audio_fetch_timeout
-    )
-
-
-@dataclass
-class VideoGenConfig:
-    """Configuration for VideoGenTool."""
-
-    base_url: str = field(default_factory=lambda: settings.video_gen_api_base_url)
-    timeout_seconds: int = field(default_factory=lambda: settings.video_gen_api_timeout)
-    output_dir: str = field(default_factory=lambda: settings.video_gen_output_dir)
-    default_quality: str = field(
-        default_factory=lambda: settings.video_gen_default_quality
-    )
-    default_with_audio: bool = field(
-        default_factory=lambda: settings.video_gen_default_with_audio
-    )
-    default_size: str = field(default_factory=lambda: settings.video_gen_default_size)
-    default_fps: int = field(default_factory=lambda: settings.video_gen_default_fps)
-    default_duration: int = field(
-        default_factory=lambda: settings.video_gen_default_duration
-    )
-    poll_interval_seconds: int = field(
-        default_factory=lambda: settings.video_gen_poll_interval
-    )
-    max_poll_count: int = field(
-        default_factory=lambda: settings.video_gen_max_poll_count
-    )
-    download_video: bool = field(
-        default_factory=lambda: settings.video_gen_download_video
-    )
-    download_timeout: int = field(
-        default_factory=lambda: settings.video_gen_download_timeout
-    )
-
-
 __all__ = [
     "MemoryConfig",
     "WebSearchApiConfig",
     "WebReaderApiConfig",
-    "VlmConfig",
-    "ImageGenConfig",
-    "TtsConfig",
-    "AsrConfig",
-    "VideoGenConfig",
     "create_config_from_dict",
     "filter_config_kwargs",
 ]
