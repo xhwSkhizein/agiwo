@@ -58,10 +58,14 @@ class BashTool(BaseTool):
     def __init__(self, config: BashToolConfig | None = None) -> None:
         if config is None:
             from agiwo.tool.builtin.bash_tool.sandbox.local import LocalSandbox
+
             config = BashToolConfig(
                 sandbox=LocalSandbox(),
                 cwd=".",
+                command_safety_validator=CommandSafetyValidator(),
             )
+        elif config.command_safety_validator is None:
+            config.command_safety_validator = CommandSafetyValidator()
         self.config = config
 
     @property
@@ -73,8 +77,9 @@ class BashTool(BaseTool):
         lines = [
             "Terminal-style bash tool.",
             "Pass one shell command via `command`.",
-            "Use trailing `&` to start a background job.",
-            "Use `bashctl` for job management (help/jobs/status/logs/stop/paths).",
+            "Set `background=true` to start a background job.",
+            "Set `pty=true` for interactive CLI commands that require a TTY.",
+            "Use `bashctl` for job management (help/jobs/status/logs/stop/paths/input).",
             "Built-in safety guard blocks destructive commands."
         ]
         if self.config.extra_instructions:
@@ -107,9 +112,17 @@ class BashTool(BaseTool):
                     "type": "number",
                     "description": "Timeout seconds for foreground command execution.",
                 },
+                "background": {
+                    "type": "boolean",
+                    "description": "Run command as background job and return job_id immediately.",
+                },
+                "pty": {
+                    "type": "boolean",
+                    "description": "Enable PTY mode for commands that require a terminal.",
+                },
                 "stdin": {
                     "type": "string",
-                    "description": "Reserved for future stdin support (currently unsupported).",
+                    "description": "Input sent to stdin for foreground PTY commands.",
                 },
             },
             "required": ["command"],
@@ -146,17 +159,58 @@ class BashTool(BaseTool):
                     message="timeout must be a number",
                 )
 
-        if parameters.get("stdin") is not None:
+        background_value = parameters.get("background")
+        background_enabled = self._parse_bool(background_value)
+        if background_value is not None and background_enabled is None:
             return self._error(
                 start=start,
                 parameters=parameters,
-                message="stdin is not supported yet; include input directly in the command",
+                message="background must be a boolean",
             )
+        background = bool(background_enabled)
+
+        pty_value = parameters.get("pty")
+        pty_enabled = self._parse_bool(pty_value)
+        if pty_value is not None and pty_enabled is None:
+            return self._error(
+                start=start,
+                parameters=parameters,
+                message="pty must be a boolean",
+            )
+        use_pty = bool(pty_enabled)
+
+        stdin_value = parameters.get("stdin")
+        stdin: str | None = None
+        if stdin_value is not None and not isinstance(stdin_value, str):
+            return self._error(
+                start=start,
+                parameters=parameters,
+                message="stdin must be a string",
+            )
+        if isinstance(stdin_value, str):
+            stdin = stdin_value
 
         try:
             if self._is_bashctl(command):
                 return await self._execute_bashctl(start, parameters, command)
-            return await self._execute_shell(start, parameters, command, cwd, timeout)
+            if command.rstrip().endswith("&"):
+                return self._error(
+                    start=start,
+                    parameters=parameters,
+                    message="trailing '&' is not supported; use background=true",
+                    exit_code=2,
+                )
+            return await self._execute_shell(
+                start=start,
+                parameters=parameters,
+                command=command,
+                cwd=cwd,
+                timeout=timeout,
+                background=background,
+                context=context,
+                use_pty=use_pty,
+                stdin=stdin,
+            )
         except TimeoutError:
             return self._error(
                 start=start, parameters=parameters, message="command timed out"
@@ -171,14 +225,31 @@ class BashTool(BaseTool):
         command: str,
         cwd: str | None,
         timeout: float | None,
+        background: bool,
+        context: ExecutionContext,
+        use_pty: bool,
+        stdin: str | None,
     ) -> ToolResult:
         shell_command = self._apply_before_hook(command)
-        foreground_command, background = self._split_background(shell_command)
+        foreground_command = shell_command.strip()
         if not foreground_command:
             return self._error(
                 start=start,
                 parameters=parameters,
                 message="command cannot be empty",
+            )
+
+        if background and stdin is not None:
+            return self._error(
+                start=start,
+                parameters=parameters,
+                message="stdin is only supported for foreground PTY execution",
+            )
+        if stdin is not None and not use_pty:
+            return self._error(
+                start=start,
+                parameters=parameters,
+                message="stdin requires pty=true",
             )
 
         safety = self.config.command_safety_validator
@@ -194,8 +265,12 @@ class BashTool(BaseTool):
                 )
 
         if background:
+            agent_id = getattr(context, "agent_id", None)
             job_id = await self.config.sandbox.start_process(
-                foreground_command, cwd=cwd
+                foreground_command,
+                cwd=cwd,
+                agent_id=agent_id,
+                use_pty=use_pty,
             )
             return self._ok(
                 start=start,
@@ -204,15 +279,24 @@ class BashTool(BaseTool):
                 job_id=job_id,
                 state="running",
                 background=True,
+                mode="pty" if use_pty else "pipe",
             )
 
         result: CommandResult = await self.config.sandbox.execute_command(
             foreground_command,
             cwd=cwd,
             timeout=timeout,
+            use_pty=use_pty,
+            stdin=stdin,
         )
         result: CommandResult = self._apply_after_hook(foreground_command, result)
-        return self._from_command_result(start, parameters, command, result)
+        return self._from_command_result(
+            start,
+            parameters,
+            command,
+            result,
+            mode="pty" if use_pty else "pipe",
+        )
 
     async def _execute_bashctl(
         self, start: float, parameters: dict[str, Any], command: str
@@ -253,6 +337,7 @@ class BashTool(BaseTool):
             "logs": self._bashctl_logs,
             "stop": self._bashctl_stop,
             "paths": self._bashctl_paths,
+            "input": self._bashctl_input,
         }
         handler = handlers.get(subcommand)
         if handler is None:
@@ -282,7 +367,7 @@ class BashTool(BaseTool):
         if not jobs:
             return self._ok(start, parameters, stdout="no jobs\n", count=0)
 
-        header = "JOB ID    STATE    EXIT   COMMAND"
+        header = "JOB ID    STATE    MODE   EXIT   COMMAND"
         lines = [header]
         for job in jobs:
             exit_code = "-" if job.exit_code is None else str(job.exit_code)
@@ -290,7 +375,7 @@ class BashTool(BaseTool):
             if len(summary) > 80:
                 summary = f"{summary[:77]}..."
             lines.append(
-                f"{job.process_id:<8}  {job.state:<7}  {exit_code:<4}  {summary}"
+                f"{job.process_id:<8}  {job.state:<7}  {job.mode:<5}  {exit_code:<4}  {summary}"
             )
 
         output = "\n".join(lines) + "\n"
@@ -319,6 +404,7 @@ class BashTool(BaseTool):
                 [
                     f"job_id: {job_id}",
                     f"state: {status.state}",
+                    f"mode: {status.mode}",
                     f"exit_code: {status.exit_code if status.exit_code is not None else '-'}",
                     f"started_at: {status.started_at or '-'}",
                     f"command: {info.command}",
@@ -332,6 +418,7 @@ class BashTool(BaseTool):
             stdout=output,
             job_id=job_id,
             state=status.state,
+            mode=status.mode,
             exit_code_value=status.exit_code,
         )
 
@@ -352,7 +439,11 @@ class BashTool(BaseTool):
         except KeyError:
             return self._error(start, parameters, f"job not found: {job_id}", exit_code=1)
 
-        output = f"stdout: {logs.stdout_path}\nstderr: {logs.stderr_path}\n"
+        output = (
+            f"mode: {logs.mode}\n"
+            f"stdout: {logs.stdout_path}\n"
+            f"stderr: {logs.stderr_path}\n"
+        )
         return self._ok(
             start,
             parameters,
@@ -360,6 +451,7 @@ class BashTool(BaseTool):
             job_id=job_id,
             stdout_path=logs.stdout_path,
             stderr_path=logs.stderr_path,
+            mode=logs.mode,
         )
 
     async def _bashctl_stop(
@@ -396,6 +488,48 @@ class BashTool(BaseTool):
 
         return self._ok(
             start, parameters, stdout=f"stopped {job_id} with {signal}\n", job_id=job_id
+        )
+
+    async def _bashctl_input(
+        self, start: float, parameters: dict[str, Any], args: list[str]
+    ) -> ToolResult:
+        if not args or args[0] in {"-h", "--help"}:
+            return self._ok(start, parameters, stdout=self._bashctl_help("input"))
+
+        job_id = args[0]
+        append_newline = True
+        payload_parts: list[str] = []
+        for arg in args[1:]:
+            if arg in {"--no-newline", "-n"}:
+                append_newline = False
+                continue
+            payload_parts.append(arg)
+
+        if not payload_parts:
+            return self._error(
+                start,
+                parameters,
+                "input requires text payload after <job_id>",
+                exit_code=2,
+            )
+
+        payload = " ".join(payload_parts)
+        if append_newline:
+            payload += "\n"
+
+        try:
+            await self.config.sandbox.write_process_stdin(job_id, payload)
+        except KeyError:
+            return self._error(start, parameters, f"job not found: {job_id}", exit_code=1)
+        except (RuntimeError, ValueError) as exc:
+            return self._error(start, parameters, str(exc), exit_code=1)
+
+        return self._ok(
+            start,
+            parameters,
+            stdout=f"sent input to {job_id}\n",
+            job_id=job_id,
+            bytes=len(payload.encode("utf-8")),
         )
 
     async def _bashctl_logs(
@@ -511,7 +645,7 @@ class BashTool(BaseTool):
             return self._error(start, parameters, f"job not found: {job_id}", exit_code=1)
 
         source = self._log_source_command(
-            log_info.stdout_path, log_info.stderr_path, stream
+            log_info.stdout_path, log_info.stderr_path, stream, mode=log_info.mode
         )
         if grep:
             grep_flags = "-n"
@@ -534,12 +668,19 @@ class BashTool(BaseTool):
             job_id=job_id,
             stream=stream,
             logs_command=log_command,
+            mode=log_info.mode,
         )
 
     @staticmethod
-    def _log_source_command(stdout_path: str, stderr_path: str, stream: str) -> str:
+    def _log_source_command(
+        stdout_path: str, stderr_path: str, stream: str, mode: str = "pipe"
+    ) -> str:
         quoted_stdout = shlex.quote(stdout_path)
         quoted_stderr = shlex.quote(stderr_path)
+        if mode == "pty":
+            if stream == "stderr":
+                return "cat /dev/null"
+            return f"cat {quoted_stdout}"
         if stream == "all":
             return f"cat {quoted_stdout} {quoted_stderr}"
         if stream == "stdout":
@@ -550,15 +691,6 @@ class BashTool(BaseTool):
     def _is_bashctl(command: str) -> bool:
         stripped = command.lstrip()
         return stripped == "bashctl" or stripped.startswith("bashctl ")
-
-    @staticmethod
-    def _split_background(command: str) -> tuple[str, bool]:
-        stripped = command.rstrip()
-        if not stripped.endswith("&"):
-            return command, False
-
-        foreground = stripped[: stripped.rfind("&")].strip()
-        return foreground, True
 
     def _from_command_result(
         self,
@@ -637,7 +769,7 @@ class BashTool(BaseTool):
         }
         payload.update(extra)
 
-        content = f"exit_code: {payload['exit_code']}\n stderr: {payload['stderr']}"
+        content = f"exit_code: {payload['exit_code']}\nstderr: {payload['stderr']}"
         end = time.time()
         return ToolResult(
             tool_name=self.name,
@@ -681,6 +813,20 @@ class BashTool(BaseTool):
         return parsed if parsed >= 0 else None
 
     @staticmethod
+    def _parse_bool(value: Any) -> bool | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+        return None
+
+    @staticmethod
     def _bashctl_help(topic: str | None = None) -> str:
         general = """bashctl - manage background jobs started by this tool
 
@@ -691,12 +837,14 @@ Usage:
   bashctl logs <job_id> [--stream all|stdout|stderr] [-n N] [--grep TEXT] [-C N] [-i]
   bashctl stop <job_id> [--force]
   bashctl paths <job_id>
+  bashctl input <job_id> <text...> [--no-newline]
 
 Examples:
   bashctl jobs --running
   bashctl status a1b2c3d4
   bashctl logs a1b2c3d4 --stream stderr --grep molt -C 10
   bashctl stop a1b2c3d4 --force
+  bashctl input a1b2c3d4 "help"
 """
 
         details = {
@@ -705,6 +853,7 @@ Examples:
             "logs": """Usage: bashctl logs <job_id> [options]\nOptions:\n  --stream all|stdout|stderr\n  -n, --tail N\n  --grep TEXT\n  -C, --context N\n  -i, --ignore-case\n""",
             "stop": """Usage: bashctl stop <job_id> [--force]\nSend TERM by default; use --force to send KILL.\n""",
             "paths": """Usage: bashctl paths <job_id>\nShow stdout/stderr log file paths for a job.\n""",
+            "input": """Usage: bashctl input <job_id> <text...> [--no-newline]\nWrite text to a running PTY job stdin. Appends newline by default.\n""",
         }
 
         if topic is None:

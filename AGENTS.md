@@ -66,7 +66,7 @@ agiwo/
 │   ├── loader.py             # SkillLoader：SKILL.md 解析
 │   └── skill_tool.py         # SkillTool：将 Skill 暴露为 Tool
 ├── config/
-│   └── settings.py           # AgiwoSettings (pydantic-settings, env prefix: agiwo_)
+│   └── settings.py           # AgiwoSettings (pydantic-settings, env prefix: AGIWO_)
 └── utils/
     ├── abort_signal.py       # AbortSignal：优雅取消
     ├── logging.py            # structlog 日志配置
@@ -169,6 +169,16 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 - **循环依赖**：遇到时必须重构组件耦合关系，禁止延迟导入等绕行手段
 - 不要使用 `rm` 删除文件，用 `mv` 移动到 `trash/` 目录
 
+## Configuration Governance
+
+- **分层归属明确**：SDK 能力配置放 `agiwo/config/settings.py`；Console 部署/渠道配置放 `console/server/config.py`
+- **命名空间统一**：项目自有环境变量仅允许 `AGIWO_*`（SDK）和 `AGIWO_CONSOLE_*`（Console）
+- **读取单一入口**：仅配置模块允许读取环境变量；业务模块禁止新增 `os.getenv(...)`
+- **外部 Provider 键保留标准名**：如 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `AWS_REGION`
+- **每个配置项必须有 owner**：新增配置前先判断归属（SDK 核心、Console 服务、或 Agent 持久化配置）
+- **Console 不承载通用 SDK 运行参数**：Agent 行为参数应存入 `agent_configs.options/model_params`，不应长期堆在全局 `.env`
+- **文档同步**：新增/删除/重命名配置项必须同步更新 `.env.example`、`README.md`、`docs/CONFIGURATION_REFACTOR_PLAN.md`
+
 ## Key Design Decisions
 
 1. **Agent 是具体类，不是 ABC**。扩展通过 Hooks + Tool 组合，不通过继承
@@ -186,6 +196,11 @@ Executor → EventEmitter → Channel → StorageSink(持久化) → TraceCollec
 13. **Persistent Root Agent**。root agent 可通过 `persistent=True` 保持存活，完成后自动进入 SLEEPING 等待新任务
 14. **Guaranteed Summarize-on-Timeout**。`enable_termination_summary` 默认 True + 超时唤醒机制，确保子 Agent 即使超时也能产出摘要
 15. **Scheduler Output Streaming**。Agent 文本产出（而非 SLEEPING 状态）驱动消息投递。`submit_and_subscribe` / `submit_task_and_subscribe` 返回 `AsyncIterator[SchedulerOutput]`，每当 Agent 产出文本就 yield 一次，消费者（如飞书 Channel）逐条发送给用户
+16. **Pending Events + Debounce 机制**。子 Agent 睡眠/完成/失败时向父 Agent 投递 `PendingEvent`，Scheduler tick 检测 debounce 条件（min_count 或 max_wait）后唤醒父 Agent 处理通知。解决父 Agent 无法感知子 Agent 中间状态的问题
+17. **Steering 机制**。外部（Scheduler/Channel）可通过 `steering_queue` 向 RUNNING 中的 Agent 注入实时消息，在下次 LLM 调用前注入为 `<system-steering>` tag。`Scheduler.steer()` 同时作为 `USER_HINT` 持久化，保证 Agent 睡眠时也能收到
+18. **Health Check**。`TaskGuard.find_unhealthy()` 检测 RUNNING 状态超过阈值无活动的 Agent（`last_activity_at` 追踪），Scheduler 每 tick 检查并向父 Agent 投递 `HEALTH_WARNING` 事件（带去重）
+19. **管理工具 cancel_agent + list_agents**。父 Agent 可通过工具主动取消子 Agent（含 force 保护）和查看所有子 Agent 详情，解决子 Agent 卡死无法管理的问题
+20. **配置治理采用“单一读取入口 + 分层命名空间”**。环境变量只在配置层读取，SDK 与 Console 通过命名空间分离，避免业务模块散落 `os.getenv` 和跨层配置污染
 
 ## Build & Test Commands
 
@@ -212,6 +227,55 @@ uv run pytest tests/scheduler/ -v
 ## Development Notes
 
 ### RecentChanges
+
+**2026-03-06 (Skills Directories + Console Agent Config UI)**
+
+- **`skills_dirs` Unified**: `AgentOptions` skills path config is now `skills_dirs`, accepting either a single string or a list; single values are normalized to a one-item list.
+- **Relative Path Resolution Fixed**: Agent-level `skills_dirs` resolve relative to `config_root` / effective root path; env-level `AGIWO_SKILLS_DIRS` resolve relative to `AgiwoSettings.root_path`.
+- **Legacy Console Data Normalized**: Console API schema and builder normalize legacy `skills_dir` payloads/records into `skills_dirs` so existing saved agents can be edited and resaved cleanly.
+- **Console Agent Form Expanded**: Web create/edit pages now expose all currently supported persisted agent options and model params, including config root, termination summary settings, memory/stream limits, compact prompt, and sampling penalties.
+
+**2026-03-05 (Configuration Namespace Cleanup — Phase 3)**
+
+- **SDK Prefix Standardized**: `AgiwoSettings` env prefix switched to `AGIWO_` (`case_sensitive=False`)
+- **Legacy Env Aliases Removed**: 移除 `AGIO_*` 工具配置别名与混合大小写 skills 环境变量兼容
+- **Console Env Cleanup**: 移除 `default_agent_options` / `default_agent_model_params` 环境变量注入入口
+- **Env Templates Unified**: 根目录与 `console/.env.example` 已统一为 `AGIWO_* / AGIWO_CONSOLE_*` 规范
+
+**2026-03-05 (Configuration Governance Plan — SDK + Console)**
+
+- **Configuration Inventory Added**: 新增 `docs/CONFIGURATION_REFACTOR_PLAN.md`，完整盘点 SDK/Console/散落 env 读取点与问题根因
+- **Layered Ownership Defined**: 明确 Provider 凭证、SDK 运行配置、Console 服务配置、Agent 持久化配置四层边界
+- **Single-Read Rule Defined**: 约束环境变量仅在配置模块读取，业务模块禁止新增 `os.getenv` 直读
+- **Namespace Cleanup Plan**: 规划 `AGIWO_*` / `AGIWO_CONSOLE_*` 主命名空间，逐步收敛历史 `AGIO_*` 与混合命名
+
+**2026-03-04 (Scheduler Redesign — Health Check, Pending Events, Steering)**
+
+- **Pending Events System**: `PendingEvent` dataclass + `SchedulerEventType` enum added to `models.py`. Events saved to `pending_events` table (SQLite) or in-memory dict. Consumed via debounce: `find_agents_with_debounced_events(min_count, max_wait, now)`.
+- **Debounce Config**: `SchedulerConfig.event_debounce_min_count` and `event_debounce_max_wait_seconds` (also in `AgiwoSettings`). Default: wake on first event, max wait 30s.
+- **AgentState New Fields**: `explain: str | None` (set by `sleep_and_wait`), `last_activity_at: datetime | None` (updated each step), `recent_steps: list[dict] | None` (rolling 10-entry window of step summaries).
+- **Steering Mechanism**: `ExecutionContext.steering_queue: asyncio.Queue | None` — each execution gets its own queue. `AgentExecutor._drain_steering_queue()` injects pending messages into the next LLM call. `Agent.get_steering_queue()` exposes queue for external callers. `Scheduler.steer(state_id, message)` puts message in queue + saves as `USER_HINT` pending event.
+- **on_step Hook Wrapping**: `SchedulerExecutor._wrap_on_step_hook()` wraps existing hook to call `_sync_step_to_state()`, updating `last_activity_at` and `recent_steps` after each step.
+- **Pending Event Generation**: `SchedulerExecutor._emit_event_to_parent()` creates events on child sleep (`CHILD_SLEEP_RESULT`), completion (`CHILD_COMPLETED`), and failure (`CHILD_FAILED`).
+- **Health Check**: `TaskGuard.find_unhealthy(now, threshold_seconds)` finds RUNNING agents with stale activity. `Scheduler._check_health()` runs each tick, emitting `HEALTH_WARNING` events to parent agents with deduplication.
+- **Pending Events Processing**: `Scheduler._process_pending_events()` runs each tick — finds agents meeting debounce threshold, wakes them via `SchedulerExecutor.wake_agent_for_events()` with formatted event context.
+- **New Tools**: `CancelAgentTool` (cancel child + subtree, requires `force=true` for RUNNING agents), `ListAgentsTool` (list direct children with status/explain/recent_steps/result).
+- **Enhanced Tools**: `SleepAndWaitTool` — new `explain` parameter stored in `AgentState.explain`. `QuerySpawnedAgentTool` — returns `explain`, `last_activity_at`, `recent_steps`.
+- **Channel Layer Steering**: `AgentRuntimeManager._handle_running_state()` now calls `Scheduler.steer()` instead of blocking on `wait_for()`, enabling non-blocking real-time hints to running agents.
+- **BashTool Agent Tracking**: `ProcessRecord.agent_id` field. `ProcessRegistry.start_process()` accepts `agent_id`. `ProcessRegistry.list_processes_by_agent()` for per-agent process lookup. `LocalSandbox` and `Sandbox` protocol updated.
+- **`_tick` Extension**: Order is now `propagate_signals → enforce_timeouts → check_health → process_pending_events → start_pending → wake_sleeping`.
+- **`AgentStateStorage` New Abstracts**: `find_running()`, `save_event()`, `get_pending_events()`, `delete_events()`, `find_agents_with_debounced_events()`, `has_recent_health_warning()` added to ABC + both implementations.
+- **`update_status` Extended**: Now accepts `explain`, `last_activity_at`, `recent_steps` sentinel kwargs.
+
+**2026-03-03 (Structured UserMessage Input)**
+
+- **Structured Input Model**: Introduced `UserMessage` dataclass with `content: list[ContentPart]` + optional `ChannelContext`. `UserInput = str | list[ContentPart] | UserMessage`. Normalize via `normalize_to_message()`.
+- **KV Cache Protection**: Dynamic context (channel metadata, memories, hook results) remains in user message content via `MessageAssembler._prepend_to_user_message()`. System prompt stays static.
+- **MessageAssembler Refactor**: `assemble()` now accepts `channel_context: ChannelContext | None` kwarg. Renders context/memories/hook as structured text blocks prepended to last user message.
+- **Scheduler UserInput**: All Scheduler APIs (`run`, `submit`, `submit_task`, `submit_and_subscribe`, `submit_task_and_subscribe`) accept `UserInput` instead of `str`. `AgentState.task` and `WakeCondition.submitted_task` are `UserInput`, serialized via `serialize_user_input`/`deserialize_user_input` in SQLite store.
+- **System Instruction Migration**: `<system-instruction>` no longer prepended to task string. Now appended to child agent's system prompt as `<task-instruction>` block (set once per child, KV cache friendly).
+- **Feishu Multimodal**: `FeishuApiClient` gains `download_image()`, `download_message_resource()`, `_authorized_binary_request()`. Service downloads attachments to local tmp dir, builds `ContentPart(url=local_path, mime_type, metadata={name, size})`. `to_message_content()` renders local-path resources as text placeholders with file info + path for Agent tool use.
+- **Channel Infra**: `BatchPayload.rendered_user_input: str` → `user_message: UserMessage`. `BaseChannelService._render_batch_prompt()` → `async _build_user_message()`. `AgentRuntimeManager.submit_to_scheduler()` accepts `UserInput`.
 
 **2026-03-02 (Scheduler Output Streaming)**
 

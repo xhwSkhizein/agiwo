@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 
 from agiwo.agent.stream_channel import StreamChannel
 
@@ -53,6 +54,11 @@ class ExecutionContext:
     # Metadata
     metadata: dict = field(default_factory=dict)
 
+    # Steering queue: external callers (e.g. Scheduler) can push messages here
+    # to be injected into the next LLM call while the agent is RUNNING.
+    # Each agent execution gets its own queue; NOT propagated to child contexts.
+    steering_queue: asyncio.Queue[Any] | None = None
+
     def new_child(self, run_id: str, agent_id: str | None = None, agent_name: str | None = None) -> "ExecutionContext":
         return ExecutionContext(
             session_id=self.session_id,
@@ -67,4 +73,5 @@ class ExecutionContext:
             trace_id=self.trace_id,
             timeout_at=self.timeout_at,
             metadata=dict(self.metadata),
+            # steering_queue intentionally omitted: each agent gets its own
         )

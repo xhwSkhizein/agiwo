@@ -36,6 +36,7 @@ class ProcessInfo:
     process_id: str
     command: str
     state: Literal["running", "exited", "unknown"]
+    mode: Literal["pipe", "pty"] = "pipe"
     started_at: float | None = None
     exit_code: int | None = None
 
@@ -45,6 +46,7 @@ class ProcessStatus:
     """Status of a process."""
 
     state: Literal["running", "exited", "unknown"]
+    mode: Literal["pipe", "pty"] = "pipe"
     started_at: float | None = None
     exit_code: int | None = None
 
@@ -55,13 +57,21 @@ class ProcessLogInfo:
 
     stdout_path: str
     stderr_path: str
+    mode: Literal["pipe", "pty"] = "pipe"
 
 
 class Sandbox(Protocol):
     """Abstract protocol for sandbox implementations."""
 
-    def execute_command(
-        self, command: str, cwd: str | None = None, timeout: float | None = None
+    async def execute_command(
+        self,
+        command: str,
+        cwd: str | None = None,
+        timeout: float | None = None,
+        use_pty: bool = False,
+        pty_cols: int = 120,
+        pty_rows: int = 40,
+        stdin: str | None = None,
     ) -> CommandResult:
         """
         Execute a command in the sandbox.
@@ -80,7 +90,7 @@ class Sandbox(Protocol):
         """
         ...
 
-    def read_file(self, path: str) -> str:
+    async def read_file(self, path: str) -> str:
         """Read a file from the sandbox.
 
         Args:
@@ -91,7 +101,7 @@ class Sandbox(Protocol):
         """
         ...
 
-    def write_file(self, files: list[WriteFileSpec]) -> None:
+    async def write_files(self, files: list[WriteFileSpec]) -> None:
         """Write multiple files to the sandbox.
 
         Args:
@@ -104,6 +114,10 @@ class Sandbox(Protocol):
         command: str,
         cwd: str | None = None,
         env: dict[str, str] | None = None,
+        agent_id: str | None = None,
+        use_pty: bool = False,
+        pty_cols: int = 120,
+        pty_rows: int = 40,
     ) -> str:
         """Start a long-running process."""
         ...
@@ -120,11 +134,27 @@ class Sandbox(Protocol):
         """Stop a running process."""
         ...
 
+    async def write_process_stdin(
+        self,
+        process_id: str,
+        data: str,
+    ) -> None:
+        """Write data to a process stdin (PTY mode)."""
+        ...
+
     async def list_processes(
         self,
         state: Literal["running", "all"] = "all",
     ) -> list[ProcessInfo]:
         """List processes managed by this sandbox."""
+        ...
+
+    async def list_processes_by_agent(
+        self,
+        agent_id: str,
+        state: Literal["running", "all"] = "all",
+    ) -> list[ProcessInfo]:
+        """List processes associated with a specific agent_id."""
         ...
 
     async def get_process_logs_info(self, process_id: str) -> ProcessLogInfo:

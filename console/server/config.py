@@ -1,30 +1,49 @@
 """
 Console server configuration.
 
-Loaded from environment variables with AGIWO_CONSOLE_ prefix.
+Console-specific settings use AGIWO_CONSOLE_ prefix.
+Storage/LLM settings are inherited from SDK's AgiwoSettings (AGIWO_ prefix).
 """
 
-from typing import Literal, Any
+from typing import Literal
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from agiwo.config.settings import settings as sdk_settings
 
 
 class ConsoleConfig(BaseSettings):
-    model_config = {"env_prefix": "AGIWO_CONSOLE_"}
+    """
+    Console-specific configuration.
+    
+    Storage paths are inherited from SDK's AgiwoSettings.
+    Console only defines its own unique settings (server, CORS, Feishu, etc.).
+    """
+    model_config = SettingsConfigDict(
+        env_prefix="AGIWO_CONSOLE_",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     # Server
     host: str = "0.0.0.0"
     port: int = 8422
 
-    # Storage backend: "sqlite" | "mongodb"
-    storage_type: Literal["sqlite", "mongodb"] = "sqlite"
+    # Storage backend for run/step persistence
+    # Note: when using sqlite, path comes from SDK settings (AGIWO_SQLITE_DB_PATH)
+    run_step_storage_type: Literal["memory", "sqlite", "mongodb"] = "sqlite"
 
-    # SQLite settings
-    sqlite_db_path: str = "agiwo.db"
-    sqlite_trace_collection: str = "agiwo_traces"
+    # Storage backend for traces.
+    # "none" is treated the same as "memory" for lightweight runtime-only tracing.
+    trace_storage_type: Literal["none", "memory", "sqlite", "mongodb"] = "sqlite"
 
-    # MongoDB settings
+    # Storage backend for console metadata (agent registry, channel runtime).
+    # Scheduler state storage currently supports memory/sqlite only:
+    # metadata_storage_type=mongodb falls back to in-memory scheduler state.
+    metadata_storage_type: Literal["memory", "sqlite", "mongodb"] = "sqlite"
+
+    # MongoDB settings (used when any *_storage_type=mongodb)
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db_name: str = "agiwo"
     mongodb_trace_collection: str = "traces"
@@ -33,14 +52,13 @@ class ConsoleConfig(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
     # Default Agent Configuration
-    default_agent_id: str = "default-agent"
-    default_agent_name: str = "Default Agent"
+    default_agent_id: str = "Walaha000"
+    default_agent_name: str = "Walaha"
     default_agent_description: str = ""
     default_agent_model_provider: str = "generic"
-    default_agent_model_name: str = "gpt-4o"
+    default_agent_model_name: str = "codex-5.3"
+    default_agent_model_params: dict = Field(default_factory=dict)
     default_agent_system_prompt: str = ""
-    default_agent_options: dict[str, Any] = Field(default_factory=dict)
-    default_agent_model_params: dict[str, Any] = Field(default_factory=dict)
 
     # Feishu channel
     feishu_enabled: bool = False
@@ -57,5 +75,32 @@ class ConsoleConfig(BaseSettings):
     feishu_debounce_ms: int = 3000
     feishu_max_batch_window_ms: int = 15000
     feishu_scheduler_wait_timeout: int = 900
-    feishu_ack_reaction_emoji: str = "FIREWORKS"  # ref: https://open.feishu.cn/document/server-docs/im-v1/message-reaction/emojis-introduce
+    feishu_ack_reaction_emoji: str = "Typing"
     feishu_ack_fallback_text: str = "收到，正在处理。"
+
+    # --- Properties that delegate to SDK settings ---
+
+    @property
+    def sqlite_db_path(self) -> str:
+        """SQLite database path from SDK settings."""
+        resolved = sdk_settings.resolve_path(sdk_settings.sqlite_db_path)
+        return str(resolved) if resolved else "agiwo.db"
+
+    @property
+    def sqlite_trace_collection(self) -> str:
+        """Trace collection name from SDK settings."""
+        return sdk_settings.trace_collection_name or "agiwo_traces"
+
+    @property
+    def effective_trace_storage_type(self) -> Literal["memory", "sqlite", "mongodb"]:
+        """Normalized trace storage type."""
+        if self.trace_storage_type == "none":
+            return "memory"
+        return self.trace_storage_type
+
+    @property
+    def scheduler_state_storage_type(self) -> Literal["memory", "sqlite"]:
+        """Scheduler state storage type derived from metadata backend support."""
+        if self.metadata_storage_type == "sqlite":
+            return "sqlite"
+        return "memory"

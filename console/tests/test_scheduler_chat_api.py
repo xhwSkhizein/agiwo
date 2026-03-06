@@ -36,7 +36,11 @@ async def client():
     """Create test client with mocked in-memory storage and Scheduler."""
     app = create_app()
 
-    config = ConsoleConfig(storage_type="sqlite", sqlite_db_path=":memory:")
+    config = ConsoleConfig(
+        run_step_storage_type="memory",
+        trace_storage_type="memory",
+        metadata_storage_type="memory",
+    )
     set_console_config(config)
     sm = StorageManager(config)
     sm.agent_state_storage = InMemoryAgentStateStorage()
@@ -79,8 +83,6 @@ class TestSchedulerChatCancel:
         state = AgentState(
             id="completed-state",
             session_id="sess-1",
-            agent_id="completed-state",
-            parent_agent_id="completed-state",
             status=AgentStateStatus.COMPLETED,
             task="Done task",
             result_summary="All done.",
@@ -100,8 +102,6 @@ class TestSchedulerChatCancel:
         state = AgentState(
             id="running-state",
             session_id="sess-2",
-            agent_id="running-state",
-            parent_agent_id="running-state",
             status=AgentStateStatus.RUNNING,
             task="Long task",
         )
@@ -127,8 +127,6 @@ class TestSchedulerChatCancel:
         state = AgentState(
             id="sleeping-state",
             session_id="sess-3",
-            agent_id="sleeping-state",
-            parent_agent_id="sleeping-state",
             status=AgentStateStatus.SLEEPING,
             task="Waiting task",
         )
@@ -149,28 +147,22 @@ class TestSchedulerChatCancel:
         parent = AgentState(
             id="parent-cancel",
             session_id="sess-4",
-            agent_id="parent-cancel",
-            parent_agent_id="parent-cancel",
             status=AgentStateStatus.SLEEPING,
             task="Parent task",
         )
         child1 = AgentState(
             id="child-cancel-1",
             session_id="sess-4",
-            agent_id="child-cancel-1",
-            parent_agent_id="parent-cancel",
-            parent_state_id="parent-cancel",
             status=AgentStateStatus.RUNNING,
             task="Child 1",
+            parent_id="parent-cancel",
         )
         child2 = AgentState(
             id="child-cancel-2",
             session_id="sess-4",
-            agent_id="child-cancel-2",
-            parent_agent_id="parent-cancel",
-            parent_state_id="parent-cancel",
             status=AgentStateStatus.COMPLETED,
             task="Child 2",
+            parent_id="parent-cancel",
             result_summary="Done",
         )
         for s in [parent, child1, child2]:

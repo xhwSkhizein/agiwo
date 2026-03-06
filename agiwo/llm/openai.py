@@ -1,5 +1,4 @@
 from typing import AsyncIterator
-import os
 import json
 
 try:
@@ -68,10 +67,10 @@ class OpenAIModel(Model):
             return self.api_key
         if settings.openai_api_key:
             return settings.openai_api_key.get_secret_value()
-        return os.getenv("OPENAI_API_KEY")
+        return None
 
     def _resolve_base_url(self) -> str | None:
-        return self.base_url or settings.openai_base_url or os.getenv("OPENAI_BASE_URL")
+        return self.base_url or settings.openai_base_url
 
     def _create_client(self) -> AsyncOpenAI:
         return AsyncOpenAI(

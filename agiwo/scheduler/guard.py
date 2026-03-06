@@ -5,7 +5,7 @@ All scheduling limit checks converge here. Tools and Scheduler call TaskGuard
 instead of implementing checks themselves.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from agiwo.scheduler.models import AgentState, AgentStateStatus, TaskLimits
 from agiwo.scheduler.store import AgentStateStorage
@@ -81,3 +81,28 @@ class TaskGuard:
     async def find_timed_out(self, now: datetime) -> list[AgentState]:
         """Find all SLEEPING states that have timed out."""
         return await self._store.find_timed_out(now)
+
+    async def find_unhealthy(
+        self, now: datetime, threshold_seconds: float | None = None
+    ) -> list[AgentState]:
+        """Find RUNNING agents that appear stuck.
+
+        An agent is considered unhealthy when:
+        - last_activity_at is older than threshold_seconds, OR
+        - last_activity_at is None and updated_at is older than threshold_seconds
+        """
+        threshold = threshold_seconds if threshold_seconds is not None else self._limits.health_check_threshold_seconds
+        cutoff = now - timedelta(seconds=threshold)
+        running_states = await self._store.find_running()
+
+        unhealthy: list[AgentState] = []
+        for state in running_states:
+            activity_ts = state.last_activity_at or state.updated_at
+            if activity_ts.tzinfo is None:
+                activity_ts = activity_ts.replace(tzinfo=timezone.utc)
+            cutoff_ts = cutoff
+            if cutoff_ts.tzinfo is None:
+                cutoff_ts = cutoff_ts.replace(tzinfo=timezone.utc)
+            if activity_ts <= cutoff_ts:
+                unhealthy.append(state)
+        return unhealthy

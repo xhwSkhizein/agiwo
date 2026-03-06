@@ -92,7 +92,7 @@ def load_builtin_tools() -> None:
                             except Exception as e:
                                 logger.warning("builtin_tool_load_failed", module=sub_module, error=str(e))
             except Exception:
-                logger.warning("subpackage has issue, skip import_module", subpkg=subpkg, name=name)
+                logger.warning("subpackage has issue, skip import_module", subpkg=f"{_BUILTIN_PACKAGE}.{name}", name=name)
                 pass  # Subpackage has issues, skip
         else:
             # Check for flat modules directly under builtin/ with _tool suffix

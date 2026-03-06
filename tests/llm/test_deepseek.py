@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from agiwo.llm.deepseek import DeepseekModel, parse_dsml_function_calls
@@ -18,7 +20,8 @@ def test_parse_dsml_function_calls_single_tool():
     assert result[0]["index"] == 0
     assert result[0]["type"] == "function"
     assert result[0]["function"]["name"] == "bash"
-    assert result[0]["function"]["arguments"]["command"] == "ls -la /Users/hongv/workspace/"
+    parsed_args = json.loads(result[0]["function"]["arguments"])
+    assert parsed_args["command"] == "ls -la /Users/hongv/workspace/"
     assert result[0]["id"].startswith("call_")
 
 
@@ -38,9 +41,11 @@ def test_parse_dsml_function_calls_multiple_tools():
     assert result is not None
     assert len(result) == 2
     assert result[0]["function"]["name"] == "bash"
-    assert result[0]["function"]["arguments"]["command"] == "ls -la"
+    args_0 = json.loads(result[0]["function"]["arguments"])
+    assert args_0["command"] == "ls -la"
     assert result[1]["function"]["name"] == "current_time"
-    assert result[1]["function"]["arguments"]["timezone"] == "UTC"
+    args_1 = json.loads(result[1]["function"]["arguments"])
+    assert args_1["timezone"] == "UTC"
 
 
 def test_parse_dsml_function_calls_no_dsml():

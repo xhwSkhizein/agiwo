@@ -40,20 +40,20 @@ logger = get_logger("app")
 def _build_default_agent_config(config: ConsoleConfig) -> AgentConfigRecord:
     """Build default agent config from ConsoleConfig."""
     default_options = {
-        "max_steps": 20,
+        "config_root": "",
+        "max_steps": 50,
         "run_timeout": 600,
-        "max_context_window_tokens": 128000,
-        "max_tokens_per_run": 128000,
+        "max_context_window_tokens": 200000,
+        "max_tokens_per_run": 200000,
         "max_run_token_cost": None,
         "enable_termination_summary": True,
         "termination_summary_prompt": "",
-        "enable_skill": False,
-        "skills_dir": None,
+        "enable_skill": settings.is_skills_enabled,
+        "skills_dirs": None,
         "relevant_memory_max_token": 2048,
         "stream_cleanup_timeout": 300.0,
+        "compact_prompt": "",
     }
-    # Override with env-provided options
-    default_options.update(config.default_agent_options)
 
     return AgentConfigRecord(
         id=config.default_agent_id,
@@ -79,18 +79,27 @@ async def lifespan(app: FastAPI):
     await agent_registry.initialize()
     set_agent_registry(agent_registry)
 
-    scheduler_config = SchedulerConfig(
-        state_storage=AgentStateStorageConfig(
+    if config.scheduler_state_storage_type == "sqlite":
+        scheduler_state_storage = AgentStateStorageConfig(
             storage_type="sqlite",
             config={"db_path": config.sqlite_db_path},
-        ),
+        )
+    else:
+        scheduler_state_storage = AgentStateStorageConfig(storage_type="memory")
+
+    scheduler_config = SchedulerConfig(
+        state_storage=scheduler_state_storage,
     )
     sched = Scheduler(scheduler_config)
     await sched.start()
+    # Keep scheduler APIs and storage-manager-based APIs on the same state store.
+    await storage_manager.agent_state_storage.close()
+    storage_manager.agent_state_storage = sched.store
     set_scheduler(sched)
 
     feishu_channel_service: FeishuChannelService | None = None
     if config.feishu_enabled:
+        logger.info("feishu_channel_enabled", enabled=True)
         missing: list[str] = []
         if not config.feishu_app_id:
             missing.append("AGIWO_CONSOLE_FEISHU_APP_ID")
@@ -121,6 +130,7 @@ async def lifespan(app: FastAPI):
         await feishu_channel_service.initialize()
         set_feishu_channel_service(feishu_channel_service)
     else:
+        logger.info("feishu_channel_disabled", enabled=False)
         set_feishu_channel_service(None)
 
     yield

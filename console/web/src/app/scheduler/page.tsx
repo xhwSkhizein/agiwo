@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   listAgentStates,
   getSchedulerStats,
+  formatUserInput,
 } from "@/lib/api";
 import type { AgentStateListItem, SchedulerStats } from "@/lib/api";
 
@@ -165,8 +166,8 @@ export default function SchedulerPage() {
                     </Link>
                   </td>
                   <td className="px-4 py-3 max-w-xs">
-                    <span className="block text-zinc-300">
-                      {s.task}
+                    <span className="block text-zinc-300 truncate">
+                      {formatUserInput(s.task)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-center">

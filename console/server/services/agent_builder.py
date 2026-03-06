@@ -10,14 +10,20 @@ from typing import Any
 from pydantic import SecretStr
 
 from agiwo.agent.agent import Agent
-from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig
+from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig, normalize_skills_dirs
 from agiwo.agent.schema import StreamEvent
+from agiwo.config.settings import settings
 from agiwo.llm.anthropic import AnthropicModel
 from agiwo.llm.bedrock_anthropic import BedrockAnthropicModel
 from agiwo.llm.deepseek import DeepseekModel
 from agiwo.llm.openai import OpenAIModel
 from agiwo.tool.agent_tool import AgentTool
 from agiwo.tool.base import BaseTool
+from agiwo.tool.storage.citation import (
+    InMemoryCitationStore,
+    MongoCitationStore,
+    SQLiteCitationStore,
+)
 
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
@@ -33,6 +39,19 @@ MODEL_PROVIDER_MAP: dict[str, type] = {
 }
 
 AGENT_TOOL_PREFIX = "agent:"
+
+
+def _create_citation_store(console_config: ConsoleConfig) -> Any:
+    """Create citation store based on console metadata storage config."""
+    if console_config.metadata_storage_type == "sqlite":
+        return SQLiteCitationStore(db_path=console_config.sqlite_db_path)
+    if console_config.metadata_storage_type == "memory":
+        return InMemoryCitationStore()
+    return MongoCitationStore(
+        uri=console_config.mongodb_uri,
+        db_name=console_config.mongodb_db_name,
+        collection_name="citation_sources",
+    )
 
 
 def build_model(config: AgentConfigRecord) -> Any:
@@ -58,19 +77,18 @@ def build_model(config: AgentConfigRecord) -> Any:
 def build_agent_options(config: AgentConfigRecord, console_config: ConsoleConfig) -> AgentOptions:
     """Build AgentOptions with storage config matching the console storage backend."""
     opts = config.options or {}
+    skills_dirs = normalize_skills_dirs(opts.get("skills_dirs"))
+    if skills_dirs is None:
+        skills_dirs = normalize_skills_dirs(opts.get("skills_dir"))
 
-    if console_config.storage_type == "sqlite":
+    # Run step storage config
+    if console_config.run_step_storage_type == "sqlite":
         run_step_cfg = RunStepStorageConfig(
             storage_type="sqlite",
             config={"db_path": console_config.sqlite_db_path},
         )
-        trace_cfg = TraceStorageConfig(
-            storage_type="sqlite",
-            config={
-                "db_path": console_config.sqlite_db_path,
-                "collection_name": console_config.sqlite_trace_collection,
-            },
-        )
+    elif console_config.run_step_storage_type == "memory":
+        run_step_cfg = RunStepStorageConfig(storage_type="memory")
     else:
         run_step_cfg = RunStepStorageConfig(
             storage_type="mongodb",
@@ -79,6 +97,20 @@ def build_agent_options(config: AgentConfigRecord, console_config: ConsoleConfig
                 "db_name": console_config.mongodb_db_name,
             },
         )
+
+    # Trace storage config
+    effective_trace_type = console_config.effective_trace_storage_type
+    if effective_trace_type == "memory":
+        trace_cfg = TraceStorageConfig(storage_type="memory")
+    elif effective_trace_type == "sqlite":
+        trace_cfg = TraceStorageConfig(
+            storage_type="sqlite",
+            config={
+                "db_path": console_config.sqlite_db_path,
+                "collection_name": console_config.sqlite_trace_collection,
+            },
+        )
+    else:
         trace_cfg = TraceStorageConfig(
             storage_type="mongodb",
             config={
@@ -89,15 +121,21 @@ def build_agent_options(config: AgentConfigRecord, console_config: ConsoleConfig
         )
 
     return AgentOptions(
+        config_root=opts.get("config_root", ""),
         max_steps=opts.get("max_steps", 10),
         run_timeout=opts.get("run_timeout", 600),
         max_context_window_tokens=opts.get("max_context_window_tokens", 32768),
         max_tokens_per_run=opts.get("max_tokens_per_run", 131072),
         max_run_token_cost=opts.get("max_run_token_cost", None),
+        enable_termination_summary=opts.get("enable_termination_summary", True),
+        termination_summary_prompt=opts.get("termination_summary_prompt", ""),
         run_step_storage=run_step_cfg,
         trace_storage=trace_cfg,
-        enable_skill=opts.get("enable_skill", True),
-        skills_dir=opts.get("skills_dir", None),
+        enable_skill=opts.get("enable_skill", settings.is_skills_enabled),
+        skills_dirs=skills_dirs,
+        relevant_memory_max_token=opts.get("relevant_memory_max_token", 2048),
+        stream_cleanup_timeout=opts.get("stream_cleanup_timeout", 300.0),
+        compact_prompt=opts.get("compact_prompt", ""),
     )
 
 
@@ -129,9 +167,6 @@ async def build_agent(
     console_config: ConsoleConfig,
     registry: AgentRegistry,
     _building: set[str] | None = None,
-    anthropic_api_key: SecretStr | None = SecretStr(os.getenv("ANTHROPIC_API_KEY")),
-    anthropic_base_url: str | None = "https://api.anthropic.com/v1",
-    anthropic_model_name: str | None = "claude-3-5-sonnet-20240620",
 ) -> Agent:
     """Build an Agent instance from persisted config.
 
@@ -155,7 +190,8 @@ async def build_agent(
         else:
             builtin_names.append(t)
 
-    tools: list[BaseTool] = create_tools(builtin_names)
+    citation_store = _create_citation_store(console_config)
+    tools: list[BaseTool] = create_tools(builtin_names, citation_source_store=citation_store)
 
     for ref_id in agent_refs:
         child_config = await registry.get_agent(ref_id)

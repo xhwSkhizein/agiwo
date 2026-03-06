@@ -1,7 +1,6 @@
 """AWS Bedrock Anthropic model implementation."""
 
 import json
-import os
 from typing import AsyncIterator
 
 try:
@@ -11,6 +10,7 @@ except ImportError:
     raise ImportError("Please install boto3: pip install boto3")
 
 from agiwo.llm.base import Model, StreamChunk
+from agiwo.config.settings import settings
 from agiwo.llm.helper import normalize_usage_metrics
 from agiwo.utils.logging import get_logger
 
@@ -63,8 +63,8 @@ class BedrockAnthropicModel(Model):
             input_price=input_price,
             output_price=output_price,
         )
-        self.aws_region = aws_region or os.getenv("AWS_REGION", "us-east-1")
-        self.aws_profile = aws_profile or os.getenv("AWS_PROFILE")
+        self.aws_region = aws_region or settings.aws_region
+        self.aws_profile = aws_profile or settings.aws_profile
         self._client = None
 
     def _get_client(self):

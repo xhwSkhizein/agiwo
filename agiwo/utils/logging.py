@@ -18,12 +18,12 @@ Usage:
 """
 
 import logging
-import os
 import sys
 from contextvars import ContextVar
 
 import structlog
 from structlog.types import FilteringBoundLogger
+from agiwo.config.settings import settings
 
 # Context variables for request tracking
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
@@ -84,7 +84,9 @@ def add_context(
 
 
 def configure_logging(
-    log_level: str = "INFO", json_logs: bool = False, log_file: str | None = None
+    log_level: str | None = None,
+    json_logs: bool | None = None,
+    log_file: str | None = None,
 ) -> None:
     """
     Configure structlog with appropriate processors and renderers.
@@ -94,21 +96,20 @@ def configure_logging(
         json_logs: If True, output JSON logs suitable for production
         log_file: Optional file path to write logs to
     """
-    # Get log level from environment or parameter
-    log_level = os.getenv("LOG_LEVEL", log_level).upper()
-    json_logs = os.getenv("LOG_JSON", str(json_logs)).lower() in ("true", "1", "yes")
+    effective_log_level = (log_level or settings.log_level).upper()
+    effective_json_logs = settings.log_json if json_logs is None else json_logs
 
     # Configure standard logging
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
-        level=getattr(logging, log_level),
+        level=getattr(logging, effective_log_level),
     )
 
     # Add file handler if specified
     if log_file:
         file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(getattr(logging, log_level))
+        file_handler.setLevel(getattr(logging, effective_log_level))
         logging.getLogger().addHandler(file_handler)
 
     # Processor chain
@@ -123,7 +124,7 @@ def configure_logging(
     ]
 
     # Add appropriate renderer
-    if json_logs:
+    if effective_json_logs:
         processors.append(structlog.processors.JSONRenderer())
     else:
         processors.extend(

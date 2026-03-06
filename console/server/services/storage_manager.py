@@ -34,11 +34,13 @@ class StorageManager:
         await self.agent_state_storage.close()
 
     def _build_run_step_config(self) -> RunStepStorageConfig:
-        if self._config.storage_type == "sqlite":
+        if self._config.run_step_storage_type == "sqlite":
             return RunStepStorageConfig(
                 storage_type="sqlite",
                 config={"db_path": self._config.sqlite_db_path},
             )
+        if self._config.run_step_storage_type == "memory":
+            return RunStepStorageConfig(storage_type="memory")
         return RunStepStorageConfig(
             storage_type="mongodb",
             config={
@@ -48,7 +50,7 @@ class StorageManager:
         )
 
     def _build_agent_state_storage(self) -> AgentStateStorage:
-        if self._config.storage_type == "sqlite":
+        if self._config.metadata_storage_type == "sqlite":
             cfg = AgentStateStorageConfig(
                 storage_type="sqlite",
                 config={"db_path": self._config.sqlite_db_path},
@@ -58,7 +60,10 @@ class StorageManager:
         return create_agent_state_storage(cfg)
 
     def _build_trace_config(self) -> TraceStorageConfig:
-        if self._config.storage_type == "sqlite":
+        effective_type = self._config.effective_trace_storage_type
+        if effective_type == "memory":
+            return TraceStorageConfig(storage_type="memory")
+        if effective_type == "sqlite":
             return TraceStorageConfig(
                 storage_type="sqlite",
                 config={

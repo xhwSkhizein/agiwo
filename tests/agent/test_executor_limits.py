@@ -8,7 +8,7 @@ from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCount
 from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.executor import AgentExecutor
 from agiwo.agent.options import AgentOptions
-from agiwo.agent.schema import TerminationReason
+from agiwo.agent.schema import StepRecord, TerminationReason
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.tool.base import BaseTool, ToolResult
@@ -101,9 +101,12 @@ async def test_no_tool_call_over_limit_is_not_completed():
         options=AgentOptions(max_context_window_tokens=100),
     )
 
+    ctx = _make_context()
+    user_step = StepRecord.user(ctx, sequence=1, user_input="test")
     output = await executor.execute(
-        messages=[{"role": "user", "content": "test"}],
-        context=_make_context(),
+        system_prompt="You are a test assistant.",
+        user_step=user_step,
+        context=ctx,
     )
 
     assert output.termination_reason == TerminationReason.MAX_CONTEXT_WINDOW_TOKENS
@@ -137,9 +140,12 @@ async def test_execute_tools_first_then_stop_on_limit():
         options=AgentOptions(max_context_window_tokens=100),
     )
 
+    ctx = _make_context()
+    user_step = StepRecord.user(ctx, sequence=1, user_input="run")
     output = await executor.execute(
-        messages=[{"role": "user", "content": "run"}],
-        context=_make_context(),
+        system_prompt="You are a test assistant.",
+        user_step=user_step,
+        context=ctx,
     )
 
     assert tool.calls == 1
@@ -164,9 +170,12 @@ async def test_model_output_limit_finish_reason_stops_without_summary():
         options=AgentOptions(),
     )
 
+    ctx = _make_context()
+    user_step = StepRecord.user(ctx, sequence=1, user_input="run")
     output = await executor.execute(
-        messages=[{"role": "user", "content": "run"}],
-        context=_make_context(),
+        system_prompt="You are a test assistant.",
+        user_step=user_step,
+        context=ctx,
     )
 
     assert output.termination_reason == TerminationReason.MAX_OUTPUT_TOKENS_PER_CALL
@@ -207,9 +216,12 @@ async def test_max_tokens_per_run_limit():
         ),
     )
 
+    ctx = _make_context()
+    user_step = StepRecord.user(ctx, sequence=1, user_input="run")
     output = await executor.execute(
-        messages=[{"role": "user", "content": "run"}],
-        context=_make_context(),
+        system_prompt="You are a test assistant.",
+        user_step=user_step,
+        context=ctx,
     )
 
     assert tool.calls == 1
@@ -237,9 +249,12 @@ async def test_max_run_token_cost_limit():
         options=AgentOptions(max_run_token_cost=0.00005),
     )
 
+    ctx = _make_context()
+    user_step = StepRecord.user(ctx, sequence=1, user_input="cost")
     output = await executor.execute(
-        messages=[{"role": "user", "content": "cost"}],
-        context=_make_context(),
+        system_prompt="You are a test assistant.",
+        user_step=user_step,
+        context=ctx,
     )
 
     assert output.termination_reason == TerminationReason.MAX_RUN_TOKEN_COST

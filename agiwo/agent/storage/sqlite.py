@@ -14,6 +14,7 @@ import aiosqlite
 from agiwo.agent.schema import Run, StepRecord
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.utils.logging import get_logger
+from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 from agiwo.utils.tojson import to_json
 
 logger = get_logger(__name__)
@@ -30,20 +31,17 @@ class SQLiteRunStepStorage(RunStepStorage):
         self._initialized = False
 
     async def connect(self) -> None:
-        """Initialize database connection and create tables."""
+        """Initialize database connection and create tables using shared pool."""
         if self._initialized:
             return
 
-        db_path = Path(self.db_path)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        self._connection = await aiosqlite.connect(str(db_path))
-        self._connection.row_factory = aiosqlite.Row
+        # Use shared connection pool
+        self._connection = await get_shared_connection(self.db_path)
 
         await self._create_tables()
         self._initialized = True
 
-        logger.info("sqlite_connected", db_path=str(db_path))
+        logger.info("sqlite_run_step_storage_connected", db_path=self.db_path)
 
     async def initialize(self) -> None:
         """Backward-compatible alias for connect()."""
@@ -54,9 +52,9 @@ class SQLiteRunStepStorage(RunStepStorage):
         await self.disconnect()
 
     async def disconnect(self) -> None:
-        """Close database connection."""
+        """Release connection back to pool."""
         if self._connection:
-            await self._connection.close()
+            await release_shared_connection(self.db_path)
             self._connection = None
             self._initialized = False
 
@@ -221,6 +219,7 @@ class SQLiteRunStepStorage(RunStepStorage):
             await self._ensure_column(
                 "steps", "llm_request_params", "TEXT", steps_columns
             )
+            await self._ensure_column("steps", "user_input", "TEXT", steps_columns)
 
             if "runnable_id" in steps_columns and "agent_id" in steps_columns:
                 await self._connection.execute(
@@ -272,8 +271,13 @@ class SQLiteRunStepStorage(RunStepStorage):
         """Serialize Pydantic model or dataclass to dict, handling nested models."""
         data = self._model_to_dict(model)
         # Convert nested models to JSON strings
-        if isinstance(model, Run) and model.metrics:
-            data["metrics"] = self._serialize_metrics(model.metrics)
+        if isinstance(model, Run):
+            if model.metrics:
+                data["metrics"] = self._serialize_metrics(model.metrics)
+            # Handle complex user_input types (UserMessage or list[ContentPart])
+            if model.user_input is not None and not isinstance(model.user_input, str):
+                from agiwo.agent.schema import serialize_user_input
+                data["user_input"] = serialize_user_input(model.user_input)
         elif isinstance(model, StepRecord) and model.metrics:
             data["metrics"] = self._serialize_metrics(model.metrics)
 
@@ -281,6 +285,13 @@ class SQLiteRunStepStorage(RunStepStorage):
         if isinstance(model, StepRecord):
             if model.tool_calls:
                 data["tool_calls"] = json.dumps(model.tool_calls)
+            # Serialize user_input for user steps (source of truth)
+            if model.user_input is not None:
+                from agiwo.agent.schema import serialize_user_input
+                data["user_input"] = serialize_user_input(model.user_input)
+            # For user steps, don't store content (it's derived from user_input)
+            if model.role.value == "user" and model.user_input is not None:
+                data.pop("content", None)
 
         # Convert datetime to ISO format string
         for field_name in ("created_at", "updated_at"):
@@ -335,6 +346,11 @@ class SQLiteRunStepStorage(RunStepStorage):
             # RunMetrics is a dataclass
             data["metrics"] = RunMetrics(**metrics_data)
 
+        # Deserialize user_input from JSON string
+        if data.get("user_input") and isinstance(data["user_input"], str):
+            from agiwo.agent.schema import deserialize_user_input
+            data["user_input"] = deserialize_user_input(data["user_input"])
+
         # Map database columns to Run model fields
         if "agent_id" in data:
             data["agent_id"] = data.pop("agent_id")
@@ -363,6 +379,19 @@ class SQLiteRunStepStorage(RunStepStorage):
         data.pop("trace_id", None)
         data.pop("span_id", None)
         data.pop("parent_span_id", None)
+
+        # Deserialize user_input and compute content for user steps
+        if data.get("user_input"):
+            from agiwo.agent.schema import (
+                deserialize_user_input,
+                normalize_to_message,
+                to_message_content,
+            )
+            data["user_input"] = deserialize_user_input(data["user_input"])
+            # For user steps, derive content from user_input if not stored
+            if data.get("role") == "user" and not data.get("content"):
+                user_msg = normalize_to_message(data["user_input"])
+                data["content"] = to_message_content(user_msg.content)
 
         # Map database columns to Step model fields
         if "agent_id" in data:

@@ -22,7 +22,7 @@ class MongoCitationStore:
     def __init__(
         self,
         uri: str = "mongodb://localhost:27017",
-        db_name: str = "agio",
+        db_name: str = "agiwo",
         collection_name: str = "citation_sources",
     ):
         self.uri = uri

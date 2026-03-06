@@ -24,6 +24,7 @@ import {
   schedulerChatStreamUrl,
   cancelSchedulerChat,
   getAgentStateChildren,
+  formatUserInput,
 } from "@/lib/api";
 import type { AgentConfig, AgentStateListItem } from "@/lib/api";
 
@@ -645,9 +646,14 @@ export default function SchedulerChatPage() {
                           {child.status}
                         </span>
                       </div>
-                      <p className="text-[10px] text-zinc-500 truncate mt-0.5">
-                        {child.task.slice(0, 60)}{child.task.length > 60 ? "..." : ""}
-                      </p>
+                      {(() => {
+                        const taskText = formatUserInput(child.task);
+                        return (
+                          <p className="text-[10px] text-zinc-500 truncate mt-0.5">
+                            {taskText.slice(0, 60)}{taskText.length > 60 ? "..." : ""}
+                          </p>
+                        );
+                      })()}
                     </div>
                   </button>
 

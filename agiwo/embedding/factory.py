@@ -2,9 +2,9 @@
 Factory for creating embedding models based on configuration.
 """
 
-import os
 from typing import Literal
 
+from agiwo.config.settings import AgiwoSettings, load_settings
 from agiwo.embedding.base import EmbeddingError, EmbeddingModel
 from agiwo.embedding.local import LocalEmbedding
 from agiwo.embedding.openai import OpenAIEmbedding
@@ -59,31 +59,50 @@ class EmbeddingFactory:
         Raises:
             EmbeddingError: If configuration is invalid.
         """
-        provider = provider or os.getenv("AGIWO_EMBEDDING_PROVIDER", "auto")
+        runtime_settings = load_settings()
+        provider = provider or runtime_settings.embedding_provider
         provider = provider.lower()
 
         if provider == "disabled":
             logger.info("embedding_disabled")
             return None
 
-        model = model or os.getenv("AGIWO_EMBEDDING_MODEL", "text-embedding-3-small")
-        dimensions = dimensions or int(os.getenv("AGIWO_EMBEDDING_DIMENSIONS", "1536"))
+        model = model or runtime_settings.embedding_model
+        dimensions = dimensions or runtime_settings.embedding_dimensions
 
         if provider == "auto":
             return EmbeddingFactory._create_auto(
-                model, dimensions, api_key, base_url, model_path
+                model,
+                dimensions,
+                api_key,
+                base_url,
+                model_path,
+                runtime_settings,
             )
 
         if provider == "openai":
-            return EmbeddingFactory._create_openai(model, dimensions, api_key)
+            return EmbeddingFactory._create_openai(
+                model,
+                dimensions,
+                api_key,
+                runtime_settings,
+            )
 
         if provider == "openai-like":
             return EmbeddingFactory._create_openai_like(
-                model, dimensions, api_key, base_url
+                model,
+                dimensions,
+                api_key,
+                base_url,
+                runtime_settings,
             )
 
         if provider == "local":
-            return EmbeddingFactory._create_local(model_path, dimensions)
+            return EmbeddingFactory._create_local(
+                model_path,
+                dimensions,
+                runtime_settings,
+            )
 
         logger.warning("unknown_embedding_provider", provider=provider)
         return None
@@ -95,33 +114,50 @@ class EmbeddingFactory:
         api_key: str | None,
         base_url: str | None,
         model_path: str | None,
+        runtime_settings: AgiwoSettings,
     ) -> EmbeddingModel | None:
         """Auto-detect available provider."""
-        local_path = model_path or os.getenv("AGIWO_LOCAL_EMBEDDING_MODEL_PATH", "")
+        local_path = model_path or runtime_settings.local_embedding_model_path or ""
         if local_path:
             try:
-                return EmbeddingFactory._create_local(local_path, dimensions)
+                return EmbeddingFactory._create_local(
+                    local_path,
+                    dimensions,
+                    runtime_settings,
+                )
             except EmbeddingError as e:
                 logger.warning("auto_local_failed", error=str(e))
 
-        openai_key = api_key or os.getenv("AGIWO_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY")
+        openai_key = api_key or runtime_settings.get_embedding_api_key()
         if openai_key:
-            custom_base = base_url or os.getenv("AGIWO_EMBEDDING_BASE_URL")
+            custom_base = base_url or runtime_settings.embedding_base_url
             if custom_base:
                 return EmbeddingFactory._create_openai_like(
-                    model, dimensions, openai_key, custom_base
+                    model,
+                    dimensions,
+                    openai_key,
+                    custom_base,
+                    runtime_settings,
                 )
-            return EmbeddingFactory._create_openai(model, dimensions, openai_key)
+            return EmbeddingFactory._create_openai(
+                model,
+                dimensions,
+                openai_key,
+                runtime_settings,
+            )
 
         logger.info("embedding_auto_no_provider", msg="No embedding provider available")
         return None
 
     @staticmethod
     def _create_openai(
-        model: str, dimensions: int, api_key: str | None
+        model: str,
+        dimensions: int,
+        api_key: str | None,
+        runtime_settings: AgiwoSettings,
     ) -> OpenAIEmbedding:
         """Create OpenAI embedding model."""
-        key = api_key or os.getenv("AGIWO_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY")
+        key = api_key or runtime_settings.get_embedding_api_key()
         if not key:
             raise EmbeddingError(
                 "OpenAI API key required. Set OPENAI_API_KEY or AGIWO_EMBEDDING_API_KEY."
@@ -137,11 +173,15 @@ class EmbeddingFactory:
 
     @staticmethod
     def _create_openai_like(
-        model: str, dimensions: int, api_key: str | None, base_url: str | None
+        model: str,
+        dimensions: int,
+        api_key: str | None,
+        base_url: str | None,
+        runtime_settings: AgiwoSettings,
     ) -> OpenAIEmbedding:
         """Create OpenAI-compatible embedding model."""
-        key = api_key or os.getenv("AGIWO_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY")
-        url = base_url or os.getenv("AGIWO_EMBEDDING_BASE_URL") or os.getenv("OPENAI_BASE_URL")
+        key = api_key or runtime_settings.get_embedding_api_key()
+        url = base_url or runtime_settings.get_embedding_base_url()
 
         if not key:
             raise EmbeddingError(
@@ -164,9 +204,13 @@ class EmbeddingFactory:
         )
 
     @staticmethod
-    def _create_local(model_path: str | None, dimensions: int) -> LocalEmbedding:
+    def _create_local(
+        model_path: str | None,
+        dimensions: int,
+        runtime_settings: AgiwoSettings,
+    ) -> LocalEmbedding:
         """Create local embedding model."""
-        path = model_path or os.getenv("AGIWO_LOCAL_EMBEDDING_MODEL_PATH")
+        path = model_path or runtime_settings.local_embedding_model_path
         if not path:
             raise EmbeddingError(
                 "Local model path required. Set AGIWO_LOCAL_EMBEDDING_MODEL_PATH."

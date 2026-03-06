@@ -9,7 +9,7 @@ from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.executor import AgentExecutor
 from agiwo.agent.options import AgentOptions
-from agiwo.agent.schema import TerminationReason
+from agiwo.agent.schema import StepRecord, TerminationReason
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.tool.base import BaseTool, ToolResult
@@ -138,8 +138,10 @@ class TestExecutorTermination:
             options=AgentOptions(max_steps=10),
         )
 
+        user_step = StepRecord.user(context, sequence=1, user_input="test")
         output = await executor.execute(
-            messages=[{"role": "user", "content": "test"}],
+            system_prompt="You are a test assistant.",
+            user_step=user_step,
             context=context,
         )
 
@@ -179,8 +181,10 @@ class TestExecutorTermination:
             options=AgentOptions(max_steps=10),
         )
 
+        user_step = StepRecord.user(context, sequence=1, user_input="test")
         output = await executor.execute(
-            messages=[{"role": "user", "content": "test"}],
+            system_prompt="You are a test assistant.",
+            user_step=user_step,
             context=context,
         )
 

@@ -2,11 +2,11 @@
 Local embedding models using llama-cpp-python.
 """
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agiwo.config.settings import load_settings
 from agiwo.embedding.base import EmbeddingError, EmbeddingModel
 from agiwo.utils.logging import get_logger
 
@@ -41,7 +41,8 @@ class LocalEmbedding(EmbeddingModel):
 
     def __post_init__(self) -> None:
         if self.model_path is None:
-            self.model_path = os.getenv("AGIWO_LOCAL_EMBEDDING_MODEL_PATH", "")
+            runtime_settings = load_settings()
+            self.model_path = runtime_settings.local_embedding_model_path or ""
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts using local GGUF model."""

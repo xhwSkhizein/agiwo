@@ -7,8 +7,13 @@ runtime, and scheduler logic live in the base channel infrastructure.
 """
 
 import asyncio
+import re
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
+from agiwo.agent.schema import ChannelContext, ContentPart, ContentType, UserMessage
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
@@ -27,11 +32,61 @@ from server.channels.feishu.commands import (
 from server.channels.feishu.connection import FeishuConnection
 from server.channels.feishu.message_parser import FeishuMessageParser
 from server.channels.feishu.store import FeishuChannelStore
-from server.channels.models import BatchContext, InboundMessage
+from server.channels.models import Attachment, BatchContext, InboundMessage
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
 
 logger = get_logger(__name__)
+
+_MAX_DOWNLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
+
+_ATTACHMENT_CONTENT_TYPE_MAP: dict[str, ContentType] = {
+    "image": ContentType.IMAGE,
+    "audio": ContentType.AUDIO,
+    "media": ContentType.VIDEO,
+    "file": ContentType.FILE,
+}
+
+_ATTACHMENT_PLACEHOLDER_RE = re.compile(r'\[(?:图片|文件|语音消息|视频|表情)[^\]]*\]')
+
+
+def _detect_mime(data: bytes) -> str:
+    if data[:8] == b'\x89PNG\r\n\x1a\n':
+        return "image/png"
+    if data[:2] == b'\xff\xd8':
+        return "image/jpeg"
+    if data[:4] == b'GIF8':
+        return "image/gif"
+    if data[:4] == b'RIFF' and len(data) >= 12 and data[8:12] == b'WEBP':
+        return "image/webp"
+    if data[:4] == b'%PDF':
+        return "application/pdf"
+    if len(data) > 8 and data[4:8] == b'ftyp':
+        return "video/mp4"
+    return "application/octet-stream"
+
+
+def _mime_to_ext(mime: str, original_name: str = "") -> str:
+    if original_name:
+        suffix = Path(original_name).suffix
+        if suffix:
+            return suffix
+    _map = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/gif": ".gif",
+        "image/webp": ".webp",
+        "application/pdf": ".pdf",
+        "video/mp4": ".mp4",
+        "audio/mp4": ".m4a",
+        "audio/mpeg": ".mp3",
+        "audio/ogg": ".ogg",
+    }
+    return _map.get(mime, ".bin")
+
+
+def _clean_attachment_placeholders(text: str) -> str:
+    return _ATTACHMENT_PLACEHOLDER_RE.sub("", text).strip()
 
 
 class FeishuChannelService(BaseChannelService):
@@ -55,7 +110,7 @@ class FeishuChannelService(BaseChannelService):
         )
         self._store = FeishuChannelStore(
             db_path=config.sqlite_db_path,
-            use_persistent_store=config.storage_type == "sqlite",
+            use_persistent_store=config.metadata_storage_type == "sqlite",
         )
         self._parser = FeishuMessageParser(
             api=self._api,
@@ -87,6 +142,7 @@ class FeishuChannelService(BaseChannelService):
 
         self._command_registry = self._build_command_registry(scheduler)
         self._closed = False
+        self._tmp_dir = Path(tempfile.mkdtemp(prefix="feishu_attachments_"))
 
     async def initialize(self) -> None:
         await self._store.connect()
@@ -106,6 +162,7 @@ class FeishuChannelService(BaseChannelService):
         await self._connection.stop()
         await self._api.close()
         await self._store.close()
+        shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def get_status(self) -> dict[str, Any]:
         return {
@@ -273,24 +330,37 @@ class FeishuChannelService(BaseChannelService):
 
     # -- BaseChannelService hooks --------------------------------------------
 
-    def _render_batch_prompt(
+    async def _build_user_message(
         self,
         context: BatchContext,
         messages: list[InboundMessage],
-    ) -> str:
-        latest_ask = self._parser.normalize_message_text(messages[-1].text)
-        if not latest_ask:
-            latest_ask = messages[-1].text.strip()
-        if not latest_ask:
-            latest_ask = "请根据上下文处理用户请求。"
+    ) -> UserMessage:
+        latest = messages[-1]
 
-        notice_lines = [
-            "source: feishu",
-            f"chat_type: {context.chat_type}",
-            f"chat_id: {context.chat_id}",
-            f"trigger_user: {messages[-1].sender_name}",
-            f"batch_message_count: {len(messages)}",
-        ]
+        # Resolve attachments: download to local tmp dir and build ContentParts
+        resolved_parts = await self._resolve_attachments(latest)
+
+        # Build text content, cleaning placeholder tokens for resolved attachments
+        text = self._parser.normalize_message_text(latest.text)
+        if resolved_parts:
+            text = _clean_attachment_placeholders(text)
+        if not text:
+            text = latest.text.strip()
+        if not text and not resolved_parts:
+            text = "请根据上下文处理用户请求。"
+
+        content_parts: list[ContentPart] = []
+        if text:
+            content_parts.append(ContentPart(type=ContentType.TEXT, text=text))
+        content_parts.extend(resolved_parts)
+
+        # Build channel context (replaces <system_notice> string concatenation)
+        metadata: dict[str, Any] = {
+            "chat_type": context.chat_type,
+            "chat_id": context.chat_id,
+            "trigger_user": latest.sender_name,
+            "batch_message_count": len(messages),
+        }
 
         if context.chat_type == "p2p":
             dm_history = [
@@ -299,9 +369,7 @@ class FeishuChannelService(BaseChannelService):
             ]
             dm_history = [line for line in dm_history if line]
             if dm_history:
-                notice_lines.append("recent_dm_messages:")
-                for line in dm_history[-5:]:
-                    notice_lines.append(f"- {line}")
+                metadata["recent_dm_messages"] = dm_history[-5:]
         else:
             current_batch_message_ids = {msg.message_id for msg in messages}
             group_history = self._parser.get_group_history_lines(
@@ -309,15 +377,71 @@ class FeishuChannelService(BaseChannelService):
                 exclude_message_ids=current_batch_message_ids,
             )
             if group_history:
-                notice_lines.append("recent_group_messages:")
-                for line in group_history:
-                    notice_lines.append(f"- {line}")
+                metadata["recent_group_messages"] = group_history
 
-        return (
-            "<system_notice>\n"
-            + "\n".join(notice_lines)
-            + "\n</system_notice>\n\n"
-            + latest_ask
+        channel_context = ChannelContext(source="feishu", metadata=metadata)
+        return UserMessage(content=content_parts, context=channel_context)
+
+    # -- Attachment resolution -----------------------------------------------
+
+    async def _resolve_attachments(
+        self, message: InboundMessage,
+    ) -> list[ContentPart]:
+        parts: list[ContentPart] = []
+        for attachment in message.attachments:
+            try:
+                part = await self._resolve_single_attachment(message, attachment)
+                if part is not None:
+                    parts.append(part)
+            except Exception as e:
+                logger.warning(
+                    "feishu_attachment_resolve_failed",
+                    key=attachment.key,
+                    attachment_type=attachment.type,
+                    error=str(e),
+                )
+        return parts
+
+    async def _resolve_single_attachment(
+        self,
+        message: InboundMessage,
+        attachment: Attachment,
+    ) -> ContentPart | None:
+        if attachment.type == "sticker":
+            return None
+
+        if attachment.type == "image":
+            data = await self._api.download_image(attachment.key)
+        else:
+            data = await self._api.download_message_resource(
+                message.message_id, attachment.key, "file"
+            )
+
+        if len(data) > _MAX_DOWNLOAD_SIZE:
+            logger.warning(
+                "feishu_attachment_too_large",
+                key=attachment.key,
+                size=len(data),
+                limit=_MAX_DOWNLOAD_SIZE,
+            )
+            return None
+
+        mime = _detect_mime(data)
+        ext = _mime_to_ext(mime, attachment.name)
+        filename = f"{attachment.key}{ext}"
+        local_path = self._tmp_dir / filename
+        local_path.write_bytes(data)
+
+        content_type = _ATTACHMENT_CONTENT_TYPE_MAP.get(attachment.type, ContentType.FILE)
+        return ContentPart(
+            type=content_type,
+            url=str(local_path),
+            mime_type=mime,
+            metadata={
+                "name": attachment.name or filename,
+                "size": len(data),
+                "source": "feishu",
+            },
         )
 
     async def _deliver_reply(self, context: BatchContext, text: str) -> None:

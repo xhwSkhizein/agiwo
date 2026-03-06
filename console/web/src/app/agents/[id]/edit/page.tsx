@@ -4,13 +4,9 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { getAgent, updateAgent, listAvailableTools, AvailableTool } from "@/lib/api";
 
-const PROVIDERS = [
-  { value: "openai", label: "OpenAI" },
-  { value: "deepseek", label: "DeepSeek" },
-  { value: "anthropic", label: "Anthropic" },
-];
+import { AgentForm } from "@/components/agent-form";
+import { AgentConfig, AgentConfigCreate, getAgent, updateAgent } from "@/lib/api";
 
 export default function EditAgentPage() {
   const params = useParams();
@@ -20,92 +16,20 @@ export default function EditAgentPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [modelProvider, setModelProvider] = useState("deepseek");
-  const [modelName, setModelName] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
-  const [maxSteps, setMaxSteps] = useState(10);
-  const [runTimeout, setRunTimeout] = useState(600);
-  const [maxContextWindowTokens, setMaxContextWindowTokens] = useState(32768);
-  const [maxTokensPerRun, setMaxTokensPerRun] = useState(131072);
-  const [maxRunTokenCost, setMaxRunTokenCost] = useState("");
-  const [maxOutputTokensPerCall, setMaxOutputTokensPerCall] = useState(4096);
-  const [cacheHitPrice, setCacheHitPrice] = useState(0);
-  const [inputPrice, setInputPrice] = useState(0);
-  const [outputPrice, setOutputPrice] = useState(0);
-  const [temperature, setTemperature] = useState(0.7);
-  const [selectedTools, setSelectedTools] = useState<string[]>([]);
-  const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
-  const [enableSkill, setEnableSkill] = useState(false);
-  const [skillsDir, setSkillsDir] = useState("");
+  const [agent, setAgent] = useState<AgentConfig | null>(null);
 
   useEffect(() => {
-    Promise.all([getAgent(agentId), listAvailableTools(agentId)])
-      .then(([a, tools]) => {
-        setName(a.name);
-        setDescription(a.description);
-        setModelProvider(a.model_provider);
-        setModelName(a.model_name);
-        setSystemPrompt(a.system_prompt);
-        setMaxSteps((a.options?.max_steps as number) ?? 10);
-        setRunTimeout((a.options?.run_timeout as number) ?? 600);
-        setMaxContextWindowTokens((a.options?.max_context_window_tokens as number) ?? 32768);
-        setMaxTokensPerRun((a.options?.max_tokens_per_run as number) ?? 131072);
-        const maxRunCost = a.options?.max_run_token_cost;
-        setMaxRunTokenCost(
-          typeof maxRunCost === "number" ? String(maxRunCost) : ""
-        );
-        setMaxOutputTokensPerCall((a.model_params?.max_output_tokens_per_call as number) ?? 4096);
-        setCacheHitPrice((a.model_params?.cache_hit_price as number) ?? 0);
-        setInputPrice((a.model_params?.input_price as number) ?? 0);
-        setOutputPrice((a.model_params?.output_price as number) ?? 0);
-        setTemperature((a.model_params?.temperature as number) ?? 0.7);
-        setSelectedTools(a.tools || []);
-        setEnableSkill((a.options?.enable_skill as boolean) ?? false);
-        setSkillsDir((a.options?.skills_dir as string) ?? "");
-        setAvailableTools(tools);
-      })
+    getAgent(agentId)
+      .then(setAgent)
       .catch(() => setError("Agent not found"))
       .finally(() => setLoading(false));
   }, [agentId]);
 
-  const toggleTool = (toolName: string) => {
-    setSelectedTools((prev) =>
-      prev.includes(toolName) ? prev.filter((t) => t !== toolName) : [...prev, toolName]
-    );
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (payload: AgentConfigCreate) => {
     setSaving(true);
     setError(null);
     try {
-      await updateAgent(agentId, {
-        name,
-        description,
-        model_provider: modelProvider,
-        model_name: modelName,
-        system_prompt: systemPrompt,
-        tools: selectedTools,
-        options: {
-          max_steps: maxSteps,
-          run_timeout: runTimeout,
-          max_context_window_tokens: maxContextWindowTokens,
-          max_tokens_per_run: maxTokensPerRun,
-          max_run_token_cost: maxRunTokenCost.trim() === "" ? undefined : Number(maxRunTokenCost),
-          enable_skill: enableSkill,
-          skills_dir: skillsDir || undefined,
-        },
-        model_params: {
-          max_output_tokens_per_call: maxOutputTokensPerCall,
-          cache_hit_price: cacheHitPrice,
-          input_price: inputPrice,
-          output_price: outputPrice,
-          temperature,
-        },
-      });
+      await updateAgent(agentId, payload);
       router.push("/agents");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update agent");
@@ -122,6 +46,14 @@ export default function EditAgentPage() {
     );
   }
 
+  if (agent === null) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-red-400">{error ?? "Agent not found"}</div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
@@ -134,265 +66,14 @@ export default function EditAgentPage() {
         <h1 className="text-xl font-semibold">Edit Agent</h1>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-5">
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">Name</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">Description</label>
-          <input
-            type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Model Provider</label>
-            <select
-              value={modelProvider}
-              onChange={(e) => setModelProvider(e.target.value)}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            >
-              {PROVIDERS.map((p) => (
-                <option key={p.value} value={p.value}>{p.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Model Name</label>
-            <input
-              type="text"
-              value={modelName}
-              onChange={(e) => setModelName(e.target.value)}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">System Prompt</label>
-          <textarea
-            value={systemPrompt}
-            onChange={(e) => setSystemPrompt(e.target.value)}
-            rows={5}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600 resize-y"
-          />
-        </div>
-
-        <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Builtin Tools</p>
-        <div className="flex flex-wrap gap-2">
-          {availableTools.filter((t) => t.type === "builtin").map((tool) => (
-            <button
-              key={tool.name}
-              type="button"
-              onClick={() => toggleTool(tool.name)}
-              className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
-                selectedTools.includes(tool.name)
-                  ? "bg-white text-black border-white"
-                  : "bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-zinc-500"
-              }`}
-              title={tool.description}
-            >
-              {tool.name}
-            </button>
-          ))}
-          {availableTools.filter((t) => t.type === "builtin").length === 0 && (
-            <span className="text-xs text-zinc-600">No builtin tools available</span>
-          )}
-        </div>
-
-        <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Agent Tools</p>
-        <div className="flex flex-wrap gap-2">
-          {availableTools.filter((t) => t.type === "agent").map((tool) => (
-            <button
-              key={tool.name}
-              type="button"
-              onClick={() => toggleTool(tool.name)}
-              className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
-                selectedTools.includes(tool.name)
-                  ? "bg-blue-600 text-white border-blue-500"
-                  : "bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-zinc-500"
-              }`}
-              title={tool.description}
-            >
-              {tool.agent_name || tool.name}
-            </button>
-          ))}
-          {availableTools.filter((t) => t.type === "agent").length === 0 && (
-            <span className="text-xs text-zinc-600">No other agents available as tools</span>
-          )}
-        </div>
-
-        <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Skills</p>
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={enableSkill}
-              onChange={(e) => setEnableSkill(e.target.checked)}
-              className="rounded border-zinc-700 bg-zinc-900"
-            />
-            Enable Skills
-          </label>
-          {enableSkill && (
-            <input
-              type="text"
-              value={skillsDir}
-              onChange={(e) => setSkillsDir(e.target.value)}
-              placeholder="Skills directory (optional, uses default)"
-              className="flex-1 px-3 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          )}
-        </div>
-
-        <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Agent Options</p>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Max Steps</label>
-            <input
-              type="number"
-              value={maxSteps}
-              onChange={(e) => setMaxSteps(Number(e.target.value))}
-              min={1}
-              max={100}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Run Timeout (s)</label>
-            <input
-              type="number"
-              value={runTimeout}
-              onChange={(e) => setRunTimeout(Number(e.target.value))}
-              min={10}
-              max={3600}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Model max context window size</label>
-            <input
-              type="number"
-              value={maxContextWindowTokens}
-              onChange={(e) => setMaxContextWindowTokens(Number(e.target.value))}
-              min={256}
-              max={128000}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Max tokens per run</label>
-            <input
-              type="number"
-              value={maxTokensPerRun}
-              onChange={(e) => setMaxTokensPerRun(Number(e.target.value))}
-              min={256}
-              max={512000}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Max run token cost (USD)</label>
-            <input
-              type="number"
-              value={maxRunTokenCost}
-              onChange={(e) => setMaxRunTokenCost(e.target.value)}
-              min={0}
-              step={0.000001}
-              placeholder="Optional"
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-        </div>
-
-        <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">Model Parameters</p>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Model max output tokens per call</label>
-            <input
-              type="number"
-              value={maxOutputTokensPerCall}
-              onChange={(e) => setMaxOutputTokensPerCall(Number(e.target.value))}
-              min={256}
-              max={128000}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Temperature</label>
-            <input
-              type="number"
-              value={temperature}
-              onChange={(e) => setTemperature(Number(e.target.value))}
-              min={0}
-              max={2}
-              step={0.1}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Cache-hit price (USD / 1M tokens)</label>
-            <input
-              type="number"
-              value={cacheHitPrice}
-              onChange={(e) => setCacheHitPrice(Number(e.target.value))}
-              min={0}
-              step={0.000001}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Input price (USD / 1M tokens)</label>
-            <input
-              type="number"
-              value={inputPrice}
-              onChange={(e) => setInputPrice(Number(e.target.value))}
-              min={0}
-              step={0.000001}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-zinc-400 mb-1.5">Output price (USD / 1M tokens)</label>
-            <input
-              type="number"
-              value={outputPrice}
-              onChange={(e) => setOutputPrice(Number(e.target.value))}
-              min={0}
-              step={0.000001}
-              className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            />
-          </div>
-        </div>
-
-        {error && <p className="text-sm text-red-400">{error}</p>}
-
-        <div className="flex gap-3 pt-2">
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-5 py-2 rounded-md bg-white text-black text-sm font-medium hover:bg-zinc-200 transition-colors disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save Changes"}
-          </button>
-          <Link
-            href="/agents"
-            className="px-5 py-2 rounded-md border border-zinc-700 text-sm hover:bg-zinc-800 transition-colors"
-          >
-            Cancel
-          </Link>
-        </div>
-      </form>
+      <AgentForm
+        initialAgent={agent}
+        excludeAgentId={agentId}
+        submitLabel="Save Changes"
+        submitting={saving}
+        error={error}
+        onSubmit={handleSubmit}
+      />
     </div>
   );
 }

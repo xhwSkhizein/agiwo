@@ -64,6 +64,32 @@ class FeishuApiClient:
             json_body=payload,
         )
 
+    async def download_image(self, image_key: str) -> bytes:
+        """Download image binary from IM API.
+
+        GET /open-apis/im/v1/images/{image_key}
+        """
+        return await self._authorized_binary_request(
+            "GET", f"/open-apis/im/v1/images/{image_key}"
+        )
+
+    async def download_message_resource(
+        self,
+        message_id: str,
+        file_key: str,
+        resource_type: str,
+    ) -> bytes:
+        """Download a message attachment binary.
+
+        GET /open-apis/im/v1/messages/{message_id}/resources/{file_key}?type={resource_type}
+        resource_type: "image" | "file"  ("file" covers file/audio/video, limit 100MB)
+        """
+        return await self._authorized_binary_request(
+            "GET",
+            f"/open-apis/im/v1/messages/{message_id}/resources/{file_key}",
+            params={"type": resource_type},
+        )
+
     async def get_user_display_name(self, open_id: str) -> str | None:
         payload = await self._authorized_request(
             "GET",
@@ -91,6 +117,22 @@ class FeishuApiClient:
             return nickname.strip()
 
         return None
+
+    async def _authorized_binary_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, str] | None = None,
+    ) -> bytes:
+        token = await self._get_tenant_access_token()
+        headers = {"Authorization": f"Bearer {token}"}
+        url = f"{self._api_base_url}{path}"
+        response = await self._client.request(
+            method, url, headers=headers, params=params
+        )
+        response.raise_for_status()
+        return response.content
 
     async def _authorized_request(
         self,

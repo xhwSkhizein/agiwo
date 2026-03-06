@@ -1,5 +1,6 @@
 """
-Scheduling tools — SpawnAgentTool, SleepAndWaitTool, QuerySpawnedAgentTool.
+Scheduling tools — SpawnAgentTool, SleepAndWaitTool, QuerySpawnedAgentTool,
+CancelAgentTool, ListAgentsTool.
 
 These tools are injected into agents by the Scheduler. They read `context.agent_id`
 directly (no SchedulingMeta needed) and interact with AgentStateStorage.
@@ -7,7 +8,7 @@ directly (no SchedulingMeta needed) and interact with AgentStateStorage.
 
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from agiwo.agent.execution_context import ExecutionContext
@@ -25,6 +26,9 @@ from agiwo.scheduler.models import (
 from agiwo.scheduler.store import AgentStateStorage
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.utils.abort_signal import AbortSignal
+
+if TYPE_CHECKING:
+    from agiwo.scheduler.scheduler import Scheduler
 
 
 class SpawnAgentTool(BaseTool):
@@ -44,7 +48,7 @@ class SpawnAgentTool(BaseTool):
             "ONLY use this when the task genuinely requires parallel execution or delegation "
             "(e.g., concurrent data fetching, parallel analysis). "
             "Do NOT spawn a child agent just to perform a simple action you can do directly. "
-            "The spawned child agent will NOT be able to spawn further child agents. "
+            "**IMPORTANT: The spawned child agent will NOT be able to spawn further child agents.**"
             "After spawning, call sleep_and_wait to wait for the child to complete if needed."
         )
 
@@ -195,6 +199,10 @@ class SleepAndWaitTool(BaseTool):
                     "enum": ["seconds", "minutes", "hours"],
                     "description": "Time unit for delay_seconds (default: seconds)",
                 },
+                "explain": {
+                    "type": "string",
+                    "description": "Optional brief reason for sleeping — visible to the parent agent and operators for observability.",
+                },
             },
             "required": ["wake_type"],
         }
@@ -225,6 +233,7 @@ class SleepAndWaitTool(BaseTool):
         wait_mode_str = parameters.get("wait_mode", "all")
         explicit_wait_for: list[str] | None = parameters.get("wait_for")
         timeout = parameters.get("timeout")
+        explain = parameters.get("explain")
 
         try:
             wake_type = WakeType(wake_type_str)
@@ -286,6 +295,7 @@ class SleepAndWaitTool(BaseTool):
             agent_id,
             AgentStateStatus.SLEEPING,
             wake_condition=wc,
+            explain=explain,
         )
 
         end_time = time.time()
@@ -294,6 +304,8 @@ class SleepAndWaitTool(BaseTool):
             summary += f" (waiting_for={len(wc.wait_for)}, mode={wc.wait_mode.value}, already_done={len(wc.completed_ids)})"
         elif delay_seconds is not None:
             summary += f" (delay={delay_seconds} {time_unit_str})"
+        if explain:
+            summary += f" | reason: {explain}"
 
         return ToolResult(
             tool_name=self.get_name(),
@@ -320,7 +332,7 @@ class QuerySpawnedAgentTool(BaseTool):
 
     def get_description(self) -> str:
         return (
-            "Query the current status and result of a spawned child agent. "
+            "Query the current status, result, and recent activity of a spawned child agent. "
             "Use this after waking up to check what the child agents have accomplished."
         )
 
@@ -364,20 +376,40 @@ class QuerySpawnedAgentTool(BaseTool):
                 error=f"Agent '{target_id}' not found",
             )
 
-        result_info = {
+        result_info: dict[str, Any] = {
             "agent_id": state.id,
             "status": state.status.value,
-            "task": state.task,
+            "task": state.task if isinstance(state.task, str) else str(state.task),
             "result_summary": state.result_summary,
+            "explain": state.explain,
+            "wake_count": state.wake_count,
+            "last_activity_at": state.last_activity_at.isoformat() if state.last_activity_at else None,
         }
+        if state.recent_steps:
+            result_info["recent_steps"] = state.recent_steps
 
         content_parts = [
             f"Agent: {state.id}",
             f"Status: {state.status.value}",
-            f"Task: {state.task}",
+            f"Task: {state.task if isinstance(state.task, str) else str(state.task)}",
         ]
+        if state.explain:
+            content_parts.append(f"Sleep reason: {state.explain}")
+        if state.last_activity_at:
+            content_parts.append(f"Last activity: {state.last_activity_at.isoformat()}")
         if state.result_summary:
             content_parts.append(f"Result: {state.result_summary}")
+        if state.recent_steps:
+            steps_text = []
+            for step in state.recent_steps[-3:]:
+                role = step.get("role", "?")
+                ts = step.get("timestamp", "")
+                tools = step.get("tool_calls", [])
+                if tools:
+                    steps_text.append(f"  [{ts[:19]}] {role}: called {', '.join(tools)}")
+                else:
+                    steps_text.append(f"  [{ts[:19]}] {role}")
+            content_parts.append("Recent steps:\n" + "\n".join(steps_text))
 
         end_time = time.time()
         return ToolResult(
@@ -386,6 +418,283 @@ class QuerySpawnedAgentTool(BaseTool):
             input_args=parameters,
             content="\n".join(content_parts),
             output=result_info,
+            start_time=start_time,
+            end_time=end_time,
+            duration=end_time - start_time,
+        )
+
+
+class CancelAgentTool(BaseTool):
+    """Cancel a child agent, optionally forcing termination even with running processes."""
+
+    def __init__(self, scheduler: "Scheduler") -> None:
+        self._scheduler = scheduler
+        super().__init__()
+
+    def get_name(self) -> str:
+        return "cancel_agent"
+
+    def get_description(self) -> str:
+        return (
+            "Cancel a spawned child agent and its entire subtree. "
+            "Use force=false first to check for running processes; "
+            "if confirmed safe, use force=true to terminate."
+        )
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "string",
+                    "description": "The ID of the child agent to cancel",
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "If false (default), check for running processes first. If true, cancel regardless.",
+                    "default": False,
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional reason for cancellation (for logging/audit)",
+                },
+            },
+            "required": ["agent_id"],
+        }
+
+    def is_concurrency_safe(self) -> bool:
+        return True
+
+    async def execute(
+        self,
+        parameters: dict[str, Any],
+        context: ExecutionContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> ToolResult:
+        start_time = time.time()
+        caller_id = context.agent_id
+        target_id = parameters.get("agent_id", "")
+        force = parameters.get("force", False)
+        reason = parameters.get("reason", "Cancelled by parent agent")
+
+        target_state = await self._scheduler.store.get_state(target_id)
+        if target_state is None:
+            end_time = time.time()
+            return ToolResult(
+                tool_name=self.get_name(),
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                content=f"Agent '{target_id}' not found.",
+                output={"success": False},
+                start_time=start_time,
+                end_time=end_time,
+                duration=end_time - start_time,
+                is_success=False,
+                error=f"Agent '{target_id}' not found",
+            )
+
+        if target_state.parent_id != caller_id:
+            end_time = time.time()
+            return ToolResult(
+                tool_name=self.get_name(),
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                content=f"Permission denied: agent '{target_id}' is not a direct child of '{caller_id}'.",
+                output={"success": False},
+                start_time=start_time,
+                end_time=end_time,
+                duration=end_time - start_time,
+                is_success=False,
+                error="Permission denied: not a direct child",
+            )
+
+        if target_state.status not in (
+            AgentStateStatus.RUNNING,
+            AgentStateStatus.SLEEPING,
+            AgentStateStatus.PENDING,
+        ):
+            end_time = time.time()
+            return ToolResult(
+                tool_name=self.get_name(),
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                content=f"Agent '{target_id}' is already in terminal state: {target_state.status.value}.",
+                output={"success": False, "status": target_state.status.value},
+                start_time=start_time,
+                end_time=end_time,
+                duration=end_time - start_time,
+            )
+
+        if not force and target_state.status == AgentStateStatus.RUNNING:
+            # Check for running BashTool background processes before cancelling
+            running_procs = await self._get_running_bash_processes(target_id)
+            content_parts = [
+                f"Agent '{target_id}' is currently RUNNING. "
+                f"Last activity: {target_state.last_activity_at.isoformat() if target_state.last_activity_at else 'unknown'}.",
+            ]
+            proc_info: list[dict] = []
+            if running_procs:
+                content_parts.append(
+                    f"\n{len(running_procs)} background process(es) are running under this agent:"
+                )
+                for p in running_procs:
+                    content_parts.append(f"  - [{p['process_id']}] {p['command']}")
+                    proc_info.append(p)
+                content_parts.append("\nUse force=true to terminate the agent and all its processes.")
+            else:
+                content_parts.append("\nNo background processes detected. Use force=true to cancel.")
+            end_time = time.time()
+            return ToolResult(
+                tool_name=self.get_name(),
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                content="\n".join(content_parts),
+                output={
+                    "success": False,
+                    "requires_force": True,
+                    "status": target_state.status.value,
+                    "running_processes": proc_info,
+                },
+                start_time=start_time,
+                end_time=end_time,
+                duration=end_time - start_time,
+            )
+
+        await self._scheduler._recursive_cancel(target_id, reason)
+
+        end_time = time.time()
+        return ToolResult(
+            tool_name=self.get_name(),
+            tool_call_id=parameters.get("tool_call_id", ""),
+            input_args=parameters,
+            content=f"Agent '{target_id}' and its subtree have been cancelled. Reason: {reason}",
+            output={"success": True, "agent_id": target_id},
+            start_time=start_time,
+            end_time=end_time,
+            duration=end_time - start_time,
+        )
+
+    async def _get_running_bash_processes(self, agent_id: str) -> list[dict]:
+        """Find running BashTool background processes for the given agent."""
+        from agiwo.tool.builtin.bash_tool.tool import BashTool
+
+        agent = self._scheduler._agents.get(agent_id)
+        if agent is None:
+            return []
+        for tool in agent.tools:
+            if isinstance(tool, BashTool):
+                try:
+                    procs = await tool.config.sandbox.list_processes_by_agent(agent_id, state="running")
+                    return [
+                        {
+                            "process_id": p.process_id,
+                            "command": p.command,
+                            "started_at": p.started_at,
+                        }
+                        for p in procs
+                    ]
+                except Exception:
+                    return []
+        return []
+
+
+class ListAgentsTool(BaseTool):
+    """List all direct child agents of the calling agent with detailed status information."""
+
+    def __init__(self, store: AgentStateStorage) -> None:
+        self._store = store
+        super().__init__()
+
+    def get_name(self) -> str:
+        return "list_agents"
+
+    def get_description(self) -> str:
+        return (
+            "List all direct child agents with their status, task, results, and recent activity. "
+            "Use this to get an overview of all spawned agents and decide on next steps."
+        )
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }
+
+    def is_concurrency_safe(self) -> bool:
+        return True
+
+    async def execute(
+        self,
+        parameters: dict[str, Any],
+        context: ExecutionContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> ToolResult:
+        start_time = time.time()
+        caller_id = context.agent_id
+
+        children = await self._store.get_states_by_parent(caller_id)
+        # Filter to current session
+        children = [c for c in children if c.session_id == context.session_id]
+
+        if not children:
+            end_time = time.time()
+            return ToolResult(
+                tool_name=self.get_name(),
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args=parameters,
+                content="No child agents found.",
+                output={"agents": []},
+                start_time=start_time,
+                end_time=end_time,
+                duration=end_time - start_time,
+            )
+
+        now = datetime.now(timezone.utc)
+        agent_infos: list[dict[str, Any]] = []
+        content_lines: list[str] = [f"Child agents ({len(children)} total):\n"]
+
+        for state in children:
+            created_ts = state.created_at
+            if created_ts.tzinfo is None:
+                created_ts = created_ts.replace(tzinfo=timezone.utc)
+            running_secs = int((now - created_ts).total_seconds())
+
+            info: dict[str, Any] = {
+                "agent_id": state.id,
+                "status": state.status.value,
+                "task": (state.task[:100] + "..." if isinstance(state.task, str) and len(str(state.task)) > 100 else state.task) if isinstance(state.task, str) else str(state.task),
+                "created_ago_seconds": running_secs,
+                "wake_count": state.wake_count,
+                "explain": state.explain,
+                "last_activity_at": state.last_activity_at.isoformat() if state.last_activity_at else None,
+                "result_summary": (state.result_summary[:200] + "..." if state.result_summary and len(state.result_summary) > 200 else state.result_summary),
+            }
+            if state.recent_steps:
+                info["recent_steps"] = state.recent_steps[-3:]
+
+            agent_infos.append(info)
+
+            task_str = info["task"]
+            status_str = state.status.value.upper()
+            line = f"- [{status_str}] {state.id}: {task_str} (running {running_secs}s, woke {state.wake_count}x)"
+            if state.explain:
+                line += f"\n  Sleep reason: {state.explain}"
+            if state.result_summary:
+                summary_short = state.result_summary[:100] + ("..." if len(state.result_summary) > 100 else "")
+                line += f"\n  Result: {summary_short}"
+            if state.last_activity_at:
+                activity_ago = int((now - (state.last_activity_at if state.last_activity_at.tzinfo else state.last_activity_at.replace(tzinfo=timezone.utc))).total_seconds())
+                line += f"\n  Last activity: {activity_ago}s ago"
+            content_lines.append(line)
+
+        end_time = time.time()
+        return ToolResult(
+            tool_name=self.get_name(),
+            tool_call_id=parameters.get("tool_call_id", ""),
+            input_args=parameters,
+            content="\n".join(content_lines),
+            output={"agents": agent_infos},
             start_time=start_time,
             end_time=end_time,
             duration=end_time - start_time,

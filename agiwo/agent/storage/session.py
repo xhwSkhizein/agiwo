@@ -1,0 +1,213 @@
+"""
+Session Storage - Session-level data persistence (CompactMetadata).
+"""
+
+import asyncio
+import json
+from abc import ABC, abstractmethod
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from agiwo.agent.schema import CompactMetadata
+from agiwo.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class SessionStorage(ABC):
+    """
+    Session-level storage interface.
+
+    Manages session-scoped data like CompactMetadata.
+    Data is isolated by (session_id, agent_id) pair.
+    """
+
+    async def close(self) -> None:
+        """Close storage and release resources (optional)."""
+        pass
+
+    @abstractmethod
+    async def save_compact_metadata(
+        self, session_id: str, agent_id: str, metadata: CompactMetadata
+    ) -> None:
+        """Save compact metadata (append to history)."""
+        ...
+
+    @abstractmethod
+    async def get_latest_compact_metadata(
+        self, session_id: str, agent_id: str
+    ) -> CompactMetadata | None:
+        """Get the most recent compact metadata."""
+        ...
+
+    @abstractmethod
+    async def get_compact_history(
+        self, session_id: str, agent_id: str
+    ) -> list[CompactMetadata]:
+        """Get all compact metadata history (sorted by created_at ascending)."""
+        ...
+
+
+class InMemorySessionStorage(SessionStorage):
+    """In-memory implementation for testing and development."""
+
+    def __init__(self) -> None:
+        self._compact_history: dict[str, list[CompactMetadata]] = {}
+        self._lock = asyncio.Lock()
+
+    def _key(self, session_id: str, agent_id: str) -> str:
+        return f"{session_id}:{agent_id}"
+
+    async def save_compact_metadata(
+        self, session_id: str, agent_id: str, metadata: CompactMetadata
+    ) -> None:
+        async with self._lock:
+            key = self._key(session_id, agent_id)
+            if key not in self._compact_history:
+                self._compact_history[key] = []
+            self._compact_history[key].append(metadata)
+
+    async def get_latest_compact_metadata(
+        self, session_id: str, agent_id: str
+    ) -> CompactMetadata | None:
+        key = self._key(session_id, agent_id)
+        history = self._compact_history.get(key, [])
+        return history[-1] if history else None
+
+    async def get_compact_history(
+        self, session_id: str, agent_id: str
+    ) -> list[CompactMetadata]:
+        key = self._key(session_id, agent_id)
+        return list(self._compact_history.get(key, []))
+
+
+class SQLiteSessionStorage(SessionStorage):
+    """SQLite implementation for persistent storage."""
+
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        self._conn: Any = None
+        self._lock = asyncio.Lock()
+
+    async def _ensure_connection(self) -> Any:
+        if self._conn is None:
+            import aiosqlite
+
+            # Ensure parent directory exists
+            db_dir = Path(self.db_path).parent
+            db_dir.mkdir(parents=True, exist_ok=True)
+
+            self._conn = await aiosqlite.connect(self.db_path)
+            # Enable WAL mode for better concurrency
+            await self._conn.execute("PRAGMA journal_mode=WAL")
+            await self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS compact_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    start_seq INTEGER NOT NULL,
+                    end_seq INTEGER NOT NULL,
+                    before_token_estimate INTEGER NOT NULL,
+                    after_token_estimate INTEGER NOT NULL,
+                    message_count INTEGER NOT NULL,
+                    transcript_path TEXT NOT NULL,
+                    analysis TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    compact_model TEXT NOT NULL,
+                    compact_tokens INTEGER NOT NULL
+                )
+            """)
+            await self._conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_compact_session_agent
+                ON compact_metadata (session_id, agent_id, created_at)
+            """)
+            await self._conn.commit()
+        return self._conn
+
+    async def close(self) -> None:
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
+
+    async def save_compact_metadata(
+        self, session_id: str, agent_id: str, metadata: CompactMetadata
+    ) -> None:
+        async with self._lock:
+            conn = await self._ensure_connection()
+            await conn.execute(
+                """
+                INSERT INTO compact_metadata (
+                    session_id, agent_id, start_seq, end_seq,
+                    before_token_estimate, after_token_estimate, message_count,
+                    transcript_path, analysis, created_at, compact_model, compact_tokens
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    metadata.session_id,
+                    metadata.agent_id,
+                    metadata.start_seq,
+                    metadata.end_seq,
+                    metadata.before_token_estimate,
+                    metadata.after_token_estimate,
+                    metadata.message_count,
+                    metadata.transcript_path,
+                    json.dumps(metadata.analysis, ensure_ascii=False, default=str),
+                    metadata.created_at.isoformat(),
+                    metadata.compact_model,
+                    metadata.compact_tokens,
+                ),
+            )
+            await conn.commit()
+
+    async def get_latest_compact_metadata(
+        self, session_id: str, agent_id: str
+    ) -> CompactMetadata | None:
+        conn = await self._ensure_connection()
+        async with conn.execute(
+            """
+            SELECT * FROM compact_metadata
+            WHERE session_id = ? AND agent_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (session_id, agent_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return self._row_to_metadata(row)
+
+    async def get_compact_history(
+        self, session_id: str, agent_id: str
+    ) -> list[CompactMetadata]:
+        conn = await self._ensure_connection()
+        async with conn.execute(
+            """
+            SELECT * FROM compact_metadata
+            WHERE session_id = ? AND agent_id = ?
+            ORDER BY created_at ASC
+            """,
+            (session_id, agent_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [self._row_to_metadata(row) for row in rows]
+
+    def _row_to_metadata(self, row: tuple) -> CompactMetadata:
+        return CompactMetadata(
+            session_id=row[1],
+            agent_id=row[2],
+            start_seq=row[3],
+            end_seq=row[4],
+            before_token_estimate=row[5],
+            after_token_estimate=row[6],
+            message_count=row[7],
+            transcript_path=row[8],
+            analysis=json.loads(row[9]),
+            created_at=datetime.fromisoformat(row[10]),
+            compact_model=row[11],
+            compact_tokens=row[12],
+        )
+
+
+__all__ = ["SessionStorage", "InMemorySessionStorage", "SQLiteSessionStorage"]

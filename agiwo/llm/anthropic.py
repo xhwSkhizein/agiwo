@@ -1,5 +1,4 @@
 from typing import AsyncIterator
-import os
 import json
 
 
@@ -71,14 +70,10 @@ class AnthropicModel(Model):
             return self.api_key
         if hasattr(settings, "anthropic_api_key") and settings.anthropic_api_key:
             return settings.anthropic_api_key.get_secret_value()
-        return os.getenv("ANTHROPIC_API_KEY")
+        return None
 
     def _resolve_base_url(self) -> str | None:
-        return (
-            self.base_url
-            or settings.anthropic_base_url
-            or os.getenv("ANTHROPIC_BASE_URL")
-        )
+        return self.base_url or settings.anthropic_base_url
 
     def _create_client(self) -> AsyncAnthropic:
         client_kwargs = {"api_key": self._resolve_api_key()}

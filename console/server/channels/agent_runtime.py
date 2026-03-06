@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from uuid import NAMESPACE_URL, uuid5
 
 from agiwo.agent.agent import Agent
+from agiwo.agent.schema import UserInput
 from agiwo.scheduler.models import AgentStateStatus, SchedulerOutput
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
@@ -95,7 +96,7 @@ class AgentRuntimeManager:
         self,
         agent: Agent,
         runtime: SessionRuntime,
-        user_input: str,
+        user_input: UserInput,
     ) -> AsyncIterator[SchedulerOutput]:
         current_state = await self._scheduler.get_state(runtime.scheduler_state_id)
 
@@ -118,11 +119,13 @@ class AgentRuntimeManager:
                 agent=agent,
                 timeout=self._scheduler_wait_timeout,
             )
-        elif current_state.status in (
-            AgentStateStatus.RUNNING,
-            AgentStateStatus.PENDING,
-        ):
+        elif current_state.status == AgentStateStatus.RUNNING:
             output_stream = await self._handle_running_state(
+                agent, runtime, user_input,
+            )
+        elif current_state.status == AgentStateStatus.PENDING:
+            # Agent hasn't started yet — wait for it to finish, then submit task
+            output_stream = await self._handle_pending_state(
                 agent, runtime, user_input,
             )
         else:
@@ -193,8 +196,39 @@ class AgentRuntimeManager:
         self,
         agent: Agent,
         runtime: SessionRuntime,
-        user_input: str,
+        user_input: UserInput,
     ) -> AsyncIterator[SchedulerOutput]:
+        steered = await self._scheduler.steer(runtime.scheduler_state_id, user_input)
+        if steered:
+            logger.info(
+                "user_input_steered_to_running_agent",
+                state_id=runtime.scheduler_state_id,
+            )
+        else:
+            logger.warning(
+                "steer_failed_agent_not_in_process",
+                state_id=runtime.scheduler_state_id,
+            )
+
+        # Don't block; the input was delivered via steering queue or saved as USER_HINT.
+        # Return an empty stream so the caller can proceed.
+        async def _empty_stream() -> AsyncIterator[SchedulerOutput]:
+            if False:
+                yield  # type: ignore[misc]
+
+        return _empty_stream()
+
+    async def _handle_pending_state(
+        self,
+        agent: Agent,
+        runtime: SessionRuntime,
+        user_input: UserInput,
+    ) -> AsyncIterator[SchedulerOutput]:
+        """Agent is PENDING (not started yet). Wait for current execution, then submit the new task."""
+        logger.info(
+            "waiting_for_pending_agent_before_submit",
+            state_id=runtime.scheduler_state_id,
+        )
         await self._scheduler.wait_for(
             runtime.scheduler_state_id,
             timeout=self._scheduler_wait_timeout,
@@ -209,12 +243,7 @@ class AgentRuntimeManager:
                 timeout=self._scheduler_wait_timeout,
             )
 
-        if refreshed is not None and refreshed.status in (
-            AgentStateStatus.RUNNING,
-            AgentStateStatus.PENDING,
-        ):
-            raise RuntimeError("previous_task_still_running_after_timeout")
-
+        # Agent completed, failed, or timed out — start fresh
         runtime.scheduler_state_id = agent.id
         return self._scheduler.submit_and_subscribe(
             agent,

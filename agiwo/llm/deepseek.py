@@ -1,4 +1,3 @@
-import os
 import re
 import uuid
 from typing import AsyncIterator
@@ -109,13 +108,12 @@ class DeepseekModel(OpenAIModel):
             return self.api_key
         if settings.deepseek_api_key:
             return settings.deepseek_api_key.get_secret_value()
-        return os.getenv("DEEPSEEK_API_KEY")
+        return None
 
     def _resolve_base_url(self) -> str | None:
         return (
             self.base_url
             or settings.deepseek_base_url
-            or os.getenv("DEEPSEEK_BASE_URL")
             or "https://api.deepseek.com"
         )
 

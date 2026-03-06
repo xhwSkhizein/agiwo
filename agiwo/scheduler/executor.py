@@ -9,13 +9,23 @@ import asyncio
 import copy
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from agiwo.agent.agent import Agent
-from agiwo.agent.schema import RunOutput, TerminationReason
+from agiwo.agent.hooks import AgentHooks
+from agiwo.agent.schema import (
+    RunOutput,
+    StepRecord,
+    TerminationReason,
+    UserInput,
+    normalize_to_message,
+)
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     OutputChannelState,
+    PendingEvent,
+    SchedulerEventType,
     SchedulerOutput,
     WakeCondition,
     WakeType,
@@ -39,6 +49,8 @@ class SchedulerExecutor:
     - Waking sleeping agents
     - Handling agent output (completion, sleep, periodic)
     - Building wake messages with child results
+    - Generating pending events for parent agents
+    - Syncing step activity to AgentState via on_step hook
     """
 
     def __init__(
@@ -77,6 +89,13 @@ class SchedulerExecutor:
         # Get parent's fully built system prompt
         parent_system_prompt = await parent.get_effective_system_prompt()
 
+        # Instruction is a task-specific directive — append to system prompt (static per child)
+        instruction = overrides.get("instruction")
+        if instruction:
+            parent_system_prompt += (
+                f"\n\n<task-instruction>\n{instruction}\n</task-instruction>"
+            )
+
         child = Agent(
             name=parent.name,
             description=parent.description,
@@ -88,16 +107,55 @@ class SchedulerExecutor:
             hooks=parent.hooks,
         )
         self._agents[child.id] = child
+        self._wrap_on_step_hook(child, state.id)
         return child
+
+    def _wrap_on_step_hook(self, agent: Agent, state_id: str) -> None:
+        """Wrap agent's on_step hook to sync last_activity_at and recent_steps to AgentState."""
+        if agent.hooks is None:
+            agent.hooks = AgentHooks()
+
+        original_hook = agent.hooks.on_step
+
+        async def scheduler_on_step(step: StepRecord) -> None:
+            if original_hook:
+                await original_hook(step)
+            await self._sync_step_to_state(state_id, step)
+
+        agent.hooks.on_step = scheduler_on_step
+
+    async def _sync_step_to_state(self, state_id: str, step: StepRecord) -> None:
+        """Update last_activity_at and rolling recent_steps in AgentState."""
+        try:
+            now = datetime.now(timezone.utc)
+            step_summary: dict = {
+                "role": step.role.value
+                if hasattr(step.role, "value")
+                else str(step.role),
+                "timestamp": now.isoformat(),
+            }
+            if step.tool_calls:
+                step_summary["tool_calls"] = [
+                    tc.get("function", {}).get("name", "unknown")
+                    for tc in step.tool_calls
+                ]
+            if step.tool_name:
+                step_summary["tool_name"] = step.tool_name
+
+            await self._store.append_recent_step(state_id, step_summary)
+        except Exception:
+            # Non-critical — don't propagate hook errors
+            pass
 
     async def run_root_agent(
         self,
         agent: Agent,
-        user_input: str,
+        user_input: UserInput,
         session_id: str,
         state: AgentState,
     ) -> None:
         """Run the root agent (submitted by user)."""
+        self._wrap_on_step_hook(agent, state.id)
         abort_signal = self._abort_signals.get(state.id)
         try:
             output = await agent.run(
@@ -139,14 +197,8 @@ class SchedulerExecutor:
                 child = await self.create_child_agent(state)
                 child_session_id = state.id
 
-                task = state.task
-                overrides = state.config_overrides or {}
-                instruction = overrides.get("instruction")
-                if instruction:
-                    task = f"<system-instruction>\n{instruction}\n</system-instruction>\n\n{task}"
-
                 output = await child.run(
-                    task, session_id=child_session_id, abort_signal=abort_signal
+                    state.task, session_id=child_session_id, abort_signal=abort_signal
                 )
                 await self._handle_agent_output(state, output)
             except Exception as e:
@@ -160,6 +212,11 @@ class SchedulerExecutor:
                 )
                 await self._update_status_and_notify(
                     state.id, AgentStateStatus.FAILED, result_summary=str(e)
+                )
+                await self._emit_event_to_parent(
+                    state,
+                    SchedulerEventType.CHILD_FAILED,
+                    {"reason": str(e)},
                 )
             finally:
                 self._abort_signals.pop(state.id, None)
@@ -194,6 +251,41 @@ class SchedulerExecutor:
                     "wake_agent_failed",
                     state_id=state.id,
                     wake_count=state.wake_count,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                )
+                await self._update_status_and_notify(
+                    state.id, AgentStateStatus.FAILED, result_summary=str(e)
+                )
+                await self._emit_output(state, str(e), is_final=state.parent_id is None)
+            finally:
+                self._abort_signals.pop(state.id, None)
+                await self._maybe_cleanup_agent(state)
+
+    async def wake_agent_for_events(
+        self, state: AgentState, events: list[PendingEvent]
+    ) -> None:
+        """Wake a SLEEPING agent to process accumulated pending events."""
+        agent = self._agents.get(state.id)
+        if agent is None:
+            logger.error("wake_agent_for_events_not_found", state_id=state.id)
+            return
+
+        await self._store.increment_wake_count(state.id)
+        abort_signal = self._abort_signals.get(state.id)
+        async with self._semaphore:
+            await self._store.update_status(state.id, AgentStateStatus.RUNNING)
+            try:
+                wake_message = self._build_events_wake_message(events)
+                output = await agent.run(
+                    wake_message, session_id=state.session_id, abort_signal=abort_signal
+                )
+                await self._handle_agent_output(state, output)
+            except Exception as e:
+                logger.exception(
+                    "wake_agent_for_events_failed",
+                    state_id=state.id,
+                    event_count=len(events),
                     error=str(e),
                     error_type=type(e).__name__,
                 )
@@ -254,7 +346,6 @@ class SchedulerExecutor:
                     "timeout_wake_failed",
                     state_id=state.id,
                     error=str(e),
-                    error_type=type(e).__name__,
                 )
                 await self._update_status_and_notify(
                     state.id, AgentStateStatus.FAILED, result_summary=str(e)
@@ -265,11 +356,17 @@ class SchedulerExecutor:
         """Handle agent output: SLEEPING, persistent idle, PERIODIC reschedule, or COMPLETED.
 
         Each branch emits text to the output channel when the agent produced content.
+        Also generates pending events for parent agents when appropriate.
         """
         text = output.response
 
         if output.termination_reason == TerminationReason.SLEEPING:
             await self._emit_output(state, text, is_final=False)
+            await self._emit_event_to_parent(
+                state,
+                SchedulerEventType.CHILD_SLEEP_RESULT,
+                {"result": text or "", "explain": state.explain},
+            )
             return
 
         refreshed = await self._store.get_state(state.id)
@@ -294,6 +391,12 @@ class SchedulerExecutor:
                     result_summary=text,
                 )
                 await self._emit_output(state, text, is_final=False)
+                # Notify parent about periodic child result
+                await self._emit_event_to_parent(
+                    state,
+                    SchedulerEventType.CHILD_SLEEP_RESULT,
+                    {"result": text or "", "explain": state.explain, "periodic": True},
+                )
                 return
 
         is_root = state.parent_id is None
@@ -312,6 +415,47 @@ class SchedulerExecutor:
             state.id, AgentStateStatus.COMPLETED, result_summary=text
         )
         await self._emit_output(state, text, is_final=is_root)
+        await self._emit_event_to_parent(
+            state,
+            SchedulerEventType.CHILD_COMPLETED,
+            {"result": text or ""},
+        )
+
+    async def _emit_event_to_parent(
+        self,
+        state: AgentState,
+        event_type: SchedulerEventType,
+        payload: dict,
+    ) -> None:
+        """Create a PendingEvent for the parent agent if this is a child agent."""
+        if state.parent_id is None:
+            return
+        parent_state = await self._store.get_state(state.parent_id)
+        if parent_state is None:
+            return
+
+        event = PendingEvent(
+            id=str(uuid4()),
+            target_agent_id=state.parent_id,
+            session_id=state.session_id,
+            event_type=event_type,
+            payload={
+                **payload,
+                "child_agent_id": state.id,
+                "child_task": state.task
+                if isinstance(state.task, str)
+                else str(state.task),
+            },
+            source_agent_id=state.id,
+            created_at=datetime.now(timezone.utc),
+        )
+        await self._store.save_event(event)
+        logger.info(
+            "pending_event_created",
+            event_type=event_type.value,
+            target_agent_id=state.parent_id,
+            source_agent_id=state.id,
+        )
 
     async def _emit_output(
         self, state: AgentState, text: str | None, *, is_final: bool
@@ -322,6 +466,7 @@ class SchedulerExecutor:
         If ``include_child_outputs`` is False on the channel, child outputs are skipped.
         When ``is_final`` is True and there is no text, a ``None`` sentinel is pushed
         so that consumers unblock.
+        Child agent output is prefixed with a notice tag indicating the source.
         """
         root_id = state.id if state.parent_id is None else state.parent_id
         channel_state = self._output_channels.get(root_id)
@@ -331,6 +476,12 @@ class SchedulerExecutor:
         is_child = state.parent_id is not None
         if is_child and not channel_state.include_child_outputs:
             return
+
+        # Prefix child output with source notice
+        if is_child and text:
+            refreshed = await self._store.get_state(state.id)
+            status_val = refreshed.status.value if refreshed else "unknown"
+            text = f"<notice>agent_id={state.id}, status={status_val}</notice>\n{text}"
 
         if text:
             await channel_state.queue.put(
@@ -370,8 +521,8 @@ class SchedulerExecutor:
         state_id: str,
         status: AgentStateStatus,
         *,
-        result_summary: str | None = None,
-        wake_condition: WakeCondition | None = None,
+        result_summary: str | None = ...,
+        wake_condition: WakeCondition | None = ...,
     ) -> None:
         """Update state status and notify waiters if it's a terminal state."""
         await self._store.update_status(
@@ -379,11 +530,14 @@ class SchedulerExecutor:
         )
         if status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED):
             self._notify_state_change(state_id)
-        elif status == AgentStateStatus.SLEEPING and wake_condition is not None:
-            if wake_condition.type == WakeType.TASK_SUBMITTED:
+        elif status == AgentStateStatus.SLEEPING and wake_condition is not ...:
+            if (
+                wake_condition is not None
+                and wake_condition.type == WakeType.TASK_SUBMITTED
+            ):
                 self._notify_state_change(state_id)
 
-    async def _build_wake_message(self, state: AgentState) -> str:
+    async def _build_wake_message(self, state: AgentState) -> UserInput:
         """Build a wake message with auto-injected child results."""
         wc = state.wake_condition
         if wc is None:
@@ -418,10 +572,50 @@ class SchedulerExecutor:
             )
 
         if wc.type == WakeType.TASK_SUBMITTED:
-            task = wc.submitted_task or ""
-            return f"{task}"
+            return normalize_to_message(wc.submitted_task or "")
 
         return "You have been woken up. Please continue your task."
+
+    def _build_events_wake_message(self, events: list[PendingEvent]) -> str:
+        """Build a wake message from a list of pending events."""
+        lines = [f"You have {len(events)} new notification(s):\n"]
+        for event in events:
+            event_label = event.event_type.value.replace("_", " ").title()
+            child_id = event.payload.get(
+                "child_agent_id", event.source_agent_id or "unknown"
+            )
+            lines.append(f"### {event_label} — Agent: {child_id}")
+            if event.event_type == SchedulerEventType.CHILD_SLEEP_RESULT:
+                result = event.payload.get("result", "")
+                explain = event.payload.get("explain")
+                periodic = event.payload.get("periodic", False)
+                if periodic:
+                    lines.append("(Periodic check completed)")
+                if explain:
+                    lines.append(f"Sleep reason: {explain}")
+                if result:
+                    lines.append(f"Result:\n{result}")
+            elif event.event_type == SchedulerEventType.CHILD_COMPLETED:
+                result = event.payload.get("result", "")
+                if result:
+                    lines.append(f"Result:\n{result}")
+            elif event.event_type == SchedulerEventType.CHILD_FAILED:
+                reason = event.payload.get("reason", "Unknown failure")
+                lines.append(f"Failure reason: {reason}")
+            elif event.event_type == SchedulerEventType.HEALTH_WARNING:
+                lines.append(
+                    event.payload.get("message", "Agent may be stuck or unhealthy")
+                )
+            elif event.event_type == SchedulerEventType.USER_HINT:
+                hint = event.payload.get("hint", "")
+                if hint:
+                    lines.append(f"User hint: {hint}")
+            lines.append("")
+        lines.append(
+            "Please review these notifications and take appropriate action "
+            "(e.g., summarize results for the user, cancel stuck agents, etc.)."
+        )
+        return "\n".join(lines)
 
     async def _collect_child_results(
         self, state: AgentState

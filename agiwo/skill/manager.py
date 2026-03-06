@@ -6,10 +6,10 @@ discovery, loading, and tool creation. It also generates system prompts
 with available skills for agents.
 """
 
-import json
-import os
 from pathlib import Path
 
+from agiwo.config.settings import settings
+from agiwo.agent.options import resolve_skills_dirs
 from agiwo.skill.loader import SkillLoader
 from agiwo.skill.registry import SkillMetadata, SkillRegistry
 from agiwo.skill.skill_tool import SkillTool
@@ -95,7 +95,11 @@ class SkillManager:
         lines.append("")
 
         for metadata in self._metadata_cache:
-            lines.append(f"- **{metadata.name}**: {metadata.description}")
+            lines.append("  <skill>")
+            lines.append(f"    <name>{metadata.name}</name>")
+            lines.append(f"    <description>{metadata.description}</description>")
+            lines.append(f"    <location>{metadata.path}</location>")
+            lines.append("  </skill>")
 
         lines.append("")
         lines.append("### How to use skills:")
@@ -128,6 +132,10 @@ class SkillManager:
         self._metadata_cache = await self.registry.discover_skills(skills_dirs)
         logger.info("skills_reloaded", skill_count=len(self._metadata_cache))
 
+    def get_resolved_skills_dirs(self) -> list[Path]:
+        """Return the current effective skill directories."""
+        return self._resolve_skills_dirs()
+
     def _resolve_skills_dirs(self) -> list[Path]:
         """
         Resolve skill directories from configuration and environment.
@@ -136,17 +144,25 @@ class SkillManager:
             List of resolved Path objects
         """
         dirs: list[Path] = []
+        seen: set[str] = set()
 
         # Add configured directories
         for skill_dir in self._skills_dirs:
             resolved = Path(skill_dir).expanduser().resolve()
+            key = str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
             if resolved.exists():
                 dirs.append(resolved)
             else:
                 logger.debug("skill_dir_not_found", path=str(resolved))
 
-        for env_dir in _iter_skills_dirs_from_env():
-            resolved = Path(env_dir).expanduser().resolve()
+        for resolved in resolve_skills_dirs(_iter_skills_dirs_from_env(), str(settings.get_root_path())):
+            key = str(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
             if resolved.exists():
                 dirs.append(resolved)
             else:
@@ -156,22 +172,4 @@ class SkillManager:
 
 
 def _iter_skills_dirs_from_env() -> list[str]:
-    raw = os.getenv("agiwo_SKILLS_DIRS") or os.getenv("agiwo_SKILLS_DIR")
-    if not raw:
-        return []
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        parsed = None
-
-    if isinstance(parsed, list):
-        items = parsed
-    elif isinstance(parsed, str):
-        items = [parsed]
-    elif parsed is None:
-        items = raw.split(",")
-    else:
-        items = [raw]
-
-    return [item.strip() for item in items if str(item).strip()]
+    return settings.get_env_skills_dirs()

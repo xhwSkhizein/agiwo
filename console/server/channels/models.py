@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
+from agiwo.agent.schema import UserMessage
+
 
 @dataclass
 class Attachment:
@@ -63,7 +65,7 @@ class BatchContext:
 class BatchPayload:
     context: BatchContext
     messages: list[InboundMessage]
-    rendered_user_input: str
+    user_message: UserMessage
 
 
 class SessionRuntimeStore(Protocol):

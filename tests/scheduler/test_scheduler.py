@@ -13,12 +13,20 @@ from agiwo.llm.base import Model, StreamChunk
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
+    PendingEvent,
     SchedulerConfig,
+    SchedulerEventType,
     WakeCondition,
     WakeType,
 )
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.scheduler.store import InMemoryAgentStateStorage
+
+
+_TEST_CLEANUP_WAIT_FIRST = 0.1
+_TEST_CLEANUP_WAIT_SECOND = 0.05
+_TEST_SETTLE_WAIT = 0.1
+_TEST_RUN_TIMEOUT = 2
 
 
 def _cleanup_agiwo_workspace(agent_names: list[str]) -> None:
@@ -48,12 +56,12 @@ async def cleanup_agiwo_folders():
     """Automatically cleanup .agiwo folders after each test."""
     yield
     # Wait for any async Agent initialization to complete
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(_TEST_CLEANUP_WAIT_FIRST)
     # List of agent names used in tests that create workspaces
     agent_names = ["test", "persist", "simple", "parent", "child-1"]
     _cleanup_agiwo_workspace(agent_names)
     # Second cleanup after short delay for any stragglers
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(_TEST_CLEANUP_WAIT_SECOND)
     _cleanup_agiwo_workspace(agent_names)
 
 
@@ -198,7 +206,7 @@ class TestSchedulerSubmit:
             assert state.task == "Hello"
             assert state.depth == 0
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(_TEST_SETTLE_WAIT)
 
     @pytest.mark.asyncio
     async def test_submit_persistent(self):
@@ -211,7 +219,7 @@ class TestSchedulerSubmit:
             assert state is not None
             assert state.is_persistent is True
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(_TEST_SETTLE_WAIT)
 
     @pytest.mark.asyncio
     async def test_submit_rejects_concurrent(self):
@@ -243,7 +251,9 @@ class TestSchedulerSimpleCompletion:
         agent = Agent(name="simple", description="test", model=model, id="simple", tools=[])
 
         async with Scheduler(_fast_config()) as scheduler:
-            result = await scheduler.run(agent, "What is the answer?", timeout=5)
+            result = await scheduler.run(
+                agent, "What is the answer?", timeout=_TEST_RUN_TIMEOUT
+            )
 
         assert result.termination_reason == TerminationReason.COMPLETED
         assert result.response == "The answer is 42"
@@ -391,7 +401,8 @@ class TestSchedulerWakeMessage:
             ),
         )
         msg = await scheduler._build_wake_message(state)
-        assert "Do X" in msg
+        from agiwo.agent.schema import extract_text
+        assert "Do X" in extract_text(msg)
         await scheduler.stop()
 
     @pytest.mark.asyncio
@@ -589,6 +600,169 @@ class TestSchedulerCancel:
             assert s.status == AgentStateStatus.FAILED
             assert s.result_summary == "test cancel"
 
+        await scheduler.stop()
+
+
+class TestSchedulerHealthCheck:
+    @pytest.mark.asyncio
+    async def test_health_check_emits_warning_for_stuck_agent(self):
+        """Stuck RUNNING child agent should generate a HEALTH_WARNING pending event for parent."""
+        from datetime import datetime, timedelta, timezone
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+        await scheduler.start()
+
+        now = datetime.now(timezone.utc)
+        # Agent with last_activity_at 600s ago (> threshold of 300s)
+        parent = AgentState(
+            id="parent-1",
+            session_id="sess",
+            status=AgentStateStatus.SLEEPING,
+            task="parent",
+            parent_id=None,
+        )
+        child = AgentState(
+            id="child-stuck",
+            session_id="sess",
+            status=AgentStateStatus.RUNNING,
+            task="stuck child",
+            parent_id="parent-1",
+            last_activity_at=now - timedelta(seconds=600),
+        )
+        await store.save_state(parent)
+        await store.save_state(child)
+
+        await scheduler._check_health()
+
+        events = await store.get_pending_events("parent-1", "sess")
+        assert len(events) == 1
+        assert events[0].event_type == SchedulerEventType.HEALTH_WARNING
+        assert events[0].source_agent_id == "child-stuck"
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_health_check_no_warning_for_healthy_agent(self):
+        """Agent with recent activity should NOT generate health warning."""
+        from datetime import datetime, timedelta, timezone
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+        await scheduler.start()
+
+        now = datetime.now(timezone.utc)
+        parent = AgentState(
+            id="parent-2", session_id="sess", status=AgentStateStatus.SLEEPING, task="p", parent_id=None,
+        )
+        child = AgentState(
+            id="child-healthy", session_id="sess", status=AgentStateStatus.RUNNING, task="c",
+            parent_id="parent-2", last_activity_at=now - timedelta(seconds=10),
+        )
+        await store.save_state(parent)
+        await store.save_state(child)
+
+        await scheduler._check_health()
+
+        events = await store.get_pending_events("parent-2", "sess")
+        assert len(events) == 0
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_health_check_deduplicates_warnings(self):
+        """Second health check should not emit duplicate warning if one already exists."""
+        from datetime import datetime, timedelta, timezone
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+        await scheduler.start()
+
+        now = datetime.now(timezone.utc)
+        parent = AgentState(
+            id="parent-3", session_id="sess", status=AgentStateStatus.SLEEPING, task="p", parent_id=None,
+        )
+        child = AgentState(
+            id="child-dup", session_id="sess", status=AgentStateStatus.RUNNING, task="c",
+            parent_id="parent-3", last_activity_at=now - timedelta(seconds=600),
+        )
+        await store.save_state(parent)
+        await store.save_state(child)
+
+        await scheduler._check_health()
+        await scheduler._check_health()  # Second check — should not duplicate
+
+        events = await store.get_pending_events("parent-3", "sess")
+        assert len(events) == 1
+        await scheduler.stop()
+
+
+class TestSchedulerDebounce:
+    @pytest.mark.asyncio
+    async def test_process_pending_events_wakes_sleeping_agent(self):
+        """A SLEEPING parent agent with pending events should be woken."""
+        from datetime import datetime, timezone
+        scheduler = Scheduler(_fast_config(event_debounce_min_count=1))
+        store = scheduler._store
+
+        parent = AgentState(
+            id="parent-dbounce",
+            session_id="sess",
+            status=AgentStateStatus.SLEEPING,
+            task="parent",
+            parent_id=None,
+            wake_count=0,
+        )
+        await store.save_state(parent)
+
+        event = PendingEvent(
+            id="evt-1",
+            target_agent_id="parent-dbounce",
+            session_id="sess",
+            event_type=SchedulerEventType.CHILD_COMPLETED,
+            payload={"result": "done", "child_agent_id": "child-x"},
+            source_agent_id="child-x",
+            created_at=datetime.now(timezone.utc),
+        )
+        await store.save_event(event)
+
+        # _process_pending_events should detect and dispatch
+        await scheduler._process_pending_events()
+
+        # Event should be deleted after dispatch
+        remaining = await store.get_pending_events("parent-dbounce", "sess")
+        assert len(remaining) == 0
+
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_process_pending_events_skips_non_sleeping(self):
+        """Non-SLEEPING agents should NOT be woken via debounce."""
+        from datetime import datetime, timezone
+        scheduler = Scheduler(_fast_config(event_debounce_min_count=1))
+        store = scheduler._store
+
+        running_agent = AgentState(
+            id="agent-running",
+            session_id="sess",
+            status=AgentStateStatus.RUNNING,
+            task="task",
+            parent_id=None,
+        )
+        await store.save_state(running_agent)
+
+        event = PendingEvent(
+            id="evt-2",
+            target_agent_id="agent-running",
+            session_id="sess",
+            event_type=SchedulerEventType.USER_HINT,
+            payload={"hint": "check this"},
+            source_agent_id=None,
+            created_at=datetime.now(timezone.utc),
+        )
+        await store.save_event(event)
+
+        before_dispatched = len(scheduler._dispatched_state_ids)
+        await scheduler._process_pending_events()
+        after_dispatched = len(scheduler._dispatched_state_ids)
+
+        # No new dispatch should have happened
+        assert after_dispatched == before_dispatched
         await scheduler.stop()
 
 

@@ -5,14 +5,19 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.tool.base import ToolResult
+from agiwo.tool.builtin.bash_tool.security import (
+    CommandSafetyDecision,
+    CommandSafetyValidator,
+)
 from agiwo.tool.builtin.bash_tool.tool import BashTool, BashToolConfig
 from agiwo.tool.builtin.bash_tool.types import (
+    AfterBashCallOutput,
+    BeforeBashCallOutput,
     CommandResult,
     ProcessInfo,
-    ProcessStatus,
     ProcessLogInfo,
+    ProcessStatus,
 )
-from agiwo.tool.builtin.bash_tool.security import CommandSafetyDecision
 
 
 class MockSandbox:
@@ -21,11 +26,35 @@ class MockSandbox:
     def __init__(self):
         self._processes: dict[str, dict] = {}
         self._process_counter = 0
+        self.executed_commands: list[str] = []
+        self.execute_calls: list[dict[str, object]] = []
+        self.started_process_calls: list[dict[str, str | None]] = []
+        self.stdin_writes: list[dict[str, str]] = []
 
     async def execute_command(
-        self, command: str, cwd: str | None = None, timeout: float | None = None
+        self,
+        command: str,
+        cwd: str | None = None,
+        timeout: float | None = None,
+        use_pty: bool = False,
+        pty_cols: int = 120,
+        pty_rows: int = 40,
+        stdin: str | None = None,
     ) -> CommandResult:
         """Execute a command and return result."""
+        self.executed_commands.append(command)
+        self.execute_calls.append(
+            {
+                "command": command,
+                "cwd": cwd,
+                "timeout": timeout,
+                "use_pty": use_pty,
+                "pty_cols": pty_cols,
+                "pty_rows": pty_rows,
+                "stdin": stdin,
+            }
+        )
+
         # Simulate echo command
         if command.startswith("echo "):
             output = command[5:].strip().strip('"\'')
@@ -43,15 +72,36 @@ class MockSandbox:
         # Default success
         return CommandResult(exit_code=0, stdout="success\n", stderr="")
 
-    async def start_process(self, command: str, cwd: str | None = None, env: dict | None = None) -> str:
+    async def start_process(
+        self,
+        command: str,
+        cwd: str | None = None,
+        env: dict | None = None,
+        agent_id: str | None = None,
+        use_pty: bool = False,
+        pty_cols: int = 120,
+        pty_rows: int = 40,
+    ) -> str:
         """Start a background process."""
         self._process_counter += 1
         process_id = f"job_{self._process_counter}"
+        self.started_process_calls.append(
+            {
+                "command": command,
+                "cwd": cwd,
+                "agent_id": agent_id,
+                "mode": "pty" if use_pty else "pipe",
+                "pty_cols": str(pty_cols),
+                "pty_rows": str(pty_rows),
+            }
+        )
         self._processes[process_id] = {
             "command": command,
             "state": "running",
+            "mode": "pty" if use_pty else "pipe",
             "started_at": time.time(),
             "exit_code": None,
+            "agent_id": agent_id,
         }
         return process_id
 
@@ -64,6 +114,7 @@ class MockSandbox:
             process_id=process_id,
             command=p["command"],
             state=p["state"],
+            mode=p["mode"],
             started_at=p["started_at"],
             exit_code=p["exit_code"],
         )
@@ -75,6 +126,7 @@ class MockSandbox:
         p = self._processes[process_id]
         return ProcessStatus(
             state=p["state"],
+            mode=p["mode"],
             started_at=p["started_at"],
             exit_code=p["exit_code"],
         )
@@ -99,6 +151,7 @@ class MockSandbox:
                     process_id=pid,
                     command=p["command"],
                     state=p["state"],
+                    mode=p["mode"],
                     started_at=p["started_at"],
                     exit_code=p["exit_code"],
                 )
@@ -112,13 +165,44 @@ class MockSandbox:
         return ProcessLogInfo(
             stdout_path=f"/tmp/{process_id}.stdout",
             stderr_path=f"/tmp/{process_id}.stderr",
+            mode=self._processes[process_id]["mode"],
         )
+
+    async def list_processes_by_agent(
+        self, agent_id: str, state: str = "all"
+    ) -> list[ProcessInfo]:
+        result = []
+        for pid, p in self._processes.items():
+            if p.get("agent_id") != agent_id:
+                continue
+            if state == "running" and p["state"] != "running":
+                continue
+            result.append(
+                ProcessInfo(
+                    process_id=pid,
+                    command=p["command"],
+                    state=p["state"],
+                    mode=p["mode"],
+                    started_at=p["started_at"],
+                    exit_code=p["exit_code"],
+                )
+            )
+        return result
+
+    async def write_process_stdin(self, process_id: str, data: str) -> None:
+        if process_id not in self._processes:
+            raise KeyError(f"Process not found: {process_id}")
+        if self._processes[process_id]["mode"] != "pty":
+            raise RuntimeError("Process does not support stdin writes (not PTY mode)")
+        self.stdin_writes.append({"process_id": process_id, "data": data})
 
 
 @pytest.fixture
 def mock_context():
     """Create a mock execution context."""
-    return MagicMock(spec=ExecutionContext)
+    context = MagicMock(spec=ExecutionContext)
+    context.agent_id = "agent_1"
+    return context
 
 
 @pytest.fixture
@@ -208,14 +292,31 @@ class TestBashToolBasic:
         assert result.output["ok"] is False
         assert "timeout must be a number" in result.output["stderr"]
 
-    async def test_stdin_not_supported(self, bash_tool, mock_context):
-        """Test that stdin parameter is rejected."""
+    async def test_stdin_requires_pty(self, bash_tool, mock_context):
+        """Test that stdin parameter requires PTY mode."""
         parameters = {"command": "echo hi", "stdin": "input", "tool_call_id": "tc_005"}
         result = await bash_tool.execute(parameters, mock_context)
 
         assert isinstance(result, ToolResult)
         assert result.output["ok"] is False
-        assert "stdin is not supported" in result.output["stderr"]
+        assert "stdin requires pty=true" in result.output["stderr"]
+
+    async def test_pty_foreground_uses_default_tty_size(self, bash_tool, mock_context):
+        parameters = {
+            "command": "echo hello",
+            "pty": True,
+            "stdin": "hi\n",
+            "tool_call_id": "tc_005b",
+        }
+        result = await bash_tool.execute(parameters, mock_context)
+
+        assert result.output["ok"] is True
+        assert result.output["mode"] == "pty"
+        call = bash_tool.config.sandbox.execute_calls[-1]
+        assert call["use_pty"] is True
+        assert call["pty_cols"] == 120
+        assert call["pty_rows"] == 40
+        assert call["stdin"] == "hi\n"
 
 
 class TestBashToolBackgroundJobs:
@@ -223,7 +324,7 @@ class TestBashToolBackgroundJobs:
 
     async def test_start_background_job(self, bash_tool, mock_context):
         """Test starting a background job."""
-        parameters = {"command": "sleep 10 &", "tool_call_id": "tc_006"}
+        parameters = {"command": "sleep 10", "background": True, "tool_call_id": "tc_006"}
         result = await bash_tool.execute(parameters, mock_context)
 
         assert isinstance(result, ToolResult)
@@ -231,6 +332,17 @@ class TestBashToolBackgroundJobs:
         assert result.output["background"] is True
         assert result.output["state"] == "running"
         assert "job_" in result.output["job_id"]
+        assert result.output["mode"] == "pipe"
+        assert bash_tool.config.sandbox.started_process_calls[-1]["agent_id"] == "agent_1"
+
+    async def test_start_background_job_with_pty(self, bash_tool, mock_context):
+        parameters = {"command": "codex", "pty": True, "background": True, "tool_call_id": "tc_006b"}
+        result = await bash_tool.execute(parameters, mock_context)
+
+        assert result.output["ok"] is True
+        assert result.output["background"] is True
+        assert result.output["mode"] == "pty"
+        assert bash_tool.config.sandbox.started_process_calls[-1]["mode"] == "pty"
 
     async def test_bashctl_jobs_empty(self, bash_tool, mock_context):
         """Test bashctl jobs with no jobs."""
@@ -244,7 +356,7 @@ class TestBashToolBackgroundJobs:
     async def test_bashctl_jobs_with_running(self, bash_tool, mock_context):
         """Test bashctl jobs --running filter."""
         # Start a background job first
-        await bash_tool.execute({"command": "sleep 10 &", "tool_call_id": "tc_008"}, mock_context)
+        await bash_tool.execute({"command": "sleep 10", "background": True, "tool_call_id": "tc_008"}, mock_context)
 
         parameters = {"command": "bashctl jobs --running", "tool_call_id": "tc_009"}
         result = await bash_tool.execute(parameters, mock_context)
@@ -258,7 +370,7 @@ class TestBashToolBackgroundJobs:
         """Test bashctl status command."""
         # Start a job
         job_result = await bash_tool.execute(
-            {"command": "sleep 10 &", "tool_call_id": "tc_010"}, mock_context
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_010"}, mock_context
         )
         job_id = job_result.output["job_id"]
 
@@ -269,6 +381,7 @@ class TestBashToolBackgroundJobs:
         assert result.output["ok"] is True
         assert result.output["job_id"] == job_id
         assert result.output["state"] == "running"
+        assert result.output["mode"] == "pipe"
 
     async def test_bashctl_status_not_found(self, bash_tool, mock_context):
         """Test bashctl status with non-existent job."""
@@ -284,7 +397,7 @@ class TestBashToolBackgroundJobs:
         """Test stopping a job."""
         # Start a job
         job_result = await bash_tool.execute(
-            {"command": "sleep 10 &", "tool_call_id": "tc_013"}, mock_context
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_013"}, mock_context
         )
         job_id = job_result.output["job_id"]
 
@@ -299,7 +412,7 @@ class TestBashToolBackgroundJobs:
         """Test force stopping a job."""
         # Start a job
         job_result = await bash_tool.execute(
-            {"command": "sleep 10 &", "tool_call_id": "tc_015"}, mock_context
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_015"}, mock_context
         )
         job_id = job_result.output["job_id"]
 
@@ -314,7 +427,7 @@ class TestBashToolBackgroundJobs:
         """Test bashctl paths command."""
         # Start a job
         job_result = await bash_tool.execute(
-            {"command": "sleep 10 &", "tool_call_id": "tc_017"}, mock_context
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_017"}, mock_context
         )
         job_id = job_result.output["job_id"]
 
@@ -325,6 +438,24 @@ class TestBashToolBackgroundJobs:
         assert result.output["ok"] is True
         assert result.output["stdout_path"] == f"/tmp/{job_id}.stdout"
         assert result.output["stderr_path"] == f"/tmp/{job_id}.stderr"
+        assert result.output["mode"] == "pipe"
+
+    async def test_bashctl_input(self, bash_tool, mock_context):
+        job_result = await bash_tool.execute(
+            {"command": "codex", "pty": True, "background": True, "tool_call_id": "tc_018b"},
+            mock_context,
+        )
+        job_id = job_result.output["job_id"]
+
+        result = await bash_tool.execute(
+            {"command": f"bashctl input {job_id} hello world", "tool_call_id": "tc_018c"},
+            mock_context,
+        )
+
+        assert result.output["ok"] is True
+        write = bash_tool.config.sandbox.stdin_writes[-1]
+        assert write["process_id"] == job_id
+        assert write["data"] == "hello world\n"
 
 
 class TestBashToolHelp:
@@ -354,7 +485,7 @@ class TestBashToolSafetyValidator:
 
     async def test_safety_validator_blocks_dangerous(self, bash_tool_with_validator, mock_context):
         """Test that safety validator blocks dangerous commands."""
-        parameters = {"command": "rm -rf / dangerous", "tool_call_id": "tc_021"}
+        parameters = {"command": "echo dangerous marker", "tool_call_id": "tc_021"}
         result = await bash_tool_with_validator.execute(parameters, mock_context)
 
         assert isinstance(result, ToolResult)
@@ -371,6 +502,31 @@ class TestBashToolSafetyValidator:
         assert result.output["ok"] is True
 
 
+class TestBashToolDefaultSafety:
+    """Default safety behavior without custom validator."""
+
+    async def test_default_construction_includes_safety_validator(self):
+        tool = BashTool()
+        assert isinstance(tool.config.command_safety_validator, CommandSafetyValidator)
+
+    async def test_default_safety_blocks_risky_command_without_execution(self, mock_sandbox, mock_context):
+        config = BashToolConfig(
+            sandbox=mock_sandbox,
+            cwd="/workspace",
+        )
+        tool = BashTool(config)
+
+        result = await tool.execute(
+            {"command": "sudo echo hello", "tool_call_id": "tc_022b"},
+            mock_context,
+        )
+
+        assert result.output["ok"] is False
+        assert result.output["exit_code"] == 126
+        assert "potentially risky" in result.output["stderr"]
+        assert mock_sandbox.executed_commands == []
+
+
 class TestBashToolLogs:
     """Log viewing tests."""
 
@@ -378,7 +534,7 @@ class TestBashToolLogs:
         """Test basic bashctl logs."""
         # Start a job
         job_result = await bash_tool.execute(
-            {"command": "sleep 10 &", "tool_call_id": "tc_023"}, mock_context
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_023"}, mock_context
         )
         job_id = job_result.output["job_id"]
 
@@ -398,6 +554,29 @@ class TestBashToolLogs:
         assert isinstance(result, ToolResult)
         assert result.output["ok"] is False
         assert "job not found" in result.output["stderr"]
+
+    async def test_bashctl_logs_invalid_stream(self, bash_tool, mock_context):
+        await bash_tool.execute({"command": "sleep 10", "background": True, "tool_call_id": "tc_025a"}, mock_context)
+        parameters = {
+            "command": "bashctl logs job_1 --stream combined",
+            "tool_call_id": "tc_025b",
+        }
+        result = await bash_tool.execute(parameters, mock_context)
+
+        assert result.output["ok"] is False
+        assert result.output["exit_code"] == 2
+        assert "must be one of" in result.output["stderr"]
+
+    async def test_bashctl_logs_grep_flags(self, bash_tool, mock_context):
+        await bash_tool.execute({"command": "sleep 10", "background": True, "tool_call_id": "tc_025c"}, mock_context)
+        parameters = {
+            "command": "bashctl logs job_1 --grep line --context 2 --ignore-case",
+            "tool_call_id": "tc_025d",
+        }
+        result = await bash_tool.execute(parameters, mock_context)
+
+        assert result.output["ok"] is True
+        assert "grep -n -i -C 2 -- line" in result.output["logs_command"]
 
 
 class TestBashToolInvalidCommands:
@@ -440,6 +619,14 @@ class TestBashToolInvalidCommands:
         assert result.output["ok"] is False
         assert "requires <job_id>" in result.output["stderr"]
 
+    async def test_trailing_ampersand_is_rejected(self, bash_tool, mock_context):
+        parameters = {"command": "sleep 10 &", "tool_call_id": "tc_029b"}
+        result = await bash_tool.execute(parameters, mock_context)
+
+        assert result.output["ok"] is False
+        assert result.output["exit_code"] == 2
+        assert "background=true" in result.output["stderr"]
+
 
 class TestBashToolTiming:
     """Timing and duration tests."""
@@ -471,7 +658,6 @@ class TestBashToolHooks:
     async def test_before_hook_modifies_command(self, mock_sandbox, mock_context):
         """Test before hook can modify command."""
         def before_hook(input_data):
-            from agiwo.tool.builtin.bash_tool.types import BeforeBashCallOutput
             return BeforeBashCallOutput(command=input_data.command.replace("OLD", "NEW"))
 
         config = BashToolConfig(
@@ -487,12 +673,12 @@ class TestBashToolHooks:
         result = await tool.execute(parameters, mock_context)
 
         assert isinstance(result, ToolResult)
-        # The hook should have modified the command
+        assert result.output["stdout"].strip() == "NEW"
+        assert mock_sandbox.executed_commands[-1] == "echo NEW"
 
     async def test_after_hook_modifies_result(self, mock_sandbox, mock_context):
         """Test after hook can modify result."""
         def after_hook(input_data):
-            from agiwo.tool.builtin.bash_tool.types import AfterBashCallOutput
             modified = CommandResult(
                 exit_code=input_data.result.exit_code,
                 stdout=input_data.result.stdout + " [MODIFIED]",
@@ -533,7 +719,7 @@ class TestBashToolHttpServerScenario:
 
         # Step 1: Start HTTP server in background
         start_result = await tool.execute(
-            {"command": "python -m http.server 18888 &", "tool_call_id": "tc_034"},
+            {"command": "python -m http.server 18888", "background": True, "tool_call_id": "tc_034"},
             mock_context,
         )
         assert isinstance(start_result, ToolResult)
@@ -609,6 +795,7 @@ class TestBashToolDefaultConstruction:
         assert tool.config is not None
         assert tool.config.sandbox is not None
         assert tool.config.cwd == "."
+        assert isinstance(tool.config.command_safety_validator, CommandSafetyValidator)
 
     async def test_bash_tool_no_args_execution(self, mock_context):
         """Test BashTool created without args can execute commands."""

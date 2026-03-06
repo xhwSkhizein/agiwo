@@ -14,12 +14,40 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// ── UserInput Types ────────────────────────────────────────────────────
+
+export interface UserMessage {
+  __type: "user_message";
+  content: Array<{
+    type: string;
+    text?: string;
+    url?: string;
+    mime_type?: string;
+  }>;
+  context?: {
+    source: string;
+    metadata?: Record<string, unknown>;
+  };
+}
+
+export interface ContentParts {
+  __type: "content_parts";
+  parts: Array<{
+    type: string;
+    text?: string;
+    url?: string;
+    mime_type?: string;
+  }>;
+}
+
+export type UserInput = string | UserMessage | ContentParts | unknown;
+
 // ── Sessions / Runs ────────────────────────────────────────────────────
 
 export interface SessionSummary {
   session_id: string;
   agent_id: string | null;
-  last_user_input: string | null;
+  last_user_input: UserInput | null;  // 结构化 UserInput
   last_response: string | null;
   run_count: number;
   step_count: number;
@@ -51,6 +79,7 @@ export interface StepResponse {
   content: unknown;
   content_for_user: string | null;
   reasoning_content: string | null;
+  user_input: UserInput | null;
   tool_calls: Record<string, unknown>[] | null;
   tool_call_id: string | null;
   name: string | null;
@@ -156,21 +185,27 @@ export function getTrace(traceId: string) {
 // ── Agents ─────────────────────────────────────────────────────────────
 
 export interface AgentOptionsPayload {
+  config_root: string;
   max_steps: number;
   run_timeout: number;
   max_context_window_tokens: number;
   max_tokens_per_run: number;
   max_run_token_cost: number | null;
+  enable_termination_summary: boolean;
+  termination_summary_prompt: string;
   enable_skill: boolean;
-  skills_dir: string | null;
+  skills_dirs: string[] | null;
+  relevant_memory_max_token: number;
+  stream_cleanup_timeout: number;
+  compact_prompt: string;
 }
 
 export interface ModelParamsPayload {
   max_output_tokens_per_call: number;
   temperature: number;
-  top_p?: number;
-  frequency_penalty?: number;
-  presence_penalty?: number;
+  top_p: number;
+  frequency_penalty: number;
+  presence_penalty: number;
   cache_hit_price: number;
   input_price: number;
   output_price: number;
@@ -254,7 +289,7 @@ export interface WakeConditionResponse {
 export interface AgentStateListItem {
   id: string;
   status: string;
-  task: string;
+  task: UserInput;
   parent_id: string | null;
   wake_condition: WakeConditionResponse | null;
   result_summary: string | null;
@@ -269,7 +304,7 @@ export interface AgentStateDetail {
   id: string;
   session_id: string;
   status: string;
-  task: string;
+  task: UserInput;
   parent_id: string | null;
   config_overrides: Record<string, unknown>;
   wake_condition: WakeConditionResponse | null;
@@ -331,4 +366,64 @@ export function cancelSchedulerChat(agentId: string, stateId: string) {
       body: JSON.stringify({ state_id: stateId }),
     }
   );
+}
+
+/**
+ * Extract readable text from UserInput for display.
+ * Handles:
+ * - string: returns as-is
+ * - UserMessage (__type=user_message): extracts text from content array
+ * - ContentParts (__type=content_parts): extracts text from parts array
+ * - other: returns JSON.stringify (fallback)
+ */
+export function formatUserInput(input: UserInput): string {
+  if (input === null || input === undefined) {
+    return "";
+  }
+
+  // Plain string
+  if (typeof input === "string") {
+    return input;
+  }
+
+  // Object with __type
+  if (typeof input === "object" && input !== null) {
+    const typed = input as Record<string, unknown>;
+    const type = typed.__type;
+
+    // UserMessage format
+    if (type === "user_message") {
+      const content = typed.content as Array<Record<string, unknown>> | undefined;
+      if (Array.isArray(content)) {
+        const texts: string[] = [];
+        for (const part of content) {
+          if (part.type === "text" && typeof part.text === "string") {
+            texts.push(part.text);
+          }
+        }
+        return texts.join("\n");
+      }
+    }
+
+    // ContentParts format
+    if (type === "content_parts") {
+      const parts = typed.parts as Array<Record<string, unknown>> | undefined;
+      if (Array.isArray(parts)) {
+        const texts: string[] = [];
+        for (const part of parts) {
+          if (part.type === "text" && typeof part.text === "string") {
+            texts.push(part.text);
+          }
+        }
+        return texts.join("\n");
+      }
+    }
+  }
+
+  // Fallback: return JSON string
+  try {
+    return JSON.stringify(input, null, 2);
+  } catch {
+    return String(input);
+  }
 }

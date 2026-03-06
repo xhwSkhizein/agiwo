@@ -2,22 +2,184 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, User, Bot, Wrench } from "lucide-react";
+import { ArrowLeft, User, Bot, Wrench, FileImage, FileAudio, FileVideo, FileText, Paperclip } from "lucide-react";
 import Link from "next/link";
-import { getSessionSteps } from "@/lib/api";
-import type { StepResponse } from "@/lib/api";
+import { getSessionSteps, formatUserInput } from "@/lib/api";
+import type { StepResponse, UserMessage, UserInput } from "@/lib/api";
+
+function ContentPartItem({ part }: { part: { type: string; text?: string; url?: string; mime_type?: string } }) {
+  const { type, text, url, mime_type } = part;
+
+  // Text content
+  if (type === "text" && text) {
+    return (
+      <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words">
+        {text}
+      </div>
+    );
+  }
+
+  // Image
+  if (type === "image" || type === "image_url" || mime_type?.startsWith("image/")) {
+    return (
+      <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
+        <FileImage className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <span className="text-xs text-zinc-400">[图片]</span>
+          {url && (
+            <a href={url} target="_blank" rel="noopener noreferrer" className="block text-xs text-blue-400 truncate hover:underline">
+              {url}
+            </a>
+          )}
+          {mime_type && <span className="text-xs text-zinc-600 ml-2">{mime_type}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  // Audio
+  if (type === "audio" || type === "input_audio" || mime_type?.startsWith("audio/")) {
+    return (
+      <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
+        <FileAudio className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <span className="text-xs text-zinc-400">[音频]</span>
+          {url && <span className="block text-xs text-zinc-500 truncate">{url}</span>}
+          {mime_type && <span className="text-xs text-zinc-600 ml-2">{mime_type}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  // Video
+  if (type === "video" || type === "video_url" || mime_type?.startsWith("video/")) {
+    return (
+      <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
+        <FileVideo className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <span className="text-xs text-zinc-400">[视频]</span>
+          {url && <span className="block text-xs text-zinc-500 truncate">{url}</span>}
+          {mime_type && <span className="text-xs text-zinc-600 ml-2">{mime_type}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  // File
+  if (type === "file" || url) {
+    return (
+      <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
+        <Paperclip className="w-4 h-4 text-zinc-400 shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <span className="text-xs text-zinc-400">[文件]</span>
+          {url && (
+            <a href={url} target="_blank" rel="noopener noreferrer" className="block text-xs text-blue-400 truncate hover:underline">
+              {url}
+            </a>
+          )}
+          {mime_type && <span className="text-xs text-zinc-600 ml-2">{mime_type}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  // Unknown type
+  return (
+    <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
+      <FileText className="w-4 h-4 text-zinc-500 shrink-0 mt-0.5" />
+      <div className="min-w-0 text-xs text-zinc-500">
+        <span className="text-zinc-400">[{type}]</span>
+        {text && <span className="ml-2">{text}</span>}
+        {url && <span className="block truncate">{url}</span>}
+      </div>
+    </div>
+  );
+}
+
+function UserMessageContent({ content }: { content: unknown }) {
+  // Try to parse as UserMessage
+  if (typeof content !== "object" || content === null) {
+    return <div className="text-sm text-zinc-200">{formatUserInput(content as UserInput)}</div>;
+  }
+
+  const typed = content as Record<string, unknown>;
+  const type = typed.__type;
+
+  // UserMessage format
+  if (type === "user_message") {
+    const userMsg = content as UserMessage;
+    const { content: parts, context } = userMsg;
+
+    return (
+      <div className="space-y-3">
+        {/* Content parts */}
+        {parts && parts.length > 0 && (
+          <div className="space-y-2">
+            {parts.map((part, i) => (
+              <ContentPartItem key={i} part={part} />
+            ))}
+          </div>
+        )}
+
+        {/* Context info */}
+        {context && (
+          <div className="pt-2 border-t border-zinc-800/50 space-y-2">
+            {/* Source */}
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Source</span>
+              <span className="text-xs px-2 py-0.5 rounded bg-emerald-900/30 text-emerald-400 border border-emerald-800/30">
+                {context.source}
+              </span>
+            </div>
+
+            {/* Metadata */}
+            {context.metadata && Object.keys(context.metadata).length > 0 && (
+              <div className="space-y-1">
+                <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Metadata</span>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                  {Object.entries(context.metadata).map(([key, value]) => (
+                    <div key={key} className="flex items-center gap-2 min-w-0">
+                      <span className="text-zinc-500 shrink-0">{key}:</span>
+                      <span className="text-zinc-300 truncate font-mono">
+                        {typeof value === "string" ? value : JSON.stringify(value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ContentParts format
+  if (type === "content_parts") {
+    const parts = typed.parts as Array<{ type: string; text?: string; url?: string; mime_type?: string }> | undefined;
+    if (parts && parts.length > 0) {
+      return (
+        <div className="space-y-2">
+          {parts.map((part, i) => (
+            <ContentPartItem key={i} part={part} />
+          ))}
+        </div>
+      );
+    }
+  }
+
+  // Fallback to string representation
+  return <div className="text-sm text-zinc-200">{formatUserInput(content as UserInput)}</div>;
+}
 
 function StepCard({ step }: { step: StepResponse }) {
   const isUser = step.role === "user";
   const isAssistant = step.role === "assistant";
   const isTool = step.role === "tool";
 
-  const content =
-    typeof step.content === "string"
-      ? step.content
-      : step.content
-      ? JSON.stringify(step.content, null, 2)
-      : "";
+  // For user steps, use the full UserMessageContent component
+  // For other steps, use simple text display
+  const content = step.content;
 
   return (
     <div
@@ -47,9 +209,17 @@ function StepCard({ step }: { step: StepResponse }) {
         </div>
       )}
 
-      {content && (
-        <div className="text-sm whitespace-pre-wrap break-words max-h-96 overflow-auto">
-          {content}
+      {Boolean(content) && (
+        <div className="max-h-96 overflow-auto">
+          {isUser ? (
+            <UserMessageContent content={content} />
+          ) : (
+            <div className="text-sm whitespace-pre-wrap break-words">
+              {typeof content === "string"
+                ? content
+                : JSON.stringify(content, null, 2)}
+            </div>
+          )}
         </div>
       )}
 

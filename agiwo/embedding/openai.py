@@ -2,11 +2,11 @@
 OpenAI and OpenAI-compatible embedding models.
 """
 
-import os
 from dataclasses import dataclass, field
 
 import httpx
 
+from agiwo.config.settings import load_settings
 from agiwo.embedding.base import EmbeddingError, EmbeddingModel
 from agiwo.utils.logging import get_logger
 
@@ -36,10 +36,13 @@ class OpenAIEmbedding(EmbeddingModel):
     _client: httpx.AsyncClient | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
+        runtime_settings = load_settings()
         if self.api_key is None:
-            self.api_key = os.getenv("OPENAI_API_KEY", "")
+            self.api_key = runtime_settings.get_openai_api_key() or ""
         if self.base_url is None:
-            self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+            self.base_url = (
+                runtime_settings.openai_base_url or "https://api.openai.com/v1"
+            )
         self.base_url = self.base_url.rstrip("/")
 
     async def embed(self, texts: list[str]) -> list[list[float]]:

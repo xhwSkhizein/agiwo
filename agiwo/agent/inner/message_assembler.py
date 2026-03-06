@@ -2,7 +2,47 @@
 MessageAssembler - Assembles complete LLM message lists.
 """
 
-from agiwo.agent.schema import StepRecord, steps_to_messages, MemoryRecord
+from typing import Any
+
+from agiwo.agent.schema import (
+    ChannelContext,
+    MemoryRecord,
+    StepRecord,
+    steps_to_messages,
+)
+
+
+def _render_channel_context(ctx: ChannelContext) -> str:
+    lines = [f"source: {ctx.source}"]
+    for key, value in ctx.metadata.items():
+        if key in ("recent_dm_messages", "recent_group_messages") and isinstance(value, list):
+            if value:
+                lines.append(f"{key}:")
+                for msg in value:
+                    lines.append(f"  - {msg}")
+        elif isinstance(value, (str, int, float, bool)):
+            lines.append(f"{key}: {value}")
+    return "<channel-context>\n" + "\n".join(lines) + "\n</channel-context>"
+
+
+def _render_memories(memories: list[MemoryRecord]) -> str:
+    content = "\n\n".join(m.content for m in memories)
+    return f"<relevant-memories>\n{content}\n</relevant-memories>"
+
+
+def _render_hook_result(result: str) -> str:
+    return f"<before_run_hook_result>\n{result}\n</before_run_hook_result>"
+
+
+def _prepend_to_user_message(msg: dict[str, Any], preamble: str) -> None:
+    """Prepend preamble text to the last user message content."""
+    content = msg.get("content")
+    if isinstance(content, str):
+        msg["content"] = preamble + "\n\n" + content
+    elif isinstance(content, list):
+        msg["content"] = [{"type": "text", "text": preamble}] + content
+    else:
+        msg["content"] = preamble
 
 
 class MessageAssembler:
@@ -16,16 +56,21 @@ class MessageAssembler:
         existing_steps: list[StepRecord] | None = None,
         memories: list[MemoryRecord] | None = None,
         before_run_hook_result: str | None = None,
+        *,
+        channel_context: ChannelContext | None = None,
     ) -> list[dict]:
         """
         Assemble the complete message list.
 
+        All dynamic context (channel metadata, memories, hook result) is prepended
+        to the last user message content to protect system prompt KV cache.
+
         Args:
-            system_prompt: Optional system prompt to include at the beginning.
-            existing_steps: Conversation history steps.
-            user_input: User input.
-            memories: List of memory records that are relevant to the user input.
+            system_prompt: The static system prompt.
+            existing_steps: Conversation history steps (user step already included).
+            memories: Relevant memory records to inject.
             before_run_hook_result: Result from before-run hook if provided.
+            channel_context: Structured channel metadata (source, chat info, history).
 
         Returns:
             List of message dicts ready for the LLM.
@@ -35,45 +80,41 @@ class MessageAssembler:
         if memories is None:
             memories = []
 
-        # use step is include in messages
         messages: list[dict] = steps_to_messages(existing_steps)
 
-        momos: str | None = MessageAssembler._build_memory_injection_msg(
-            messages, memories
-        )
-        last_user_input = messages[-1]
-        if momos:
-            if last_user_input["role"] == "user":
-                last_user_input["content"] += (
-                    "\n\n<inject-memories>" + momos + "</inject-memories>"
-                )
+        filtered_memories = MessageAssembler._filter_memories(messages, memories)
 
-        # re-think about this
+        preamble_parts: list[str] = []
+        if channel_context:
+            preamble_parts.append(_render_channel_context(channel_context))
+        if filtered_memories:
+            preamble_parts.append(_render_memories(filtered_memories))
         if before_run_hook_result:
-            last_user_input["content"] += (
-                "\n\n<before_run_hook_result>"
-                + before_run_hook_result
-                + "</before_run_hook_result>"
-            )
+            preamble_parts.append(_render_hook_result(before_run_hook_result))
 
-        # Insert system prompt if provided
+        if preamble_parts and messages:
+            last_msg = messages[-1]
+            if last_msg.get("role") == "user":
+                preamble_text = "\n\n".join(preamble_parts)
+                _prepend_to_user_message(last_msg, preamble_text)
+
         if system_prompt:
             messages.insert(0, {"role": "system", "content": system_prompt})
 
         return messages
 
     @staticmethod
-    def _build_memory_injection_msg(
+    def _filter_memories(
         messages: list[dict], memories: list[MemoryRecord]
-    ) -> str | None:
+    ) -> list[MemoryRecord]:
         if not memories:
-            return None
+            return []
 
         MIN_RELEVANCE_SCORE = 0.5
         SIMILARITY_THRESHOLD = 0.8
 
         existing_texts: list[str] = [
-            msg.get("content", "") for msg in messages[:-1] if msg.get("content")
+            msg.get("content", "") for msg in messages[:-1] if isinstance(msg.get("content"), str)
         ]
 
         def _is_similar_to_history(content: str) -> bool:
@@ -86,7 +127,7 @@ class MessageAssembler:
                     return True
             return False
 
-        filtered_memories: list[MemoryRecord] = []
+        filtered: list[MemoryRecord] = []
         seen_contents: set[str] = set()
 
         for memory in sorted(
@@ -105,12 +146,9 @@ class MessageAssembler:
             if _is_similar_to_history(content_normalized):
                 continue
 
-            filtered_memories.append(memory)
+            filtered.append(memory)
 
-        if not filtered_memories:
-            return None
-
-        return "\n\n".join([m.content for m in filtered_memories])
+        return filtered
 
     @staticmethod
     def _text_similarity(a: str, b: str) -> float:

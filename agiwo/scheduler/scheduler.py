@@ -12,20 +12,24 @@ from typing import Any, AsyncIterator
 from uuid import uuid4
 
 from agiwo.agent.agent import Agent
-from agiwo.agent.schema import RunOutput, TerminationReason
+from agiwo.agent.schema import RunOutput, TerminationReason, UserInput, extract_text
 from agiwo.scheduler.executor import SchedulerExecutor
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     OutputChannelState,
+    PendingEvent,
     SchedulerConfig,
+    SchedulerEventType,
     SchedulerOutput,
     WakeCondition,
     WakeType,
 )
 from agiwo.scheduler.store import AgentStateStorage, create_agent_state_storage
 from agiwo.scheduler.tools import (
+    CancelAgentTool,
+    ListAgentsTool,
     QuerySpawnedAgentTool,
     SleepAndWaitTool,
     SpawnAgentTool,
@@ -89,6 +93,8 @@ class Scheduler:
             SpawnAgentTool(self._store, self._guard),
             SleepAndWaitTool(self._store, self._guard),
             QuerySpawnedAgentTool(self._store),
+            CancelAgentTool(self),
+            ListAgentsTool(self._store),
         ]
 
     # ──────────────────────────────────────────────────────────────────────
@@ -148,7 +154,7 @@ class Scheduler:
     async def run(
         self,
         agent: Agent,
-        user_input: str,
+        user_input: UserInput,
         *,
         session_id: str | None = None,
         timeout: float | None = None,
@@ -176,7 +182,7 @@ class Scheduler:
     async def submit(
         self,
         agent: Agent,
-        user_input: str,
+        user_input: UserInput,
         *,
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
@@ -234,7 +240,7 @@ class Scheduler:
     async def submit_task(
         self,
         state_id: str,
-        task: str,
+        task: UserInput,
         *,
         agent: Agent | None = None,
     ) -> None:
@@ -276,7 +282,7 @@ class Scheduler:
     async def submit_and_subscribe(
         self,
         agent: Agent,
-        user_input: str,
+        user_input: UserInput,
         *,
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
@@ -313,7 +319,7 @@ class Scheduler:
     async def submit_task_and_subscribe(
         self,
         state_id: str,
-        task: str,
+        task: UserInput,
         *,
         agent: Agent | None = None,
         timeout: float | None = None,
@@ -458,6 +464,48 @@ class Scheduler:
         logger.info("scheduler_cancel", state_id=state_id, reason=reason)
         return True
 
+    async def steer(self, state_id: str, user_input: UserInput) -> bool:
+        """
+        Send a steering message to a RUNNING agent.
+
+        The text is extracted from ``user_input`` and injected into the agent's
+        next LLM call via the steering queue. If the agent is not currently running,
+        the hint is saved as a USER_HINT pending event for delivery on the next wake.
+
+        Returns:
+            True if the steering queue was available (agent is RUNNING in-process),
+            False otherwise (message saved as pending event for later delivery).
+        """
+        message = extract_text(user_input)
+        if not message:
+            return False
+
+        agent = self._agents.get(state_id)
+        queue_available = False
+
+        if agent is not None:
+            steering_queue = agent.get_steering_queue()
+            if steering_queue is not None:
+                await steering_queue.put(message)
+                queue_available = True
+
+        # Also save as USER_HINT pending event as fallback / audit trail
+        state = await self._store.get_state(state_id)
+        if state is not None:
+            event = PendingEvent(
+                id=str(uuid4()),
+                target_agent_id=state_id,
+                session_id=state.session_id,
+                event_type=SchedulerEventType.USER_HINT,
+                payload={"hint": message},
+                source_agent_id=None,
+                created_at=datetime.now(timezone.utc),
+            )
+            await self._store.save_event(event)
+
+        logger.info("steer_sent", state_id=state_id, queue_available=queue_available)
+        return queue_available
+
     async def shutdown(self, state_id: str) -> bool:
         """
         Graceful shutdown — let the agent produce a final report then exit (user-triggered only).
@@ -518,6 +566,8 @@ class Scheduler:
         """Single scheduling tick: propagate signals, enforce timeouts, start pending, wake sleeping."""
         await self._propagate_signals()
         await self._enforce_timeouts()
+        await self._check_health()
+        await self._process_pending_events()
         await self._start_pending()
         await self._wake_sleeping()
 
@@ -555,6 +605,86 @@ class Scheduler:
             self._active_tasks.add(task)
             task.add_done_callback(self._active_tasks.discard)
 
+    async def _check_health(self) -> None:
+        """Find stuck RUNNING agents and emit HEALTH_WARNING events to their parents."""
+        now = datetime.now(timezone.utc)
+        unhealthy = await self._guard.find_unhealthy(now)
+        for state in unhealthy:
+            if state.parent_id is None:
+                continue
+            parent_state = await self._store.get_state(state.parent_id)
+            if parent_state is None:
+                continue
+            # Dedup: skip if recent health warning already exists for this pair
+            already_warned = await self._store.has_recent_health_warning(
+                target_agent_id=state.parent_id,
+                source_agent_id=state.id,
+                within_seconds=self._config.task_limits.health_check_threshold_seconds,
+                now=now,
+            )
+            if already_warned:
+                continue
+            event = PendingEvent(
+                id=str(uuid4()),
+                target_agent_id=state.parent_id,
+                session_id=state.session_id,
+                event_type=SchedulerEventType.HEALTH_WARNING,
+                payload={
+                    "child_agent_id": state.id,
+                    "message": (
+                        f"Agent '{state.id}' appears stuck — no activity for "
+                        f">{self._config.task_limits.health_check_threshold_seconds:.0f}s. "
+                        f"Consider using cancel_agent to terminate it."
+                    ),
+                    "last_activity_at": state.last_activity_at.isoformat() if state.last_activity_at else None,
+                },
+                source_agent_id=state.id,
+                created_at=now,
+            )
+            await self._store.save_event(event)
+            logger.warning(
+                "health_warning_emitted",
+                stuck_agent_id=state.id,
+                parent_id=state.parent_id,
+            )
+
+    async def _process_pending_events(self) -> None:
+        """Process debounced pending events: wake SLEEPING parent agents to receive notifications."""
+        now = datetime.now(timezone.utc)
+        min_count = self._config.event_debounce_min_count
+        max_wait = self._config.event_debounce_max_wait_seconds
+
+        agent_session_pairs = await self._store.find_agents_with_debounced_events(min_count, max_wait, now)
+        for agent_id, session_id in agent_session_pairs:
+            if agent_id in self._dispatched_state_ids:
+                continue
+            state = await self._store.get_state(agent_id)
+            if state is None:
+                # Orphaned events — agent no longer exists, delete by agent_id
+                await self._store.delete_events_by_agent(agent_id)
+                continue
+            if state.status != AgentStateStatus.SLEEPING:
+                # Agent exists but not sleeping — delete events for this specific session
+                events = await self._store.get_pending_events(agent_id, session_id)
+                if events:
+                    await self._store.delete_events([e.id for e in events])
+                continue
+
+            rejection = await self._guard.check_wake(state)
+            if rejection is not None:
+                logger.warning("pending_events_wake_rejected", state_id=agent_id, reason=rejection)
+                continue
+
+            events = await self._store.get_pending_events(agent_id, state.session_id)
+            if not events:
+                continue
+
+            await self._store.delete_events([e.id for e in events])
+            self._dispatched_state_ids.add(agent_id)
+            task = asyncio.create_task(self._executor.wake_agent_for_events(state, events))
+            self._active_tasks.add(task)
+            task.add_done_callback(self._active_tasks.discard)
+
     async def _wake_sleeping(self) -> None:
         """Wake agents whose conditions are satisfied, skipping already-dispatched ones."""
         now = datetime.now(timezone.utc)
@@ -587,14 +717,14 @@ class Scheduler:
     async def _run_root_agent(
         self,
         agent: Agent,
-        user_input: str,
+        user_input: UserInput,
         session_id: str,
         state: AgentState,
     ) -> None:
         """Run the root agent (submitted by user)."""
         await self._executor.run_root_agent(agent, user_input, session_id, state)
 
-    async def _build_wake_message(self, state: AgentState) -> str:
+    async def _build_wake_message(self, state: AgentState) -> UserInput:
         """Build a wake message with auto-injected child results."""
         return await self._executor._build_wake_message(state)
 

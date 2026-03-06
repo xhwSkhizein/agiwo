@@ -99,6 +99,11 @@ class MongoRunStepStorage(RunStepStorage):
         data = asdict(obj)
         if "role" in data and hasattr(data["role"], "value"):
             data["role"] = data["role"].value
+        # Handle UserInput serialization for Run model
+        if hasattr(obj, "user_input") and obj.user_input is not None:
+            from agiwo.agent.schema import serialize_user_input
+            if not isinstance(obj.user_input, str):
+                data["user_input"] = serialize_user_input(obj.user_input)
         return filter_none_values(data)
 
     def _deserialize_run(self, doc: dict) -> Run:
@@ -106,6 +111,11 @@ class MongoRunStepStorage(RunStepStorage):
         metrics = doc.get("metrics")
         if isinstance(metrics, dict):
             doc["metrics"] = RunMetrics(**metrics)
+        # Handle UserInput deserialization
+        user_input = doc.get("user_input")
+        if isinstance(user_input, str) and user_input.startswith("{"):
+            from agiwo.agent.schema import deserialize_user_input
+            doc["user_input"] = deserialize_user_input(user_input)
         return Run(**doc)
 
     def _deserialize_step(self, doc: dict) -> StepRecord:

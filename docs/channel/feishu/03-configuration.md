@@ -32,7 +32,7 @@
 |--------|--------|------|
 | `AGIWO_CONSOLE_FEISHU_API_BASE_URL` | `https://open.feishu.cn` | 飞书 OpenAPI 地址 |
 | `AGIWO_CONSOLE_FEISHU_BOT_OPEN_ID` | `""` | 机器人 Open ID，群聊 @ 触发必需 |
-| `AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_ID` | `""` | 默认 Agent ID，消息处理入口 |
+| `AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME` | `""` | 默认 Agent 名称，消息处理入口 |
 | `AGIWO_CONSOLE_FEISHU_WHITELIST_OPEN_IDS` | `[]` | 白名单用户 Open ID 列表（JSON 数组） |
 | `AGIWO_CONSOLE_FEISHU_SDK_LOG_LEVEL` | `info` | Lark SDK 日志级别：`debug`/`info`/`warn`/`error` |
 
@@ -48,7 +48,7 @@
 
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
-| `AGIWO_CONSOLE_FEISHU_ACK_REACTION_EMOJI` | `FIREWORKS` | ACK 表情反应类型 [表情列表](https://open.feishu.cn/document/server-docs/im-v1/message-reaction/emojis-introduce) |
+| `AGIWO_CONSOLE_FEISHU_ACK_REACTION_EMOJI` | `Typing` | ACK 表情反应类型 [表情列表](https://open.feishu.cn/document/server-docs/im-v1/message-reaction/emojis-introduce) |
 | `AGIWO_CONSOLE_FEISHU_ACK_FALLBACK_TEXT` | `收到，正在处理。` | 表情失败时的回退文本 |
 
 ## 飞书平台配置
@@ -127,7 +127,7 @@ AGIWO_CONSOLE_FEISHU_ENABLED=true
 AGIWO_CONSOLE_FEISHU_MODE=long_connection
 AGIWO_CONSOLE_FEISHU_APP_ID=cli_xxxxxxxxxxxx
 AGIWO_CONSOLE_FEISHU_APP_SECRET=xxxxxxxxxxxxxxxx
-AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_ID=default-agent
+AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME=default-agent
 AGIWO_CONSOLE_FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxxxxx
 ```
 
@@ -151,7 +151,7 @@ AGIWO_CONSOLE_FEISHU_MODE=webhook
 AGIWO_CONSOLE_FEISHU_APP_ID=cli_xxxxxxxxxxxx
 AGIWO_CONSOLE_FEISHU_APP_SECRET=xxxxxxxxxxxxxxxx
 AGIWO_CONSOLE_FEISHU_VERIFICATION_TOKEN=xxxxxxxxxxxxxxxx
-AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_ID=default-agent
+AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME=default-agent
 AGIWO_CONSOLE_FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxxxxx
 ```
 
@@ -163,8 +163,10 @@ AGIWO_CONSOLE_FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxxxxx
 # =============================================================================
 # [A] Console Server
 # =============================================================================
-AGIWO_CONSOLE_STORAGE_TYPE=sqlite
-AGIWO_CONSOLE_SQLITE_DB_PATH=.agiwo/agiwo.db
+AGIWO_SQLITE_DB_PATH=.agiwo/agiwo.db
+AGIWO_CONSOLE_RUN_STEP_STORAGE_TYPE=sqlite
+AGIWO_CONSOLE_TRACE_STORAGE_TYPE=sqlite
+AGIWO_CONSOLE_METADATA_STORAGE_TYPE=sqlite
 AGIWO_CONSOLE_HOST=0.0.0.0
 AGIWO_CONSOLE_PORT=8422
 
@@ -188,7 +190,7 @@ AGIWO_CONSOLE_FEISHU_ENCRYPT_KEY=
 AGIWO_CONSOLE_FEISHU_BOT_OPEN_ID=ou_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # 默认 Agent（必须先在 Console 创建）
-AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_ID=my-assistant-agent
+AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME=my-assistant-agent
 
 # 访问控制（空数组表示允许所有）
 AGIWO_CONSOLE_FEISHU_WHITELIST_OPEN_IDS=[]
@@ -199,7 +201,7 @@ AGIWO_CONSOLE_FEISHU_MAX_BATCH_WINDOW_MS=15000
 AGIWO_CONSOLE_FEISHU_SCHEDULER_WAIT_TIMEOUT=900
 
 # ACK 响应
-AGIWO_CONSOLE_FEISHU_ACK_REACTION_EMOJI=FIREWORKS
+AGIWO_CONSOLE_FEISHU_ACK_REACTION_EMOJI=Typing
 AGIWO_CONSOLE_FEISHU_ACK_FALLBACK_TEXT="收到，正在处理。"
 
 # SDK 日志

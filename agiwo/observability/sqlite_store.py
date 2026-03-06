@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 from collections import deque
-from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -14,6 +13,7 @@ import aiosqlite
 from agiwo.observability.base import BaseTraceStorage, TraceQuery
 from agiwo.observability.trace import Trace, Span
 from agiwo.utils.logging import get_logger
+from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 
 logger = get_logger(__name__)
 
@@ -49,25 +49,22 @@ class SQLiteTraceStorage(BaseTraceStorage):
         self._initialized = False
 
     async def initialize(self) -> None:
-        """Initialize SQLite connection"""
+        """Initialize SQLite connection using shared pool."""
         if self._initialized:
             return
 
-        db_path = Path(self.db_path)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        self._connection = await aiosqlite.connect(str(db_path))
-        self._connection.row_factory = aiosqlite.Row
+        # Use shared connection pool
+        self._connection = await get_shared_connection(self.db_path)
 
         await self._create_tables()
         self._initialized = True
 
-        logger.info("sqlite_trace_storage_initialized", db_path=str(db_path))
+        logger.info("sqlite_trace_storage_initialized", db_path=self.db_path)
 
     async def disconnect(self) -> None:
-        """Close database connection."""
+        """Release connection back to pool."""
         if self._connection:
-            await self._connection.close()
+            await release_shared_connection(self.db_path)
             self._connection = None
             self._initialized = False
 
@@ -343,11 +340,8 @@ class SQLiteTraceStorage(BaseTraceStorage):
                 pass
 
     async def close(self) -> None:
-        """Close SQLite connection"""
-        if self._connection:
-            await self._connection.close()
-            self._connection = None
-            self._initialized = False
+        """Release connection back to pool."""
+        await self.disconnect()
 
 
 __all__ = ["SQLiteTraceStorage"]

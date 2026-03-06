@@ -6,6 +6,9 @@ from datetime import datetime, timedelta, timezone
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
+    PendingEvent,
+    SchedulerConfig,
+    SchedulerEventType,
     TaskLimits,
     TimeUnit,
     WaitMode,
@@ -214,6 +217,69 @@ class TestAgentState:
         assert AgentStateStatus.FAILED.value == "failed"
 
 
+class TestAgentStateNewFields:
+    def test_explain_field_default_none(self):
+        state = AgentState(
+            id="a1",
+            session_id="s1",
+            status=AgentStateStatus.RUNNING,
+            task="task",
+        )
+        assert state.explain is None
+        assert state.last_activity_at is None
+        assert state.recent_steps is None
+
+    def test_explain_field_set(self):
+        state = AgentState(
+            id="a1",
+            session_id="s1",
+            status=AgentStateStatus.SLEEPING,
+            task="task",
+            explain="Waiting for news search results",
+        )
+        assert state.explain == "Waiting for news search results"
+
+
+class TestPendingEvent:
+    def test_create_event(self):
+        now = datetime.now(timezone.utc)
+        event = PendingEvent(
+            id="evt-1",
+            target_agent_id="parent-agent",
+            session_id="sess-1",
+            event_type=SchedulerEventType.CHILD_COMPLETED,
+            payload={"result": "done"},
+            created_at=now,
+            source_agent_id="child-agent",
+        )
+        assert event.id == "evt-1"
+        assert event.event_type == SchedulerEventType.CHILD_COMPLETED
+        assert event.payload["result"] == "done"
+        assert event.source_agent_id == "child-agent"
+
+    def test_scheduler_event_types(self):
+        assert SchedulerEventType.CHILD_SLEEP_RESULT.value == "child_sleep_result"
+        assert SchedulerEventType.CHILD_COMPLETED.value == "child_completed"
+        assert SchedulerEventType.CHILD_FAILED.value == "child_failed"
+        assert SchedulerEventType.HEALTH_WARNING.value == "health_warning"
+        assert SchedulerEventType.USER_HINT.value == "user_hint"
+
+
+class TestSchedulerConfig:
+    def test_debounce_defaults(self):
+        config = SchedulerConfig()
+        assert config.event_debounce_min_count == 1
+        assert config.event_debounce_max_wait_seconds == 30.0
+
+    def test_debounce_custom(self):
+        config = SchedulerConfig(
+            event_debounce_min_count=3,
+            event_debounce_max_wait_seconds=60.0,
+        )
+        assert config.event_debounce_min_count == 3
+        assert config.event_debounce_max_wait_seconds == 60.0
+
+
 class TestTaskLimits:
     def test_defaults(self):
         limits = TaskLimits()
@@ -221,3 +287,4 @@ class TestTaskLimits:
         assert limits.max_children_per_agent == 10
         assert limits.default_wait_timeout == 600.0
         assert limits.max_wake_count == 20
+        assert limits.health_check_threshold_seconds == 300.0

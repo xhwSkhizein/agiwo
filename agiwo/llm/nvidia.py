@@ -1,4 +1,3 @@
-import os
 from typing import AsyncIterator
 
 from agiwo.config.settings import settings
@@ -43,13 +42,12 @@ class NvidiaModel(OpenAIModel):
             return self.api_key
         if settings.nvidia_api_key:
             return settings.nvidia_api_key.get_secret_value()
-        return os.getenv("NVIDIA_BUILD_API_KEY")
+        return None
 
     def _resolve_base_url(self) -> str | None:
         return (
             self.base_url
             or settings.nvidia_base_url
-            or os.getenv("NVIDIA_BUILD_BASE_URL")
             or "https://integrate.api.nvidia.com/v1"
         )
 

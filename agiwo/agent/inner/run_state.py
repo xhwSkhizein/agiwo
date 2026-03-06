@@ -1,6 +1,7 @@
 import time
 from dataclasses import dataclass, field
 
+from agiwo.agent.schema import CompactMetadata
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.schema import (
@@ -32,6 +33,10 @@ class RunState:
     assistant_steps_count: int = 0
     pending_tool_calls: list[dict] | None = None
     response_content: str | None = None
+
+    # Compact state
+    last_compact_metadata: CompactMetadata | None = None
+    compact_start_seq: int = 0
 
     async def next_sequence(self) -> int:
         return await self.context.sequence_counter.next()

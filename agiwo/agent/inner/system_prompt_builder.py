@@ -5,6 +5,7 @@ with composable sections (base, environment, skills, etc.)
 """
 
 import os
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -76,6 +77,31 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
         """Get the effective root path from options."""
         return self.options.get_effective_root_path()
 
+    def _ensure_template_files(self, workspace: str) -> None:
+        """Ensure IDENTITY.md, SOUL.md, USER.md exist in workspace.
+
+        If files don't exist, copy them from templates directory.
+
+        Args:
+            workspace: Absolute path to the agent workspace directory.
+        """
+        template_files = ["IDENTITY.md", "SOUL.md", "USER.md"]
+
+        for filename in template_files:
+            target_path = Path(workspace) / filename
+            if target_path.exists():
+                continue
+
+            source_path = Path(__file__).parent.parent.parent.parent / "templates" / filename
+            if source_path.exists():
+                try:
+                    shutil.copy2(source_path, target_path)
+                    logger.info("copied_template_file", source=str(source_path), target=str(target_path))
+                except Exception as e:
+                    logger.warning("failed_to_copy_template", filename=filename, error=str(e))
+            else:
+                logger.warning("template_file_not_found", filename=str(source_path))
+
     async def initialize(self) -> str:
         """Initialize workspace and build system prompt.
 
@@ -92,6 +118,9 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
             instance_work_dir = f"{workspace}/WORK/{self.agent_id}"
             os.makedirs(workspace + "/MEMORY", exist_ok=True)
             os.makedirs(instance_work_dir, exist_ok=True)
+
+            self._ensure_template_files(workspace)
+
             self._workspace_initialized = True
 
             if self._skill_manager is not None:
@@ -160,7 +189,7 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
         if self._skill_manager is None:
             return ""
 
-        skills_dirs = self._resolve_skills_dirs()
+        skills_dirs = self._get_skills_dirs_for_fingerprint()
         fingerprints: list[str] = []
 
         for skills_dir in skills_dirs:
@@ -212,21 +241,11 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
         )
         return self._system_prompt
 
-    def _resolve_skills_dirs(self) -> list[Path]:
-        """Resolve configured skills directories.
-
-        Returns:
-            List of resolved Path objects.
-        """
-        if self.options.skills_dir:
-            return [Path(self.options.skills_dir).expanduser().resolve()]
-
-        root_path = self._get_root_path()
-        default_dir = (
-            Path(f"{os.path.expanduser(root_path)}/skills").expanduser().resolve()
-        )
-
-        return [default_dir] if default_dir.exists() else []
+    def _get_skills_dirs_for_fingerprint(self) -> list[Path]:
+        """Get skill directories used for change detection."""
+        if self._skill_manager is not None:
+            return self._skill_manager.get_resolved_skills_dirs()
+        return self.options.get_configured_skills_dirs()
 
     def _build_base_section(self) -> str:
         """Build base system prompt section."""

@@ -11,13 +11,29 @@ This module implements the core agent execution loop:
 import asyncio
 import time
 
+from agiwo.agent.compact.compactor import Compactor
+from agiwo.agent.schema import CompactMetadata
+from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.llm_handler import LLMStreamHandler
-from agiwo.agent.inner.summarizer import build_termination_messages
+from agiwo.agent.inner.message_assembler import MessageAssembler
+from agiwo.agent.inner.summarizer import (
+    build_termination_messages,
+    DEFAULT_TERMINATION_USER_PROMPT,
+    _format_termination_reason,
+)
 from agiwo.agent.inner.run_state import RunState
-from agiwo.agent.schema import RunOutput, StepRecord, TerminationReason
+from agiwo.agent.schema import (
+    ChannelContext,
+    MemoryRecord,
+    RunOutput,
+    StepRecord,
+    TerminationReason,
+)
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.hooks import AgentHooks
+from agiwo.agent.storage.session import SessionStorage
+from agiwo.config.settings import settings
 from agiwo.llm.base import Model
 from agiwo.llm.helper import parse_json_tool_args
 from agiwo.utils.abort_signal import AbortSignal
@@ -62,11 +78,17 @@ class AgentExecutor:
         emitter: EventEmitter,
         options: AgentOptions | None = None,
         hooks: AgentHooks | None = None,
+        run_step_storage: RunStepStorage | None = None,
+        session_storage: SessionStorage | None = None,
+        root_path: str | None = None,
     ):
         self.model = model
         self.emitter = emitter
         self.options = options or AgentOptions()
         self.hooks = hooks or AgentHooks()
+        self.run_step_storage = run_step_storage
+        self.session_storage = session_storage
+        self.root_path = root_path or settings.root_path
         self.cache_hit_price = float(getattr(model, "cache_hit_price", 0.0) or 0.0)
         self.input_price = float(getattr(model, "input_price", 0.0) or 0.0)
         self.output_price = float(getattr(model, "output_price", 0.0) or 0.0)
@@ -76,23 +98,92 @@ class AgentExecutor:
 
         self._tool_schemas = [t.to_openai_schema() for t in tools] if tools else None
 
+        # Compactor (created only when both session_storage and max_context_window_tokens are set)
+        self._compactor: Compactor | None = None
+        if (
+            session_storage is not None
+            and self.options.max_context_window_tokens is not None
+        ):
+            self._compactor = Compactor(
+                llm_handler=self.llm_handler,
+                emitter=emitter,
+                session_storage=session_storage,
+                compact_prompt=self.options.compact_prompt,
+                root_path=self.root_path,
+            )
+
     # ───────────────────────────────────────────────────────────────────
     # Public API
     # ───────────────────────────────────────────────────────────────────
 
     async def execute(
         self,
-        messages: list[dict],
+        system_prompt: str,
+        user_step: StepRecord,
         context: ExecutionContext,
         *,
+        memories: list[MemoryRecord] | None = None,
+        before_run_hook_result: str | None = None,
+        channel_context: ChannelContext | None = None,
         pending_tool_calls: list[dict] | None = None,
         abort_signal: AbortSignal | None = None,
     ) -> RunOutput:
+        """
+        Execute agent loop.
+
+        Args:
+            system_prompt: System prompt for the agent.
+            user_step: Current user step (history loaded internally).
+            context: Execution context.
+            memories: Retrieved memory records.
+            before_run_hook_result: Result from before-run hook.
+            channel_context: Channel context metadata.
+            pending_tool_calls: Pending tool calls from previous run.
+            abort_signal: Abort signal for cancellation.
+
+        Returns:
+            RunOutput with response and metrics.
+        """
+        # Query CompactMetadata and load history
+        last_compact: CompactMetadata | None = None
+        compact_start_seq = 0
+        existing_steps: list[StepRecord] = []
+
+        if self.session_storage is not None:
+            last_compact = await self.session_storage.get_latest_compact_metadata(
+                context.session_id, context.agent_id
+            )
+            if last_compact:
+                compact_start_seq = last_compact.end_seq + 1
+
+        # Load historical steps (filtered by compact metadata)
+        # Note: user_step is already persisted by Agent, so it's included in the query result
+        if self.run_step_storage is not None:
+            existing_steps = await self.run_step_storage.get_steps(
+                session_id=context.session_id,
+                agent_id=context.agent_id,
+                start_seq=compact_start_seq if compact_start_seq > 0 else None,
+            )
+        else:
+            # No storage: use user_step directly
+            existing_steps = [user_step]
+
+        # Assemble messages from steps
+        messages = MessageAssembler.assemble(
+            system_prompt,
+            existing_steps,
+            memories,
+            before_run_hook_result,
+            channel_context=channel_context,
+        )
+
         state = RunState(
             context=context,
             config=self.options,
             messages=messages,
             tool_schemas=self._tool_schemas,
+            last_compact_metadata=last_compact,
+            compact_start_seq=compact_start_seq,
         )
 
         try:
@@ -140,6 +231,17 @@ class AgentExecutor:
                 state.termination_reason = reason
                 break
 
+            # Check if compact is needed
+            if await self._maybe_compact(state, abort_signal):
+                logger.info(
+                    "compact_triggered",
+                    run_id=state.context.run_id,
+                    before_messages=len(state.messages),
+                )
+
+            # Drain steering queue before LLM call
+            self._drain_steering_queue(state)
+
             # LLM call (with hooks)
             state.current_step += 1
             if self.hooks.on_before_llm_call:
@@ -176,6 +278,42 @@ class AgentExecutor:
     # ───────────────────────────────────────────────────────────────────
     # Helpers
     # ───────────────────────────────────────────────────────────────────
+
+    def _drain_steering_queue(self, state: RunState) -> None:
+        """Consume all pending steering messages and inject them into the current messages.
+
+        Injection rules:
+        - If the last message is role=user or role=tool: append <system-steering> tag to its content
+        - Otherwise: append a new user message with the steering text
+        """
+        queue = state.context.steering_queue
+        if queue is None or queue.empty():
+            return
+
+        parts: list[str] = []
+        while not queue.empty():
+            try:
+                parts.append(str(queue.get_nowait()))
+            except Exception:
+                break
+
+        if not parts:
+            return
+
+        steering_text = "\n".join(parts)
+        tag = f"\n\n<system-steering>{steering_text}</system-steering>"
+
+        last_msg = state.messages[-1] if state.messages else None
+        if last_msg and last_msg.get("role") in ("user", "tool"):
+            content = last_msg.get("content", "")
+            if isinstance(content, str):
+                last_msg["content"] = content + tag
+            elif isinstance(content, list):
+                last_msg["content"].append({"type": "text", "text": tag})
+            else:
+                last_msg["content"] = tag
+        else:
+            state.messages.append({"role": "user", "content": steering_text})
 
     async def _execute_tools(
         self,
@@ -259,6 +397,10 @@ class AgentExecutor:
             )
             return TerminationReason.TIMEOUT
 
+        return self._check_run_token_limits(state)
+
+    def _check_run_token_limits(self, state: RunState) -> TerminationReason | None:
+        """Check max_tokens_per_run and max_run_token_cost limits."""
         if (
             self.options.max_tokens_per_run is not None
             and state.total_tokens >= self.options.max_tokens_per_run
@@ -314,31 +456,7 @@ class AgentExecutor:
             )
             return TerminationReason.MAX_CONTEXT_WINDOW_TOKENS
 
-        if (
-            self.options.max_tokens_per_run is not None
-            and state.total_tokens >= self.options.max_tokens_per_run
-        ):
-            logger.warning(
-                "limit_hit_max_tokens_per_run_post",
-                total_tokens=state.total_tokens,
-                max_tokens=self.options.max_tokens_per_run,
-                run_id=state.context.run_id,
-            )
-            return TerminationReason.MAX_TOKENS_PER_RUN
-
-        if (
-            self.options.max_run_token_cost is not None
-            and state.token_cost >= self.options.max_run_token_cost
-        ):
-            logger.warning(
-                "limit_hit_max_run_token_cost_post",
-                token_cost=state.token_cost,
-                max_cost=self.options.max_run_token_cost,
-                run_id=state.context.run_id,
-            )
-            return TerminationReason.MAX_RUN_TOKEN_COST
-
-        return None
+        return self._check_run_token_limits(state)
 
     @staticmethod
     def _is_model_output_limit_hit(finish_reason: str | None) -> bool:
@@ -378,20 +496,37 @@ class AgentExecutor:
         if state.termination_reason not in self.SUMMARY_REASONS:
             return
 
-        summary_messages = build_termination_messages(
-            messages=state.messages,
-            termination_reason=state.termination_reason,
-            pending_tool_calls=state.pending_tool_calls,
-            custom_prompt=self.options.termination_summary_prompt,
+        # Build summary user prompt
+        prompt_template = (
+            self.options.termination_summary_prompt or DEFAULT_TERMINATION_USER_PROMPT
+        )
+        termination_reason_str = _format_termination_reason(state.termination_reason)
+        user_prompt = (
+            prompt_template % termination_reason_str
+            if "%s" in prompt_template
+            else prompt_template
         )
 
+        # Record Summary UserStep (the summary request)
+        user_seq = await state.next_sequence()
+        summary_user_step = StepRecord.user(
+            state.context,
+            sequence=user_seq,
+            content=user_prompt,
+            name="summary_request",
+        )
+        await self.emitter.emit_step_completed(summary_user_step)
+        state.track_step(summary_user_step, append_message=True)
+
+        # Call LLM for summary
         step, llm_context = await self.llm_handler.stream_assistant_step(
             state,
             self.emitter.emit_step_delta,
             abort_signal,
-            messages=summary_messages,
+            messages=state.messages,
             tools=None,
         )
+        step.name = "summary"
         await self.emitter.emit_step_completed(step, llm=llm_context)
         state.track_step(step, append_message=False)
 
@@ -399,3 +534,68 @@ class AgentExecutor:
             "summary_generated",
             tokens=step.metrics.total_tokens if step.metrics else 0,
         )
+
+    # ───────────────────────────────────────────────────────────────────
+    # Compact
+    # ───────────────────────────────────────────────────────────────────
+
+    async def _maybe_compact(
+        self,
+        state: RunState,
+        abort_signal: AbortSignal | None,
+    ) -> bool:
+        """
+        Check and perform compact if needed.
+
+        Returns:
+            True if compact was performed, False otherwise.
+        """
+        if self._compactor is None:
+            return False
+
+        if not self._compactor.should_compact(
+            state.messages, self.options.max_context_window_tokens
+        ):
+            return False
+
+        # Retry logic
+        retry_count = settings.compact_retry_count
+        last_error: Exception | None = None
+
+        for attempt in range(retry_count + 1):
+            try:
+                result = await self._compactor.compact(state, abort_signal)
+
+                # Update state with compacted messages
+                state.messages = result.compacted_messages
+
+                logger.info(
+                    "compact_success",
+                    run_id=state.context.run_id,
+                    start_seq=result.metadata.start_seq,
+                    end_seq=result.metadata.end_seq,
+                    before_tokens=result.metadata.before_token_estimate,
+                    after_tokens=result.metadata.after_token_estimate,
+                    attempt=attempt + 1,
+                )
+                return True
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "compact_attempt_failed",
+                    run_id=state.context.run_id,
+                    attempt=attempt + 1,
+                    max_attempts=retry_count + 1,
+                    error=str(e),
+                )
+                if attempt < retry_count:
+                    continue
+
+        # All retries failed, log and continue without compact
+        logger.error(
+            "compact_failed_all_retries",
+            run_id=state.context.run_id,
+            error=str(last_error),
+        )
+        return False

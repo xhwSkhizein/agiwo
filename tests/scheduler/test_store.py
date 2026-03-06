@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
+    PendingEvent,
+    SchedulerEventType,
     TimeUnit,
     WaitMode,
     WakeCondition,
@@ -279,3 +281,122 @@ class TestInMemoryWakeCount:
         s = await store.get_state("agent-1")
         assert s is not None
         assert s.wake_count == 2
+
+
+def _make_event(
+    id: str = "evt-1",
+    target_agent_id: str = "parent",
+    session_id: str = "sess-1",
+    event_type: SchedulerEventType = SchedulerEventType.CHILD_COMPLETED,
+    payload: dict | None = None,
+    source_agent_id: str | None = "child",
+    created_at: datetime | None = None,
+) -> PendingEvent:
+    return PendingEvent(
+        id=id,
+        target_agent_id=target_agent_id,
+        session_id=session_id,
+        event_type=event_type,
+        payload=payload or {"result": "done"},
+        source_agent_id=source_agent_id,
+        created_at=created_at or datetime.now(timezone.utc),
+    )
+
+
+class TestInMemoryPendingEvents:
+    @pytest.mark.asyncio
+    async def test_save_and_get_event(self, store):
+        event = _make_event()
+        await store.save_event(event)
+        events = await store.get_pending_events("parent", "sess-1")
+        assert len(events) == 1
+        assert events[0].id == "evt-1"
+        assert events[0].event_type == SchedulerEventType.CHILD_COMPLETED
+
+    @pytest.mark.asyncio
+    async def test_get_events_filters_by_target_and_session(self, store):
+        await store.save_event(_make_event(id="e1", target_agent_id="a", session_id="s1"))
+        await store.save_event(_make_event(id="e2", target_agent_id="b", session_id="s1"))
+        await store.save_event(_make_event(id="e3", target_agent_id="a", session_id="s2"))
+        events_a_s1 = await store.get_pending_events("a", "s1")
+        assert len(events_a_s1) == 1
+        assert events_a_s1[0].id == "e1"
+
+    @pytest.mark.asyncio
+    async def test_delete_events(self, store):
+        await store.save_event(_make_event(id="e1"))
+        await store.save_event(_make_event(id="e2"))
+        await store.delete_events(["e1"])
+        events = await store.get_pending_events("parent", "sess-1")
+        assert len(events) == 1
+        assert events[0].id == "e2"
+
+    @pytest.mark.asyncio
+    async def test_find_agents_with_debounced_events_by_count(self, store):
+        # 3 events → should trigger with min_count=3
+        await store.save_event(_make_event(id="e1"))
+        await store.save_event(_make_event(id="e2"))
+        await store.save_event(_make_event(id="e3"))
+        now = datetime.now(timezone.utc)
+        result = await store.find_agents_with_debounced_events(3, 60.0, now)
+        # Returns list of (agent_id, session_id) tuples
+        assert ("parent", "sess-1") in result
+
+    @pytest.mark.asyncio
+    async def test_find_agents_with_debounced_events_by_time(self, store):
+        # 1 event older than 10s → triggers when max_wait=5s
+        old_ts = datetime.now(timezone.utc) - timedelta(seconds=10)
+        await store.save_event(_make_event(id="e1", created_at=old_ts))
+        now = datetime.now(timezone.utc)
+        # min_count=99 (won't trigger by count), max_wait=5 (will trigger by time)
+        result = await store.find_agents_with_debounced_events(99, 5.0, now)
+        # Returns list of (agent_id, session_id) tuples
+        assert ("parent", "sess-1") in result
+
+    @pytest.mark.asyncio
+    async def test_has_recent_health_warning_false_when_none(self, store):
+        now = datetime.now(timezone.utc)
+        result = await store.has_recent_health_warning("parent", "child", 300.0, now)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_has_recent_health_warning_true_when_recent(self, store):
+        now = datetime.now(timezone.utc)
+        event = _make_event(
+            id="hw1",
+            event_type=SchedulerEventType.HEALTH_WARNING,
+            target_agent_id="parent",
+            source_agent_id="child",
+            created_at=now - timedelta(seconds=10),
+        )
+        await store.save_event(event)
+        result = await store.has_recent_health_warning("parent", "child", 300.0, now)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_update_status_with_explain(self, store):
+        state = _make_state(id="a1", status=AgentStateStatus.RUNNING)
+        await store.save_state(state)
+        await store.update_status("a1", AgentStateStatus.SLEEPING, explain="Waiting for user")
+        updated = await store.get_state("a1")
+        assert updated is not None
+        assert updated.explain == "Waiting for user"
+
+    @pytest.mark.asyncio
+    async def test_update_status_with_recent_steps(self, store):
+        state = _make_state(id="a1", status=AgentStateStatus.RUNNING)
+        await store.save_state(state)
+        steps = [{"role": "assistant", "timestamp": "2026-01-01T00:00:00", "tool_calls": ["web_search"]}]
+        await store.update_status("a1", AgentStateStatus.RUNNING, recent_steps=steps)
+        updated = await store.get_state("a1")
+        assert updated is not None
+        assert updated.recent_steps == steps
+
+    @pytest.mark.asyncio
+    async def test_find_running(self, store):
+        await store.save_state(_make_state(id="r1", status=AgentStateStatus.RUNNING, parent_id=None))
+        await store.save_state(_make_state(id="s1", status=AgentStateStatus.SLEEPING, parent_id=None))
+        running = await store.find_running()
+        ids = [s.id for s in running]
+        assert "r1" in ids
+        assert "s1" not in ids

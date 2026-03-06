@@ -26,16 +26,16 @@ import itertools
 from agiwo.agent.schema import (
     UserInput,
     extract_text,
-    normalize_input,
-    to_message_content,
+    normalize_to_message,
 )
 from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
 from agiwo.agent.inner.event_emitter import EventEmitter
-from agiwo.agent.inner.message_assembler import MessageAssembler
 from agiwo.agent.inner.storage_sink import StorageSink
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.agent.inner.system_prompt_builder import DefaultSystemPromptBuilder
 from agiwo.agent.memory_hooks import DefaultMemoryHook
+from agiwo.agent.storage.session import SessionStorage, InMemorySessionStorage, SQLiteSessionStorage
+from agiwo.config.settings import settings
 from agiwo.llm.base import Model
 from agiwo.skill.manager import SkillManager
 from agiwo.tool.base import BaseTool
@@ -55,20 +55,14 @@ from agiwo.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-def _resolve_skills_dirs(options: AgentOptions, config_root: str) -> list[Path]:
+def _resolve_skills_dirs(options: AgentOptions) -> list[Path]:
     """Resolve skill directories from options."""
-    if options.skills_dir:
-        return [Path(options.skills_dir).expanduser().resolve()]
-    
-    default_dir = Path(f"{Path(config_root).expanduser()}/skills").expanduser().resolve()
-    if default_dir.exists():
-        return [default_dir]
-    return []
+    return options.get_configured_skills_dirs()
 
 
-def _create_skill_manager(options: AgentOptions, agent_name: str, config_root: str) -> SkillManager:
+def _create_skill_manager(options: AgentOptions, agent_name: str) -> SkillManager:
     """Create SkillManager from options configuration."""
-    skills_dirs = _resolve_skills_dirs(options, config_root)
+    skills_dirs = _resolve_skills_dirs(options)
     manager = SkillManager(skills_dirs=skills_dirs)
     logger.info("skill_manager_created", agent_name=agent_name, skills_dirs=[str(d) for d in skills_dirs])
     return manager
@@ -134,7 +128,7 @@ class Agent:
         self._skill_manager: SkillManager | None = None
         if self.options.enable_skill:
             self._skill_manager = _create_skill_manager(
-                self.options, self.name, self.options.config_root
+                self.options, self.name
             )
             skill_tool = self._skill_manager.get_skill_tool()
             self.tools.append(skill_tool)
@@ -159,6 +153,9 @@ class Agent:
         )
         self._system_prompt: str | None = None
 
+        # Session storage for compact metadata
+        self.session_storage: SessionStorage = self._create_session_storage()
+
     async def get_effective_system_prompt(self) -> str:
         """Get the fully built system prompt (triggers build if needed).
 
@@ -182,9 +179,20 @@ class Agent:
         seq = next(counter)
         return f"{self.name}-{seq:03d}"
 
+    def _create_session_storage(self) -> SessionStorage:
+        """Create SessionStorage based on RunStepStorage configuration."""
+        storage_config = self.options.run_step_storage
+        if storage_config.storage_type == "sqlite":
+            db_path = storage_config.config.get("db_path", "agiwo.db")
+            resolved_path = settings.resolve_path(db_path)
+            return SQLiteSessionStorage(str(resolved_path) if resolved_path else db_path)
+        # Default to in-memory
+        return InMemorySessionStorage()
+
     async def close(self) -> None:
         """Close agent and release all resources."""
         await self.run_step_storage.close()
+        await self.session_storage.close()
         if self.trace_storage is not None:
             await self.trace_storage.close()
 
@@ -296,7 +304,8 @@ class Agent:
             session_id=resolved_session_id,
         )
         initial_seq = max((s.sequence for s in all_steps), default=-1) + 1
-        return ExecutionContext(
+        steering_queue: asyncio.Queue = asyncio.Queue()
+        context = ExecutionContext(
             run_id=str(uuid4()),
             session_id=resolved_session_id,
             channel=StreamChannel(),
@@ -305,7 +314,18 @@ class Agent:
             agent_name=self.name,
             sequence_counter=SessionSequenceCounter(initial_seq),
             metadata=metadata or {},
+            steering_queue=steering_queue,
         )
+        self._current_steering_queue = steering_queue
+        return context
+
+    def get_steering_queue(self) -> asyncio.Queue | None:
+        """Return the steering queue for the current execution, if active.
+
+        External callers (e.g. Scheduler) can push messages here to be injected
+        into the next LLM call while the agent is RUNNING.
+        """
+        return getattr(self, "_current_steering_queue", None)
 
     def _start_execution_task(
         self,
@@ -328,6 +348,7 @@ class Agent:
             finally:
                 if close_channel_on_complete:
                     await context.channel.close()
+                self._current_steering_queue = None  # 清理过期 queue
 
         return asyncio.create_task(_wrapper())
 
@@ -342,15 +363,8 @@ class Agent:
 
         emitter = EventEmitter(context)
 
-        # Load agent-specific history
-        existing_steps = await self.run_step_storage.get_steps(
-            session_id=context.session_id,
-            agent_id=self.id,
-        )
-
-        # Record user step and include in history
+        # Record user step (Executor handles history loading internally)
         user_step = await self._record_user_step(user_input, context, emitter)
-        existing_steps.append(user_step)
 
         # Emit RUN_STARTED
         await emitter.emit_run_started(
@@ -370,24 +384,26 @@ class Agent:
             if self.hooks.on_memory_retrieve and user_input:
                 memories = await self.hooks.on_memory_retrieve(user_input, context)
 
-            # Assemble messages
-            messages = MessageAssembler.assemble(
-                system_prompt,
-                existing_steps,
-                memories,
-                before_run_hook_result,
-            )
-
-            # Execute core loop
+            # Execute core loop (MessageAssembler moved inside Executor)
+            user_message = normalize_to_message(user_input)
             executor = AgentExecutor(
                 model=self.model,
                 tools=self.tools or [],
                 emitter=emitter,
                 options=self.options,
                 hooks=self.hooks,
+                run_step_storage=self.run_step_storage,
+                session_storage=self.session_storage,
+                root_path=self.options.get_effective_root_path(),
             )
             result = await executor.execute(
-                messages, context, abort_signal=abort_signal
+                system_prompt=system_prompt,
+                user_step=user_step,
+                context=context,
+                memories=memories,
+                before_run_hook_result=before_run_hook_result,
+                channel_context=user_message.context,
+                abort_signal=abort_signal,
             )
 
             # After-run hook
@@ -430,11 +446,10 @@ class Agent:
         emitter: EventEmitter,
     ) -> StepRecord:
         seq = await context.sequence_counter.next()
-        content = to_message_content(normalize_input(user_input))
         user_step = StepRecord.user(
             context,
             sequence=seq,
-            content=content,
+            user_input=user_input,
             agent_id=self.id,
         )
         await emitter.emit_step_completed(user_step)

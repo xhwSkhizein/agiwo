@@ -12,6 +12,26 @@ from agiwo.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _extract_content(response: dict) -> str:
+    """Extract text content from LLM API response.
+
+    Supports:
+    - OpenAI-style: choices[0].message.content
+    - Legacy: content, response
+    """
+    content = response.get("content") or response.get("response")
+    if content:
+        return str(content)
+    choices = response.get("choices")
+    if choices and len(choices) > 0:
+        msg = choices[0].get("message")
+        if isinstance(msg, dict):
+            c = msg.get("content")
+            if c is not None:
+                return str(c)
+    return ""
+
+
 class LlmApiClient:
     """LLM API 客户端，用于文本处理任务。"""
 
@@ -74,11 +94,7 @@ Your task is to:
                 data={"messages": messages},
             )
 
-            # 提取响应内容
-            # 假设 API 返回格式为 {"content": "..."}
-            # 如果实际格式不同，需要调整
-            summary = response.get("content", "") or response.get("response", "")
-            
+            summary = _extract_content(response)
             if summary:
                 logger.info("llm_summarization_success", text_length=len(text), summary_length=len(summary))
                 return summary
@@ -138,9 +154,7 @@ user's query is:
                 data={"messages": messages},
             )
 
-            # 提取响应内容
-            extracted = response.get("content", "") or response.get("response", "")
-            
+            extracted = _extract_content(response)
             if extracted:
                 logger.info(
                     "llm_extraction_success",

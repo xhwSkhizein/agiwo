@@ -3,13 +3,15 @@ Scheduler data models.
 
 Defines the core data structures for agent scheduling:
 AgentState, AgentStateStatus, WakeCondition, WakeType, WaitMode, TimeUnit, TaskLimits,
-SchedulerOutput.
+SchedulerOutput, PendingEvent, SchedulerEventType.
 """
 
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+
+from agiwo.agent.schema import UserInput, serialize_user_input, deserialize_user_input
 
 
 class AgentStateStatus(str, Enum):
@@ -29,6 +31,7 @@ class WakeType(str, Enum):
     TIMER = "timer"
     PERIODIC = "periodic"
     TASK_SUBMITTED = "task_submitted"
+    PENDING_EVENTS = "pending_events"
 
 
 class WaitMode(str, Enum):
@@ -44,6 +47,16 @@ class TimeUnit(str, Enum):
     SECONDS = "seconds"
     MINUTES = "minutes"
     HOURS = "hours"
+
+
+class SchedulerEventType(str, Enum):
+    """Type of pending event in the scheduler event queue."""
+
+    CHILD_SLEEP_RESULT = "child_sleep_result"
+    CHILD_COMPLETED = "child_completed"
+    CHILD_FAILED = "child_failed"
+    HEALTH_WARNING = "health_warning"
+    USER_HINT = "user_hint"
 
 
 def to_seconds(value: float, unit: TimeUnit) -> float:
@@ -71,7 +84,7 @@ class WakeCondition:
     time_unit: TimeUnit | None = None
     wakeup_at: datetime | None = None
     # TASK_SUBMITTED fields
-    submitted_task: str | None = None
+    submitted_task: UserInput | None = None
     # Timeout (WAITSET / PERIODIC — prevents permanent sleep)
     timeout_at: datetime | None = None
 
@@ -87,6 +100,8 @@ class WakeCondition:
             return self.wakeup_at is not None and now >= self.wakeup_at
         if self.type == WakeType.TASK_SUBMITTED:
             return self.submitted_task is not None
+        if self.type == WakeType.PENDING_EVENTS:
+            return False
         return False
 
     def is_timed_out(self, now: datetime) -> bool:
@@ -114,7 +129,7 @@ class WakeCondition:
         if self.wakeup_at is not None:
             result["wakeup_at"] = self.wakeup_at.isoformat()
         if self.submitted_task is not None:
-            result["submitted_task"] = self.submitted_task
+            result["submitted_task"] = serialize_user_input(self.submitted_task)
         if self.timeout_at is not None:
             result["timeout_at"] = self.timeout_at.isoformat()
         return result
@@ -142,7 +157,9 @@ class WakeCondition:
             time_value=data.get("time_value"),
             time_unit=time_unit,
             wakeup_at=wakeup_at,
-            submitted_task=data.get("submitted_task"),
+            submitted_task=deserialize_user_input(data["submitted_task"])
+            if data.get("submitted_task")
+            else None,
             timeout_at=timeout_at,
         )
 
@@ -162,7 +179,7 @@ class AgentState:
     id: str
     session_id: str
     status: AgentStateStatus
-    task: str
+    task: UserInput
     parent_id: str | None = None
     config_overrides: dict = field(default_factory=dict)
     wake_condition: WakeCondition | None = None
@@ -171,8 +188,33 @@ class AgentState:
     is_persistent: bool = False
     depth: int = 0
     wake_count: int = 0
+    # Sleep reason — set by sleep_and_wait explain parameter
+    explain: str | None = None
+    # Tracks last agent activity for health check
+    last_activity_at: datetime | None = None
+    # Rolling window of recent step summaries (max 10), synced via on_step hook
+    recent_steps: list[dict] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
+class PendingEvent:
+    """
+    An event in an agent's pending event queue.
+
+    Used to deliver asynchronous notifications from child agents,
+    health checks, and other system sources to a parent/root agent.
+    Events accumulate and are delivered via debounce wake.
+    """
+
+    id: str
+    target_agent_id: str
+    session_id: str
+    event_type: SchedulerEventType
+    payload: dict
+    created_at: datetime
+    source_agent_id: str | None = None
 
 
 @dataclass
@@ -224,6 +266,7 @@ class TaskLimits:
     max_children_per_agent: int = 10
     default_wait_timeout: float = 600.0
     max_wake_count: int = 20
+    health_check_threshold_seconds: float = 300.0
 
 
 @dataclass
@@ -238,3 +281,5 @@ class SchedulerConfig:
     max_concurrent: int = 10
     graceful_shutdown_wait_seconds: int = 30
     task_limits: TaskLimits = field(default_factory=TaskLimits)
+    event_debounce_min_count: int = 1
+    event_debounce_max_wait_seconds: float = 30.0

@@ -37,7 +37,11 @@ async def client():
     app = create_app()
 
     # Manually initialize dependencies with in-memory storage
-    config = ConsoleConfig(storage_type="sqlite", sqlite_db_path=":memory:")
+    config = ConsoleConfig(
+        run_step_storage_type="memory",
+        trace_storage_type="memory",
+        metadata_storage_type="memory",
+    )
     set_console_config(config)
     sm = StorageManager(config)
     # Override agent_state_storage with in-memory for isolation
@@ -64,8 +68,6 @@ async def _seed_states(client: AsyncClient) -> None:
         AgentState(
             id="parent-1",
             session_id="sess-1",
-            agent_id="parent-1",
-            parent_agent_id="parent-1",
             status=AgentStateStatus.SLEEPING,
             task="Orchestrate research",
             wake_condition=WakeCondition(
@@ -77,28 +79,22 @@ async def _seed_states(client: AsyncClient) -> None:
         AgentState(
             id="child-1",
             session_id="sess-1",
-            agent_id="child-1",
-            parent_agent_id="parent-1",
-            parent_state_id="parent-1",
             status=AgentStateStatus.COMPLETED,
             task="Research topic A",
+            parent_id="parent-1",
             result_summary="Topic A is about X.",
             signal_propagated=True,
         ),
         AgentState(
             id="child-2",
             session_id="sess-1",
-            agent_id="child-2",
-            parent_agent_id="parent-1",
-            parent_state_id="parent-1",
             status=AgentStateStatus.RUNNING,
             task="Research topic B",
+            parent_id="parent-1",
         ),
         AgentState(
             id="delayed-1",
             session_id="sess-2",
-            agent_id="delayed-1",
-            parent_agent_id="delayed-1",
             status=AgentStateStatus.SLEEPING,
             task="Wait and retry",
             wake_condition=WakeCondition(
@@ -111,8 +107,6 @@ async def _seed_states(client: AsyncClient) -> None:
         AgentState(
             id="failed-1",
             session_id="sess-3",
-            agent_id="failed-1",
-            parent_agent_id="failed-1",
             status=AgentStateStatus.FAILED,
             task="Broken task",
         ),

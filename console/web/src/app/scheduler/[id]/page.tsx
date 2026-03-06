@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { getAgentState, getAgentStateChildren } from "@/lib/api";
+import { getAgentState, getAgentStateChildren, formatUserInput } from "@/lib/api";
 import type { AgentStateDetail, AgentStateListItem } from "@/lib/api";
 
 const STATUS_STYLES: Record<string, string> = {
@@ -128,7 +128,7 @@ function ChildrenTable({ children }: { children: AgentStateListItem[] }) {
               </td>
               <td className="px-4 py-2.5 max-w-xs">
                 <span className="truncate block text-zinc-300 text-xs">
-                  {c.task}
+                  {formatUserInput(c.task)}
                 </span>
               </td>
               <td className="px-4 py-2.5 text-center">
@@ -221,7 +221,7 @@ export default function SchedulerDetailPage() {
       <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
         <h3 className="text-sm font-medium mb-2">Details</h3>
         <InfoRow label="Task">
-          <p className="whitespace-pre-wrap">{state.task}</p>
+          <p className="whitespace-pre-wrap">{formatUserInput(state.task)}</p>
         </InfoRow>
         {state.parent_id && (
           <InfoRow label="Parent">

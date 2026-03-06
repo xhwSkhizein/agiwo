@@ -48,10 +48,13 @@ class AgentRegistry:
         if self._initialized:
             return
 
-        if self._config.storage_type == "sqlite":
+        if self._config.metadata_storage_type == "sqlite":
             await self._init_sqlite()
-        else:
+        elif self._config.metadata_storage_type == "mongodb":
             await self._init_mongodb()
+        else:
+            # memory: use in-memory storage for testing
+            self._memory_store: dict[str, AgentConfigRecord] = {}
 
         self._initialized = True
 
@@ -64,23 +67,34 @@ class AgentRegistry:
     # ── CRUD ────────────────────────────────────────────────────────────
 
     async def list_agents(self, limit: int = 50, offset: int = 0) -> list[AgentConfigRecord]:
-        if self._config.storage_type == "sqlite":
+        if self._config.metadata_storage_type == "sqlite":
             return await self._sqlite_list(limit, offset)
+        if self._config.metadata_storage_type == "memory":
+            return list(self._memory_store.values())[offset:offset + limit]
         return await self._mongo_list(limit, offset)
 
     async def get_agent(self, agent_id: str) -> AgentConfigRecord | None:
-        if self._config.storage_type == "sqlite":
+        if self._config.metadata_storage_type == "sqlite":
             return await self._sqlite_get(agent_id)
+        if self._config.metadata_storage_type == "memory":
+            return self._memory_store.get(agent_id)
         return await self._mongo_get(agent_id)
 
     async def get_agent_by_name(self, agent_name: str) -> AgentConfigRecord | None:
-        if self._config.storage_type == "sqlite":
+        if self._config.metadata_storage_type == "sqlite":
             return await self._sqlite_get_by_name(agent_name)
+        if self._config.metadata_storage_type == "memory":
+            for record in self._memory_store.values():
+                if record.name == agent_name:
+                    return record
+            return None
         return await self._mongo_get_by_name(agent_name)
 
     async def create_agent(self, record: AgentConfigRecord) -> AgentConfigRecord:
-        if self._config.storage_type == "sqlite":
+        if self._config.metadata_storage_type == "sqlite":
             await self._sqlite_upsert(record)
+        elif self._config.metadata_storage_type == "memory":
+            self._memory_store[record.id] = record
         else:
             await self._mongo_upsert(record)
         return record
@@ -95,15 +109,19 @@ class AgentRegistry:
                 setattr(existing, key, value)
         existing.updated_at = datetime.now()
 
-        if self._config.storage_type == "sqlite":
+        if self._config.metadata_storage_type == "sqlite":
             await self._sqlite_upsert(existing)
+        elif self._config.metadata_storage_type == "memory":
+            self._memory_store[existing.id] = existing
         else:
             await self._mongo_upsert(existing)
         return existing
 
     async def delete_agent(self, agent_id: str) -> bool:
-        if self._config.storage_type == "sqlite":
+        if self._config.metadata_storage_type == "sqlite":
             return await self._sqlite_delete(agent_id)
+        if self._config.metadata_storage_type == "memory":
+            return self._memory_store.pop(agent_id, None) is not None
         return await self._mongo_delete(agent_id)
 
     # ── SQLite ──────────────────────────────────────────────────────────

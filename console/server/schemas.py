@@ -5,7 +5,10 @@ API-layer Pydantic models for request/response serialization.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from agiwo.agent.options import normalize_skills_dirs
+from agiwo.config.settings import settings
 
 
 # ── Session / Run / Step Responses ──────────────────────────────────────
@@ -21,6 +24,7 @@ class StepResponse(BaseModel):
     content: Any | None = None
     content_for_user: str | None = None
     reasoning_content: str | None = None
+    user_input: Any | None = None
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     name: str | None = None
@@ -47,7 +51,7 @@ class RunResponse(BaseModel):
 class SessionSummary(BaseModel):
     session_id: str
     agent_id: str | None = None
-    last_user_input: str | None = None
+    last_user_input: Any | None = None  # 结构化 UserInput
     last_response: str | None = None
     run_count: int = 0
     step_count: int = 0
@@ -120,15 +124,36 @@ class TraceListItem(BaseModel):
 
 
 class AgentOptionsPayload(BaseModel):
+    config_root: str = ""
     max_steps: int = Field(default=10, ge=1)
     run_timeout: int = Field(default=600, ge=1)
     max_context_window_tokens: int = Field(default=32768, ge=1)
     max_tokens_per_run: int = Field(default=131072, ge=1)
     max_run_token_cost: float | None = Field(default=None, ge=0)
-    enable_skill: bool = False
-    skills_dir: str | None = None
+    enable_termination_summary: bool = True
+    termination_summary_prompt: str = ""
+    enable_skill: bool = Field(default_factory=lambda: settings.is_skills_enabled)
+    skills_dirs: list[str] | None = None
+    relevant_memory_max_token: int = Field(default=2048, ge=1)
+    stream_cleanup_timeout: float = Field(default=300.0, gt=0)
+    compact_prompt: str = ""
 
     model_config = {"extra": "ignore"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        if "skills_dirs" not in normalized and "skills_dir" in normalized:
+            normalized["skills_dirs"] = normalized["skills_dir"]
+        return normalized
+
+    @field_validator("skills_dirs", mode="before")
+    @classmethod
+    def _normalize_skills_dirs(cls, value: Any) -> list[str] | None:
+        return normalize_skills_dirs(value)
 
 
 class ModelParamsPayload(BaseModel):

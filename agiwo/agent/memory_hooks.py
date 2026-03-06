@@ -42,9 +42,10 @@ class DefaultMemoryHook:
         if not query or len(query.strip()) < 3:
             return []
 
+        agent_id = getattr(context, "agent_id", None)
         workspace_dir = self._resolve_workspace(context)
         if not workspace_dir:
-            logger.debug("memory_retrieve_no_workspace", context=context.agent_id)
+            logger.debug("memory_retrieve_no_workspace", agent_id=agent_id)
             return []
 
         store = await self._get_or_create_store(workspace_dir)
@@ -83,7 +84,7 @@ class DefaultMemoryHook:
             "memory_retrieved",
             query=query[:50],
             count=len(records),
-            agent_id=context.agent_id,
+            agent_id=agent_id,
         )
         return records
 

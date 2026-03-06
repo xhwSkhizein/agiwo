@@ -2,6 +2,7 @@
 Sessions and Runs API router.
 """
 
+import json
 from dataclasses import asdict
 from typing import Any
 
@@ -21,6 +22,11 @@ def _step_to_response(step: Any) -> StepResponse:
     elif created_at is not None:
         created_at = str(created_at)
 
+    # Serialize user_input for API response
+    user_input_data = None
+    if hasattr(step, "user_input") and step.user_input is not None:
+        user_input_data = _parse_user_input(step.user_input)
+
     return StepResponse(
         id=step.id,
         session_id=step.session_id,
@@ -31,6 +37,7 @@ def _step_to_response(step: Any) -> StepResponse:
         content=step.content,
         content_for_user=step.content_for_user,
         reasoning_content=step.reasoning_content,
+        user_input=user_input_data,
         tool_calls=step.tool_calls,
         tool_call_id=step.tool_call_id,
         name=step.name,
@@ -43,12 +50,18 @@ def _step_to_response(step: Any) -> StepResponse:
 
 def _run_to_response(run: Any) -> RunResponse:
     """Convert Run dataclass to RunResponse."""
+    # Handle user_input serialization for API response
+    user_input = run.user_input
+    if user_input is not None and not isinstance(user_input, str):
+        from agiwo.agent.schema import serialize_user_input
+        user_input = serialize_user_input(user_input)
+
     return RunResponse(
         id=run.id,
         agent_id=run.agent_id,
         session_id=run.session_id,
         user_id=run.user_id,
-        user_input=run.user_input,
+        user_input=user_input,
         status=run.status.value if hasattr(run.status, "value") else str(run.status),
         response_content=run.response_content,
         metrics=asdict(run.metrics) if run.metrics else None,
@@ -56,6 +69,44 @@ def _run_to_response(run: Any) -> RunResponse:
         updated_at=run.updated_at.isoformat() if hasattr(run.updated_at, "isoformat") else str(run.updated_at) if run.updated_at else None,
         parent_run_id=run.parent_run_id,
     )
+
+
+def _parse_user_input(user_input: Any) -> Any | None:
+    """Parse UserInput to structured format for display.
+
+    Handles:
+    - str (plain text): return as-is
+    - str (JSON): parse and return dict
+    - dict: return as-is (already parsed)
+    - UserMessage/ContentPart objects: convert to dict
+    - other: return str() representation (fallback)
+    """
+    if user_input is None:
+        return None
+
+    # Handle string - try to parse as JSON first
+    if isinstance(user_input, str):
+        if user_input.startswith("{"):
+            try:
+                return json.loads(user_input)
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return user_input
+
+    # Dict is already structured
+    if isinstance(user_input, dict):
+        return user_input
+
+    # Handle UserMessage dataclass - convert to dict
+    if hasattr(user_input, "to_dict"):
+        return user_input.to_dict()
+
+    # Handle list of ContentPart - convert to dict format
+    if isinstance(user_input, list):
+        return {"__type": "content_parts", "parts": [p.to_dict() if hasattr(p, "to_dict") else p for p in user_input]}
+
+    # Fallback: str() representation
+    return str(user_input)
 
 
 @router.get("/runs", response_model=list[RunResponse])
@@ -129,19 +180,13 @@ async def list_sessions(
     for s in page:
         runs_list = s["runs"]
         last_run = runs_list[0] if runs_list else None
-        user_input_str = None
-        if last_run and last_run.user_input:
-            user_input_str = (
-                last_run.user_input
-                if isinstance(last_run.user_input, str)
-                else str(last_run.user_input)
-            )
+        user_input_data = _parse_user_input(last_run.user_input) if last_run else None
 
         results.append(
             SessionSummary(
                 session_id=s["session_id"],
                 agent_id=s["agent_id"],
-                last_user_input=user_input_str[:200] if user_input_str else None,
+                last_user_input=user_input_data,
                 last_response=last_run.response_content[:200] if last_run and last_run.response_content else None,
                 run_count=len(runs_list),
                 created_at=s["created_at"].isoformat() if hasattr(s["created_at"], "isoformat") else str(s["created_at"]) if s["created_at"] else None,

@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 class SQLiteCitationStore:
     """SQLite implementation of Citation Store."""
 
-    def __init__(self, db_path: str = "agio.db") -> None:
+    def __init__(self, db_path: str = "agiwo.db") -> None:
         self.db_path = db_path
         self._connection: aiosqlite.Connection | None = None
         self._initialized = False

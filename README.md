@@ -42,6 +42,22 @@ uv sync
 cp .env.example .env
 ```
 
+### Configuration Model
+
+The repository currently has two runtime configuration layers:
+
+- **SDK layer** (`agiwo/config/settings.py`) for agent/runtime capabilities
+- **Console layer** (`console/server/config.py`) for FastAPI server and channel integration
+
+Environment variable namespaces:
+
+- SDK-owned keys: `AGIWO_*`
+- Console-owned keys: `AGIWO_CONSOLE_*`
+- Provider credentials: canonical external names (for example `OPENAI_API_KEY`)
+
+Detailed inventory and the full cleanup/refactor plan are documented in
+[`docs/CONFIGURATION_REFACTOR_PLAN.md`](docs/CONFIGURATION_REFACTOR_PLAN.md).
+
 ### Minimal Example
 
 ```python
@@ -260,7 +276,7 @@ agent = Agent(
     system_prompt="You are a helpful coding assistant.",  # Base section
     options=AgentOptions(
         enable_skill=True,                    # Enable skills section
-        skills_dir="~/.agiwo/skills",        # Custom skills directory
+        skills_dirs=["~/.agiwo/skills"],     # One or more custom skill directories
     ),
 )
 # SOUL.md and skills changes are automatically picked up on next execution
@@ -307,7 +323,8 @@ model = DeepseekModel(id="deepseek-chat", name="deepseek-chat")
 model = NvidiaModel(id="moonshotai/kimi-k2.5", name="kimi-k2.5")
 ```
 
-API keys are resolved in order: constructor argument > `AgiwoSettings` > environment variable.
+API keys are resolved in order: constructor argument > `AgiwoSettings` > environment variable.  
+See [`docs/CONFIGURATION_REFACTOR_PLAN.md`](docs/CONFIGURATION_REFACTOR_PLAN.md) for the consolidation roadmap.
 
 ## Architecture
 

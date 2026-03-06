@@ -7,9 +7,11 @@ from agiwo.agent.memory_hooks import (
 )
 from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.schema import (
+    ChannelContext,
     ContentPart,
     ContentType,
     UserInput,
+    UserMessage,
     EventType,
     MessageRole,
     Run,
@@ -32,6 +34,7 @@ __all__ = [
     "AgentOptions",
     "RunStepStorageConfig",
     "TraceStorageConfig",
+    "ChannelContext",
     "ContentPart",
     "ContentType",
     "DefaultMemoryHook",
@@ -51,5 +54,6 @@ __all__ = [
     "StreamEvent",
     "TerminationReason",
     "UserInput",
+    "UserMessage",
     "create_default_memory_hooks",
 ]

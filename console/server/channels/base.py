@@ -8,6 +8,7 @@ behaviour (message delivery, prompt rendering, error mapping).
 
 from abc import ABC, abstractmethod
 
+from agiwo.agent.schema import UserMessage
 from agiwo.utils.logging import get_logger
 
 from server.channels.agent_runtime import AgentRuntimeManager
@@ -24,7 +25,7 @@ class BaseChannelService(ABC):
     """Generic channel service with batching, agent runtime, and scheduler integration.
 
     Subclasses must implement the abstract hooks that handle channel-specific
-    concerns: message delivery, prompt rendering, and error display.
+    concerns: message delivery, prompt building, and error display.
     """
 
     def __init__(
@@ -61,12 +62,14 @@ class BaseChannelService(ABC):
         context: BatchContext,
         messages: list[InboundMessage],
     ) -> None:
-        rendered = self._render_batch_prompt(context, messages)
+        user_message = await self._build_user_message(context, messages)
         batch = BatchPayload(
             context=context,
             messages=messages,
-            rendered_user_input=rendered,
+            user_message=user_message,
         )
+
+        from agiwo.agent.schema import extract_text
 
         logger.info(
             "channel_batch_dispatched",
@@ -74,7 +77,7 @@ class BaseChannelService(ABC):
             chat_type=batch.context.chat_type,
             chat_id=batch.context.chat_id,
             message_count=len(batch.messages),
-            input_preview=self._truncate_for_log(batch.rendered_user_input),
+            input_preview=self._truncate_for_log(extract_text(user_message)),
         )
 
         try:
@@ -93,7 +96,7 @@ class BaseChannelService(ABC):
         agent = await self._runtime_mgr.get_or_create_runtime_agent(runtime)
 
         output_stream = await self._runtime_mgr.submit_to_scheduler(
-            agent, runtime, batch.rendered_user_input,
+            agent, runtime, batch.user_message,
         )
 
         is_first_output = True
@@ -113,11 +116,11 @@ class BaseChannelService(ABC):
     # -- Abstract hooks (channel-specific) -----------------------------------
 
     @abstractmethod
-    def _render_batch_prompt(
+    async def _build_user_message(
         self,
         context: BatchContext,
         messages: list[InboundMessage],
-    ) -> str: ...
+    ) -> UserMessage: ...
 
     @abstractmethod
     async def _deliver_reply(self, context: BatchContext, text: str) -> None: ...

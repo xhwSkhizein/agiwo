@@ -17,7 +17,16 @@ from agiwo.scheduler.models import (
     WakeType,
 )
 from agiwo.scheduler.store import InMemoryAgentStateStorage
-from agiwo.scheduler.tools import SpawnAgentTool, SleepAndWaitTool, QuerySpawnedAgentTool
+from agiwo.scheduler.tools import (
+    CancelAgentTool,
+    ListAgentsTool,
+    QuerySpawnedAgentTool,
+    SleepAndWaitTool,
+    SpawnAgentTool,
+)
+from agiwo.tool.builtin.bash_tool.tool import BashTool, BashToolConfig
+from agiwo.tool.builtin.bash_tool.types import ProcessInfo
+from unittest.mock import AsyncMock, MagicMock
 
 
 @pytest.fixture
@@ -333,3 +342,201 @@ class TestQuerySpawnedAgentTool:
         )
         assert not result.is_success
         assert "not found" in result.content
+
+    @pytest.mark.asyncio
+    async def test_query_includes_explain_and_recent_steps(self, store, context):
+        from datetime import datetime, timezone
+        state = AgentState(
+            id="child-2",
+            session_id="sess-1",
+            status=AgentStateStatus.SLEEPING,
+            task="Periodic check",
+            parent_id="orch",
+            explain="Waiting 8h before next run",
+            recent_steps=[{"role": "assistant", "timestamp": "2026-01-01T00:00:00", "tool_calls": ["web_search"]}],
+        )
+        await store.save_state(state)
+
+        tool = QuerySpawnedAgentTool(store)
+        result = await tool.execute({"agent_id": "child-2", "tool_call_id": "tc-1"}, context)
+        assert result.is_success
+        assert "Waiting 8h" in result.content
+        assert "web_search" in result.content
+
+
+class TestSleepAndWaitExplain:
+    @pytest.mark.asyncio
+    async def test_sleep_with_explain_stored(self, store, guard, context):
+        await _register_parent(store)
+        sleep_tool = SleepAndWaitTool(store, guard)
+        result = await sleep_tool.execute(
+            {
+                "wake_type": "timer",
+                "delay_seconds": 10,
+                "explain": "Waiting for rate limit to reset",
+                "tool_call_id": "tc-1",
+            },
+            context,
+        )
+        assert result.is_success
+        state = await store.get_state("orch")
+        assert state.explain == "Waiting for rate limit to reset"
+        assert "Waiting for rate limit to reset" in result.content
+
+
+class TestCancelAgentTool:
+    @pytest.mark.asyncio
+    async def test_cancel_nonexistent_agent(self, store, context):
+        mock_scheduler = MagicMock()
+        mock_scheduler.store = store
+        tool = CancelAgentTool(mock_scheduler)
+        result = await tool.execute({"agent_id": "ghost", "tool_call_id": "tc-1"}, context)
+        assert not result.is_success
+        assert "not found" in result.content
+
+    @pytest.mark.asyncio
+    async def test_cancel_non_child_agent(self, store, context):
+        other_state = AgentState(
+            id="other",
+            session_id="sess-1",
+            status=AgentStateStatus.RUNNING,
+            task="other task",
+            parent_id="someone-else",
+        )
+        await store.save_state(other_state)
+        mock_scheduler = MagicMock()
+        mock_scheduler.store = store
+        tool = CancelAgentTool(mock_scheduler)
+        result = await tool.execute({"agent_id": "other", "tool_call_id": "tc-1"}, context)
+        assert not result.is_success
+        assert "Permission denied" in result.content
+
+    @pytest.mark.asyncio
+    async def test_cancel_running_without_force_warns(self, store, context):
+        child = AgentState(
+            id="child-run",
+            session_id="sess-1",
+            status=AgentStateStatus.RUNNING,
+            task="run",
+            parent_id="orch",
+        )
+        await store.save_state(child)
+        mock_scheduler = MagicMock()
+        mock_scheduler.store = store
+        tool = CancelAgentTool(mock_scheduler)
+        result = await tool.execute({"agent_id": "child-run", "force": False, "tool_call_id": "tc-1"}, context)
+        # Should warn and not cancel
+        assert result.output.get("requires_force") is True
+
+    @pytest.mark.asyncio
+    async def test_cancel_running_without_force_includes_running_bash_processes(self, store, context):
+        class MockBashSandbox:
+            async def list_processes_by_agent(self, agent_id: str, state: str = "running"):
+                if agent_id != "child-run" or state != "running":
+                    return []
+                return [
+                    ProcessInfo(
+                        process_id="proc-1",
+                        command="sleep 1",
+                        state="running",
+                        started_at=datetime.now(timezone.utc).timestamp(),
+                        exit_code=None,
+                    )
+                ]
+
+        child = AgentState(
+            id="child-run",
+            session_id="sess-1",
+            status=AgentStateStatus.RUNNING,
+            task="run",
+            parent_id="orch",
+        )
+        await store.save_state(child)
+
+        bash_tool = BashTool(
+            BashToolConfig(
+                sandbox=MockBashSandbox(),  # type: ignore[arg-type]
+                cwd=".",
+            )
+        )
+        mock_agent = MagicMock()
+        mock_agent.tools = [bash_tool]
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.store = store
+        mock_scheduler._agents = {"child-run": mock_agent}
+
+        tool = CancelAgentTool(mock_scheduler)
+        result = await tool.execute(
+            {"agent_id": "child-run", "force": False, "tool_call_id": "tc-1"},
+            context,
+        )
+
+        assert result.output.get("requires_force") is True
+        assert result.output["running_processes"][0]["process_id"] == "proc-1"
+        assert "sleep 1" in result.content
+
+    @pytest.mark.asyncio
+    async def test_cancel_with_force(self, store, context):
+        child = AgentState(
+            id="child-force",
+            session_id="sess-1",
+            status=AgentStateStatus.RUNNING,
+            task="run",
+            parent_id="orch",
+        )
+        await store.save_state(child)
+        mock_scheduler = MagicMock()
+        mock_scheduler.store = store
+        mock_scheduler._recursive_cancel = AsyncMock()
+        tool = CancelAgentTool(mock_scheduler)
+        result = await tool.execute({"agent_id": "child-force", "force": True, "tool_call_id": "tc-1"}, context)
+        assert result.is_success
+        mock_scheduler._recursive_cancel.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cancel_already_completed(self, store, context):
+        child = AgentState(
+            id="child-done",
+            session_id="sess-1",
+            status=AgentStateStatus.COMPLETED,
+            task="run",
+            parent_id="orch",
+        )
+        await store.save_state(child)
+        mock_scheduler = MagicMock()
+        mock_scheduler.store = store
+        tool = CancelAgentTool(mock_scheduler)
+        result = await tool.execute({"agent_id": "child-done", "tool_call_id": "tc-1"}, context)
+        assert "terminal state" in result.content
+
+
+class TestListAgentsTool:
+    @pytest.mark.asyncio
+    async def test_list_no_children(self, store, context):
+        tool = ListAgentsTool(store)
+        result = await tool.execute({"tool_call_id": "tc-1"}, context)
+        assert result.is_success
+        assert "No child agents" in result.content
+
+    @pytest.mark.asyncio
+    async def test_list_children(self, store, context):
+        c1 = AgentState(
+            id="c1", session_id="sess-1", status=AgentStateStatus.RUNNING, task="task A", parent_id="orch"
+        )
+        c2 = AgentState(
+            id="c2", session_id="sess-1", status=AgentStateStatus.SLEEPING, task="task B", parent_id="orch",
+            explain="Sleeping until morning", result_summary="partial result"
+        )
+        await store.save_state(c1)
+        await store.save_state(c2)
+
+        tool = ListAgentsTool(store)
+        result = await tool.execute({"tool_call_id": "tc-1"}, context)
+        assert result.is_success
+        assert "c1" in result.content
+        assert "c2" in result.content
+        assert "Sleeping until morning" in result.content
+        assert "partial result" in result.content
+        agents = result.output["agents"]
+        assert len(agents) == 2
