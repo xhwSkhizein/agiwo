@@ -14,7 +14,10 @@ from pathlib import Path
 from typing import Any
 import aiofiles
 
-from agiwo.agent.compact.prompt import DEFAULT_COMPACT_PROMPT, DEFAULT_ASSISTANT_RESPONSE
+from agiwo.agent.compact.prompt import (
+    DEFAULT_COMPACT_PROMPT,
+    DEFAULT_ASSISTANT_RESPONSE,
+)
 from agiwo.agent.schema import CompactMetadata, CompactResult
 from agiwo.agent.schema import StepRecord
 from agiwo.agent.inner.event_emitter import EventEmitter
@@ -26,49 +29,6 @@ from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-def estimate_tokens(messages: list[dict[str, Any]]) -> int:
-    """Estimate token count from messages using char/4 heuristic."""
-    total_chars = sum(len(str(m.get("content", ""))) for m in messages)
-    return total_chars // 4
-
-
-def build_compact_messages(
-    messages: list[dict[str, Any]],
-    last_compact_metadata: CompactMetadata | None,
-    custom_prompt: str | None = None,
-) -> list[dict[str, Any]]:
-    """
-    Build messages for compact LLM call.
-
-    Similar to termination summary pattern:
-    - Appends a user message requesting summary to existing messages
-    - Preserves KVCache by continuing the conversation
-
-    Args:
-        messages: Current conversation history (OpenAI format)
-        last_compact_metadata: Previous compact metadata if any
-        custom_prompt: Custom user prompt for compact request
-
-    Returns:
-        New messages list with compact request appended
-    """
-    result_messages = list(messages)
-
-    prompt_template = custom_prompt or DEFAULT_COMPACT_PROMPT
-
-    previous_summary = ""
-    if last_compact_metadata:
-        previous_summary = last_compact_metadata.get_summary()
-
-    compact_prompt = prompt_template.format(
-        previous_summary=previous_summary or "None",
-    )
-
-    result_messages.append({"role": "user", "content": compact_prompt})
-
-    return result_messages
 
 
 def build_compacted_messages(
@@ -89,7 +49,9 @@ def build_compacted_messages(
     Returns:
         Compacted messages list
     """
-    assistant_response = settings.compact_assistant_response or DEFAULT_ASSISTANT_RESPONSE
+    assistant_response = (
+        settings.compact_assistant_response or DEFAULT_ASSISTANT_RESPONSE
+    )
 
     compacted_messages: list[dict[str, Any]] = []
 
@@ -98,9 +60,7 @@ def build_compacted_messages(
         compacted_messages.append({"role": "system", "content": system_prompt})
 
     # 2. Compact summary as user message
-    compact_user_content = (
-        f"[Conversation compressed. original source: {transcript_path}]\n\n# Summary\n{summary}"
-    )
+    compact_user_content = f"[Conversation compressed. original source: {transcript_path}]\n\n# Summary\n{summary}"
     compacted_messages.append({"role": "user", "content": compact_user_content})
 
     # 3. Assistant acknowledgment
@@ -244,14 +204,17 @@ class Compactor:
         self.compact_prompt = compact_prompt
         self.root_path = root_path or settings.root_path
 
-    @staticmethod
-    def should_compact(messages: list[dict], max_context_window_tokens: int | None) -> bool:
+    def should_compact(
+        self, messages: list[dict], max_context_window: int | None
+    ) -> bool:
         """Check if compact should be triggered."""
-        if max_context_window_tokens is None:
+        if max_context_window is None:
             return False
 
-        estimated_tokens = estimate_tokens(messages)
-        threshold = int(max_context_window_tokens * settings.compact_threshold_ratio)
+        estimated_tokens = self.llm_handler.metrics_resolver.estimate_messages_tokens(
+            messages
+        )
+        threshold = int(max_context_window * settings.compact_threshold_ratio)
         return estimated_tokens >= threshold
 
     async def compact(
@@ -266,7 +229,10 @@ class Compactor:
         2. Call LLM to generate summary (preserves KVCache)
         3. Build compacted messages and metadata
         """
-        before_token_estimate = estimate_tokens(state.messages)
+        metrics_resolver = self.llm_handler.metrics_resolver
+        before_token_estimate = metrics_resolver.estimate_messages_tokens(
+            state.messages
+        )
 
         # Build compact prompt
         prompt_template = self.compact_prompt or DEFAULT_COMPACT_PROMPT
@@ -291,7 +257,7 @@ class Compactor:
         # Build compact messages (now includes the compact user step)
         compact_messages = list(state.messages)
 
-        # Call LLM for summarization
+        # Call LLM for summarization (metrics auto-resolved by LLMStreamHandler)
         step, llm_context = await self.llm_handler.stream_assistant_step(
             state,
             self.emitter.emit_step_delta,
@@ -335,7 +301,9 @@ class Compactor:
             latest_user_message=latest_user_message,
         )
 
-        after_token_estimate = estimate_tokens(compacted_messages)
+        after_token_estimate = metrics_resolver.estimate_messages_tokens(
+            compacted_messages
+        )
 
         # Build metadata
         metadata = CompactMetadata(
@@ -377,6 +345,7 @@ class Compactor:
         return CompactResult(
             compacted_messages=compacted_messages,
             metadata=metadata,
+            step=step,
         )
 
     @staticmethod
@@ -396,8 +365,6 @@ class Compactor:
 
 
 __all__ = [
-    "estimate_tokens",
-    "build_compact_messages",
     "build_compacted_messages",
     "save_transcript",
     "parse_compact_response",

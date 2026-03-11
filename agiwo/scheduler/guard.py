@@ -63,6 +63,9 @@ class TaskGuard:
 
     async def check_wake(self, state: AgentState) -> str | None:
         """Check if waking an agent is allowed. Returns None=allowed, str=rejection reason."""
+        if state.parent_id is None:
+            # Root agent can always be woken
+            return None
         if state.wake_count >= self._limits.max_wake_count:
             reason = (
                 f"Max wake count ({self._limits.max_wake_count}) reached. "

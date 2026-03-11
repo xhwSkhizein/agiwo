@@ -49,3 +49,24 @@ def test_tool_model_provider_legacy_values_are_rejected(monkeypatch) -> None:
 
     with pytest.raises(ValidationError):
         load_settings(include_env_file=False)
+
+
+def test_tool_model_name_requires_explicit_name_for_compatible_provider(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AGIWO_TOOL_DEFAULT_MODEL_PROVIDER", "openai-compatible")
+
+    with pytest.raises(ValidationError, match="AGIWO_TOOL_DEFAULT_MODEL_NAME"):
+        load_settings(include_env_file=False)
+
+
+def test_tool_model_name_allows_explicit_name_for_compatible_provider(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AGIWO_TOOL_DEFAULT_MODEL_PROVIDER", "openai-compatible")
+    monkeypatch.setenv("AGIWO_TOOL_DEFAULT_MODEL_NAME", "MiniMax-M2.5")
+
+    settings = load_settings(include_env_file=False)
+
+    assert settings.get_tool_model_provider() == "openai-compatible"
+    assert settings.get_tool_model_name() == "MiniMax-M2.5"

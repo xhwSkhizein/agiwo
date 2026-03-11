@@ -2,8 +2,6 @@
 Local sandbox for bash tool
 """
 
-from __future__ import annotations
-
 import asyncio
 import errno
 import fcntl
@@ -94,7 +92,7 @@ class LocalSandbox(Sandbox):
                     pass
                 raise TimeoutError(
                     f"Command timed out after {timeout} seconds: {command}"
-                )
+                ) from None
 
             return CommandResult(
                 stdout=stdout_bytes.decode("utf-8", errors="replace"),
@@ -103,14 +101,14 @@ class LocalSandbox(Sandbox):
             )
         except TimeoutError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - sandbox execution boundary
             return CommandResult(
                 stdout="",
                 stderr=f"Failed to execute command: {exc}",
                 exit_code=1,
             )
 
-    async def _execute_command_with_pty(
+    async def _execute_command_with_pty(  # noqa: C901, PLR0912, PLR0915 - PTY lifecycle boundary
         self,
         command: str,
         working_dir: Path,
@@ -140,7 +138,7 @@ class LocalSandbox(Sandbox):
                 cwd=str(working_dir),
                 start_new_session=True,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - sandbox PTY start boundary
             os.close(master_fd)
             os.close(slave_fd)
             return CommandResult(
@@ -209,7 +207,7 @@ class LocalSandbox(Sandbox):
                 chunks.append(chunk)
         except TimeoutError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - sandbox PTY read boundary
             return CommandResult(
                 stdout=b"".join(chunks).decode("utf-8", errors="replace"),
                 stderr=f"Failed to execute PTY command: {exc}",
@@ -265,7 +263,8 @@ class LocalSandbox(Sandbox):
             raise RuntimeError(
                 f"Too many running processes (limit: {self.max_processes}). "
                 f"Stop one first. Currently running: {running_list}. "
-                "Use `bashctl jobs` to inspect and `bashctl stop <job_id>` to terminate."
+                "Use `bash_process` with `action=jobs` to inspect and "
+                "`action=stop` to terminate."
             )
 
         working_dir = str(self.workspace)
@@ -323,7 +322,7 @@ class LocalSandbox(Sandbox):
         try:
             target.relative_to(self.workspace)
         except ValueError:
-            raise ValueError(f"Path escapes workspace: {path}")
+            raise ValueError(f"Path escapes workspace: {path}") from None
         return target
 
     @staticmethod

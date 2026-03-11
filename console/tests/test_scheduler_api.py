@@ -12,23 +12,28 @@ from httpx import ASGITransport, AsyncClient
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
-    WaitMode,
+    AgentStateStorageConfig,
+    SchedulerConfig,
     WakeCondition,
     WakeType,
     TimeUnit,
 )
-from agiwo.scheduler.store import InMemoryAgentStateStorage
+from agiwo.scheduler.scheduler import Scheduler
 
 from server.app import create_app
 from server.dependencies import (
-    get_storage_manager,
-    set_storage_manager,
-    set_console_config,
-    set_agent_registry,
+    ConsoleRuntime,
+    bind_console_runtime,
+    clear_console_runtime,
+    get_console_runtime_from_app,
 )
 from server.config import ConsoleConfig
-from server.services.agent_registry import AgentRegistry
+from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_manager import StorageManager
+
+
+def _runtime(client: AsyncClient) -> ConsoleRuntime:
+    return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
 
 
 @pytest.fixture
@@ -42,27 +47,41 @@ async def client():
         trace_storage_type="memory",
         metadata_storage_type="memory",
     )
-    set_console_config(config)
     sm = StorageManager(config)
-    # Override agent_state_storage with in-memory for isolation
-    sm.agent_state_storage = InMemoryAgentStateStorage()
-    set_storage_manager(sm)
+    scheduler = Scheduler(
+        SchedulerConfig(
+            state_storage=AgentStateStorageConfig(storage_type="memory"),
+        )
+    )
+    await scheduler.start()
 
     registry = AgentRegistry(config)
     await registry.initialize()
-    set_agent_registry(registry)
+    bind_console_runtime(
+        app,
+        ConsoleRuntime(
+            config=config,
+            storage_manager=sm,
+            agent_registry=registry,
+            scheduler=scheduler,
+        ),
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
+    clear_console_runtime(app)
     await registry.close()
+    await scheduler.stop()
     await sm.close()
 
 
 async def _seed_states(client: AsyncClient) -> None:
     """Seed agent states into the in-memory storage."""
-    storage = get_storage_manager().agent_state_storage
+    scheduler = _runtime(client).scheduler
+    assert scheduler is not None
+    storage = scheduler.store
 
     states = [
         AgentState(
@@ -217,6 +236,69 @@ class TestSchedulerStats:
         data = resp.json()
         assert data["total"] == 0
         assert data["pending"] == 0
+
+
+class TestPersistentAgentEndpoints:
+    @pytest.mark.asyncio
+    async def test_create_persistent_agent_generates_unique_state_ids_without_session_id(self, client):
+        registry = _runtime(client).agent_registry
+        config = await registry.create_agent(
+            AgentConfigRecord(
+                id="agent-config-1",
+                name="persistent-agent",
+                model_provider="openai",
+                model_name="gpt-test",
+            )
+        )
+
+        first = await client.post(
+            "/api/scheduler/states/create",
+            json={"agent_config_id": config.id},
+        )
+        second = await client.post(
+            "/api/scheduler/states/create",
+            json={"agent_config_id": config.id},
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["state_id"] != second.json()["state_id"]
+
+    @pytest.mark.asyncio
+    async def test_resume_endpoint_rehydrates_missing_runtime_agent(self, client):
+        registry = _runtime(client).agent_registry
+        config = await registry.create_agent(
+            AgentConfigRecord(
+                id="agent-config-2",
+                name="persistent-agent",
+                model_provider="openai",
+                model_name="gpt-test",
+            )
+        )
+        scheduler = _runtime(client).scheduler
+        assert scheduler is not None
+        state = AgentState(
+            id="agent-config-2--resume",
+            session_id="sess-resume",
+            status=AgentStateStatus.SLEEPING,
+            task="Initial task",
+            agent_config_id=config.id,
+            is_persistent=True,
+        )
+        await scheduler.store.save_state(state)
+
+        response = await client.post(
+            f"/api/scheduler/states/{state.id}/resume",
+            json={"message": "Resume work"},
+        )
+
+        assert response.status_code == 200
+        assert scheduler.get_registered_agent(state.id) is not None
+
+        updated = await scheduler.get_state(state.id)
+        assert updated is not None
+        assert updated.wake_condition is not None
+        assert updated.wake_condition.submitted_task == "Resume work"
 
     @pytest.mark.asyncio
     async def test_stats_with_data(self, client):

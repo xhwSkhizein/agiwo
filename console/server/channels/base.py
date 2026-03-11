@@ -8,7 +8,7 @@ behaviour (message delivery, prompt rendering, error mapping).
 
 from abc import ABC, abstractmethod
 
-from agiwo.agent.schema import UserMessage
+from agiwo.agent.schema import UserMessage, extract_text
 from agiwo.utils.logging import get_logger
 
 from server.channels.agent_runtime import AgentRuntimeManager
@@ -58,7 +58,7 @@ class BaseChannelService(ABC):
 
     async def _on_batch_ready(
         self,
-        session_key: str,
+        chat_context_scope_id: str,
         context: BatchContext,
         messages: list[InboundMessage],
     ) -> None:
@@ -69,11 +69,9 @@ class BaseChannelService(ABC):
             user_message=user_message,
         )
 
-        from agiwo.agent.schema import extract_text
-
         logger.info(
             "channel_batch_dispatched",
-            session_key=session_key,
+            chat_context_scope_id=chat_context_scope_id,
             chat_type=batch.context.chat_type,
             chat_id=batch.context.chat_id,
             message_count=len(batch.messages),
@@ -85,18 +83,19 @@ class BaseChannelService(ABC):
         except Exception as e:
             logger.exception(
                 "channel_batch_execution_failed",
-                session_key=session_key,
+                chat_context_scope_id=chat_context_scope_id,
                 error=str(e),
             )
             failure_text = self._to_user_facing_error(e)
             await self._deliver_reply(batch.context, failure_text)
 
     async def _execute_batch(self, batch: BatchPayload) -> None:
-        runtime = await self._runtime_mgr.get_or_create_runtime(batch.context)
-        agent = await self._runtime_mgr.get_or_create_runtime_agent(runtime)
+        created = await self._runtime_mgr.get_or_create_current_session(batch.context)
+        session = created.session
+        agent = await self._runtime_mgr.get_or_create_runtime_agent(session)
 
         output_stream = await self._runtime_mgr.submit_to_scheduler(
-            agent, runtime, batch.user_message,
+            agent, session, batch.user_message,
         )
 
         is_first_output = True

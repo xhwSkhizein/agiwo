@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
 import time
+from typing import Any, Protocol, runtime_checkable
 
-from agiwo.agent.schema import TerminationReason
+from agiwo.agent.runtime import TerminationReason
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.agent.execution_context import ExecutionContext
 
@@ -41,13 +41,44 @@ class ToolResult:
     termination_reason: TerminationReason | None = None
 
     @classmethod
-    def error(
+    def success(
+        cls,
+        tool_name: str,
+        content: str,
+        tool_call_id: str = "",
+        input_args: dict[str, Any] | None = None,
+        start_time: float | None = None,
+        output: Any = None,
+        content_for_user: str | None = None,
+        termination_reason: TerminationReason | None = None,
+    ) -> "ToolResult":
+        """Create a ToolResult representing a successful operation."""
+        now = time.time()
+        start = start_time if start_time is not None else now
+        return cls(
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            input_args=input_args or {},
+            content=content,
+            output=output,
+            start_time=start,
+            end_time=now,
+            duration=now - start,
+            content_for_user=content_for_user,
+            is_success=True,
+            termination_reason=termination_reason,
+        )
+
+    @classmethod
+    def failed(
         cls,
         tool_name: str,
         error: str,
         tool_call_id: str = "",
         input_args: dict[str, Any] | None = None,
         start_time: float | None = None,
+        content: str | None = None,
+        output: Any = None,
     ) -> "ToolResult":
         """Create a ToolResult representing an error."""
         now = time.time()
@@ -56,8 +87,8 @@ class ToolResult:
             tool_name=tool_name,
             tool_call_id=tool_call_id,
             input_args=input_args or {},
-            content=f"Error: {error}",
-            output=None,
+            content=content or f"Error: {error}",
+            output=output,
             error=error,
             start_time=start,
             end_time=now,
@@ -88,6 +119,46 @@ class ToolResult:
             duration=now - start,
             is_success=False,
         )
+
+    @classmethod
+    def denied(
+        cls,
+        tool_name: str,
+        reason: str,
+        tool_call_id: str = "",
+        input_args: dict[str, Any] | None = None,
+        start_time: float | None = None,
+        content: str | None = None,
+        output: Any = None,
+    ) -> "ToolResult":
+        """Create a ToolResult representing a denied operation."""
+        error = f"Permission denied: {reason}"
+        return cls.failed(
+            tool_name=tool_name,
+            error=error,
+            tool_call_id=tool_call_id,
+            input_args=input_args,
+            start_time=start_time,
+            content=content
+            or (
+                f"Tool execution denied: {reason}. "
+                "Please ask the user for permission or use a different approach."
+            ),
+            output=output,
+        )
+
+
+@runtime_checkable
+class AgentProcessProbe(Protocol):
+    """Public tool capability for inspecting agent-owned background processes."""
+
+    async def list_agent_processes(
+        self,
+        agent_id: str,
+        *,
+        state: str = "running",
+    ) -> list[dict[str, object]]:
+        """Return structured process summaries owned by one agent."""
 
 
 class BaseTool(ABC):
@@ -151,7 +222,7 @@ class BaseTool(ABC):
             cacheable=self.cacheable,
         )
 
-    def to_openai_schema(self) -> dict:
+    def to_openai_schema(self) -> dict[str, object]:
         """Convert to OpenAI function calling format."""
         return {
             "type": "function",
@@ -161,44 +232,3 @@ class BaseTool(ABC):
                 "parameters": self.get_parameters(),
             },
         }
-
-    def _create_error_result(
-        self,
-        parameters: dict,
-        error: str,
-        start_time: float,
-    ) -> "ToolResult":
-        """Create error result helper method."""
-
-        return ToolResult(
-            tool_name=self.name,
-            tool_call_id=parameters.get("tool_call_id", ""),
-            input_args=parameters,
-            content=f"Error: {error}",
-            output=None,
-            error=error,
-            start_time=start_time,
-            end_time=time.time(),
-            duration=time.time() - start_time,
-            is_success=False,
-        )
-
-    def _create_abort_result(
-        self,
-        parameters: dict,
-        start_time: float,
-    ) -> "ToolResult":
-        """Create abort result helper method."""
-
-        return ToolResult(
-            tool_name=self.name,
-            tool_call_id=parameters.get("tool_call_id", ""),
-            input_args=parameters,
-            content="Operation was aborted",
-            output=None,
-            error="Aborted",
-            start_time=start_time,
-            end_time=time.time(),
-            duration=time.time() - start_time,
-            is_success=False,
-        )

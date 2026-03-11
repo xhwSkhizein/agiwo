@@ -26,7 +26,8 @@ class Model(ABC):
     name: str
     temperature: float = 0.7
     top_p: float = 1.0
-    max_tokens: int = 4096
+    max_output_tokens: int = 4096
+    max_context_window: int = 200000
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0
     api_key: str | None = None
@@ -39,8 +40,10 @@ class Model(ABC):
     def __post_init__(self) -> None:
         if not (0.0 <= self.temperature <= 2.0):
             raise ValueError("temperature must be between 0.0 and 2.0")
-        if self.max_tokens is not None and self.max_tokens < 1:
-            raise ValueError("max_tokens must be at least 1")
+        if self.max_output_tokens is not None and self.max_output_tokens < 1:
+            raise ValueError("max_output_tokens must be at least 1")
+        if self.max_context_window is not None and self.max_context_window < 1:
+            raise ValueError("max_context_window must be at least 1")
         if self.cache_hit_price < 0 or self.input_price < 0 or self.output_price < 0:
             raise ValueError("token prices must be non-negative")
 

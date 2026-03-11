@@ -20,7 +20,7 @@ async def test_anthropic_model_arun_stream_basic(mock_settings, mock_anthropic_c
         api_key="test-key",
         temperature=0.7,
         top_p=1.0,
-        max_tokens=100,
+        max_output_tokens=100,
         frequency_penalty=0.0,
         presence_penalty=0.0,
     )
@@ -60,7 +60,7 @@ async def test_anthropic_model_arun_stream_with_system_prompt(mock_settings, moc
         api_key="test-key",
         temperature=0.7,
         top_p=1.0,
-        max_tokens=100,
+        max_output_tokens=100,
         frequency_penalty=0.0,
         presence_penalty=0.0,
     )
@@ -104,7 +104,7 @@ async def test_anthropic_model_arun_stream_with_usage(mock_settings, mock_anthro
         api_key="test-key",
         temperature=0.7,
         top_p=1.0,
-        max_tokens=100,
+        max_output_tokens=100,
         frequency_penalty=0.0,
         presence_penalty=0.0,
     )
@@ -161,7 +161,7 @@ async def test_anthropic_model_arun_stream_with_tool_use(mock_settings, mock_ant
         api_key="test-key",
         temperature=0.7,
         top_p=1.0,
-        max_tokens=100,
+        max_output_tokens=100,
         frequency_penalty=0.0,
         presence_penalty=0.0,
     )
@@ -218,6 +218,53 @@ async def test_anthropic_model_arun_stream_with_tool_use(mock_settings, mock_ant
     assert tool_call_chunk is not None
     assert len(tool_call_chunk.tool_calls) == 1
     assert tool_call_chunk.tool_calls[0]["function"]["name"] == "test_function"
+    assert tool_call_chunk.tool_calls[0]["function"]["arguments"] == '{"x": 1}'
+
+
+@pytest.mark.asyncio
+@patch("agiwo.llm.anthropic.settings")
+async def test_anthropic_model_arun_stream_maps_max_tokens_to_length(
+    mock_settings,
+    mock_anthropic_client,
+):
+    mock_settings.anthropic_api_key = None
+    model = AnthropicModel(
+        id="claude-3-5-sonnet",
+        name="claude-3-5-sonnet",
+        api_key="test-key",
+        temperature=0.7,
+        top_p=1.0,
+        max_output_tokens=100,
+        frequency_penalty=0.0,
+        presence_penalty=0.0,
+    )
+    model.client = mock_anthropic_client
+    model.model_name = "claude-3-5-sonnet"
+    model.max_tokens_to_sample = 100
+
+    mock_delta = MagicMock()
+    mock_delta.stop_reason = "max_tokens"
+
+    mock_event = MagicMock()
+    mock_event.type = "message_delta"
+    mock_event.delta = mock_delta
+    mock_event.usage = {"output_tokens": 7}
+
+    async def async_iter(self):
+        yield mock_event
+
+    mock_stream = AsyncMock()
+    mock_stream.__aiter__ = async_iter
+    mock_anthropic_client.messages.create = AsyncMock(return_value=mock_stream)
+
+    messages = [{"role": "user", "content": "Hello"}]
+    chunks = []
+    async for chunk in model.arun_stream(messages):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+    assert chunks[0].finish_reason == "length"
+    assert chunks[0].usage["output_tokens"] == 7
 
 
 @pytest.mark.asyncio
@@ -230,7 +277,7 @@ async def test_anthropic_model_convert_messages(mock_settings, mock_anthropic_cl
         api_key="test-key",
         temperature=0.7,
         top_p=1.0,
-        max_tokens=100,
+        max_output_tokens=100,
         frequency_penalty=0.0,
         presence_penalty=0.0,
     )

@@ -25,33 +25,99 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ── UserInput Types ────────────────────────────────────────────────────
 
+export interface ContentPartPayload {
+  type: string;
+  text?: string;
+  url?: string;
+  mime_type?: string;
+  detail?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ChannelContextPayload {
+  source: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface UserMessage {
   __type: "user_message";
-  content: Array<{
-    type: string;
-    text?: string;
-    url?: string;
-    mime_type?: string;
-  }>;
-  context?: {
-    source: string;
-    metadata?: Record<string, unknown>;
-  };
+  content: ContentPartPayload[];
+  context?: ChannelContextPayload | null;
 }
 
 export interface ContentParts {
   __type: "content_parts";
-  parts: Array<{
-    type: string;
-    text?: string;
-    url?: string;
-    mime_type?: string;
-  }>;
+  parts: ContentPartPayload[];
 }
 
-export type UserInput = string | UserMessage | ContentParts | unknown;
+export type UserInput =
+  | string
+  | ContentPartPayload[]
+  | UserMessage
+  | ContentParts;
 
 // ── Sessions / Runs ────────────────────────────────────────────────────
+
+export interface RunMetricsSummary {
+  run_count: number;
+  completed_run_count: number;
+  step_count: number;
+  tool_calls_count: number;
+  duration_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  token_cost: number;
+}
+
+export type UsageSource = "provider" | "estimated" | "mixed";
+
+export interface RunMetricsPayload {
+  duration_ms?: number | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  total_tokens?: number | null;
+  cache_read_tokens?: number | null;
+  cache_creation_tokens?: number | null;
+  token_cost?: number | null;
+  steps_count?: number | null;
+  tool_calls_count?: number | null;
+}
+
+export interface StepMetricsPayload extends RunMetricsPayload {
+  usage_source?: UsageSource | null;
+  model_name?: string | null;
+  provider?: string | null;
+  first_token_latency_ms?: number | null;
+}
+
+export interface SpanMetricsPayload {
+  "tokens.input"?: number | null;
+  "tokens.output"?: number | null;
+  "tokens.total"?: number | null;
+  "tokens.cache_read"?: number | null;
+  "tokens.cache_creation"?: number | null;
+  token_cost?: number | null;
+  first_token_ms?: number | null;
+  duration_ms?: number | null;
+  model?: string | null;
+  provider?: string | null;
+  usage_source?: UsageSource | null;
+}
+
+export interface ToolFunctionPayload {
+  name: string;
+  arguments: string;
+}
+
+export interface ToolCallPayload {
+  id?: string;
+  index?: number;
+  type?: string;
+  function?: ToolFunctionPayload;
+}
 
 export interface SessionSummary {
   session_id: string;
@@ -60,6 +126,7 @@ export interface SessionSummary {
   last_response: string | null;
   run_count: number;
   step_count: number;
+  metrics: RunMetricsSummary;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -72,7 +139,7 @@ export interface RunResponse {
   user_input: UserInput;
   status: string;
   response_content: string | null;
-  metrics: Record<string, unknown> | null;
+  metrics: RunMetricsPayload | null;
   created_at: string | null;
   updated_at: string | null;
   parent_run_id: string | null;
@@ -89,14 +156,66 @@ export interface StepResponse {
   content_for_user: string | null;
   reasoning_content: string | null;
   user_input: UserInput | null;
-  tool_calls: Record<string, unknown>[] | null;
+  tool_calls: ToolCallPayload[] | null;
   tool_call_id: string | null;
   name: string | null;
-  metrics: Record<string, unknown> | null;
+  metrics: StepMetricsPayload | null;
   created_at: string | null;
   parent_run_id: string | null;
   depth: number;
 }
+
+export interface StepDeltaPayload {
+  content?: string | null;
+  reasoning_content?: string | null;
+  tool_calls?: ToolCallPayload[] | null;
+  usage?: Record<string, number> | null;
+}
+
+export interface StreamEventBase {
+  type: string;
+}
+
+export interface AgentStreamEventPayload extends StreamEventBase {
+  type:
+    | "step_delta"
+    | "step_completed"
+    | "run_started"
+    | "run_completed"
+    | "run_failed"
+    | "error"
+    | "tool_auth_required"
+    | "tool_auth_denied";
+  run_id: string;
+  delta?: StepDeltaPayload;
+  step?: StepResponse;
+  data?: Record<string, unknown>;
+  agent_id?: string | null;
+  span_id?: string | null;
+  parent_run_id?: string | null;
+  parent_span_id?: string | null;
+  trace_id?: string | null;
+  step_id?: string | null;
+  depth?: number;
+  timestamp?: string | null;
+}
+
+export interface SchedulerCompletedEventPayload extends StreamEventBase {
+  type: "scheduler_completed";
+  state_id: string;
+  response?: string | null;
+  termination_reason?: string | null;
+}
+
+export interface SchedulerFailedEventPayload extends StreamEventBase {
+  type: "scheduler_failed";
+  error: string;
+}
+
+export type StreamEventPayload =
+  | AgentStreamEventPayload
+  | SchedulerCompletedEventPayload
+  | SchedulerFailedEventPayload;
 
 export function listSessions(limit = 20, offset = 0) {
   return fetchJSON<SessionSummary[]>(`/api/sessions?limit=${limit}&offset=${offset}`);
@@ -118,6 +237,10 @@ export function getSessionSteps(sessionId: string) {
   return fetchJSON<StepResponse[]>(`/api/sessions/${sessionId}/steps`);
 }
 
+export function getSessionSummary(sessionId: string) {
+  return fetchJSON<SessionSummary>(`/api/sessions/${sessionId}/summary`);
+}
+
 // ── Traces ─────────────────────────────────────────────────────────────
 
 export interface TraceListItem {
@@ -129,6 +252,11 @@ export interface TraceListItem {
   duration_ms: number | null;
   status: string;
   total_tokens: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cache_read_tokens: number;
+  total_cache_creation_tokens: number;
+  total_token_cost: number;
   total_llm_calls: number;
   total_tool_calls: number;
   input_query: string | null;
@@ -150,7 +278,7 @@ export interface SpanResponse {
   attributes: Record<string, unknown>;
   input_preview: string | null;
   output_preview: string | null;
-  metrics: Record<string, unknown>;
+  metrics: SpanMetricsPayload;
   llm_details: Record<string, unknown> | null;
   tool_details: Record<string, unknown> | null;
   run_id: string | null;
@@ -168,6 +296,9 @@ export interface TraceDetail {
   status: string;
   root_span_id: string | null;
   total_tokens: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_token_cost: number;
   total_llm_calls: number;
   total_tool_calls: number;
   total_cache_read_tokens: number;
@@ -197,9 +328,8 @@ export interface AgentOptionsPayload {
   config_root: string;
   max_steps: number;
   run_timeout: number;
-  max_context_window_tokens: number;
-  max_tokens_per_run: number;
-  max_run_token_cost: number | null;
+  max_input_tokens_per_call: number | null;
+  max_run_cost: number | null;
   enable_termination_summary: boolean;
   termination_summary_prompt: string;
   enable_skill: boolean;
@@ -212,7 +342,8 @@ export interface AgentOptionsPayload {
 export interface ModelParamsPayload {
   base_url: string | null;
   api_key_env_name: string | null;
-  max_output_tokens_per_call: number;
+  max_output_tokens: number;
+  max_context_window: number;
   temperature: number;
   top_p: number;
   frequency_penalty: number;
@@ -238,13 +369,13 @@ export interface AgentConfig {
 
 export interface AgentConfigCreate {
   name: string;
-  description?: string;
+  description: string;
   model_provider: string;
   model_name: string;
-  system_prompt?: string;
-  tools?: string[];
-  options?: Partial<AgentOptionsPayload>;
-  model_params?: Partial<ModelParamsPayload>;
+  system_prompt: string;
+  tools: string[];
+  options: AgentOptionsPayload;
+  model_params: ModelParamsPayload;
 }
 
 export interface AvailableTool {
@@ -274,7 +405,7 @@ export function createAgent(data: AgentConfigCreate) {
   });
 }
 
-export function updateAgent(agentId: string, data: Partial<AgentConfigCreate>) {
+export function updateAgent(agentId: string, data: AgentConfigCreate) {
   return fetchJSON<AgentConfig>(`/api/agents/${agentId}`, {
     method: "PUT",
     body: JSON.stringify(data),
@@ -290,12 +421,14 @@ export async function deleteAgent(agentId: string) {
 
 export interface WakeConditionResponse {
   type: string;
+  wait_for: string[];
+  wait_mode: string;
+  completed_ids: string[];
   time_value: number | null;
   time_unit: string | null;
-  total_children: number;
-  completed_children: number;
   wakeup_at: string | null;
   submitted_task: UserInput | null;
+  timeout_at: string | null;
 }
 
 export interface AgentStateListItem {
@@ -305,9 +438,11 @@ export interface AgentStateListItem {
   parent_id: string | null;
   wake_condition: WakeConditionResponse | null;
   result_summary: string | null;
+  agent_config_id: string | null;
   is_persistent: boolean;
   depth: number;
   wake_count: number;
+  metrics: RunMetricsSummary;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -322,9 +457,11 @@ export interface AgentStateDetail {
   wake_condition: WakeConditionResponse | null;
   result_summary: string | null;
   signal_propagated: boolean;
+  agent_config_id: string | null;
   is_persistent: boolean;
   depth: number;
   wake_count: number;
+  metrics: RunMetricsSummary;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -370,6 +507,18 @@ export function schedulerChatStreamUrl(agentId: string) {
   return `${API_BASE}/api/scheduler/chat/${agentId}`;
 }
 
+export function parseStreamEventPayload(data: string): StreamEventPayload | null {
+  try {
+    const parsed = JSON.parse(data) as StreamEventPayload;
+    if (!parsed || typeof parsed !== "object" || typeof parsed.type !== "string") {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 export function cancelSchedulerChat(agentId: string, stateId: string) {
   return fetchJSON<{ ok: boolean; state_id: string }>(
     `/api/scheduler/chat/${agentId}/cancel`,
@@ -380,89 +529,45 @@ export function cancelSchedulerChat(agentId: string, stateId: string) {
   );
 }
 
-/**
- * Extract readable text from UserInput for display.
- * Handles:
- * - string: returns as-is
- * - UserMessage (__type=user_message or has content+context): extracts text from content array
- * - ContentParts (__type=content_parts): extracts text from parts array
- * - other: returns JSON.stringify (fallback)
- */
-export function formatUserInput(input: UserInput): string {
-  if (input === null || input === undefined) {
-    return "";
-  }
+// ── Scheduler Control ─────────────────────────────────────────────────
 
-  // Plain string
-  if (typeof input === "string") {
-    return input;
-  }
+export interface PendingEventItem {
+  id: string;
+  target_agent_id: string;
+  source_agent_id: string | null;
+  event_type: string;
+  payload: Record<string, unknown>;
+  created_at: string | null;
+}
 
-  // Object type
-  if (typeof input === "object" && input !== null) {
-    const typed = input as Record<string, unknown>;
-    const type = typed.__type;
+export function steerAgent(id: string, message: string, urgent = false) {
+  return fetchJSON<{ ok: boolean }>(`/api/scheduler/states/${id}/steer`, {
+    method: "POST",
+    body: JSON.stringify({ message, urgent }),
+  });
+}
 
-    // UserMessage format (with __type)
-    if (type === "user_message") {
-      const content = typed.content as Array<Record<string, unknown>> | undefined;
-      if (Array.isArray(content)) {
-        const texts: string[] = [];
-        for (const part of content) {
-          if (part.type === "text" && typeof part.text === "string") {
-            texts.push(part.text);
-          }
-        }
-        return texts.join("\n");
-      }
-    }
+export function cancelAgent(id: string, reason?: string) {
+  return fetchJSON<{ ok: boolean }>(`/api/scheduler/states/${id}/cancel`, {
+    method: "POST",
+    body: JSON.stringify({ reason }),
+  });
+}
 
-    // ContentParts format (with __type)
-    if (type === "content_parts") {
-      const parts = typed.parts as Array<Record<string, unknown>> | undefined;
-      if (Array.isArray(parts)) {
-        const texts: string[] = [];
-        for (const part of parts) {
-          if (part.type === "text" && typeof part.text === "string") {
-            texts.push(part.text);
-          }
-        }
-        return texts.join("\n");
-      }
-    }
+export function resumeAgent(id: string, message: string) {
+  return fetchJSON<{ ok: boolean }>(`/api/scheduler/states/${id}/resume`, {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}
 
-    // UserMessage format (without __type, Pydantic serialized)
-    // Detect by presence of content array and context object
-    const content = typed.content as Array<Record<string, unknown>> | undefined;
-    const context = typed.context as Record<string, unknown> | undefined;
-    if (Array.isArray(content) && typeof context === "object" && context !== null) {
-      const texts: string[] = [];
-      for (const part of content) {
-        if (part.type === "text" && typeof part.text === "string") {
-          texts.push(part.text);
-        }
-      }
-      return texts.join("\n");
-    }
+export function getPendingEvents(id: string) {
+  return fetchJSON<PendingEventItem[]>(`/api/scheduler/states/${id}/pending-events`);
+}
 
-    // Simple content array (no context)
-    if (Array.isArray(content)) {
-      const texts: string[] = [];
-      for (const part of content) {
-        if (part.type === "text" && typeof part.text === "string") {
-          texts.push(part.text);
-        }
-      }
-      if (texts.length > 0) {
-        return texts.join("\n");
-      }
-    }
-  }
-
-  // Fallback: return JSON string
-  try {
-    return JSON.stringify(input, null, 2);
-  } catch {
-    return String(input);
-  }
+export function createPersistentAgent(data: { agent_config_id?: string; initial_task?: string; session_id?: string }) {
+  return fetchJSON<{ ok: boolean; state_id: string }>(`/api/scheduler/states/create`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
 }

@@ -1,54 +1,80 @@
 "use client";
 
-import { UserInput } from "@/lib/api";
+import type {
+  ChannelContextPayload,
+  ContentParts,
+  ContentPartPayload,
+  UserInput,
+  UserMessage,
+} from "@/lib/api";
+import { PillBadge } from "@/components/pill-badge";
 
 interface UserInputDetailProps {
-  input: UserInput;
+  input: UserInput | null | undefined;
   showContext?: boolean;
   maxTextLength?: number;
 }
 
-interface ContentPart {
-  type: string;
-  text?: string;
-  url?: string;
-  mime_type?: string;
-  detail?: string;
-  metadata?: Record<string, unknown>;
+interface UserInputCompactProps {
+  input: UserInput | null | undefined;
+  maxLength?: number;
+  showContextBadge?: boolean;
+  showMetadata?: boolean;
+  showAttachmentBadge?: boolean;
 }
 
-interface ChannelContext {
-  source: string;
-  metadata?: Record<string, unknown>;
-}
+type UserInputObject = UserMessage | ContentParts;
+type LooseSerializedUserInput = {
+  __type?: string;
+  content?: ContentPartPayload[];
+  parts?: ContentPartPayload[];
+  context?: ChannelContextPayload | null;
+};
 
 /**
  * Extract content parts from UserInput
  * Handles multiple formats:
  * - UserMessage with __type
+ * - ContentParts with __type
  * - UserMessage without __type (Pydantic serialized)
- * - Simple content array
+ * - Simple content/parts arrays
  */
-function extractContentParts(input: UserInput): ContentPart[] | null {
+function extractContentParts(input: UserInput): ContentPartPayload[] | null {
   if (input === null || input === undefined) {
     return null;
+  }
+
+  if (Array.isArray(input)) {
+    return input;
   }
 
   if (typeof input !== "object") {
     return null;
   }
 
-  const typed = input as Record<string, unknown>;
+  const typed = input as UserInputObject;
+  const looseTyped = input as LooseSerializedUserInput;
 
   // UserMessage format (with __type)
   if (typed.__type === "user_message") {
-    const content = typed.content as ContentPart[] | undefined;
+    const content = typed.content as ContentPartPayload[] | undefined;
     return content || null;
   }
 
+  // ContentParts format (with __type)
+  if (typed.__type === "content_parts") {
+    const parts = typed.parts as ContentPartPayload[] | undefined;
+    return parts || null;
+  }
+
   // UserMessage format (without __type, Pydantic serialized)
-  if (Array.isArray(typed.content)) {
-    return typed.content as ContentPart[];
+  if (Array.isArray(looseTyped.content)) {
+    return looseTyped.content;
+  }
+
+  // ContentParts format (without __type)
+  if (Array.isArray(looseTyped.parts)) {
+    return looseTyped.parts;
   }
 
   return null;
@@ -57,8 +83,12 @@ function extractContentParts(input: UserInput): ContentPart[] | null {
 /**
  * Extract ChannelContext from UserInput
  */
-function extractChannelContext(input: UserInput): ChannelContext | null {
+function extractChannelContext(input: UserInput): ChannelContextPayload | null {
   if (input === null || input === undefined) {
+    return null;
+  }
+
+  if (Array.isArray(input)) {
     return null;
   }
 
@@ -66,20 +96,47 @@ function extractChannelContext(input: UserInput): ChannelContext | null {
     return null;
   }
 
-  const typed = input as Record<string, unknown>;
+  const typed = input as UserInputObject;
+  const looseTyped = input as LooseSerializedUserInput;
 
   // UserMessage format (with __type)
   if (typed.__type === "user_message") {
-    const context = typed.context as ChannelContext | undefined;
+    const context = typed.context as ChannelContextPayload | undefined;
     return context || null;
   }
 
   // UserMessage format (without __type, Pydantic serialized)
-  if (typed.context && typeof typed.context === "object") {
-    return typed.context as ChannelContext;
+  if (looseTyped.context && typeof looseTyped.context === "object") {
+    return looseTyped.context;
   }
 
   return null;
+}
+
+function formatMetadataValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  const serialized = JSON.stringify(value);
+  return serialized ?? String(value);
+}
+
+function getInputTypeLabel(input: UserInput): string | null {
+  if (input === null || input === undefined) {
+    return null;
+  }
+
+  if (Array.isArray(input)) {
+    return "content_parts";
+  }
+
+  if (typeof input !== "object") {
+    return null;
+  }
+
+  const typed = input as UserInputObject;
+  return typeof typed.__type === "string" ? typed.__type : null;
 }
 
 /**
@@ -95,7 +152,7 @@ function formatText(text: string, maxLength?: number): string {
 /**
  * Get a short label for the content type
  */
-function getContentTypeLabel(part: ContentPart): string {
+function getContentTypeLabel(part: ContentPartPayload): string {
   switch (part.type) {
     case "text":
       return "文本";
@@ -106,12 +163,57 @@ function getContentTypeLabel(part: ContentPart): string {
     case "file":
       return "文件";
     case "audio":
+    case "input_audio":
       return "音频";
     case "video":
+    case "video_url":
       return "视频";
     default:
       return part.type;
   }
+}
+
+function ResourceMeta({ part }: { part: ContentPartPayload }) {
+  const entries = Object.entries(part.metadata || {});
+
+  return (
+    <>
+      {part.mime_type && (
+        <div className="text-xs text-zinc-500">{part.mime_type}</div>
+      )}
+      {part.detail && (
+        <div className="text-xs text-zinc-500">{part.detail}</div>
+      )}
+      {entries.length > 0 && (
+        <div className="space-y-0.5">
+          {entries.map(([key, value]) => (
+            <div key={key} className="text-xs text-zinc-500 break-all">
+              {key}: {formatMetadataValue(value)}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function ResourceView({ part }: { part: ContentPartPayload }) {
+  return (
+    <div className="space-y-1">
+      <span className="text-xs text-zinc-500">{getContentTypeLabel(part)}</span>
+      {part.url && (
+        <a
+          href={part.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block text-xs text-blue-400 break-all hover:underline"
+        >
+          {part.url}
+        </a>
+      )}
+      <ResourceMeta part={part} />
+    </div>
+  );
 }
 
 /**
@@ -121,7 +223,7 @@ function ContentPartView({
   part,
   maxTextLength,
 }: {
-  part: ContentPart;
+  part: ContentPartPayload;
   maxTextLength?: number;
 }) {
   switch (part.type) {
@@ -134,27 +236,12 @@ function ContentPartView({
 
     case "image":
     case "image_url":
-      return (
-        <div className="space-y-1">
-          <span className="text-xs text-zinc-500">{getContentTypeLabel(part)}</span>
-          {part.url && (
-            <div className="text-xs text-zinc-400 break-all">{part.url}</div>
-          )}
-        </div>
-      );
-
+    case "audio":
+    case "input_audio":
+    case "video":
+    case "video_url":
     case "file":
-      return (
-        <div className="space-y-1">
-          <span className="text-xs text-zinc-500">{getContentTypeLabel(part)}</span>
-          {part.url && (
-            <div className="text-xs text-zinc-400 break-all">{part.url}</div>
-          )}
-          {part.mime_type && (
-            <div className="text-xs text-zinc-500">{part.mime_type}</div>
-          )}
-        </div>
-      );
+      return <ResourceView part={part} />;
 
     default:
       return (
@@ -171,7 +258,7 @@ function ContentPartView({
 /**
  * Render ChannelContext metadata
  */
-function ChannelContextView({ context }: { context: ChannelContext }) {
+function ChannelContextView({ context }: { context: ChannelContextPayload }) {
   const { source, metadata } = context;
 
   return (
@@ -186,7 +273,7 @@ function ChannelContextView({ context }: { context: ChannelContext }) {
             <div key={key} className="flex items-start gap-2 text-xs">
               <span className="text-zinc-500 min-w-[80px]">{key}:</span>
               <span className="text-zinc-400 break-all">
-                {typeof value === "string" ? value : JSON.stringify(value)}
+                {formatMetadataValue(value)}
               </span>
             </div>
           ))}
@@ -267,10 +354,10 @@ export function UserInputDetail({
 export function UserInputCompact({
   input,
   maxLength = 100,
-}: {
-  input: UserInput;
-  maxLength?: number;
-}) {
+  showContextBadge = false,
+  showMetadata = false,
+  showAttachmentBadge = false,
+}: UserInputCompactProps) {
   if (typeof input === "string") {
     return (
       <span className="text-sm text-zinc-300 truncate">
@@ -284,6 +371,24 @@ export function UserInputCompact({
   }
 
   const contentParts = extractContentParts(input);
+  const channelContext = extractChannelContext(input);
+  const textParts = contentParts
+    ?.filter((p) => p.type === "text" && p.text)
+    .map((p) => p.text as string) || [];
+  const textSummary = textParts.join(" ");
+  const firstText = textParts[0];
+  const hasAttachments = contentParts?.some((p) => p.type !== "text") || false;
+  const metadataEntries = Object.entries(channelContext?.metadata || {});
+  const inputTypeLabel = getInputTypeLabel(input);
+  const contextBadge =
+    channelContext?.source ||
+    (showContextBadge && inputTypeLabel === "content_parts"
+      ? inputTypeLabel
+      : null);
+  const shouldRenderDetailed =
+    Boolean(contextBadge) ||
+    (showAttachmentBadge && hasAttachments) ||
+    (showMetadata && metadataEntries.length > 0);
 
   if (!contentParts) {
     return (
@@ -291,8 +396,45 @@ export function UserInputCompact({
     );
   }
 
-  // Find first text part
-  const firstText = contentParts.find((p) => p.type === "text" && p.text)?.text;
+  const summaryText =
+    textSummary ||
+    (hasAttachments
+      ? `[${contentParts.map((p) => getContentTypeLabel(p)).join(", ")}]`
+      : "(无文本内容)");
+
+  if (shouldRenderDetailed) {
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2 min-w-0">
+          {contextBadge && (
+            <PillBadge className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/50">
+              {contextBadge}
+            </PillBadge>
+          )}
+          <span className="min-w-0 flex-1 text-sm text-zinc-300 truncate">
+            {formatText(summaryText, maxLength)}
+          </span>
+          {showAttachmentBadge && hasAttachments && (
+            <span className="shrink-0 text-[10px] px-1 py-0.5 rounded bg-zinc-800 text-zinc-500">
+              +附件
+            </span>
+          )}
+        </div>
+        {showMetadata && metadataEntries.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {metadataEntries.map(([key, value]) => (
+              <span key={key} className="text-[10px] text-zinc-500">
+                <span className="text-zinc-600">{key}:</span>
+                <span className="text-zinc-400 ml-1">
+                  {formatMetadataValue(value)}
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if (firstText) {
     return (

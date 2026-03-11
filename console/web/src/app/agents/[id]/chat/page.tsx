@@ -3,9 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Send, User, Bot, Wrench, Loader2 } from "lucide-react";
-import { getAgent, getSessionSteps, chatStreamUrl } from "@/lib/api";
-import type { AgentConfig, StepResponse } from "@/lib/api";
+import { ArrowLeft } from "lucide-react";
+import { ChatInputBar } from "@/components/chat-input-bar";
+import { ChatMessageItem } from "@/components/chat-message";
+import { EmptyStateMessage, FullPageMessage } from "@/components/state-message";
+import { getAgent, chatStreamUrl, parseStreamEventPayload } from "@/lib/api";
+import type { AgentConfig, AgentStreamEventPayload, ToolCallPayload } from "@/lib/api";
 
 function genId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -16,7 +19,7 @@ interface ChatMessage {
   role: "user" | "assistant" | "tool";
   content: string;
   name?: string;
-  tool_calls?: Record<string, unknown>[];
+  tool_calls?: ToolCallPayload[];
   reasoning_content?: string;
   isStreaming?: boolean;
 }
@@ -84,7 +87,7 @@ export default function AgentChatPage() {
       const decoder = new TextDecoder();
       let currentAssistantContent = "";
       let currentReasoningContent = "";
-      let pendingToolMessages: ChatMessage[] = [];
+      const pendingToolMessages: ChatMessage[] = [];
       let capturedSessionId = sessionId;
 
       if (!reader) throw new Error("No response body");
@@ -104,16 +107,23 @@ export default function AgentChatPage() {
           if (!dataStr || dataStr === "") continue;
 
           try {
-            const data = JSON.parse(dataStr);
+            const data = parseStreamEventPayload(dataStr);
+            if (!data) {
+              continue;
+            }
+            if (data.type === "scheduler_completed" || data.type === "scheduler_failed") {
+              continue;
+            }
+            const agentEvent = data as AgentStreamEventPayload;
 
-            if (data.type === "run_started" && data.data?.session_id) {
-              capturedSessionId = data.data.session_id;
+            if (agentEvent.type === "run_started" && agentEvent.data?.session_id) {
+              capturedSessionId = String(agentEvent.data.session_id);
               if (!sessionId) setSessionId(capturedSessionId);
             }
 
-            if (data.type === "step_delta" && data.delta) {
-              if (data.delta.content) {
-                currentAssistantContent += data.delta.content;
+            if (agentEvent.type === "step_delta" && agentEvent.delta) {
+              if (agentEvent.delta.content) {
+                currentAssistantContent += agentEvent.delta.content;
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantMsg.id
@@ -122,8 +132,8 @@ export default function AgentChatPage() {
                   )
                 );
               }
-              if (data.delta.reasoning_content) {
-                currentReasoningContent += data.delta.reasoning_content;
+              if (agentEvent.delta.reasoning_content) {
+                currentReasoningContent += agentEvent.delta.reasoning_content;
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === assistantMsg.id
@@ -134,8 +144,8 @@ export default function AgentChatPage() {
               }
             }
 
-            if (data.type === "step_completed" && data.step) {
-              const step = data.step;
+            if (agentEvent.type === "step_completed" && agentEvent.step) {
+              const step = agentEvent.step;
               if (step.role === "assistant") {
                 const tc = step.tool_calls;
                 if (tc && tc.length > 0) {
@@ -175,7 +185,7 @@ export default function AgentChatPage() {
               }
             }
 
-            if (data.type === "run_completed") {
+            if (agentEvent.type === "run_completed") {
               setMessages((prev) =>
                 prev
                   .map((m) =>
@@ -187,7 +197,6 @@ export default function AgentChatPage() {
               );
             }
           } catch {
-            // skip non-JSON lines
           }
         }
       }
@@ -209,19 +218,11 @@ export default function AgentChatPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-zinc-500">Loading agent...</div>
-      </div>
-    );
+    return <FullPageMessage>Loading agent...</FullPageMessage>;
   }
 
   if (!agent) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-zinc-500">Agent not found</div>
-      </div>
-    );
+    return <FullPageMessage>Agent not found</FullPageMessage>;
   }
 
   return (
@@ -246,109 +247,24 @@ export default function AgentChatPage() {
 
       <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
         {messages.length === 0 && (
-          <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
+          <EmptyStateMessage className="flex items-center justify-center h-full text-zinc-600 text-sm">
             Send a message to start the conversation
-          </div>
+          </EmptyStateMessage>
         )}
 
         {messages.map((msg) => (
-          <div key={msg.id} className="flex gap-3">
-            <div className="shrink-0 mt-1">
-              {msg.role === "user" && (
-                <div className="w-7 h-7 rounded-full bg-blue-900/50 flex items-center justify-center">
-                  <User className="w-3.5 h-3.5 text-blue-400" />
-                </div>
-              )}
-              {msg.role === "assistant" && (
-                <div className="w-7 h-7 rounded-full bg-green-900/50 flex items-center justify-center">
-                  <Bot className="w-3.5 h-3.5 text-green-400" />
-                </div>
-              )}
-              {msg.role === "tool" && (
-                <div className="w-7 h-7 rounded-full bg-amber-900/50 flex items-center justify-center">
-                  <Wrench className="w-3.5 h-3.5 text-amber-400" />
-                </div>
-              )}
-            </div>
-
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-zinc-400 uppercase">
-                  {msg.role}
-                  {msg.name && ` — ${msg.name}`}
-                </span>
-                {msg.isStreaming && (
-                  <Loader2 className="w-3 h-3 text-zinc-500 animate-spin" />
-                )}
-              </div>
-
-              {msg.reasoning_content && (
-                <div className="mb-2 px-3 py-2 rounded bg-zinc-800/50 text-xs text-zinc-400 whitespace-pre-wrap max-h-32 overflow-auto">
-                  <span className="text-zinc-500 font-medium">Thinking: </span>
-                  {msg.reasoning_content}
-                </div>
-              )}
-
-              {msg.content && (
-                <div className="text-sm whitespace-pre-wrap break-words">
-                  {msg.content}
-                </div>
-              )}
-
-              {msg.tool_calls && msg.tool_calls.length > 0 && (
-                <div className="mt-2 space-y-1">
-                  {msg.tool_calls.map((tc, i) => {
-                    const fn = tc.function as
-                      | Record<string, unknown>
-                      | undefined;
-                    return (
-                      <div
-                        key={i}
-                        className="text-xs bg-zinc-800/50 rounded px-3 py-2 font-mono overflow-auto max-h-32"
-                      >
-                        <span className="text-amber-400">
-                          {fn ? (fn.name as string) : "tool_call"}
-                        </span>
-                        <span className="text-zinc-500 ml-2">
-                          {fn
-                            ? (fn.arguments as string)
-                            : JSON.stringify(tc)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
+          <ChatMessageItem key={msg.id} message={msg} />
         ))}
         <div ref={messagesEndRef} />
       </div>
 
       <div className="shrink-0 px-5 py-3 border-t border-zinc-800 bg-zinc-900/50">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            sendMessage();
-          }}
-          className="flex items-center gap-3"
-        >
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type a message..."
-            disabled={isStreaming}
-            className="flex-1 px-4 py-2.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm focus:outline-none focus:border-zinc-500 disabled:opacity-50"
-          />
-          <button
-            type="submit"
-            disabled={isStreaming || !input.trim()}
-            className="p-2.5 rounded-lg bg-white text-black hover:bg-zinc-200 transition-colors disabled:opacity-30"
-          >
-            <Send className="w-4 h-4" />
-          </button>
-        </form>
+        <ChatInputBar
+          value={input}
+          onChange={setInput}
+          onSubmit={sendMessage}
+          disabled={isStreaming}
+        />
       </div>
     </div>
   );

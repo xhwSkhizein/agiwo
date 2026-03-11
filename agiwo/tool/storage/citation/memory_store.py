@@ -10,6 +10,11 @@ from agiwo.tool.storage.citation.models import (
     CitationSourceRaw,
     CitationSourceSimplified,
 )
+from agiwo.tool.storage.citation.utils import (
+    reorder_simplified_sources,
+    sort_simplified_sources,
+    to_simplified_source,
+)
 
 
 class InMemoryCitationStore:
@@ -69,20 +74,8 @@ class InMemoryCitationStore:
         for citation_id in citation_ids:
             source = self._sources[session_id].get(citation_id)
             if source:
-                simplified.append(
-                    CitationSourceSimplified(
-                        citation_id=source.citation_id,
-                        source_type=source.source_type,
-                        url=source.url,
-                        index=source.index,
-                        title=source.title,
-                        snippet=source.snippet,
-                        date_published=source.date_published,
-                        source=source.source,
-                        created_at=source.created_at,
-                    )
-                )
-        return simplified
+                simplified.append(to_simplified_source(source))
+        return reorder_simplified_sources(simplified, citation_ids)
 
     async def get_session_citations(
         self,
@@ -93,20 +86,9 @@ class InMemoryCitationStore:
             return []
 
         sources = self._sources[session_id].values()
-        return [
-            CitationSourceSimplified(
-                citation_id=source.citation_id,
-                source_type=source.source_type,
-                url=source.url,
-                index=source.index,
-                title=source.title,
-                snippet=source.snippet,
-                date_published=source.date_published,
-                source=source.source,
-                created_at=source.created_at,
-            )
-            for source in sources
-        ]
+        return sort_simplified_sources(
+            to_simplified_source(source) for source in sources
+        )
 
     async def update_citation_source(
         self,

@@ -5,11 +5,13 @@ from agiwo.llm.anthropic import AnthropicModel
 from agiwo.llm.bedrock_anthropic import BedrockAnthropicModel
 from agiwo.llm.deepseek import DeepseekModel
 from agiwo.llm.nvidia import NvidiaModel
+from agiwo.config.settings import ModelProvider
 
 __all__ = [
     "Model",
     "StreamChunk",
     "ModelConfig",
+    "ModelProvider",
     "create_model",
     "create_model_from_dict",
     "OpenAIModel",

@@ -4,16 +4,20 @@ Test cases for StorageFactory.
 Tests storage creation and usage for all storage types.
 """
 
+from datetime import datetime, timedelta
 import os
 import pytest
 import tempfile
 
+from agiwo import Agent, AgentOptions
+from agiwo.agent.schema import Run, RunMetrics, RunStatus
 from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.factory import StorageFactory
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
-from agiwo.observability.collector import InMemoryTraceStorage
+from agiwo.observability.memory_store import InMemoryTraceStorage
 from agiwo.observability.sqlite_store import SQLiteTraceStorage
+from agiwo.observability.trace import SpanStatus, Trace
 
 
 class TestRunStepStorageFactory:
@@ -45,7 +49,6 @@ class TestRunStepStorageFactory:
         config = RunStepStorageConfig(storage_type="memory")
         storage = StorageFactory.create_run_step_storage(config)
 
-        from agiwo.agent.schema import Run, RunStatus, RunMetrics
         run = Run(
             id="test-run",
             agent_id="test-agent",
@@ -72,7 +75,6 @@ class TestRunStepStorageFactory:
             storage = StorageFactory.create_run_step_storage(config)
             assert not storage._initialized
 
-            from agiwo.agent.schema import Run, RunStatus, RunMetrics
             run = Run(
                 id="test-run",
                 agent_id="test-agent",
@@ -125,13 +127,67 @@ class TestTraceStorageFactory:
         config = TraceStorageConfig(storage_type="memory")
         storage = StorageFactory.create_trace_storage(config)
 
-        from agiwo.observability.trace import Trace
         trace = Trace(trace_id="test-trace", agent_id="test-agent")
         await storage.save_trace(trace)
 
         retrieved = await storage.get_trace("test-trace")
         assert retrieved is not None
         assert retrieved.trace_id == "test-trace"
+
+    @pytest.mark.asyncio
+    async def test_memory_storage_query_and_recent_follow_shared_contract(self):
+        config = TraceStorageConfig(storage_type="memory")
+        storage = StorageFactory.create_trace_storage(config)
+
+        base_time = datetime(2026, 3, 9, 10, 0, 0)
+        traces = [
+            Trace(
+                trace_id="trace-1",
+                agent_id="agent-a",
+                session_id="session-1",
+                user_id="user-1",
+                status=SpanStatus.OK,
+                start_time=base_time,
+                duration_ms=100.0,
+            ),
+            Trace(
+                trace_id="trace-2",
+                agent_id="agent-a",
+                session_id="session-1",
+                user_id="user-1",
+                status=SpanStatus.OK,
+                start_time=base_time + timedelta(seconds=1),
+                duration_ms=200.0,
+            ),
+            Trace(
+                trace_id="trace-3",
+                agent_id="agent-b",
+                session_id="session-2",
+                user_id="user-2",
+                status=SpanStatus.ERROR,
+                start_time=base_time + timedelta(seconds=2),
+                duration_ms=300.0,
+            ),
+        ]
+        for trace in traces:
+            await storage.save_trace(trace)
+
+        recent = storage.get_recent(limit=2)
+        assert [trace.trace_id for trace in recent] == ["trace-3", "trace-2"]
+
+        filtered = await storage.query_traces(
+            {
+                "agent_id": "agent-a",
+                "start_time": base_time + timedelta(milliseconds=500),
+                "min_duration_ms": 150.0,
+                "limit": 10,
+                "offset": 0,
+            }
+        )
+        assert [trace.trace_id for trace in filtered] == ["trace-2"]
+
+        paged = await storage.query_traces({"limit": 1, "offset": 1})
+        assert [trace.trace_id for trace in paged] == ["trace-2"]
 
     @pytest.mark.asyncio
     async def test_sqlite_storage_lazy_connect(self):
@@ -145,12 +201,36 @@ class TestTraceStorageFactory:
             storage = StorageFactory.create_trace_storage(config)
             assert not storage._initialized
 
-            from agiwo.observability.trace import Trace
             trace = Trace(trace_id="test-trace", agent_id="test-agent")
             await storage.save_trace(trace)
 
             retrieved = await storage.get_trace("test-trace")
             assert retrieved is not None
+
+            await storage.close()
+
+    @pytest.mark.asyncio
+    async def test_sqlite_storage_recent_matches_memory_order(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            config = TraceStorageConfig(
+                storage_type="sqlite",
+                config={"db_path": db_path, "collection_name": "test_traces"},
+            )
+            storage = StorageFactory.create_trace_storage(config)
+
+            base_time = datetime(2026, 3, 9, 10, 0, 0)
+            for idx in range(3):
+                await storage.save_trace(
+                    Trace(
+                        trace_id=f"trace-{idx}",
+                        status=SpanStatus.OK,
+                        start_time=base_time + timedelta(seconds=idx),
+                    )
+                )
+
+            recent = storage.get_recent(limit=2)
+            assert [trace.trace_id for trace in recent] == ["trace-2", "trace-1"]
 
             await storage.close()
 
@@ -160,8 +240,6 @@ class TestAgentIntegration:
 
     def test_agent_storage_created_in_init(self):
         """Storage is created synchronously in Agent.__init__."""
-        from agiwo import Agent, AgentOptions
-
         agent = Agent(
             name="test-agent",
             description="Test",
@@ -175,8 +253,6 @@ class TestAgentIntegration:
 
     def test_agent_with_trace_storage(self):
         """Agent creates trace storage when configured."""
-        from agiwo import Agent, AgentOptions
-
         agent = Agent(
             name="test-agent",
             description="Test",
@@ -191,8 +267,6 @@ class TestAgentIntegration:
 
     @pytest.mark.asyncio
     async def test_agent_close(self):
-        from agiwo import Agent, AgentOptions
-
         agent = Agent(
             name="test-agent",
             description="Test",

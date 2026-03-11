@@ -1,213 +1,83 @@
-"""
-Sessions and Runs API router.
-"""
+"""Sessions and Runs API router."""
 
-import json
-from dataclasses import asdict
-from typing import Any
+from fastapi import APIRouter, HTTPException, Query
 
-from fastapi import APIRouter, Query
-
-from server.dependencies import get_storage_manager
+from server.dependencies import ConsoleRuntimeDep
+from server.domain.sessions import session_aggregate_to_summary_data
+from server.response_serialization import run_to_response, step_to_response
 from server.schemas import RunResponse, SessionSummary, StepResponse
+from server.services.session_summary import collect_session_aggregates
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
 
-def _step_to_response(step: Any) -> StepResponse:
-    """Convert StepRecord dataclass to StepResponse."""
-    created_at = step.created_at
-    if created_at is not None and hasattr(created_at, "isoformat"):
-        created_at = created_at.isoformat()
-    elif created_at is not None:
-        created_at = str(created_at)
-
-    # Serialize user_input for API response
-    user_input_data = None
-    if hasattr(step, "user_input") and step.user_input is not None:
-        user_input_data = _parse_user_input(step.user_input)
-
-    return StepResponse(
-        id=step.id,
-        session_id=step.session_id,
-        run_id=step.run_id,
-        sequence=step.sequence,
-        role=step.role.value if hasattr(step.role, "value") else str(step.role),
-        agent_id=step.agent_id,
-        content=step.content,
-        content_for_user=step.content_for_user,
-        reasoning_content=step.reasoning_content,
-        user_input=user_input_data,
-        tool_calls=step.tool_calls,
-        tool_call_id=step.tool_call_id,
-        name=step.name,
-        metrics=asdict(step.metrics) if step.metrics else None,
-        created_at=created_at,
-        parent_run_id=step.parent_run_id,
-        depth=step.depth,
-    )
-
-
-def _run_to_response(run: Any) -> RunResponse:
-    """Convert Run dataclass to RunResponse."""
-    # Handle user_input serialization for API response
-    user_input = run.user_input
-    if user_input is not None and not isinstance(user_input, str):
-        from agiwo.agent.schema import serialize_user_input
-        user_input = serialize_user_input(user_input)
-
-    return RunResponse(
-        id=run.id,
-        agent_id=run.agent_id,
-        session_id=run.session_id,
-        user_id=run.user_id,
-        user_input=user_input,
-        status=run.status.value if hasattr(run.status, "value") else str(run.status),
-        response_content=run.response_content,
-        metrics=asdict(run.metrics) if run.metrics else None,
-        created_at=run.created_at.isoformat() if hasattr(run.created_at, "isoformat") else str(run.created_at) if run.created_at else None,
-        updated_at=run.updated_at.isoformat() if hasattr(run.updated_at, "isoformat") else str(run.updated_at) if run.updated_at else None,
-        parent_run_id=run.parent_run_id,
-    )
-
-
-def _parse_user_input(user_input: Any) -> Any | None:
-    """Parse UserInput to structured format for display.
-
-    Handles:
-    - str (plain text): return as-is
-    - str (JSON): parse and return dict
-    - dict: return as-is (already parsed)
-    - UserMessage/ContentPart objects: convert to dict
-    - other: return str() representation (fallback)
-    """
-    if user_input is None:
-        return None
-
-    # Handle string - try to parse as JSON first
-    if isinstance(user_input, str):
-        if user_input.startswith("{"):
-            try:
-                return json.loads(user_input)
-            except (json.JSONDecodeError, ValueError):
-                pass
-        return user_input
-
-    # Dict is already structured
-    if isinstance(user_input, dict):
-        return user_input
-
-    # Handle UserMessage dataclass - convert to dict
-    if hasattr(user_input, "to_dict"):
-        return user_input.to_dict()
-
-    # Handle list of ContentPart - convert to dict format
-    if isinstance(user_input, list):
-        return {"__type": "content_parts", "parts": [p.to_dict() if hasattr(p, "to_dict") else p for p in user_input]}
-
-    # Fallback: str() representation
-    return str(user_input)
-
-
 @router.get("/runs", response_model=list[RunResponse])
 async def list_runs(
+    runtime: ConsoleRuntimeDep,
     user_id: str | None = None,
     session_id: str | None = None,
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> list[RunResponse]:
     """List all runs with optional filtering."""
-    storage = get_storage_manager().run_step_storage
+    storage = runtime.storage_manager.run_step_storage
     runs = await storage.list_runs(
         user_id=user_id,
         session_id=session_id,
         limit=limit,
         offset=offset,
     )
-    return [_run_to_response(r) for r in runs]
+    return [run_to_response(r) for r in runs]
 
 
 @router.get("/runs/{run_id}", response_model=RunResponse)
-async def get_run(run_id: str) -> RunResponse:
+async def get_run(run_id: str, runtime: ConsoleRuntimeDep) -> RunResponse:
     """Get a single run by ID."""
-    storage = get_storage_manager().run_step_storage
+    storage = runtime.storage_manager.run_step_storage
     run = await storage.get_run(run_id)
     if run is None:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Run not found")
-    return _run_to_response(run)
+    return run_to_response(run)
 
 
 @router.get("/sessions", response_model=list[SessionSummary])
 async def list_sessions(
+    runtime: ConsoleRuntimeDep,
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> list[SessionSummary]:
-    """
-    List sessions by aggregating runs.
-
-    Groups runs by session_id and returns summary info.
-    """
-    storage = get_storage_manager().run_step_storage
-    runs = await storage.list_runs(limit=500, offset=0)
-
-    session_map: dict[str, dict[str, Any]] = {}
-    for run in runs:
-        sid = run.session_id
-        if sid not in session_map:
-            session_map[sid] = {
-                "session_id": sid,
-                "agent_id": run.agent_id,
-                "runs": [],
-                "created_at": run.created_at,
-                "updated_at": run.updated_at,
-            }
-        session_map[sid]["runs"].append(run)
-        if run.updated_at and (
-            session_map[sid]["updated_at"] is None
-            or run.updated_at > session_map[sid]["updated_at"]
-        ):
-            session_map[sid]["updated_at"] = run.updated_at
-
-    sessions = sorted(
-        session_map.values(),
-        key=lambda s: s["updated_at"] or "",
-        reverse=True,
-    )
+    """List sessions by aggregating runs."""
+    storage = runtime.storage_manager.run_step_storage
+    sessions = await collect_session_aggregates(storage)
     page = sessions[offset : offset + limit]
+    return [session_aggregate_to_summary_data(session) for session in page]
 
-    results = []
-    for s in page:
-        runs_list = s["runs"]
-        last_run = runs_list[0] if runs_list else None
-        user_input_data = _parse_user_input(last_run.user_input) if last_run else None
 
-        results.append(
-            SessionSummary(
-                session_id=s["session_id"],
-                agent_id=s["agent_id"],
-                last_user_input=user_input_data,
-                last_response=last_run.response_content[:200] if last_run and last_run.response_content else None,
-                run_count=len(runs_list),
-                created_at=s["created_at"].isoformat() if hasattr(s["created_at"], "isoformat") else str(s["created_at"]) if s["created_at"] else None,
-                updated_at=s["updated_at"].isoformat() if hasattr(s["updated_at"], "isoformat") else str(s["updated_at"]) if s["updated_at"] else None,
-            )
-        )
-
-    return results
+@router.get("/sessions/{session_id}/summary", response_model=SessionSummary)
+async def get_session_summary(
+    session_id: str,
+    runtime: ConsoleRuntimeDep,
+) -> SessionSummary:
+    """Get full aggregated metrics for one session."""
+    storage = runtime.storage_manager.run_step_storage
+    sessions = await collect_session_aggregates(storage, session_id=session_id)
+    if not sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session_aggregate_to_summary_data(sessions[0])
 
 
 @router.get("/sessions/{session_id}/steps", response_model=list[StepResponse])
 async def get_session_steps(
     session_id: str,
+    runtime: ConsoleRuntimeDep,
     agent_id: str | None = None,
     limit: int = Query(default=1000, ge=1, le=5000),
 ) -> list[StepResponse]:
     """Get all steps for a session."""
-    storage = get_storage_manager().run_step_storage
+    storage = runtime.storage_manager.run_step_storage
     steps = await storage.get_steps(
         session_id=session_id,
         agent_id=agent_id,
         limit=limit,
     )
-    return [_step_to_response(s) for s in steps]
+    return [step_to_response(s) for s in steps]

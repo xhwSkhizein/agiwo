@@ -1,17 +1,22 @@
 """AWS Bedrock Anthropic model implementation."""
 
 import json
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 try:
     import boto3
     from botocore.exceptions import ClientError
 except ImportError:
-    raise ImportError("Please install boto3: pip install boto3")
+    raise ImportError("Please install boto3: pip install boto3") from None
 
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.config.settings import settings
-from agiwo.llm.helper import normalize_usage_metrics
+from agiwo.llm.helper import (
+    AnthropicStreamTranslator,
+    convert_openai_messages_to_anthropic,
+    convert_openai_tools_to_anthropic,
+    normalize_bedrock_anthropic_event,
+)
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -37,16 +42,9 @@ class BedrockAnthropicModel(Model):
         name: str,
         api_key: str | None = None,
         base_url: str | None = None,
-        temperature: float = 0.7,
-        top_p: float = 1.0,
-        max_tokens: int = 4096,
-        frequency_penalty: float = 0.0,
-        presence_penalty: float = 0.0,
-        cache_hit_price: float = 0.0,
-        input_price: float = 0.0,
-        output_price: float = 0.0,
         aws_region: str | None = None,
         aws_profile: str | None = None,
+        **model_kwargs: Any,
     ):
         super().__init__(
             id=id,
@@ -54,14 +52,7 @@ class BedrockAnthropicModel(Model):
             api_key=api_key,
             base_url=base_url,
             provider="bedrock-anthropic",
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            frequency_penalty=frequency_penalty,
-            presence_penalty=presence_penalty,
-            cache_hit_price=cache_hit_price,
-            input_price=input_price,
-            output_price=output_price,
+            **model_kwargs,
         )
         self.aws_region = aws_region or settings.aws_region
         self.aws_profile = aws_profile or settings.aws_profile
@@ -81,93 +72,24 @@ class BedrockAnthropicModel(Model):
             )
         return self._client
 
-    def _convert_messages(self, messages: list[dict]) -> tuple[str | None, list[dict]]:
-        """Convert OpenAI format messages to Anthropic format for Bedrock."""
-        system_prompt = None
-        anthropic_messages = []
-
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
-
-            if role == "system":
-                system_prompt = content
-            elif role == "user":
-                anthropic_messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": content}]
-                })
-            elif role == "assistant":
-                content_blocks = []
-                if content:
-                    content_blocks.append({"type": "text", "text": content})
-
-                # Handle tool_calls if present
-                if "tool_calls" in msg:
-                    for tool_call in msg["tool_calls"]:
-                        func = tool_call["function"]
-                        args = func["arguments"]
-                        if isinstance(args, str):
-                            args = json.loads(args)
-
-                        content_blocks.append({
-                            "type": "tool_use",
-                            "id": tool_call["id"],
-                            "name": func["name"],
-                            "input": args,
-                        })
-
-                anthropic_messages.append({
-                    "role": "assistant",
-                    "content": content_blocks
-                })
-            elif role == "tool":
-                # Tool result
-                tool_result_content = content
-                if not isinstance(tool_result_content, str):
-                    tool_result_content = json.dumps(tool_result_content)
-
-                anthropic_messages.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": msg.get("tool_call_id"),
-                        "content": tool_result_content,
-                    }]
-                })
-
-        return system_prompt, anthropic_messages
-
-    def _convert_tools(self, tools: list[dict] | None) -> list[dict] | None:
-        """Convert OpenAI format tools to Anthropic format."""
-        if not tools:
-            return None
-
-        anthropic_tools = []
-        for tool in tools:
-            if tool.get("type") == "function":
-                func = tool["function"]
-                anthropic_tools.append({
-                    "name": func["name"],
-                    "description": func.get("description", ""),
-                    "input_schema": func.get("parameters", {}),
-                })
-
-        return anthropic_tools if anthropic_tools else None
-
     async def arun_stream(
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         """Call AWS Bedrock Anthropic API and return streaming output."""
-        system_prompt, anthropic_messages = self._convert_messages(messages)
-        anthropic_tools = self._convert_tools(tools)
+        system_prompt, anthropic_messages = convert_openai_messages_to_anthropic(
+            messages,
+            wrap_user_text=True,
+            assistant_text_blocks=True,
+            include_reasoning=False,
+        )
+        anthropic_tools = convert_openai_tools_to_anthropic(tools)
 
         # Build request body
         body = {
             "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": self.max_tokens,
+            "max_tokens": self.max_output_tokens,
             "temperature": self.temperature,
             "messages": anthropic_messages,
         }
@@ -196,104 +118,12 @@ class BedrockAnthropicModel(Model):
                 body=json.dumps(body),
             )
 
-            # Track accumulated state
-            current_content = ""
-            tool_calls_buffer = {}
-            usage_info = {
-                "input_tokens": 0,
-                "output_tokens": 0,
-            }
+            translator = AnthropicStreamTranslator(include_reasoning=False)
 
             for event in response["body"]:
                 chunk = json.loads(event["chunk"]["bytes"].decode())
-                stream_chunk = StreamChunk()
-
-                # Handle message_start (contains usage)
-                if chunk.get("type") == "message_start":
-                    message = chunk.get("message", {})
-                    usage = message.get("usage", {})
-                    if usage:
-                        usage_info["input_tokens"] = usage.get("input_tokens", 0)
-                        usage_info["output_tokens"] = usage.get("output_tokens", 0)
-                        stream_chunk.usage = normalize_usage_metrics(usage_info)
-
-                # Handle content_block_start
-                elif chunk.get("type") == "content_block_start":
-                    index = chunk.get("index", 0)
-                    content_block = chunk.get("content_block", {})
-
-                    if content_block.get("type") == "tool_use":
-                        tool_calls_buffer[index] = {
-                            "id": content_block.get("id"),
-                            "name": content_block.get("name"),
-                            "input": "",
-                        }
-
-                # Handle content_block_delta
-                elif chunk.get("type") == "content_block_delta":
-                    delta = chunk.get("delta", {})
-                    index = chunk.get("index", 0)
-
-                    if delta.get("type") == "text_delta":
-                        text = delta.get("text", "")
-                        stream_chunk.content = text
-                        current_content += text
-
-                    elif delta.get("type") == "input_json_delta":
-                        partial_json = delta.get("partial_json", "")
-                        if index in tool_calls_buffer:
-                            tool_calls_buffer[index]["input"] += partial_json
-
-                # Handle content_block_stop (tool call complete)
-                elif chunk.get("type") == "content_block_stop":
-                    index = chunk.get("index", 0)
-                    if index in tool_calls_buffer:
-                        tool_call = tool_calls_buffer[index]
-                        try:
-                            arguments = json.loads(tool_call["input"])
-                        except json.JSONDecodeError:
-                            arguments = tool_call["input"]
-
-                        stream_chunk.tool_calls = [{
-                            "index": index,
-                            "id": tool_call["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tool_call["name"],
-                                "arguments": arguments,
-                            },
-                        }]
-
-                # Handle message_delta (stop reason and usage)
-                elif chunk.get("type") == "message_delta":
-                    delta = chunk.get("delta", {})
-                    usage = chunk.get("usage", {})
-
-                    if usage:
-                        usage_info["output_tokens"] = usage.get("output_tokens", usage_info["output_tokens"])
-                        stream_chunk.usage = normalize_usage_metrics(usage_info)
-
-                    stop_reason = delta.get("stop_reason")
-                    if stop_reason:
-                        if stop_reason == "tool_use":
-                            stream_chunk.finish_reason = "tool_calls"
-                        elif stop_reason == "max_tokens":
-                            stream_chunk.finish_reason = "length"
-                        else:
-                            stream_chunk.finish_reason = "stop"
-
-                # Handle message_stop
-                elif chunk.get("type") == "message_stop":
-                    if stream_chunk.finish_reason is None:
-                        stream_chunk.finish_reason = "stop"
-
-                # Yield if has content
-                if (
-                    stream_chunk.content is not None
-                    or stream_chunk.tool_calls is not None
-                    or stream_chunk.usage is not None
-                    or stream_chunk.finish_reason is not None
-                ):
+                stream_chunk = translator.process(normalize_bedrock_anthropic_event(chunk))
+                if stream_chunk is not None:
                     yield stream_chunk
 
         except ClientError as e:

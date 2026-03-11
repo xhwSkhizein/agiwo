@@ -2,28 +2,39 @@
 PermissionManager - Unified permission manager.
 
 Integrates all permission-related functionality:
+- Permission policy service (PermissionService + PermissionDecision)
 - Permission checking (cache + DB)
 - Authorization wait coordination
-- Returns explicit authorization results (allowed/denied)
+- Global singleton factory (get_permission_manager / reset_permission_manager)
 """
 
 import asyncio
 import hashlib
 import json
 import time
-from datetime import datetime
-from typing import Any
+from datetime import datetime, timedelta
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from agiwo.agent.schema import StreamEvent, EventType
-from agiwo.tool.permission.consent_store import ConsentStore
-from agiwo.tool.permission.consent_waiter import ConsentWaiter
-from agiwo.tool.permission.service import PermissionDecision, PermissionService
 from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.schema import EventType, StreamEvent
+from agiwo.tool.permission.store import ConsentDecision, ConsentStore, ConsentWaiter, InMemoryConsentStore
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# ── Data Models ──────────────────────────────────────────────────────────
+
+
+class PermissionDecision(BaseModel):
+    """Permission decision result"""
+
+    decision: Literal["allowed", "denied", "requires_consent"]
+    reason: str
+    suggested_patterns: list[str] | None = None  # Suggested patterns
+    expires_at_hint: datetime | None = None  # Suggested expiration time
 
 
 class ConsentResult(BaseModel):
@@ -32,6 +43,112 @@ class ConsentResult(BaseModel):
     allowed: bool  # True=allow execution, False=deny execution
     reason: str  # Reason description
     from_cache: bool = False  # Whether result is from cache
+
+
+# ── PermissionService ────────────────────────────────────────────────────
+
+
+class PermissionService:
+    """
+    Permission policy service.
+
+    Generates permission decisions based on tool configuration and context.
+    """
+
+    def __init__(self, tool_configs: dict[str, dict] | None = None) -> None:
+        self._tool_configs = tool_configs or {}
+
+    async def check_permission(
+        self,
+        user_id: str,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        context: ExecutionContext,
+    ) -> PermissionDecision:
+        """
+        Check tool execution permission.
+
+        Decision logic:
+        1. If tool config requires_consent=False → allowed
+        2. If tool config requires_consent=True → requires_consent
+        3. Agent can override default policy (e.g., read-only tool set)
+        """
+        # Get tool configuration
+        tool_config = self._tool_configs.get(tool_name)
+
+        if not tool_config:
+            # Tool not found in config, default to requires_consent
+            return PermissionDecision(
+                decision="requires_consent",
+                reason=f"Tool {tool_name} configuration not found",
+                suggested_patterns=self._generate_suggested_patterns(
+                    tool_name, tool_args
+                ),
+            )
+
+        requires_consent = tool_config.get("requires_consent", False)
+
+        if not requires_consent:
+            return PermissionDecision(
+                decision="allowed",
+                reason="Tool does not require consent",
+            )
+
+        # Tool requires consent
+        return PermissionDecision(
+            decision="requires_consent",
+            reason="Tool requires user consent",
+            suggested_patterns=self._generate_suggested_patterns(tool_name, tool_args),
+            expires_at_hint=datetime.now() + timedelta(days=30),  # Default: 30 days
+        )
+
+    def _generate_suggested_patterns(
+        self, tool_name: str, tool_args: dict[str, Any]
+    ) -> list[str]:
+        """Generate suggested patterns for user consent."""
+        patterns = []
+
+        # Generate pattern based on tool type
+        if tool_name == "bash":
+            # For bash, suggest pattern based on command
+            command = tool_args.get("command", "")
+            if command:
+                # Exact match pattern
+                patterns.append(f"bash({command})")
+                # If command contains common patterns, suggest wildcard
+                if "run" in command.lower():
+                    # Suggest pattern for npm/yarn run commands
+                    parts = command.split()
+                    if len(parts) >= 2:
+                        base_cmd = " ".join(parts[:2])
+                        patterns.append(f"bash({base_cmd} *)")
+
+        elif tool_name in ["file_read", "file_edit", "file_write"]:
+            # For file operations, suggest pattern based on file path
+            path = tool_args.get("path") or tool_args.get("file_path")
+            if path:
+                patterns.append(f"{tool_name}({path})")
+                # Suggest parent directory pattern
+                if "/" in path:
+                    parent = "/".join(path.split("/")[:-1])
+                    if parent:
+                        patterns.append(f"{tool_name}({parent}/*)")
+
+        else:
+            # Generic pattern: exact match
+            args_str = self._serialize_args(tool_args)
+            if args_str:
+                patterns.append(f"{tool_name}({args_str})")
+
+        return patterns[:3]  # Limit to 3 suggestions
+
+    def _serialize_args(self, args: dict[str, Any]) -> str:
+        """Serialize arguments to string for pattern generation"""
+        items = sorted([(k, v) for k, v in args.items() if k != "tool_call_id"])
+        return " ".join(f"{k}={v}" for k, v in items)
+
+
+# ── PermissionManager ────────────────────────────────────────────────────
 
 
 class PermissionManager:
@@ -53,17 +170,6 @@ class PermissionManager:
         cache_ttl: int = 300,  # Cache TTL (seconds)
         cache_size: int = 1000,  # Cache size
     ):
-        """
-        Initialize permission manager.
-
-        Args:
-            consent_store: ConsentStore instance
-            consent_waiter: ConsentWaiter instance
-            permission_service: PermissionService instance
-            tool_configs: Tool configurations dict {tool_name: config}
-            cache_ttl: Cache TTL in seconds (default: 300)
-            cache_size: Maximum cache size (default: 1000)
-        """
         self.consent_store = consent_store
         self.consent_waiter = consent_waiter
         self.permission_service = permission_service
@@ -84,16 +190,6 @@ class PermissionManager:
     ) -> ConsentResult:
         """
         Check and wait for authorization, returns explicit authorization result.
-
-        Args:
-            tool_call_id: Tool call unique identifier
-            tool_name: Tool name
-            tool_args: Tool arguments
-            context: Execution context
-            timeout: Timeout in seconds
-
-        Returns:
-            ConsentResult: Authorization result (allowed=True/False)
 
         Process:
         1. Check cache (hit and not expired → return directly)
@@ -391,4 +487,51 @@ class PermissionManager:
         )
 
 
-__all__ = ["PermissionManager", "ConsentResult"]
+# ── Global Singleton Factory ─────────────────────────────────────────────
+
+
+_permission_manager: PermissionManager | None = None
+
+
+def get_permission_manager() -> PermissionManager:
+    """
+    Get global PermissionManager singleton.
+
+    The PermissionManager is shared across all Agents in the system.
+    """
+    global _permission_manager
+
+    if _permission_manager is None:
+
+        logger.info("initializing_global_permission_manager")
+
+        _permission_manager = PermissionManager(
+            consent_store=InMemoryConsentStore(),
+            consent_waiter=ConsentWaiter(default_timeout=300.0),
+            permission_service=PermissionService(),
+            cache_ttl=300,
+            cache_size=1000,
+        )
+
+    return _permission_manager
+
+
+def reset_permission_manager() -> None:
+    """
+    Reset global PermissionManager singleton.
+
+    This is primarily used for testing to ensure a clean state.
+    """
+    global _permission_manager
+    _permission_manager = None
+    logger.debug("permission_manager_reset")
+
+
+__all__ = [
+    "PermissionDecision",
+    "ConsentResult",
+    "PermissionService",
+    "PermissionManager",
+    "get_permission_manager",
+    "reset_permission_manager",
+]

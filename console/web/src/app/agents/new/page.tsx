@@ -1,10 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 
 import { AgentForm } from "@/components/agent-form";
+import { BackHeader } from "@/components/back-header";
 import { createAgent, AgentConfigCreate } from "@/lib/api";
 import { useState } from "react";
 
@@ -28,15 +27,11 @@ export default function NewAgentPage() {
 
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/agents"
-          className="p-1.5 rounded hover:bg-zinc-800 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <h1 className="text-xl font-semibold">Create Agent</h1>
-      </div>
+      <BackHeader
+        href="/agents"
+        title="Create Agent"
+        subtitle={null}
+      />
 
       <AgentForm
         submitLabel="Create Agent"

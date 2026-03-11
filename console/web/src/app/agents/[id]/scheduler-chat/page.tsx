@@ -5,10 +5,6 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
-  Send,
-  User,
-  Bot,
-  Wrench,
   Loader2,
   XCircle,
   Clock,
@@ -21,12 +17,26 @@ import {
 } from "lucide-react";
 import {
   getAgent,
+  parseStreamEventPayload,
   schedulerChatStreamUrl,
   cancelSchedulerChat,
   getAgentStateChildren,
 } from "@/lib/api";
+import { ChatInputBar } from "@/components/chat-input-bar";
+import { ChatMessageItem } from "@/components/chat-message";
+import { PillBadge } from "@/components/pill-badge";
+import { EmptyStateMessage, FullPageMessage } from "@/components/state-message";
 import { UserInputCompact } from "@/components/user-input-detail";
-import type { AgentConfig, AgentStateListItem } from "@/lib/api";
+import type {
+  AgentConfig,
+  AgentStateListItem,
+  AgentStreamEventPayload,
+  SchedulerCompletedEventPayload,
+  SchedulerFailedEventPayload,
+  StepResponse,
+  StreamEventPayload,
+  ToolCallPayload,
+} from "@/lib/api";
 
 function genId(): string {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -37,7 +47,7 @@ interface ChatMessage {
   role: "user" | "assistant" | "tool" | "system";
   content: string;
   name?: string;
-  tool_calls?: Record<string, unknown>[];
+  tool_calls?: ToolCallPayload[];
   reasoning_content?: string;
   isStreaming?: boolean;
   agentId?: string;
@@ -202,11 +212,17 @@ export default function SchedulerChatPage() {
           if (!dataStr) continue;
 
           try {
-            const data = JSON.parse(dataStr);
-            const eventAgentId = data.agent_id || null;
+            const data = parseStreamEventPayload(dataStr);
+            if (!data) {
+              continue;
+            }
+            const eventAgentId =
+              "agent_id" in data && typeof data.agent_id === "string"
+                ? data.agent_id
+                : null;
 
-            if (data.type === "run_started" && data.data?.session_id) {
-              const capturedSessionId = data.data.session_id;
+            if (data.type === "run_started" && "data" in data && data.data?.session_id) {
+              const capturedSessionId = String(data.data.session_id);
               if (!sessionId) setSessionId(capturedSessionId);
               if (!rootAgentId) {
                 rootAgentId = eventAgentId;
@@ -222,7 +238,7 @@ export default function SchedulerChatPage() {
               continue;
             }
 
-            if (data.type === "step_delta" && data.delta) {
+            if (data.type === "step_delta" && "delta" in data && data.delta) {
               if (data.delta.content) {
                 currentAssistantContent += data.delta.content;
                 setMessages((prev) =>
@@ -245,7 +261,7 @@ export default function SchedulerChatPage() {
               }
             }
 
-            if (data.type === "step_completed" && data.step) {
+            if (data.type === "step_completed" && "step" in data && data.step) {
               const step = data.step;
               if (step.role === "assistant") {
                 const tc = step.tool_calls;
@@ -259,8 +275,7 @@ export default function SchedulerChatPage() {
                   );
 
                   for (const call of tc) {
-                    const fn = call.function as Record<string, unknown> | undefined;
-                    const toolName = fn?.name as string | undefined;
+                    const toolName = call.function?.name;
                     if (toolName === "sleep_and_wait") {
                       setOrchestrationStatus("sleeping");
                     }
@@ -331,6 +346,7 @@ export default function SchedulerChatPage() {
             }
 
             if (data.type === "scheduler_completed") {
+              const event = data as SchedulerCompletedEventPayload;
               setOrchestrationStatus("completed");
               stopPolling();
               if (stateId) {
@@ -342,11 +358,12 @@ export default function SchedulerChatPage() {
             }
 
             if (data.type === "scheduler_failed") {
+              const event = data as SchedulerFailedEventPayload;
               setOrchestrationStatus("failed");
               stopPolling();
               setMessages((prev) => [
                 ...prev.filter((m) => !(m.role === "assistant" && !m.content && !m.tool_calls)),
-                { id: genId(), role: "system", content: `Orchestration failed: ${data.error || "Unknown error"}` },
+                { id: genId(), role: "system", content: `Orchestration failed: ${event.error || "Unknown error"}` },
               ]);
             }
           } catch {
@@ -369,10 +386,13 @@ export default function SchedulerChatPage() {
     }
   };
 
-  const handleChildEvent = (childAgentId: string, data: Record<string, unknown>) => {
-    const type = data.type as string;
+  const handleChildEvent = (childAgentId: string, data: StreamEventPayload) => {
+    if (data.type === "scheduler_completed" || data.type === "scheduler_failed") {
+      return;
+    }
+    const type = data.type;
     if (type === "step_delta" && data.delta) {
-      const delta = data.delta as Record<string, string>;
+      const delta = data.delta;
       if (delta.content) {
         setChildMessages((prev) => {
           const msgs = prev[childAgentId] || [];
@@ -391,20 +411,26 @@ export default function SchedulerChatPage() {
             ...prev,
             [childAgentId]: [
               ...msgs,
-              { id: genId(), role: "assistant" as const, content: delta.content, isStreaming: true, agentId: childAgentId },
+              {
+                id: genId(),
+                role: "assistant" as const,
+                content: delta.content ?? "",
+                isStreaming: true,
+                agentId: childAgentId,
+              },
             ],
           };
         });
       }
     }
     if (type === "step_completed" && data.step) {
-      const step = data.step as Record<string, unknown>;
+      const step = data.step as StepResponse;
       if (step.role === "tool") {
         const toolMsg: ChatMessage = {
           id: genId(),
           role: "tool",
           content: typeof step.content === "string" ? step.content : JSON.stringify(step.content),
-          name: (step.name as string) || undefined,
+          name: step.name || undefined,
           agentId: childAgentId,
         };
         setChildMessages((prev) => ({
@@ -427,19 +453,11 @@ export default function SchedulerChatPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-zinc-500">Loading agent...</div>
-      </div>
-    );
+    return <FullPageMessage>Loading agent...</FullPageMessage>;
   }
 
   if (!agent) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-zinc-500">Agent not found</div>
-      </div>
-    );
+    return <FullPageMessage>Agent not found</FullPageMessage>;
   }
 
   const StatusIcon = statusConfig[orchestrationStatus].icon;
@@ -457,9 +475,9 @@ export default function SchedulerChatPage() {
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-sm font-medium">{agent.name}</h1>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-400 font-medium">
+                <PillBadge className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-400 font-medium">
                   Scheduler
-                </span>
+                </PillBadge>
               </div>
               <p className="text-xs text-zinc-500">
                 {agent.model_provider}/{agent.model_name}
@@ -481,102 +499,25 @@ export default function SchedulerChatPage() {
         {/* Messages */}
         <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
           {messages.length === 0 && (
-            <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
+            <EmptyStateMessage className="flex items-center justify-center h-full text-zinc-600 text-sm">
               Send a message to start the scheduler orchestration
-            </div>
+            </EmptyStateMessage>
           )}
 
           {messages.map((msg) => (
-            <div key={msg.id} className="flex gap-3">
-              <div className="shrink-0 mt-1">
-                {msg.role === "user" && (
-                  <div className="w-7 h-7 rounded-full bg-blue-900/50 flex items-center justify-center">
-                    <User className="w-3.5 h-3.5 text-blue-400" />
-                  </div>
-                )}
-                {msg.role === "assistant" && (
-                  <div className="w-7 h-7 rounded-full bg-green-900/50 flex items-center justify-center">
-                    <Bot className="w-3.5 h-3.5 text-green-400" />
-                  </div>
-                )}
-                {msg.role === "tool" && (
-                  <div className="w-7 h-7 rounded-full bg-amber-900/50 flex items-center justify-center">
-                    <Wrench className="w-3.5 h-3.5 text-amber-400" />
-                  </div>
-                )}
-                {msg.role === "system" && (
-                  <div className="w-7 h-7 rounded-full bg-purple-900/50 flex items-center justify-center">
-                    <Clock className="w-3.5 h-3.5 text-purple-400" />
-                  </div>
-                )}
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs font-medium text-zinc-400 uppercase">
-                    {msg.role}
-                    {msg.name && ` — ${msg.name}`}
-                  </span>
-                  {msg.isStreaming && <Loader2 className="w-3 h-3 text-zinc-500 animate-spin" />}
-                </div>
-
-                {msg.reasoning_content && (
-                  <div className="mb-2 px-3 py-2 rounded bg-zinc-800/50 text-xs text-zinc-400 whitespace-pre-wrap max-h-32 overflow-auto">
-                    <span className="text-zinc-500 font-medium">Thinking: </span>
-                    {msg.reasoning_content}
-                  </div>
-                )}
-
-                {msg.content && (
-                  <div className={`text-sm whitespace-pre-wrap break-words ${msg.role === "system" ? "text-purple-300 italic" : ""}`}>
-                    {msg.content}
-                  </div>
-                )}
-
-                {msg.tool_calls && msg.tool_calls.length > 0 && (
-                  <div className="mt-2 space-y-1">
-                    {msg.tool_calls.map((tc, i) => {
-                      const fn = tc.function as Record<string, unknown> | undefined;
-                      return (
-                        <div key={i} className="text-xs bg-zinc-800/50 rounded px-3 py-2 font-mono overflow-auto max-h-32">
-                          <span className="text-amber-400">{fn ? (fn.name as string) : "tool_call"}</span>
-                          <span className="text-zinc-500 ml-2">{fn ? (fn.arguments as string) : JSON.stringify(tc)}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
+            <ChatMessageItem key={msg.id} message={msg} />
           ))}
           <div ref={messagesEndRef} />
         </div>
 
         {/* Input */}
         <div className="shrink-0 px-5 py-3 border-t border-zinc-800 bg-zinc-900/50">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              sendMessage();
-            }}
-            className="flex items-center gap-3"
-          >
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a message..."
-              disabled={isStreaming}
-              className="flex-1 px-4 py-2.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm focus:outline-none focus:border-zinc-500 disabled:opacity-50"
-            />
-            <button
-              type="submit"
-              disabled={isStreaming || !input.trim()}
-              className="p-2.5 rounded-lg bg-white text-black hover:bg-zinc-200 transition-colors disabled:opacity-30"
-            >
-              <Send className="w-4 h-4" />
-            </button>
-          </form>
+          <ChatInputBar
+            value={input}
+            onChange={setInput}
+            onSubmit={sendMessage}
+            disabled={isStreaming}
+          />
         </div>
       </div>
 
@@ -642,9 +583,9 @@ export default function SchedulerChatPage() {
                             ? "..." + child.id.slice(-16)
                             : child.id}
                         </span>
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${childStatusBadge[child.status] || "bg-zinc-700 text-zinc-300"}`}>
+                        <PillBadge className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${childStatusBadge[child.status] || "bg-zinc-700 text-zinc-300"}`}>
                           {child.status}
-                        </span>
+                        </PillBadge>
                       </div>
                       <UserInputCompact input={child.task} maxLength={60} />
                     </div>

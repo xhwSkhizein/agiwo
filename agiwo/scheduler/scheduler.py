@@ -18,7 +18,6 @@ from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
-    OutputChannelState,
     PendingEvent,
     SchedulerConfig,
     SchedulerEventType,
@@ -26,7 +25,10 @@ from agiwo.scheduler.models import (
     WakeCondition,
     WakeType,
 )
+from agiwo.scheduler.runtime import SchedulerRuntime
+from agiwo.scheduler.services import SchedulerTickEngine
 from agiwo.scheduler.store import AgentStateStorage, create_agent_state_storage
+from agiwo.scheduler.tool_port import SchedulerToolPort
 from agiwo.scheduler.tools import (
     CancelAgentTool,
     ListAgentsTool,
@@ -67,34 +69,32 @@ class Scheduler:
         self._guard = TaskGuard(self._config.task_limits, self._store)
         self._check_interval = self._config.check_interval
         self._semaphore = asyncio.Semaphore(self._config.max_concurrent)
+        self._runtime = SchedulerRuntime(self._store)
+        self._tool_port = SchedulerToolPort(self._store, self._guard, self._runtime)
         self._running = False
         self._loop_task: asyncio.Task | None = None
-        self._active_tasks: set[asyncio.Task] = set()
-        self._agents: dict[str, Agent] = {}
-        self._abort_signals: dict[str, AbortSignal] = {}
-        self._state_events: dict[str, asyncio.Event] = {}
-        self._dispatched_state_ids: set[str] = set()
-        self._output_channels: dict[str, OutputChannelState] = {}
         self._scheduling_tools: list = self._create_scheduling_tools()
         self._executor = SchedulerExecutor(
-            scheduler=self,
             store=self._store,
-            agents=self._agents,
-            abort_signals=self._abort_signals,
-            state_events=self._state_events,
+            runtime=self._runtime,
             semaphore=self._semaphore,
-            dispatched_state_ids=self._dispatched_state_ids,
-            output_channels=self._output_channels,
+        )
+        self._tick_engine = SchedulerTickEngine(
+            store=self._store,
+            guard=self._guard,
+            executor=self._executor,
+            runtime=self._runtime,
+            config=self._config,
         )
 
     def _create_scheduling_tools(self) -> list:
         """Create the scheduling tools that will be injected into agents."""
         return [
-            SpawnAgentTool(self._store, self._guard),
-            SleepAndWaitTool(self._store, self._guard),
-            QuerySpawnedAgentTool(self._store),
-            CancelAgentTool(self),
-            ListAgentsTool(self._store),
+            SpawnAgentTool(self._tool_port),
+            SleepAndWaitTool(self._tool_port),
+            QuerySpawnedAgentTool(self._tool_port),
+            CancelAgentTool(self._tool_port),
+            ListAgentsTool(self._tool_port),
         ]
 
     # ──────────────────────────────────────────────────────────────────────
@@ -113,13 +113,14 @@ class Scheduler:
         """Gracefully stop the scheduler."""
         self._running = False
 
-        if self._active_tasks:
+        if self._runtime.active_tasks:
             logger.info(
                 "scheduler_waiting_for_active_tasks",
-                count=len(self._active_tasks),
+                count=len(self._runtime.active_tasks),
             )
             done, pending = await asyncio.wait(
-                self._active_tasks, timeout=self._config.graceful_shutdown_wait_seconds
+                self._runtime.active_tasks,
+                timeout=self._config.graceful_shutdown_wait_seconds,
             )
             for t in pending:
                 t.cancel()
@@ -150,6 +151,10 @@ class Scheduler:
     def store(self) -> AgentStateStorage:
         """Expose the underlying state storage (read-only access)."""
         return self._store
+
+    def get_registered_agent(self, state_id: str) -> Agent | None:
+        """Return the in-memory agent object for a scheduler state."""
+        return self._runtime.get_registered_agent(state_id)
 
     async def run(
         self,
@@ -187,6 +192,7 @@ class Scheduler:
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
         persistent: bool = False,
+        agent_config_id: str | None = None,
     ) -> str:
         """
         Submit an agent task, return immediately with the state_id.
@@ -198,6 +204,7 @@ class Scheduler:
             abort_signal: Optional signal to cancel the orchestration.
             persistent: If True, the root agent stays SLEEPING after completion
                         and accepts new tasks via submit_task().
+            agent_config_id: Optional config template ID that created this instance.
 
         Returns:
             state_id (= agent.id) that can be used with wait_for() or get_state().
@@ -222,19 +229,19 @@ class Scheduler:
             status=AgentStateStatus.RUNNING,
             task=user_input,
             parent_id=None,
+            agent_config_id=agent_config_id,
             is_persistent=persistent,
             depth=0,
         )
         await self._store.save_state(state)
 
         if abort_signal is not None:
-            self._abort_signals[state.id] = abort_signal
+            self._runtime.set_abort_signal(state.id, abort_signal)
 
         task = asyncio.create_task(
-            self._run_root_agent(agent, user_input, resolved_session_id, state)
+            self._executor.run_root_agent(agent, user_input, resolved_session_id, state)
         )
-        self._active_tasks.add(task)
-        task.add_done_callback(self._active_tasks.discard)
+        self._runtime.track_active_task(task)
         return state.id
 
     async def submit_task(
@@ -245,8 +252,10 @@ class Scheduler:
         agent: Agent | None = None,
     ) -> None:
         """
-        Submit a new task to a persistent root agent that is SLEEPING.
+        Submit a new task to a persistent root agent.
 
+        Accepts agents in SLEEPING, COMPLETED, or FAILED states.
+        Terminal states (COMPLETED/FAILED) are first reset to SLEEPING.
         The agent will be woken up on the next tick with TASK_SUBMITTED condition.
 
         Args:
@@ -257,17 +266,21 @@ class Scheduler:
                 in-memory agent registry is empty.
 
         Raises:
-            RuntimeError: If the agent is not persistent or not SLEEPING.
+            RuntimeError: If the agent is not persistent or in an incompatible state.
         """
         state = await self._store.get_state(state_id)
         if state is None:
             raise RuntimeError(f"Agent state '{state_id}' not found")
         if not state.is_persistent:
             raise RuntimeError(f"Agent '{state_id}' is not persistent. Use submit() instead.")
-        if state.status != AgentStateStatus.SLEEPING:
+
+        if state.status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED):
+            await self._store.update_status(state_id, AgentStateStatus.SLEEPING)
+            logger.info("reset_terminal_to_sleeping", state_id=state_id, from_status=state.status.value)
+        elif state.status != AgentStateStatus.SLEEPING:
             raise RuntimeError(
-                f"Agent '{state_id}' is not SLEEPING (status={state.status.value}). "
-                f"Cannot submit task."
+                f"Agent '{state_id}' is {state.status.value}. "
+                f"Cannot submit task (expected SLEEPING, COMPLETED, or FAILED)."
             )
 
         if agent is not None:
@@ -287,6 +300,7 @@ class Scheduler:
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
         persistent: bool = False,
+        agent_config_id: str | None = None,
         timeout: float | None = None,
         include_child_outputs: bool = True,
     ) -> AsyncIterator[SchedulerOutput]:
@@ -295,11 +309,10 @@ class Scheduler:
         Combines submit() with an output subscription so that the channel is
         created before execution starts — no outputs are lost.
         """
-        channel_state = OutputChannelState(
-            queue=asyncio.Queue(),
+        self._runtime.open_output_channel(
+            agent.id,
             include_child_outputs=include_child_outputs,
         )
-        self._output_channels[agent.id] = channel_state
 
         try:
             await self.submit(
@@ -308,13 +321,12 @@ class Scheduler:
                 session_id=session_id,
                 abort_signal=abort_signal,
                 persistent=persistent,
+                agent_config_id=agent_config_id,
             )
-            async for output in self._consume_output_channel(
-                agent.id, channel_state, timeout
-            ):
+            async for output in self._runtime.consume_output_channel(agent.id, timeout):
                 yield output
         finally:
-            self._output_channels.pop(agent.id, None)
+            self._runtime.close_output_channel(agent.id)
 
     async def submit_task_and_subscribe(
         self,
@@ -334,49 +346,17 @@ class Scheduler:
         (required after server restart when persistent state survives but the
         in-memory registry is empty).
         """
-        channel_state = OutputChannelState(
-            queue=asyncio.Queue(),
+        self._runtime.open_output_channel(
+            state_id,
             include_child_outputs=include_child_outputs,
         )
-        self._output_channels[state_id] = channel_state
 
         try:
             await self.submit_task(state_id, task, agent=agent)
-            async for output in self._consume_output_channel(
-                state_id, channel_state, timeout
-            ):
+            async for output in self._runtime.consume_output_channel(state_id, timeout):
                 yield output
         finally:
-            self._output_channels.pop(state_id, None)
-
-    async def _consume_output_channel(
-        self,
-        state_id: str,
-        channel_state: OutputChannelState,
-        timeout: float | None,
-    ) -> AsyncIterator[SchedulerOutput]:
-        """Read from an output channel until ``is_final`` or timeout."""
-        start = time.time()
-        while True:
-            remaining = None
-            if timeout is not None:
-                elapsed = time.time() - start
-                if elapsed >= timeout:
-                    return
-                remaining = timeout - elapsed
-
-            try:
-                item = await asyncio.wait_for(
-                    channel_state.queue.get(), timeout=remaining
-                )
-            except asyncio.TimeoutError:
-                return
-
-            if item is None:
-                return
-            yield item
-            if item.is_final:
-                return
+            self._runtime.close_output_channel(state_id)
 
     async def wait_for(
         self,
@@ -395,7 +375,7 @@ class Scheduler:
         initial_state = await self._store.get_state(state_id)
         is_persistent = initial_state.is_persistent if initial_state else False
 
-        event = self._state_events.setdefault(state_id, asyncio.Event())
+        event = self._runtime.get_or_create_state_event(state_id)
 
         try:
             while True:
@@ -437,7 +417,7 @@ class Scheduler:
                 except asyncio.TimeoutError:
                     return RunOutput(termination_reason=TerminationReason.TIMEOUT)
         finally:
-            self._state_events.pop(state_id, None)
+            self._runtime.pop_state_event(state_id)
 
     async def get_state(self, state_id: str) -> AgentState | None:
         """Query the current state of a scheduled agent."""
@@ -460,51 +440,57 @@ class Scheduler:
         ):
             return False
 
-        await self._recursive_cancel(state_id, reason)
+        await self._runtime.recursive_cancel(state_id, reason)
         logger.info("scheduler_cancel", state_id=state_id, reason=reason)
         return True
 
-    async def steer(self, state_id: str, user_input: UserInput) -> bool:
+    async def steer(self, state_id: str, user_input: UserInput, *, urgent: bool = False) -> bool:
         """
-        Send a steering message to a RUNNING agent.
+        Send a steering message to an agent.
 
-        The text is extracted from ``user_input`` and injected into the agent's
-        next LLM call via the steering queue. If the agent is not currently running,
-        the hint is saved as a USER_HINT pending event for delivery on the next wake.
+        Dispatches through the appropriate channel based on agent state:
+        - RUNNING: in-memory steering queue (no persistence, consumed in current run)
+        - Non-RUNNING: persisted as USER_HINT PendingEvent (consumed on next wake)
+        - urgent + SLEEPING: also triggers immediate wake bypassing debounce
 
         Returns:
-            True if the steering queue was available (agent is RUNNING in-process),
-            False otherwise (message saved as pending event for later delivery).
+            True if the message was delivered or persisted successfully.
         """
         message = extract_text(user_input)
         if not message:
             return False
 
-        agent = self._agents.get(state_id)
-        queue_available = False
-
-        if agent is not None:
-            steering_queue = agent.get_steering_queue()
-            if steering_queue is not None:
-                await steering_queue.put(message)
-                queue_available = True
-
-        # Also save as USER_HINT pending event as fallback / audit trail
         state = await self._store.get_state(state_id)
-        if state is not None:
-            event = PendingEvent(
-                id=str(uuid4()),
-                target_agent_id=state_id,
-                session_id=state.session_id,
-                event_type=SchedulerEventType.USER_HINT,
-                payload={"hint": message},
-                source_agent_id=None,
-                created_at=datetime.now(timezone.utc),
-            )
-            await self._store.save_event(event)
+        if state is None:
+            return False
 
-        logger.info("steer_sent", state_id=state_id, queue_available=queue_available)
-        return queue_available
+        if state.status == AgentStateStatus.RUNNING:
+            agent = self._runtime.get_registered_agent(state_id)
+            if agent is None:
+                return False
+            queue = agent.get_steering_queue()
+            if queue is None:
+                return False
+            await queue.put(message)
+            logger.info("steer_queued", state_id=state_id)
+            return True
+
+        event = PendingEvent(
+            id=str(uuid4()),
+            target_agent_id=state_id,
+            session_id=state.session_id,
+            event_type=SchedulerEventType.USER_HINT,
+            payload={"hint": message},
+            source_agent_id=None,
+            created_at=datetime.now(timezone.utc),
+        )
+        await self._store.save_event(event)
+
+        if urgent and state.status == AgentStateStatus.SLEEPING:
+            await self._tick_engine.try_urgent_wake(state)
+
+        logger.info("steer_persisted", state_id=state_id, urgent=urgent)
+        return True
 
     async def shutdown(self, state_id: str) -> bool:
         """
@@ -524,7 +510,7 @@ class Scheduler:
         ):
             return False
 
-        await self._recursive_shutdown(state_id)
+        await self._runtime.recursive_shutdown(state_id)
         logger.info("scheduler_shutdown", state_id=state_id)
         return True
 
@@ -540,11 +526,7 @@ class Scheduler:
                 agent.tools.append(tool)
         if agent.options is not None:
             agent.options.enable_termination_summary = True
-        self._agents[agent.id] = agent
-
-    async def _create_child_agent(self, state: AgentState) -> Agent:
-        """Create a child Agent by copying the parent's configuration."""
-        return await self._executor.create_child_agent(state)
+        self._runtime.register_agent(agent)
 
     # ──────────────────────────────────────────────────────────────────────
     # Scheduling Loop
@@ -555,226 +537,9 @@ class Scheduler:
         logger.info("scheduler_loop_started")
         while self._running:
             try:
-                await self._tick()
+                await self._tick_engine.tick()
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("scheduler_tick_error")
             await asyncio.sleep(self._check_interval)
-
-    async def _tick(self) -> None:
-        """Single scheduling tick: propagate signals, enforce timeouts, start pending, wake sleeping."""
-        await self._propagate_signals()
-        await self._enforce_timeouts()
-        await self._check_health()
-        await self._process_pending_events()
-        await self._start_pending()
-        await self._wake_sleeping()
-
-    async def _propagate_signals(self) -> None:
-        """Propagate completion/failure signals from child to parent agents."""
-        completed = await self._store.find_unpropagated_completed()
-        for state in completed:
-            if state.parent_id is not None:
-                await self._store.mark_child_completed(state.parent_id, state.id)
-                logger.info(
-                    "signal_propagated",
-                    child_id=state.id,
-                    parent_id=state.parent_id,
-                    child_status=state.status.value,
-                )
-            await self._store.mark_propagated(state.id)
-
-    async def _enforce_timeouts(self) -> None:
-        """Find timed-out SLEEPING agents and wake them for summarization."""
-        now = datetime.now(timezone.utc)
-        timed_out = await self._guard.find_timed_out(now)
-        for state in timed_out:
-            task = asyncio.create_task(self._executor.wake_for_timeout(state))
-            self._active_tasks.add(task)
-            task.add_done_callback(self._active_tasks.discard)
-
-    async def _start_pending(self) -> None:
-        """Start all PENDING agents, skipping already-dispatched ones."""
-        pending = await self._store.find_pending()
-        for state in pending:
-            if state.id in self._dispatched_state_ids:
-                continue
-            self._dispatched_state_ids.add(state.id)
-            task = asyncio.create_task(self._executor.run_agent(state))
-            self._active_tasks.add(task)
-            task.add_done_callback(self._active_tasks.discard)
-
-    async def _check_health(self) -> None:
-        """Find stuck RUNNING agents and emit HEALTH_WARNING events to their parents."""
-        now = datetime.now(timezone.utc)
-        unhealthy = await self._guard.find_unhealthy(now)
-        for state in unhealthy:
-            if state.parent_id is None:
-                continue
-            parent_state = await self._store.get_state(state.parent_id)
-            if parent_state is None:
-                continue
-            # Dedup: skip if recent health warning already exists for this pair
-            already_warned = await self._store.has_recent_health_warning(
-                target_agent_id=state.parent_id,
-                source_agent_id=state.id,
-                within_seconds=self._config.task_limits.health_check_threshold_seconds,
-                now=now,
-            )
-            if already_warned:
-                continue
-            event = PendingEvent(
-                id=str(uuid4()),
-                target_agent_id=state.parent_id,
-                session_id=state.session_id,
-                event_type=SchedulerEventType.HEALTH_WARNING,
-                payload={
-                    "child_agent_id": state.id,
-                    "message": (
-                        f"Agent '{state.id}' appears stuck — no activity for "
-                        f">{self._config.task_limits.health_check_threshold_seconds:.0f}s. "
-                        f"Consider using cancel_agent to terminate it."
-                    ),
-                    "last_activity_at": state.last_activity_at.isoformat() if state.last_activity_at else None,
-                },
-                source_agent_id=state.id,
-                created_at=now,
-            )
-            await self._store.save_event(event)
-            logger.warning(
-                "health_warning_emitted",
-                stuck_agent_id=state.id,
-                parent_id=state.parent_id,
-            )
-
-    async def _process_pending_events(self) -> None:
-        """Process debounced pending events: wake SLEEPING parent agents to receive notifications."""
-        now = datetime.now(timezone.utc)
-        min_count = self._config.event_debounce_min_count
-        max_wait = self._config.event_debounce_max_wait_seconds
-
-        agent_session_pairs = await self._store.find_agents_with_debounced_events(min_count, max_wait, now)
-        for agent_id, session_id in agent_session_pairs:
-            if agent_id in self._dispatched_state_ids:
-                continue
-            state = await self._store.get_state(agent_id)
-            if state is None:
-                # Orphaned events — agent no longer exists, delete by agent_id
-                await self._store.delete_events_by_agent(agent_id)
-                continue
-            if state.status != AgentStateStatus.SLEEPING:
-                # Agent exists but not sleeping — delete events for this specific session
-                events = await self._store.get_pending_events(agent_id, session_id)
-                if events:
-                    await self._store.delete_events([e.id for e in events])
-                continue
-
-            rejection = await self._guard.check_wake(state)
-            if rejection is not None:
-                logger.warning("pending_events_wake_rejected", state_id=agent_id, reason=rejection)
-                continue
-
-            events = await self._store.get_pending_events(agent_id, state.session_id)
-            if not events:
-                continue
-
-            await self._store.delete_events([e.id for e in events])
-            self._dispatched_state_ids.add(agent_id)
-            task = asyncio.create_task(self._executor.wake_agent_for_events(state, events))
-            self._active_tasks.add(task)
-            task.add_done_callback(self._active_tasks.discard)
-
-    async def _wake_sleeping(self) -> None:
-        """Wake agents whose conditions are satisfied, skipping already-dispatched ones."""
-        now = datetime.now(timezone.utc)
-        wakeable = await self._store.find_wakeable(now)
-        for state in wakeable:
-            if state.id in self._dispatched_state_ids:
-                continue
-            rejection = await self._guard.check_wake(state)
-            if rejection is not None:
-                logger.warning(
-                    "wake_rejected",
-                    state_id=state.id,
-                    reason=rejection,
-                )
-                await self._store.update_status(
-                    state.id,
-                    AgentStateStatus.FAILED,
-                    result_summary=f"Wake rejected: {rejection}",
-                )
-                continue
-            self._dispatched_state_ids.add(state.id)
-            task = asyncio.create_task(self._executor.wake_agent(state))
-            self._active_tasks.add(task)
-            task.add_done_callback(self._active_tasks.discard)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Agent Execution (delegated to SchedulerExecutor)
-    # ──────────────────────────────────────────────────────────────────────
-
-    async def _run_root_agent(
-        self,
-        agent: Agent,
-        user_input: UserInput,
-        session_id: str,
-        state: AgentState,
-    ) -> None:
-        """Run the root agent (submitted by user)."""
-        await self._executor.run_root_agent(agent, user_input, session_id, state)
-
-    async def _build_wake_message(self, state: AgentState) -> UserInput:
-        """Build a wake message with auto-injected child results."""
-        return await self._executor._build_wake_message(state)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Cancel / Shutdown
-    # ──────────────────────────────────────────────────────────────────────
-
-    async def _recursive_cancel(self, state_id: str, reason: str) -> None:
-        """Recursively cancel an agent and all its descendants."""
-        signal = self._abort_signals.get(state_id)
-        if signal is not None:
-            signal.abort(reason)
-
-        children = await self._store.get_states_by_parent(state_id)
-        for child in children:
-            if child.status in (
-                AgentStateStatus.RUNNING,
-                AgentStateStatus.SLEEPING,
-                AgentStateStatus.PENDING,
-            ):
-                await self._recursive_cancel(child.id, reason)
-
-        await self._executor._update_status_and_notify(
-            state_id, AgentStateStatus.FAILED, result_summary=reason
-        )
-
-    async def _recursive_shutdown(self, state_id: str) -> None:
-        """Recursively graceful-shutdown an agent and all its descendants."""
-        children = await self._store.get_states_by_parent(state_id)
-        for child in children:
-            if child.status in (
-                AgentStateStatus.RUNNING,
-                AgentStateStatus.SLEEPING,
-                AgentStateStatus.PENDING,
-            ):
-                await self._recursive_shutdown(child.id)
-
-        state = await self._store.get_state(state_id)
-        if state is None:
-            return
-
-        if state.status == AgentStateStatus.SLEEPING:
-            wc = WakeCondition(
-                type=WakeType.TASK_SUBMITTED,
-                submitted_task="System shutdown requested. Please produce a final summary report of all work done so far.",
-            )
-            await self._store.update_status(
-                state_id, AgentStateStatus.SLEEPING, wake_condition=wc
-            )
-        elif state.status == AgentStateStatus.PENDING:
-            await self._executor._update_status_and_notify(
-                state_id, AgentStateStatus.FAILED, result_summary="Shutdown before execution"
-            )

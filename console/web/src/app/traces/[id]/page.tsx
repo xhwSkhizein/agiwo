@@ -2,24 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft, Clock, Zap, Cpu, Wrench } from "lucide-react";
+import { Clock, Zap, Cpu, Wrench } from "lucide-react";
+import { BackHeader } from "@/components/back-header";
+import { MetricCard } from "@/components/metric-card";
+import { MonoText } from "@/components/mono-text";
+import { SectionCard } from "@/components/section-card";
+import { FullPageMessage } from "@/components/state-message";
+import { TokenMetricsBadges } from "@/components/token-metrics-badges";
+import { TokenSummaryCards } from "@/components/token-summary-cards";
+import { TraceStatusBadge } from "@/components/trace-status-badge";
 import { getTrace } from "@/lib/api";
 import type { TraceDetail, SpanResponse } from "@/lib/api";
-
-function StatusBadge({ status }: { status: string }) {
-  const cls =
-    status === "ok"
-      ? "bg-green-900/50 text-green-400"
-      : status === "error"
-      ? "bg-red-900/50 text-red-400"
-      : status === "running"
-      ? "bg-blue-900/50 text-blue-400"
-      : "bg-zinc-800 text-zinc-400";
-  return (
-    <span className={`text-xs px-1.5 py-0.5 rounded ${cls}`}>{status}</span>
-  );
-}
+import {
+  formatDurationMs,
+  parseGenericMetrics,
+} from "@/lib/metrics";
+import { formatRoundedMs } from "@/lib/time";
 
 function KindIcon({ kind }: { kind: string }) {
   if (kind === "agent") return <Cpu className="w-3.5 h-3.5 text-purple-400" />;
@@ -41,6 +39,7 @@ function SpanRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const spanMetrics = parseGenericMetrics(span.metrics);
   const spanStartMs = span.start_time
     ? new Date(span.start_time).getTime() - traceStartMs
     : 0;
@@ -72,7 +71,7 @@ function SpanRow({
         >
           <KindIcon kind={span.kind} />
           <span className="text-sm truncate">{span.name}</span>
-          <StatusBadge status={span.status} />
+          <TraceStatusBadge status={span.status} />
         </div>
 
         <div className="flex-1 h-5 relative bg-zinc-800/30 rounded overflow-hidden">
@@ -95,7 +94,9 @@ function SpanRow({
           <div className="grid grid-cols-2 gap-x-6 gap-y-1">
             <div>
               <span className="text-zinc-500">Span ID: </span>
-              <span className="font-mono">{span.span_id.slice(0, 12)}</span>
+              <MonoText className="font-mono">
+                {span.span_id.slice(0, 12)}
+              </MonoText>
             </div>
             <div>
               <span className="text-zinc-500">Kind: </span>
@@ -104,7 +105,7 @@ function SpanRow({
             {span.duration_ms != null && (
               <div>
                 <span className="text-zinc-500">Duration: </span>
-                <span>{Math.round(span.duration_ms)}ms</span>
+                <span>{formatRoundedMs(span.duration_ms)}</span>
               </div>
             )}
             {span.error_message && (
@@ -117,6 +118,13 @@ function SpanRow({
 
           {Object.keys(span.metrics).length > 0 && (
             <div>
+              <TokenMetricsBadges
+                metrics={spanMetrics}
+                showCacheRead={false}
+                showCacheCreation={false}
+                chipClassName="bg-zinc-800"
+                className="mb-2 grid grid-cols-2 sm:grid-cols-4 gap-2"
+              />
               <p className="text-zinc-500 mb-1">Metrics:</p>
               <div className="bg-zinc-800/50 rounded px-3 py-2 font-mono overflow-auto max-h-32">
                 {JSON.stringify(span.metrics, null, 2)}
@@ -180,19 +188,11 @@ export default function TraceDetailPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-zinc-500">Loading trace...</div>
-      </div>
-    );
+    return <FullPageMessage>Loading trace...</FullPageMessage>;
   }
 
   if (!trace) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-zinc-500">Trace not found</div>
-      </div>
-    );
+    return <FullPageMessage>Trace not found</FullPageMessage>;
   }
 
   const traceStartMs = trace.start_time
@@ -202,61 +202,53 @@ export default function TraceDetailPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/traces"
-          className="p-1.5 rounded hover:bg-zinc-800 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <div>
-          <h1 className="text-xl font-semibold">Trace Detail</h1>
-          <p className="text-xs text-zinc-500 font-mono mt-0.5">
-            {trace.trace_id}
-          </p>
-        </div>
-      </div>
+      <BackHeader
+        href="/traces"
+        title="Trace Detail"
+        subtitle={trace.trace_id}
+      />
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          <p className="text-xs text-zinc-500">Status</p>
-          <div className="mt-1">
-            <StatusBadge status={trace.status} />
-          </div>
-        </div>
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          <p className="text-xs text-zinc-500">Duration</p>
-          <p className="text-lg font-medium mt-1">
-            {trace.duration_ms ? `${Math.round(trace.duration_ms)}ms` : "-"}
-          </p>
-        </div>
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          <p className="text-xs text-zinc-500">Total Tokens</p>
-          <p className="text-lg font-medium mt-1">
-            {trace.total_tokens.toLocaleString()}
-          </p>
-        </div>
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
-          <p className="text-xs text-zinc-500">LLM / Tool Calls</p>
-          <p className="text-lg font-medium mt-1">
-            {trace.total_llm_calls} / {trace.total_tool_calls}
-          </p>
-        </div>
-      </div>
+      <TokenSummaryCards
+        cost={trace.total_token_cost}
+        costLabel="Total Cost"
+        inputTokens={trace.total_input_tokens}
+        outputTokens={trace.total_output_tokens}
+        totalTokens={trace.total_tokens}
+        cacheReadTokens={trace.total_cache_read_tokens}
+        cacheCreationTokens={trace.total_cache_creation_tokens}
+        extraCards={
+          <>
+            <MetricCard
+              label="Status"
+              valueClassName="text-lg font-medium"
+              value={<TraceStatusBadge status={trace.status} />}
+            />
+            <MetricCard
+              label="Duration"
+              valueClassName="text-lg font-medium"
+              value={formatDurationMs(trace.duration_ms || 0)}
+            />
+            <MetricCard
+              label="LLM / Tool"
+              valueClassName="text-lg font-medium"
+              value={`${trace.total_llm_calls} / ${trace.total_tool_calls}`}
+            />
+          </>
+        }
+      />
 
       {trace.input_query && (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+        <SectionCard className="p-4">
           <p className="text-xs text-zinc-500 mb-1">Input</p>
           <p className="text-sm">{trace.input_query}</p>
-        </div>
+        </SectionCard>
       )}
 
-      <div className="rounded-lg border border-zinc-800 overflow-hidden">
-        <div className="px-4 py-3 bg-zinc-900 border-b border-zinc-800">
-          <h2 className="text-sm font-medium">
-            Span Waterfall ({trace.spans.length} spans)
-          </h2>
-        </div>
+      <SectionCard
+        className="overflow-hidden"
+        title={`Span Waterfall (${trace.spans.length} spans)`}
+        headerClassName="px-4 py-3 border-b border-zinc-800"
+      >
         <div>
           {trace.spans.map((span) => (
             <SpanRow
@@ -269,13 +261,13 @@ export default function TraceDetailPage() {
             />
           ))}
         </div>
-      </div>
+      </SectionCard>
 
       {trace.final_output && (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+        <SectionCard className="p-4">
           <p className="text-xs text-zinc-500 mb-1">Final Output</p>
           <p className="text-sm whitespace-pre-wrap">{trace.final_output}</p>
-        </div>
+        </SectionCard>
       )}
     </div>
   );

@@ -20,7 +20,7 @@ async def test_nvidia_model_arun_stream_basic(mock_settings, mock_openai_client)
         api_key="test-key",
         temperature=0.7,
         top_p=1.0,
-        max_tokens=100,
+        max_output_tokens=100,
         frequency_penalty=0.0,
         presence_penalty=0.0,
     )
@@ -62,7 +62,7 @@ async def test_nvidia_model_arun_stream_with_reasoning(mock_settings, mock_opena
         api_key="test-key",
         temperature=0.7,
         top_p=1.0,
-        max_tokens=100,
+        max_output_tokens=100,
         frequency_penalty=0.0,
         presence_penalty=0.0,
     )

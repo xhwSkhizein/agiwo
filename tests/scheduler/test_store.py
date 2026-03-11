@@ -1,8 +1,8 @@
 """Tests for AgentStateStorage implementations."""
 
-import asyncio
-import pytest
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from agiwo.scheduler.models import (
     AgentState,
@@ -10,11 +10,10 @@ from agiwo.scheduler.models import (
     PendingEvent,
     SchedulerEventType,
     TimeUnit,
-    WaitMode,
     WakeCondition,
     WakeType,
 )
-from agiwo.scheduler.store import InMemoryAgentStateStorage
+from agiwo.scheduler.store import InMemoryAgentStateStorage, SQLiteAgentStateStorage
 
 
 @pytest.fixture
@@ -400,3 +399,31 @@ class TestInMemoryPendingEvents:
         ids = [s.id for s in running]
         assert "r1" in ids
         assert "s1" not in ids
+
+
+class TestSQLiteAgentStateStorage:
+    @pytest.mark.asyncio
+    async def test_save_and_get_round_trip(self, tmp_path):
+        store = SQLiteAgentStateStorage(str(tmp_path / "scheduler.db"))
+        state = _make_state(
+            id="sqlite-agent",
+            status=AgentStateStatus.SLEEPING,
+            explain="waiting for child",
+        )
+        state.wake_condition = WakeCondition(
+            type=WakeType.WAITSET,
+            wait_for=["child-1"],
+            completed_ids=["child-1"],
+        )
+
+        await store.save_state(state)
+        retrieved = await store.get_state("sqlite-agent")
+
+        assert retrieved is not None
+        assert retrieved.id == "sqlite-agent"
+        assert retrieved.status == AgentStateStatus.SLEEPING
+        assert retrieved.explain == "waiting for child"
+        assert retrieved.wake_condition is not None
+        assert retrieved.wake_condition.completed_ids == ["child-1"]
+
+        await store.close()

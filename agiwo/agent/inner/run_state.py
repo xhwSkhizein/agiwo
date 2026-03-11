@@ -1,10 +1,10 @@
 import time
 from dataclasses import dataclass, field
 
-from agiwo.agent.schema import CompactMetadata
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.options import AgentOptions
-from agiwo.agent.schema import (
+from agiwo.agent.compact_types import CompactMetadata
+from agiwo.agent.runtime import (
     StepRecord,
     step_to_message,
     RunOutput,
@@ -27,6 +27,8 @@ class RunState:
     total_tokens: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
     token_cost: float = 0.0
     steps_count: int = 0
     tool_calls_count: int = 0
@@ -61,6 +63,8 @@ class RunState:
                 total_tokens=self.total_tokens,
                 input_tokens=self.input_tokens,
                 output_tokens=self.output_tokens,
+                cache_read_tokens=self.cache_read_tokens,
+                cache_creation_tokens=self.cache_creation_tokens,
                 token_cost=self.token_cost,
                 steps_count=self.steps_count,
                 tool_calls_count=self.tool_calls_count,
@@ -94,6 +98,10 @@ class RunState:
             self.input_tokens += step.metrics.input_tokens
         if step.metrics.output_tokens is not None:
             self.output_tokens += step.metrics.output_tokens
+        if step.metrics.cache_read_tokens is not None:
+            self.cache_read_tokens += step.metrics.cache_read_tokens
+        if step.metrics.cache_creation_tokens is not None:
+            self.cache_creation_tokens += step.metrics.cache_creation_tokens
 
     def _track_assistant(self, step: StepRecord) -> None:
         self.assistant_steps_count += 1

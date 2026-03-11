@@ -5,10 +5,18 @@ with composable sections (base, environment, skills, etc.)
 """
 
 import os
+import platform
+import locale
+
+try:
+    import distro  # Linux发行版补充，非必需，没有则自动忽略
+except ImportError:
+    distro = None
 import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
+
 
 from agiwo.tool.base import BaseTool
 from agiwo.utils.logging import get_logger
@@ -18,6 +26,48 @@ if TYPE_CHECKING:
     from agiwo.skill.manager import SkillManager
 
 logger = get_logger(__name__)
+
+
+def get_os_info():
+    """
+    获取操作系统及版本信息，返回一行整合后的字符串
+    :return: 操作系统信息字符串
+    """
+    # 基础系统信息
+    os_name = platform.system()
+    os_release = platform.release()
+    os_version = platform.version()
+    machine_type = platform.machine()
+
+    # 不同系统补充信息
+    extra_info = ""
+    if os_name == "Darwin":
+        mac_version = platform.mac_ver()[0]
+        extra_info = f", macOS verion:{mac_version}"
+    elif os_name == "Windows":
+        win_ver = platform.win32_ver()[1]  # 提取Windows具体版本号
+        extra_info = f", Windows version detail:{win_ver}"
+    elif os_name == "Linux" and distro:
+        distro_name = distro.name()
+        distro_ver = distro.version()
+        extra_info = f", Linux distro:{distro_name} {distro_ver}"
+
+    # 整合为一行返回
+    return f"OS:{os_name}, os_release:{os_release}, os_version:{os_version}, arch:{machine_type}{extra_info}"
+
+
+def get_language_info():
+    """
+    获取系统默认语言信息，返回一行整合后的字符串
+    :return: 语言信息字符串（失败则返回提示）
+    """
+    try:
+        default_lang, _ = locale.getlocale()
+        # 整合为一行返回
+        return f"{default_lang}"
+    except Exception as e:
+        logger.warning(f"获取语言信息失败: {str(e)}")
+        return None
 
 
 class SystemPromptBuilder(Protocol):
@@ -56,6 +106,9 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
         self._workspace_initialized = False
         self._system_prompt: str | None = None
         self.tools = tools
+        # Computed workspace path (root_path / agent_name)
+        root = Path(options.get_effective_root_path()).expanduser().resolve()
+        self._workspace_path: Path = root / agent_name
         # Change tracking for auto-refresh
         self._soul_mtime: float | None = None
         self._skills_fingerprint: str | None = None
@@ -63,19 +116,27 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
     def build(self) -> str:
         """Assemble system prompt from modular sections."""
         sections = [
+            self._build_identity_section(),
             self._build_soul_section(),
             self._build_base_section(),
             self._build_environment_section(),
             self._build_tools_section(),
             self._build_skills_section(),
-            self._build_identity_section(),
             self._build_user_section(),
         ]
         return "\n\n".join(filter(None, sections))
 
-    def _get_root_path(self) -> str:
-        """Get the effective root path from options."""
-        return self.options.get_effective_root_path()
+    @property
+    def _soul_path(self) -> Path:
+        return self._workspace_path / "SOUL.md"
+
+    @property
+    def _identity_path(self) -> Path:
+        return self._workspace_path / "IDENTITY.md"
+
+    @property
+    def _user_path(self) -> Path:
+        return self._workspace_path / "USER.md"
 
     def _ensure_template_files(self, workspace: str) -> None:
         """Ensure IDENTITY.md, SOUL.md, USER.md exist in workspace.
@@ -92,13 +153,21 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
             if target_path.exists():
                 continue
 
-            source_path = Path(__file__).parent.parent.parent.parent / "templates" / filename
+            source_path = (
+                Path(__file__).parent.parent.parent.parent / "templates" / filename
+            )
             if source_path.exists():
                 try:
                     shutil.copy2(source_path, target_path)
-                    logger.info("copied_template_file", source=str(source_path), target=str(target_path))
+                    logger.info(
+                        "copied_template_file",
+                        source=str(source_path),
+                        target=str(target_path),
+                    )
                 except Exception as e:
-                    logger.warning("failed_to_copy_template", filename=filename, error=str(e))
+                    logger.warning(
+                        "failed_to_copy_template", filename=filename, error=str(e)
+                    )
             else:
                 logger.warning("template_file_not_found", filename=str(source_path))
 
@@ -112,11 +181,9 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
             The built system prompt string.
         """
         if not self._workspace_initialized:
-            root_path = self._get_root_path()
-            workspace = f"{os.path.expanduser(root_path)}/{self.agent_name}"
-            workspace = os.path.abspath(workspace)
-            instance_work_dir = f"{workspace}/WORK/{self.agent_id}"
-            os.makedirs(workspace + "/MEMORY", exist_ok=True)
+            workspace = str(self._workspace_path)
+            instance_work_dir = str(self._workspace_path / "WORK" / self.agent_id)
+            os.makedirs(str(self._workspace_path / "MEMORY"), exist_ok=True)
             os.makedirs(instance_work_dir, exist_ok=True)
 
             self._ensure_template_files(workspace)
@@ -127,13 +194,8 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
                 await self._skill_manager.initialize()
 
         if self._system_prompt is None:
-            # Initialize change tracking state
-            root_path = self._get_root_path()
-            soul_path = Path(
-                f"{os.path.expanduser(root_path)}/{self.agent_name}/SOUL.md"
-            )
-            if soul_path.exists():
-                self._soul_mtime = soul_path.stat().st_mtime
+            if self._soul_path.exists():
+                self._soul_mtime = self._soul_path.stat().st_mtime
 
             if self._skill_manager is not None:
                 self._skills_fingerprint = self._compute_skills_fingerprint()
@@ -171,12 +233,10 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
 
     def _check_soul_changed(self) -> bool:
         """Check if SOUL.md has been modified since last build."""
-        root_path = self._get_root_path()
-        soul_path = Path(f"{os.path.expanduser(root_path)}/{self.agent_name}/SOUL.md")
-        if not soul_path.exists():
+        if not self._soul_path.exists():
             return self._soul_mtime is not None
 
-        current_mtime = soul_path.stat().st_mtime
+        current_mtime = self._soul_path.stat().st_mtime
         if self._soul_mtime is None:
             return True
         return current_mtime != self._soul_mtime
@@ -217,11 +277,8 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
 
     async def _refresh_prompt(self) -> str:
         """Refresh system prompt and update change tracking state."""
-        # Update SOUL.md tracking
-        root_path = self._get_root_path()
-        soul_path = Path(f"{os.path.expanduser(root_path)}/{self.agent_name}/SOUL.md")
-        if soul_path.exists():
-            self._soul_mtime = soul_path.stat().st_mtime
+        if self._soul_path.exists():
+            self._soul_mtime = self._soul_path.stat().st_mtime
         else:
             self._soul_mtime = None
 
@@ -247,15 +304,31 @@ class DefaultSystemPromptBuilder(SystemPromptBuilder):
             return self._skill_manager.get_resolved_skills_dirs()
         return self.options.get_configured_skills_dirs()
 
+    def _build_identity_section(self) -> str:
+        """load ${WORKSPACE}/IDENTITY.md as agent's identity."""
+        if not self._identity_path.exists():
+            return ""
+        content = self._identity_path.read_text()
+        logger.info("loaded IDENTITY.md file", path=str(self._identity_path))
+        result = f"{content}\n_This IDENTITY.md is yours to evolve. As you learn who you are, update it._"
+        return result.strip() if result else ""
+
+    def _build_soul_section(self) -> str:
+        """load {self.agent_name}/SOUL.md like openclaw, it's the core of 觉"""
+        if not self._soul_path.exists():
+            return ""
+        content = self._soul_path.read_text()
+        logger.info("loaded SOUL.md file", path=str(self._soul_path))
+        result = f"---\n\n{content}\nSOUL.md path: {self._soul_path}\n"
+        return result.strip() if result else ""
+
     def _build_base_section(self) -> str:
         """Build base system prompt section."""
         return self.base_prompt.strip() if self.base_prompt else ""
 
     def _build_environment_section(self) -> str:
         """Build workspace and environment section."""
-        root_path = self._get_root_path()
-        workspace = f"{os.path.expanduser(root_path)}/{self.agent_name}"
-        workspace = os.path.abspath(workspace)
+        workspace = str(self._workspace_path)
         current_date = datetime.now().strftime("%Y-%m-%d")
         timezone = datetime.now().astimezone().tzinfo
 
@@ -271,14 +344,17 @@ Your workspace: **{workspace}**:
 
 - **WORK/** — Your working directory. Store task plans, findings, progress notes and working files here. **IMPORTANT**: Use Git for version control in subdirectories where you modify files.
 
-Current Time-zone: {timezone}
-Current date: {current_date}
+- **Environment**
+OS: {get_os_info()}
+Language: {get_language_info()}
+Time-zone: {timezone}
+Date: {current_date}, use the `bash` tool get current time if there is a need
 """
 
     def _build_tools_section(self) -> str:
         if not self.tools or len(self.tools) == 0:
             return ""
-        tool_section = "# Tools you can use\n"
+        tool_section = "# Tools you can use\n\n"
         tool_section += "<tools>\n"
         for tool in self.tools:
             tool_section += f"<tool>\n  <name>{tool.name}</name>\n  <description>{tool.get_short_description()}</description>\n</tool>\n"
@@ -292,40 +368,14 @@ Current date: {current_date}
         rendered = f"---\n\n{self._skill_manager.render_skills_section()}"
         return rendered.strip() if rendered else ""
 
-    def _build_soul_section(self) -> str:
-        """load {self.agent_name}/SOUL.md like openclaw, it's the core of 觉"""
-        root_path = self._get_root_path()
-        soul_path = Path(f"{os.path.expanduser(root_path)}/{self.agent_name}/SOUL.md")
-        if not soul_path.exists():
-            return ""
-        soul = soul_path.read_text()
-        logger.info("loaded SOUL.md file", path=str(soul_path))
-        soul: str = f"{soul}\nSOUL.md path: {soul_path.absolute()}\n"
-        return soul.strip() if soul else ""
-
-    def _build_identity_section(self) -> str:
-        """load ${WORKSPACE}/IDENTITY.md as agent's identity."""
-        root_path = self._get_root_path()
-        identity_path = Path(
-            f"{os.path.expanduser(root_path)}/{self.agent_name}/IDENTITY.md"
-        )
-        if not identity_path.exists():
-            return ""
-        identity = identity_path.read_text()
-        logger.info("loaded IDENTITY.md file", path=str(identity_path))
-        identity: str = f"---\n\n{identity}\n_This IDENTITY.md is yours to evolve. As you learn who you are, update it._"
-        return identity.strip() if identity else ""
-
     def _build_user_section(self) -> str:
         """load ${WORKSPACE}/USER.md, it's user's information you talk to."""
-        root_path = self._get_root_path()
-        user_path = Path(f"{os.path.expanduser(root_path)}/{self.agent_name}/USER.md")
-        if not user_path.exists():
+        if not self._user_path.exists():
             return ""
-        user = user_path.read_text()
-        logger.info("loaded USER.md file", path=str(user_path))
-        user: str = f"---\n\n{user}"
-        return user.strip() if user else ""
+        content = self._user_path.read_text()
+        logger.info("loaded USER.md file", path=str(self._user_path))
+        result = f"---\n\n{content}"
+        return result.strip() if result else ""
 
 
 __all__ = [

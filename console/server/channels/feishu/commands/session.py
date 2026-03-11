@@ -1,128 +1,202 @@
 """
-Session management commands: /new and /list.
+Session management commands: /new, /list and /switch.
 """
 
-from datetime import datetime, timezone
-from uuid import uuid4
+from datetime import datetime
+from functools import partial
 
-from agiwo.agent.agent import Agent
-from agiwo.scheduler.models import AgentStateStatus
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.feishu.commands.base import CommandContext, CommandHandler, CommandResult
-from server.channels.feishu.store import FeishuChannelStore
-from server.channels.models import SessionRuntime
+from server.channels.agent_runtime import AgentRuntimeManager
+from server.channels.session_binding import (
+    ChatContextNotFoundError,
+    SessionNotFoundError,
+    SessionNotInChatContextError,
+)
+from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
+from server.channels.feishu.commands.status_text import format_scheduler_status
+from server.channels.models import Session
 from server.channels.session_manager import SessionManager
 
 
-class NewSessionCommand(CommandHandler):
-    """Create a fresh conversation, resetting the current session context."""
-
-    def __init__(
-        self,
-        store: FeishuChannelStore,
-        scheduler: Scheduler,
-        runtime_agents: dict[str, Agent],
-        session_manager: SessionManager,
-    ) -> None:
-        self._store = store
-        self._scheduler = scheduler
-        self._runtime_agents = runtime_agents
-        self._session_manager = session_manager
-
-    @property
-    def name(self) -> str:
-        return "new"
-
-    @property
-    def description(self) -> str:
-        return "创建新会话，重置当前对话上下文"
-
-    async def execute(self, ctx: CommandContext, args: str) -> CommandResult:
-        runtime = ctx.runtime
-        if runtime is None:
-            return CommandResult(text="当前没有活跃会话，发送消息即可自动创建。")
-
-        state = await self._scheduler.get_state(runtime.scheduler_state_id)
-        if state is not None and state.status in (
-            AgentStateStatus.RUNNING,
-            AgentStateStatus.SLEEPING,
-            AgentStateStatus.PENDING,
-        ):
-            await self._scheduler.cancel(runtime.scheduler_state_id, "用户执行 /new 重置会话")
-
-        cached_agent = self._runtime_agents.pop(runtime.runtime_agent_id, None)
-        if cached_agent is not None:
-            await cached_agent.close()
-
-        runtime.agiwo_session_id = str(uuid4())
-        runtime.scheduler_state_id = runtime.runtime_agent_id
-        runtime.updated_at = datetime.now(timezone.utc)
-        await self._store.upsert_session_runtime(runtime)
-
-        self._session_manager.reset_session(ctx.session_key)
-
-        return CommandResult(text="新会话已创建，对话上下文已重置。")
+def build_session_command_specs(
+    runtime_mgr: AgentRuntimeManager,
+    session_manager: SessionManager,
+    scheduler: Scheduler,
+) -> list[CommandSpec]:
+    return [
+        CommandSpec(
+            name="new",
+            description="创建新会话，重置当前对话上下文",
+            execute=partial(_execute_new_session, runtime_mgr, session_manager),
+        ),
+        CommandSpec(
+            name="list",
+            description="列出历史会话和概览",
+            execute=partial(_execute_list_sessions, runtime_mgr, scheduler),
+        ),
+        CommandSpec(
+            name="switch",
+            description="切换当前会话 — /switch <session_id>",
+            execute=partial(_execute_switch_session, runtime_mgr, session_manager),
+        ),
+    ]
 
 
-class ListSessionsCommand(CommandHandler):
-    """List the user's session runtimes across chats."""
+async def _execute_new_session(
+    runtime_mgr: AgentRuntimeManager,
+    session_manager: SessionManager,
+    ctx: CommandContext,
+    args: str,
+) -> CommandResult:
+    del args
 
-    def __init__(
-        self,
-        store: FeishuChannelStore,
-        scheduler: Scheduler,
-    ) -> None:
-        self._store = store
-        self._scheduler = scheduler
-
-    @property
-    def name(self) -> str:
-        return "list"
-
-    @property
-    def description(self) -> str:
-        return "列出历史会话和概览"
-
-    async def execute(self, ctx: CommandContext, args: str) -> CommandResult:
-        runtimes = await self._store.list_session_runtimes_by_user(
-            ctx.trigger_user_open_id
+    current_session = ctx.current_session
+    if current_session is None and not ctx.base_agent_id:
+        return CommandResult(
+            text="默认 Agent 不存在，无法创建会话。请先检查默认 Agent 配置。"
         )
-        if not runtimes:
-            return CommandResult(text="暂无会话记录。")
 
-        runtimes.sort(key=lambda r: r.updated_at, reverse=True)
-
-        lines: list[str] = [f"会话列表 (共 {len(runtimes)} 个):\n"]
-        for i, rt in enumerate(runtimes, 1):
-            is_current = rt.session_key == ctx.session_key
-            marker = " [当前]" if is_current else ""
-            chat_label = "私聊" if rt.chat_type == "p2p" else f"群聊 {rt.chat_id[:8]}..."
-
-            status_text = await self._resolve_status_text(rt)
-
-            lines.append(
-                f"{i}. {chat_label}{marker}\n"
-                f"   状态: {status_text}\n"
-                f"   会话ID: {rt.agiwo_session_id[:8]}...\n"
-                f"   更新于: {self._format_time(rt.updated_at)}"
+    cleanup_error: str | None = None
+    if current_session is not None:
+        try:
+            await runtime_mgr.terminate_session_runtime(
+                current_session,
+                "用户执行 /new 重置会话",
             )
+        except Exception as exc:  # noqa: BLE001
+            cleanup_error = str(exc)
 
-        return CommandResult(text="\n".join(lines))
+    created = await runtime_mgr.create_new_session(
+        chat_context_scope_id=ctx.chat_context_scope_id,
+        channel_instance_id=ctx.channel_instance_id,
+        chat_id=ctx.chat_id,
+        chat_type=ctx.chat_type,
+        user_open_id=ctx.trigger_user_open_id,
+        base_agent_id=ctx.base_agent_id,
+        created_by="COMMAND_NEW",
+    )
+    session_manager.reset_chat_context(ctx.chat_context_scope_id)
+    if cleanup_error is not None:
+        return CommandResult(
+            text=(
+                f"新会话已创建: {created.session.id}\n"
+                f"警告: 旧会话清理失败: {cleanup_error}"
+            )
+        )
+    return CommandResult(text=f"新会话已创建: {created.session.id}")
 
-    async def _resolve_status_text(self, runtime: SessionRuntime) -> str:
-        state = await self._scheduler.get_state(runtime.scheduler_state_id)
-        if state is None:
-            return "未启动"
-        status_map = {
-            AgentStateStatus.PENDING: "等待中",
-            AgentStateStatus.RUNNING: "运行中",
-            AgentStateStatus.SLEEPING: "空闲",
-            AgentStateStatus.COMPLETED: "已完成",
-            AgentStateStatus.FAILED: "已失败",
-        }
-        return status_map.get(state.status, state.status.value)
 
-    def _format_time(self, dt: datetime) -> str:
-        local = dt.astimezone()
-        return local.strftime("%m-%d %H:%M")
+async def _execute_switch_session(
+    runtime_mgr: AgentRuntimeManager,
+    session_manager: SessionManager,
+    ctx: CommandContext,
+    args: str,
+) -> CommandResult:
+    target_session_id = args.strip()
+    if not target_session_id:
+        return CommandResult(text="用法: /switch <session_id>")
+
+    if ctx.current_session is not None and ctx.current_session.id == target_session_id:
+        return CommandResult(text=f"当前已在会话 {target_session_id}。")
+
+    try:
+        switched = await runtime_mgr.switch_session(
+            chat_context_scope_id=ctx.chat_context_scope_id,
+            target_session_id=target_session_id,
+        )
+    except (
+        ChatContextNotFoundError,
+        SessionNotFoundError,
+        SessionNotInChatContextError,
+    ) as exc:
+        return CommandResult(text=_switch_session_error_text(exc, target_session_id))
+
+    cleanup_error: str | None = None
+    previous = switched.previous_session
+    if previous is not None and previous.id != switched.current_session.id:
+        try:
+            await runtime_mgr.terminate_session_runtime(
+                previous,
+                "用户执行 /switch 切换会话",
+            )
+        except Exception as exc:  # noqa: BLE001
+            cleanup_error = str(exc)
+
+    session_manager.reset_chat_context(ctx.chat_context_scope_id)
+    if cleanup_error is not None:
+        return CommandResult(
+            text=(
+                f"已切换到会话: {switched.current_session.id}\n"
+                f"警告: 旧会话清理失败: {cleanup_error}"
+            )
+        )
+    return CommandResult(text=f"已切换到会话: {switched.current_session.id}")
+
+
+async def _execute_list_sessions(
+    runtime_mgr: AgentRuntimeManager,
+    scheduler: Scheduler,
+    ctx: CommandContext,
+    args: str,
+) -> CommandResult:
+    del args
+
+    items = await runtime_mgr.list_user_sessions(
+        user_open_id=ctx.trigger_user_open_id,
+        current_chat_context_scope_id=ctx.chat_context_scope_id,
+    )
+    if not items:
+        return CommandResult(text="暂无会话记录。")
+
+    lines: list[str] = [f"会话列表 (共 {len(items)} 个):\n"]
+    for i, item in enumerate(items, 1):
+        marker_current = " [当前]" if item.is_current else ""
+        marker_context = " [当前上下文]" if item.in_current_context else ""
+        chat_context = item.chat_context
+        session = item.session
+        chat_label = (
+            "私聊"
+            if chat_context.chat_type == "p2p"
+            else f"群聊 {chat_context.chat_id}..."
+        )
+        status_text = await _resolve_status_text(scheduler, session)
+        lines.append(
+            f"{i}. {chat_label}{marker_current}{marker_context}\n"
+            f"   状态: {status_text}\n"
+            f"   会话ID: {session.id}\n"
+            f"   in_current_context: {'true' if item.in_current_context else 'false'}\n"
+            f"   更新于: {_format_time(session.updated_at)}"
+        )
+    return CommandResult(text="\n".join(lines))
+
+
+def _switch_session_error_text(
+    error: Exception,
+    target_session_id: str,
+) -> str:
+    if isinstance(error, ChatContextNotFoundError):
+        return "当前聊天上下文不存在，请先发送一条消息。"
+    if isinstance(error, SessionNotFoundError):
+        return f"会话不存在: {target_session_id}"
+    if isinstance(error, SessionNotInChatContextError):
+        return "只能切换到当前聊天上下文下的历史会话。"
+    return f"切换失败: {error}"
+
+
+async def _resolve_status_text(
+    scheduler: Scheduler,
+    session: Session,
+) -> str:
+    if not session.scheduler_state_id:
+        return "未启动"
+
+    state = await scheduler.get_state(session.scheduler_state_id)
+    if state is None:
+        return "未启动"
+    return format_scheduler_status(state.status)
+
+
+def _format_time(dt: datetime) -> str:
+    local = dt.astimezone()
+    return local.strftime("%m-%d %H:%M")

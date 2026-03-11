@@ -1,6 +1,7 @@
 import time
 from typing import AsyncIterator
 
+from agiwo.agent.inner.run_payloads import apply_run_metrics_payload
 from agiwo.agent.schema import EventType, Run, RunStatus, StreamEvent
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.utils.logging import get_logger
@@ -76,13 +77,7 @@ class StorageSink:
         run.status = RunStatus.COMPLETED
         run.response_content = data.get("response")
         run.metrics.end_at = time.time()
-        metrics: dict = data.get("metrics")
-        if metrics:
-            run.metrics.duration_ms = metrics.get("duration", 0)
-            run.metrics.total_tokens = metrics.get("total_tokens", 0)
-            run.metrics.input_tokens = metrics.get("input_tokens", 0)
-            run.metrics.output_tokens = metrics.get("output_tokens", 0)
-            run.metrics.tool_calls_count = metrics.get("tool_calls_count", 0)
+        apply_run_metrics_payload(run.metrics, data.get("metrics"))
         await self.storage.save_run(run)
 
     async def _handle_run_failed(self, event: StreamEvent) -> None:

@@ -94,9 +94,16 @@ class TestCheckWake:
         assert result is None
 
     @pytest.mark.asyncio
+    async def test_root_not_limited_by_max_wake_count(self, store):
+        guard = TaskGuard(TaskLimits(max_wake_count=10), store)
+        state = _make_state(wake_count=10, parent_id=None)
+        result = await guard.check_wake(state)
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_rejected_max_wake_count(self, store):
         guard = TaskGuard(TaskLimits(max_wake_count=10), store)
-        state = _make_state(wake_count=10)
+        state = _make_state(wake_count=10, parent_id="parent-1")
         result = await guard.check_wake(state)
         assert result is not None
         assert "wake count" in result.lower()

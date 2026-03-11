@@ -66,37 +66,31 @@ def load_builtin_tools() -> None:
     """
     import agiwo.tool.builtin as builtin_pkg
 
+    def _is_tool_module(name: str) -> bool:
+        return name == "tool" or name.endswith("_tool")
+
     for _, name, ispkg in pkgutil.iter_modules(builtin_pkg.__path__, prefix=""):
         if ispkg:
-            # Check for {subpackage}/tool.py pattern
-            tool_module = f"{_BUILTIN_PACKAGE}.{name}.tool"
-            try:
-                importlib.import_module(tool_module)
-                logger.debug("builtin_tool_loaded", module=tool_module)
-            except ModuleNotFoundError:
-                # No tool.py in this subpackage, skip silently
-                pass
-            except Exception as e:
-                logger.warning("builtin_tool_load_failed", module=tool_module, error=str(e))
-
-            # Also check for flat modules inside subpackages like web_surfing/web_search_api_tool.py
+            # Scan subpackage for tool modules (tool.py or *_tool.py)
             try:
                 subpkg = importlib.import_module(f"{_BUILTIN_PACKAGE}.{name}")
-                if hasattr(subpkg, '__path__'):
-                    for _, subname, _ in pkgutil.iter_modules(subpkg.__path__, prefix=""):
-                        if subname.endswith("_tool"):
-                            sub_module = f"{_BUILTIN_PACKAGE}.{name}.{subname}"
-                            try:
-                                importlib.import_module(sub_module)
-                                logger.debug("builtin_tool_loaded", module=sub_module)
-                            except Exception as e:
-                                logger.warning("builtin_tool_load_failed", module=sub_module, error=str(e))
-            except Exception:
-                logger.warning("subpackage has issue, skip import_module", subpkg=f"{_BUILTIN_PACKAGE}.{name}", name=name)
-                pass  # Subpackage has issues, skip
+            except Exception as e:
+                logger.warning("builtin_subpkg_load_failed", subpkg=name, error=str(e))
+                continue
+
+            if not hasattr(subpkg, "__path__"):
+                continue
+
+            for _, subname, _ in pkgutil.iter_modules(subpkg.__path__, prefix=""):
+                if _is_tool_module(subname):
+                    sub_module = f"{_BUILTIN_PACKAGE}.{name}.{subname}"
+                    try:
+                        importlib.import_module(sub_module)
+                        logger.debug("builtin_tool_loaded", module=sub_module)
+                    except Exception as e:
+                        logger.warning("builtin_tool_load_failed", module=sub_module, error=str(e))
         else:
-            # Check for flat modules directly under builtin/ with _tool suffix
-            if name.endswith("_tool"):
+            if _is_tool_module(name):
                 module_path = f"{_BUILTIN_PACKAGE}.{name}"
                 try:
                     importlib.import_module(module_path)

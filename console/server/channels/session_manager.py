@@ -53,23 +53,23 @@ class SessionManager:
 
     async def enqueue(
         self,
-        session_key: str,
+        chat_context_scope_id: str,
         message: InboundMessage,
         context: BatchContext,
     ) -> None:
-        lock = self._get_lock(session_key)
+        lock = self._get_lock(chat_context_scope_id)
         now_ms = int(time.time() * 1000)
 
         async with lock:
-            state = self._states.setdefault(session_key, _SessionState())
+            state = self._states.setdefault(chat_context_scope_id, _SessionState())
             state.pending_messages.append(message)
             state.latest_context = context
             if state.first_pending_at_ms is None:
                 state.first_pending_at_ms = now_ms
-            self._reschedule_flush_locked(session_key, state, now_ms)
+            self._reschedule_flush_locked(chat_context_scope_id, state, now_ms)
 
-    def reset_session(self, session_key: str) -> None:
-        self._states.pop(session_key, None)
+    def reset_chat_context(self, chat_context_scope_id: str) -> None:
+        self._states.pop(chat_context_scope_id, None)
 
     async def close(self) -> None:
         flush_tasks: list[asyncio.Task[None]] = []
@@ -85,16 +85,16 @@ class SessionManager:
 
     # -- Internal ------------------------------------------------------------
 
-    def _get_lock(self, session_key: str) -> asyncio.Lock:
-        lock = self._locks.get(session_key)
+    def _get_lock(self, chat_context_scope_id: str) -> asyncio.Lock:
+        lock = self._locks.get(chat_context_scope_id)
         if lock is None:
             lock = asyncio.Lock()
-            self._locks[session_key] = lock
+            self._locks[chat_context_scope_id] = lock
         return lock
 
     def _reschedule_flush_locked(
         self,
-        session_key: str,
+        chat_context_scope_id: str,
         state: _SessionState,
         now_ms: int,
     ) -> None:
@@ -111,22 +111,26 @@ class SessionManager:
         delay_ms = min(self._debounce_ms, remaining_window_ms)
 
         state.flush_task = asyncio.create_task(
-            self._flush_after_delay(session_key, delay_ms)
+            self._flush_after_delay(chat_context_scope_id, delay_ms)
         )
 
-    async def _flush_after_delay(self, session_key: str, delay_ms: int) -> None:
+    async def _flush_after_delay(
+        self,
+        chat_context_scope_id: str,
+        delay_ms: int,
+    ) -> None:
         if delay_ms > 0:
             try:
                 await asyncio.sleep(delay_ms / 1000)
             except asyncio.CancelledError:
                 return
-        await self._flush_session(session_key)
+        await self._flush_session(chat_context_scope_id)
 
-    async def _flush_session(self, session_key: str) -> None:
-        lock = self._get_lock(session_key)
+    async def _flush_session(self, chat_context_scope_id: str) -> None:
+        lock = self._get_lock(chat_context_scope_id)
 
         async with lock:
-            state = self._states.get(session_key)
+            state = self._states.get(chat_context_scope_id)
             if state is None or state.running or not state.pending_messages:
                 return
             if state.latest_context is None:
@@ -141,16 +145,16 @@ class SessionManager:
             state.running = True
 
         try:
-            await self._on_batch_ready(session_key, context, messages)
+            await self._on_batch_ready(chat_context_scope_id, context, messages)
         finally:
             async with lock:
-                refreshed = self._states.get(session_key)
+                refreshed = self._states.get(chat_context_scope_id)
                 if refreshed is None:
                     return
                 refreshed.running = False
                 if refreshed.pending_messages:
                     self._reschedule_flush_locked(
-                        session_key,
+                        chat_context_scope_id,
                         refreshed,
                         int(time.time() * 1000),
                     )

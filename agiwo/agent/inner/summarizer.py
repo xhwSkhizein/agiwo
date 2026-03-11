@@ -95,10 +95,9 @@ def _format_termination_reason(reason: TerminationReason | str) -> str:
     reason_mapping = {
         TerminationReason.MAX_STEPS.value: "reaching the maximum number of execution steps",
         TerminationReason.TIMEOUT.value: "execution timeout",
-        TerminationReason.MAX_OUTPUT_TOKENS_PER_CALL.value: "reaching model output token limit for one LLM call",
-        TerminationReason.MAX_CONTEXT_WINDOW_TOKENS.value: "reaching model context window token limit for one LLM call",
-        TerminationReason.MAX_TOKENS_PER_RUN.value: "reaching maximum token budget for this run",
-        TerminationReason.MAX_RUN_TOKEN_COST.value: "reaching maximum token cost budget for this run",
+        TerminationReason.MAX_OUTPUT_TOKENS.value: "reaching model output token limit for one LLM call",
+        TerminationReason.MAX_INPUT_TOKENS_PER_CALL.value: "reaching model input token limit for one LLM call",
+        TerminationReason.MAX_RUN_COST.value: "reaching maximum token cost budget for this run",
         TerminationReason.CANCELLED.value: "user cancellation",
         TerminationReason.TOOL_LIMIT.value: "reaching the tool call limit",
     }

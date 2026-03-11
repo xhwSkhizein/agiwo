@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Plus, MessageSquare, Trash2, Network } from "lucide-react";
+import { TextStateMessage } from "@/components/state-message";
 import { listAgents, deleteAgent } from "@/lib/api";
 import type { AgentConfig } from "@/lib/api";
 
@@ -10,16 +11,20 @@ export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const loadAgents = () => {
-    setLoading(true);
+  const fetchAgents = () =>
     listAgents()
       .then(setAgents)
-      .catch(() => setAgents([]))
-      .finally(() => setLoading(false));
+      .catch(() => setAgents([]));
+
+  const loadAgents = (showLoading = true) => {
+    if (showLoading) {
+      setLoading(true);
+    }
+    fetchAgents().finally(() => setLoading(false));
   };
 
   useEffect(() => {
-    loadAgents();
+    void fetchAgents().finally(() => setLoading(false));
   }, []);
 
   const handleDelete = async (id: string) => {
@@ -51,7 +56,7 @@ export default function AgentsPage() {
       </div>
 
       {loading ? (
-        <div className="text-zinc-500">Loading...</div>
+        <TextStateMessage>Loading...</TextStateMessage>
       ) : agents.length === 0 ? (
         <div className="text-center py-16 space-y-3">
           <p className="text-zinc-500">No agents configured yet</p>

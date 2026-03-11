@@ -1,347 +1,102 @@
-"""
-Agent registry — manages agent configurations and instantiation.
+"""Agent registry domain service and public models."""
 
-Persists AgentConfig to SQLite or MongoDB alongside the main storage.
-"""
-
-import json
 from datetime import datetime
-from typing import Any
-from uuid import uuid4
-
-import aiosqlite
-from pydantic import BaseModel, Field, model_validator
-from agiwo.utils.mongo_pool import (
-    get_shared_mongo_client,
-    release_shared_mongo_client,
-)
-from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 
 from server.config import ConsoleConfig
+from server.domain.agent_configs import AgentConfigInput
+from server.domain.tool_references import serialize_tool_references
+from server.services.agent_registry_models import AgentConfigRecord
+from server.services.agent_registry_store import (
+    AgentRegistryStore,
+    create_agent_registry_store,
+)
 
 
-def sanitize_model_params(params: Any) -> dict[str, Any]:
-    if not isinstance(params, dict):
-        return {}
-    normalized = dict(params)
-    normalized.pop("api_key", None)
-    base_url = normalized.get("base_url")
-    if isinstance(base_url, str):
-        cleaned = base_url.strip()
-        if cleaned:
-            normalized["base_url"] = cleaned
-        else:
-            normalized.pop("base_url", None)
-    api_key_env_name = normalized.get("api_key_env_name")
-    if isinstance(api_key_env_name, str):
-        cleaned = api_key_env_name.strip()
-        if cleaned:
-            normalized["api_key_env_name"] = cleaned
-        else:
-            normalized.pop("api_key_env_name", None)
-    return normalized
-
-
-class AgentConfigRecord(BaseModel):
-    """Persisted agent configuration."""
-
-    id: str = Field(default_factory=lambda: str(uuid4()))
-    name: str
-    description: str = ""
-    model_provider: str
-    model_name: str
-    system_prompt: str = ""
-    tools: list[str] = Field(default_factory=list)
-    options: dict[str, Any] = Field(default_factory=dict)
-    model_params: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_record_fields(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        normalized = dict(data)
-        normalized["model_params"] = sanitize_model_params(
-            normalized.get("model_params")
-        )
-        return normalized
+def _validate_agent_config_record(record: AgentConfigRecord) -> AgentConfigRecord:
+    normalized_input = AgentConfigInput(
+        name=record.name,
+        description=record.description,
+        model_provider=record.model_provider,
+        model_name=record.model_name,
+        system_prompt=record.system_prompt,
+        tools=record.tools,
+        options=record.options,
+        model_params=record.model_params,
+    )
+    return AgentConfigRecord.model_validate(
+        {
+            **record.model_dump(mode="python"),
+            "tools": serialize_tool_references(normalized_input.tools),
+        }
+    )
 
 
 class AgentRegistry:
-    """
-    CRUD operations for agent configurations.
-
-    Supports SQLite and MongoDB backends matching the console config.
-    """
+    """CRUD operations and domain validation for agent configurations."""
 
     def __init__(self, config: ConsoleConfig) -> None:
         self._config = config
-        self._sqlite_conn: aiosqlite.Connection | None = None
-        self._mongo_collection: Any = None
+        self._store: AgentRegistryStore | None = None
         self._initialized = False
 
     async def initialize(self) -> None:
         if self._initialized:
             return
-
-        if self._config.metadata_storage_type == "sqlite":
-            await self._init_sqlite()
-        elif self._config.metadata_storage_type == "mongodb":
-            await self._init_mongodb()
-        else:
-            # memory: use in-memory storage for testing
-            self._memory_store: dict[str, AgentConfigRecord] = {}
-
+        self._store = create_agent_registry_store(self._config)
+        await self._store.connect()
         self._initialized = True
 
     async def close(self) -> None:
-        if self._sqlite_conn is not None:
-            await release_shared_connection(self._config.sqlite_db_path)
-            self._sqlite_conn = None
-        if self._mongo_collection is not None:
-            await release_shared_mongo_client(self._config.mongodb_uri)
-            self._mongo_collection = None
+        if self._store is not None:
+            await self._store.close()
+            self._store = None
         self._initialized = False
 
-    # ── CRUD ────────────────────────────────────────────────────────────
-
-    async def list_agents(self, limit: int = 50, offset: int = 0) -> list[AgentConfigRecord]:
-        if self._config.metadata_storage_type == "sqlite":
-            return await self._sqlite_list(limit, offset)
-        if self._config.metadata_storage_type == "memory":
-            return list(self._memory_store.values())[offset:offset + limit]
-        return await self._mongo_list(limit, offset)
+    async def list_agents(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[AgentConfigRecord]:
+        return await self._require_store().list_agents(limit=limit, offset=offset)
 
     async def get_agent(self, agent_id: str) -> AgentConfigRecord | None:
-        if self._config.metadata_storage_type == "sqlite":
-            return await self._sqlite_get(agent_id)
-        if self._config.metadata_storage_type == "memory":
-            return self._memory_store.get(agent_id)
-        return await self._mongo_get(agent_id)
+        return await self._require_store().get_agent(agent_id)
 
     async def get_agent_by_name(self, agent_name: str) -> AgentConfigRecord | None:
-        if self._config.metadata_storage_type == "sqlite":
-            return await self._sqlite_get_by_name(agent_name)
-        if self._config.metadata_storage_type == "memory":
-            for record in self._memory_store.values():
-                if record.name == agent_name:
-                    return record
-            return None
-        return await self._mongo_get_by_name(agent_name)
+        return await self._require_store().get_agent_by_name(agent_name)
 
     async def create_agent(self, record: AgentConfigRecord) -> AgentConfigRecord:
-        record = AgentConfigRecord.model_validate(record.model_dump(mode="python"))
-        if self._config.metadata_storage_type == "sqlite":
-            await self._sqlite_upsert(record)
-        elif self._config.metadata_storage_type == "memory":
-            self._memory_store[record.id] = record
-        else:
-            await self._mongo_upsert(record)
-        return record
+        normalized = _validate_agent_config_record(record)
+        await self._require_store().upsert_agent(normalized)
+        return normalized
 
-    async def update_agent(self, agent_id: str, updates: dict[str, Any]) -> AgentConfigRecord | None:
+    async def replace_agent(
+        self,
+        agent_id: str,
+        record: AgentConfigRecord,
+    ) -> AgentConfigRecord | None:
         existing = await self.get_agent(agent_id)
         if existing is None:
             return None
 
-        merged = existing.model_dump(mode="python")
-        for key, value in updates.items():
-            if value is not None and key in merged:
-                merged[key] = value
-        merged["updated_at"] = datetime.now()
-        existing = AgentConfigRecord.model_validate(merged)
-
-        if self._config.metadata_storage_type == "sqlite":
-            await self._sqlite_upsert(existing)
-        elif self._config.metadata_storage_type == "memory":
-            self._memory_store[existing.id] = existing
-        else:
-            await self._mongo_upsert(existing)
-        return existing
+        replacement = AgentConfigRecord.model_validate(
+            {
+                **record.model_dump(mode="python"),
+                "id": existing.id,
+                "created_at": existing.created_at,
+                "updated_at": datetime.now(),
+            }
+        )
+        normalized = _validate_agent_config_record(replacement)
+        await self._require_store().upsert_agent(normalized)
+        return normalized
 
     async def delete_agent(self, agent_id: str) -> bool:
-        if self._config.metadata_storage_type == "sqlite":
-            return await self._sqlite_delete(agent_id)
-        if self._config.metadata_storage_type == "memory":
-            return self._memory_store.pop(agent_id, None) is not None
-        return await self._mongo_delete(agent_id)
+        return await self._require_store().delete_agent(agent_id)
 
-    # ── SQLite ──────────────────────────────────────────────────────────
+    def _require_store(self) -> AgentRegistryStore:
+        assert self._store is not None, "AgentRegistry.initialize() must be called before use"
+        return self._store
 
-    async def _init_sqlite(self) -> None:
-        self._sqlite_conn = await get_shared_connection(self._config.sqlite_db_path)
 
-        await self._sqlite_conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS agent_configs (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                description TEXT DEFAULT '',
-                model_provider TEXT NOT NULL,
-                model_name TEXT NOT NULL,
-                system_prompt TEXT DEFAULT '',
-                tools TEXT DEFAULT '[]',
-                options TEXT DEFAULT '{}',
-                model_params TEXT DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        await self._sqlite_conn.commit()
-
-    async def _sqlite_list(self, limit: int, offset: int) -> list[AgentConfigRecord]:
-        if self._sqlite_conn is None:
-            return []
-
-        rows = []
-        async with self._sqlite_conn.execute(
-            "SELECT * FROM agent_configs ORDER BY updated_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
-        ) as cursor:
-            async for row in cursor:
-                rows.append(self._sqlite_deserialize(row))
-        return rows
-
-    async def _sqlite_get(self, agent_id: str) -> AgentConfigRecord | None:
-        if self._sqlite_conn is None:
-            return None
-
-        async with self._sqlite_conn.execute(
-            "SELECT * FROM agent_configs WHERE id = ?", (agent_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row is not None:
-                return self._sqlite_deserialize(row)
-        return None
-
-    async def _sqlite_get_by_name(self, agent_name: str) -> AgentConfigRecord | None:
-        if self._sqlite_conn is None:
-            return None
-
-        async with self._sqlite_conn.execute(
-            """
-            SELECT *
-            FROM agent_configs
-            WHERE name = ?
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (agent_name,),
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row is not None:
-                return self._sqlite_deserialize(row)
-        return None
-
-    async def _sqlite_upsert(self, record: AgentConfigRecord) -> None:
-        if self._sqlite_conn is None:
-            return
-
-        data = self._sqlite_serialize(record)
-        columns = ", ".join(data.keys())
-        placeholders = ", ".join(["?" for _ in data])
-        values = list(data.values())
-
-        await self._sqlite_conn.execute(
-            f"INSERT OR REPLACE INTO agent_configs ({columns}) VALUES ({placeholders})",
-            values,
-        )
-        await self._sqlite_conn.commit()
-
-    async def _sqlite_delete(self, agent_id: str) -> bool:
-        if self._sqlite_conn is None:
-            return False
-
-        cursor = await self._sqlite_conn.execute(
-            "DELETE FROM agent_configs WHERE id = ?", (agent_id,)
-        )
-        await self._sqlite_conn.commit()
-        return cursor.rowcount > 0
-
-    def _sqlite_serialize(self, record: AgentConfigRecord) -> dict[str, Any]:
-        data = record.model_dump(mode="json")
-        data["tools"] = json.dumps(data["tools"])
-        data["options"] = json.dumps(data["options"])
-        data["model_params"] = json.dumps(data["model_params"])
-        if isinstance(data["created_at"], datetime):
-            data["created_at"] = data["created_at"].isoformat()
-        if isinstance(data["updated_at"], datetime):
-            data["updated_at"] = data["updated_at"].isoformat()
-        return data
-
-    def _sqlite_deserialize(self, row: aiosqlite.Row) -> AgentConfigRecord:
-        data = dict(row)
-        data["tools"] = json.loads(data.get("tools") or "[]")
-        data["options"] = json.loads(data.get("options") or "{}")
-        data["model_params"] = json.loads(data.get("model_params") or "{}")
-        return AgentConfigRecord.model_validate(data)
-
-    # ── MongoDB ─────────────────────────────────────────────────────────
-
-    async def _init_mongodb(self) -> None:
-        client = await get_shared_mongo_client(self._config.mongodb_uri)
-        db = client[self._config.mongodb_db_name]
-        self._mongo_collection = db["agent_configs"]
-        await self._mongo_collection.create_index("id", unique=True)
-
-    async def _mongo_list(self, limit: int, offset: int) -> list[AgentConfigRecord]:
-        if self._mongo_collection is None:
-            return []
-
-        results = []
-        cursor = (
-            self._mongo_collection.find()
-            .sort("updated_at", -1)
-            .skip(offset)
-            .limit(limit)
-        )
-        async for doc in cursor:
-            doc.pop("_id", None)
-            results.append(AgentConfigRecord.model_validate(doc))
-        return results
-
-    async def _mongo_get(self, agent_id: str) -> AgentConfigRecord | None:
-        if self._mongo_collection is None:
-            return None
-
-        doc = await self._mongo_collection.find_one({"id": agent_id})
-        if doc is not None:
-            doc.pop("_id", None)
-            return AgentConfigRecord.model_validate(doc)
-        return None
-
-    async def _mongo_get_by_name(self, agent_name: str) -> AgentConfigRecord | None:
-        if self._mongo_collection is None:
-            return None
-
-        doc = (
-            await self._mongo_collection.find({"name": agent_name})
-            .sort("updated_at", -1)
-            .limit(1)
-            .to_list(length=1)
-        )
-        if not doc:
-            return None
-
-        item = doc[0]
-        item.pop("_id", None)
-        return AgentConfigRecord.model_validate(item)
-
-    async def _mongo_upsert(self, record: AgentConfigRecord) -> None:
-        if self._mongo_collection is None:
-            return
-
-        data = record.model_dump(mode="json")
-        await self._mongo_collection.replace_one(
-            {"id": record.id}, data, upsert=True
-        )
-
-    async def _mongo_delete(self, agent_id: str) -> bool:
-        if self._mongo_collection is None:
-            return False
-
-        result = await self._mongo_collection.delete_one({"id": agent_id})
-        return result.deleted_count > 0
+__all__ = ["AgentConfigRecord", "AgentRegistry"]

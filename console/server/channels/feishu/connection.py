@@ -9,24 +9,24 @@ loop via a callback.
 import asyncio
 import threading
 import time
-from collections.abc import Callable
-from typing import Any
+from concurrent.futures import Future
+from collections.abc import Awaitable, Callable
 
 from agiwo.utils.logging import get_logger
-
-try:
-    import lark_oapi as lark
-except Exception:
-    lark = None
-
-try:
-    from lark_oapi.ws import client as lark_ws_client_module
-except Exception:
-    lark_ws_client_module = None
+from server.channels.feishu.inbound_envelope import FeishuInboundEnvelope, FeishuMention
+from server.channels.feishu.sdk_adapter import (
+    build_event_handler,
+    create_ws_client,
+    disable_auto_reconnect,
+    install_worker_loop,
+    is_sdk_available,
+    resolve_log_level,
+    resolve_worker_loop,
+)
 
 logger = get_logger(__name__)
 
-OnPayloadCallback = Callable[[dict[str, Any]], Any]
+OnEnvelopeCallback = Callable[[FeishuInboundEnvelope], Awaitable[object]]
 
 
 class FeishuConnection:
@@ -46,13 +46,13 @@ class FeishuConnection:
         self._sdk_log_level = sdk_log_level
 
         self._main_loop: asyncio.AbstractEventLoop | None = None
-        self._on_payload: OnPayloadCallback | None = None
+        self._on_envelope: OnEnvelopeCallback | None = None
 
         self._ws_thread: threading.Thread | None = None
         self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._ws_ready = threading.Event()
         self._ws_start_error: Exception | None = None
-        self._ws_client: Any = None
+        self._ws_client: object | None = None
         self._closed = False
 
     def is_alive(self) -> bool:
@@ -61,13 +61,13 @@ class FeishuConnection:
     async def start(
         self,
         main_loop: asyncio.AbstractEventLoop,
-        on_payload: OnPayloadCallback,
+        on_envelope: OnEnvelopeCallback,
     ) -> None:
-        if lark is None:
+        if not is_sdk_available():
             raise RuntimeError("lark_oapi_not_installed")
 
         self._main_loop = main_loop
-        self._on_payload = on_payload
+        self._on_envelope = on_envelope
         self._closed = False
         self._ws_start_error = None
         self._ws_ready.clear()
@@ -95,13 +95,8 @@ class FeishuConnection:
         logger.info("feishu_long_connection_stopping")
         self._closed = True
 
-        if self._ws_client is not None:
-            try:
-                self._ws_client._auto_reconnect = False
-            except Exception:
-                pass
-
-        ws_loop = self._ws_loop or getattr(lark_ws_client_module, "loop", None)
+        disable_auto_reconnect(self._ws_client)
+        ws_loop = resolve_worker_loop(self._ws_loop)
         if ws_loop is not None and ws_loop.is_running():
             ws_loop.call_soon_threadsafe(ws_loop.stop)
 
@@ -115,7 +110,7 @@ class FeishuConnection:
     # -- Worker thread -------------------------------------------------------
 
     def _run_worker(self) -> None:
-        if lark is None:
+        if not is_sdk_available():
             self._ws_start_error = RuntimeError("lark_oapi_not_installed")
             self._ws_ready.set()
             return
@@ -123,25 +118,20 @@ class FeishuConnection:
         thread_loop = asyncio.new_event_loop()
         self._ws_loop = thread_loop
         asyncio.set_event_loop(thread_loop)
-        if lark_ws_client_module is not None:
-            lark_ws_client_module.loop = thread_loop
+        install_worker_loop(thread_loop)
 
         try:
-            event_handler = (
-                lark.EventDispatcherHandler.builder(
-                    self._encrypt_key,
-                    self._verification_token,
-                )
-                .register_p2_im_message_receive_v1(self._on_message)
-                .register_p2_im_message_message_read_v1(self._on_message_read)
-                .build()
+            event_handler = build_event_handler(
+                self._encrypt_key,
+                self._verification_token,
+                on_message=self._on_message,
+                on_message_read=self._on_message_read,
             )
-
-            self._ws_client = lark.ws.Client(
-                self._app_id,
-                self._app_secret,
+            self._ws_client = create_ws_client(
+                app_id=self._app_id,
+                app_secret=self._app_secret,
                 event_handler=event_handler,
-                log_level=self._resolve_log_level(),
+                log_level=resolve_log_level(self._sdk_log_level),
             )
             self._ws_ready.set()
             self._ws_client.start()
@@ -160,14 +150,8 @@ class FeishuConnection:
             loop = self._ws_loop
             if loop is not None and not loop.is_closed():
                 try:
-                    pending = asyncio.all_tasks(loop)
-                    for task in pending:
-                        task.cancel()
-                    if pending:
-                        loop.run_until_complete(
-                            asyncio.gather(*pending, return_exceptions=True)
-                        )
-                except Exception:
+                    self._drain_worker_loop(loop)
+                except RuntimeError:
                     pass
                 finally:
                     loop.close()
@@ -176,31 +160,34 @@ class FeishuConnection:
 
     # -- SDK event handlers --------------------------------------------------
 
-    def _on_message(self, data: Any) -> None:
-        payload = self._build_payload_from_sdk_event(data)
-        if payload is None:
+    def _on_message(self, data: object) -> None:
+        envelope = self._build_inbound_envelope_from_sdk_event(data)
+        if envelope is None:
             return
 
         loop = self._main_loop
-        callback = self._on_payload
+        callback = self._on_envelope
         if loop is None or callback is None:
             return
 
-        future = asyncio.run_coroutine_threadsafe(callback(payload), loop)
+        future = asyncio.run_coroutine_threadsafe(callback(envelope), loop)
         future.add_done_callback(self._on_future_done)
 
-    def _on_future_done(self, future: Any) -> None:
+    def _on_future_done(self, future: Future[object]) -> None:
         try:
             _ = future.result()
         except Exception as e:
             logger.exception("feishu_long_connection_event_failed", error=str(e))
 
-    def _on_message_read(self, data: Any) -> None:
+    def _on_message_read(self, data: object) -> None:
         _ = data
 
     # -- Payload conversion --------------------------------------------------
 
-    def _build_payload_from_sdk_event(self, data: Any) -> dict[str, Any] | None:
+    def _build_inbound_envelope_from_sdk_event(
+        self,
+        data: object,
+    ) -> FeishuInboundEnvelope | None:
         event = getattr(data, "event", None)
         header = getattr(data, "header", None)
         message = getattr(event, "message", None)
@@ -224,52 +211,74 @@ class FeishuConnection:
         if not isinstance(sender_open_id, str) or not sender_open_id:
             return None
 
-        mentions_payload: list[dict[str, Any]] = []
-        mentions = getattr(message, "mentions", None) or []
-        for mention in mentions:
+        mentions = self._extract_mentions(message)
+        content = self._read_message_content(message)
+        thread_id = self._read_thread_id(message)
+        event_time_ms = self._coerce_event_time_ms(message)
+        event_type = self._coerce_event_type(header)
+        event_id = self._coerce_event_id(header, message_id)
+
+        return FeishuInboundEnvelope(
+            event_type=event_type,
+            event_id=event_id,
+            message_id=message_id,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            sender_open_id=sender_open_id,
+            message_type=message_type,
+            content=content,
+            event_time_ms=event_time_ms,
+            thread_id=thread_id,
+            mentions=tuple(mentions),
+        )
+
+    def _drain_worker_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(
+                asyncio.gather(*pending, return_exceptions=True)
+            )
+
+    def _extract_mentions(self, message: object) -> list[FeishuMention]:
+        mentions: list[FeishuMention] = []
+        raw_mentions = getattr(message, "mentions", None) or []
+        for mention in raw_mentions:
             mention_id = getattr(mention, "id", None)
             mention_open_id = getattr(mention_id, "open_id", None)
             if not isinstance(mention_open_id, str) or not mention_open_id:
                 continue
-            mentions_payload.append({"id": {"open_id": mention_open_id}})
+            mentions.append(FeishuMention(open_id=mention_open_id))
+        return mentions
 
-        return {
-            "header": {
-                "event_id": getattr(header, "event_id", message_id),
-                "event_type": getattr(header, "event_type", "im.message.receive_v1"),
-                "token": getattr(header, "token", ""),
-            },
-            "event": {
-                "message": {
-                    "message_id": message_id,
-                    "chat_id": chat_id,
-                    "chat_type": chat_type,
-                    "thread_id": getattr(message, "thread_id", None),
-                    "message_type": message_type,
-                    "content": getattr(message, "content", ""),
-                    "mentions": mentions_payload,
-                    "create_time": getattr(message, "create_time", int(time.time() * 1000)),
-                },
-                "sender": {
-                    "sender_id": {
-                        "open_id": sender_open_id,
-                    }
-                },
-            },
-        }
+    def _read_message_content(self, message: object) -> str:
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            return content
+        return ""
 
-    def _resolve_log_level(self) -> Any:
-        if lark is None:
-            return None
+    def _read_thread_id(self, message: object) -> str | None:
+        thread_id = getattr(message, "thread_id", None)
+        if isinstance(thread_id, str) and thread_id:
+            return thread_id
+        return None
 
-        level = self._sdk_log_level.lower()
-        if level == "debug":
-            return lark.LogLevel.DEBUG
-        if level == "warn":
-            warning_level = getattr(lark.LogLevel, "WARN", None)
-            if warning_level is not None:
-                return warning_level
-            return lark.LogLevel.WARNING
-        if level == "error":
-            return lark.LogLevel.ERROR
-        return lark.LogLevel.INFO
+    def _coerce_event_time_ms(self, message: object) -> int:
+        create_time = getattr(message, "create_time", int(time.time() * 1000))
+        try:
+            return int(create_time)
+        except (TypeError, ValueError):
+            return int(time.time() * 1000)
+
+    def _coerce_event_type(self, header: object) -> str:
+        event_type = getattr(header, "event_type", "im.message.receive_v1")
+        if isinstance(event_type, str) and event_type:
+            return event_type
+        return "im.message.receive_v1"
+
+    def _coerce_event_id(self, header: object, message_id: str) -> str:
+        event_id = getattr(header, "event_id", message_id)
+        if isinstance(event_id, str) and event_id:
+            return event_id
+        return message_id

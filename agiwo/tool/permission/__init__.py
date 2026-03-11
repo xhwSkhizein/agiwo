@@ -5,23 +5,34 @@ This module provides a unified permission management system for controlling
 tool execution based on user consent and authorization policies.
 """
 
-from agiwo.tool.permission.consent_store import (
+from agiwo.tool.permission.store import (
+    ConsentDecision,
+    ConsentRecord,
     ConsentStore,
+    ConsentWaiter,
     InMemoryConsentStore,
     MongoConsentStore,
 )
-from agiwo.tool.permission.consent_waiter import ConsentDecision, ConsentWaiter
-from agiwo.tool.permission.manager import ConsentResult, PermissionManager
-from agiwo.tool.permission.service import PermissionDecision, PermissionService
+from agiwo.tool.permission.manager import (
+    ConsentResult,
+    PermissionDecision,
+    PermissionManager,
+    PermissionService,
+    get_permission_manager,
+    reset_permission_manager,
+)
 
 __all__ = [
-    "PermissionManager",
-    "ConsentResult",
+    "ConsentDecision",
+    "ConsentRecord",
     "ConsentStore",
+    "ConsentWaiter",
     "InMemoryConsentStore",
     "MongoConsentStore",
-    "ConsentWaiter",
-    "ConsentDecision",
-    "PermissionService",
+    "ConsentResult",
     "PermissionDecision",
+    "PermissionManager",
+    "PermissionService",
+    "get_permission_manager",
+    "reset_permission_manager",
 ]

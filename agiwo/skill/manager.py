@@ -143,35 +143,15 @@ class SkillManager:
         Resolve skill directories from configuration and environment.
 
         Returns:
-            List of resolved Path objects
+            List of resolved Path objects (existing only)
         """
+        raw_dirs = [str(d) for d in self._skills_dirs] + settings.get_env_skills_dirs()
+        all_resolved = resolve_skills_dirs(raw_dirs, str(settings.get_root_path()))
+
         dirs: list[Path] = []
-        seen: set[str] = set()
-
-        # Add configured directories
-        for skill_dir in self._skills_dirs:
-            resolved = Path(skill_dir).expanduser().resolve()
-            key = str(resolved)
-            if key in seen:
-                continue
-            seen.add(key)
+        for resolved in all_resolved:
             if resolved.exists():
                 dirs.append(resolved)
             else:
                 logger.debug("skill_dir_not_found", path=str(resolved))
-
-        for resolved in resolve_skills_dirs(_iter_skills_dirs_from_env(), str(settings.get_root_path())):
-            key = str(resolved)
-            if key in seen:
-                continue
-            seen.add(key)
-            if resolved.exists():
-                dirs.append(resolved)
-            else:
-                logger.debug("skill_dir_not_found", path=str(resolved))
-
         return dirs
-
-
-def _iter_skills_dirs_from_env() -> list[str]:
-    return settings.get_env_skills_dirs()

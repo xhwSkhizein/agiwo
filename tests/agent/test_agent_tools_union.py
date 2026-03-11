@@ -1,12 +1,12 @@
 """Tests for Agent tools union logic with DEFAULT_TOOLS."""
 
 import pytest
-from unittest.mock import MagicMock
 from agiwo.agent.agent import Agent
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.tool.builtin.registry import DEFAULT_TOOLS
+from agiwo.llm.base import StreamChunk
 
 
 class MockTool(BaseTool):
@@ -47,8 +47,7 @@ class MockModel:
 
     async def arun_stream(self, messages, tools=None):
         """Mock stream that yields a simple response."""
-        from agiwo.llm.base import StreamChunk
-
+        del messages, tools
         # Yield a simple text chunk
         yield StreamChunk(text="Hello from mock model")
 
@@ -155,6 +154,7 @@ class TestAgentToolsUnion:
         # Should have bash tool loaded
         tool_names = {t.get_name() for t in agent.tools}
         assert "bash" in tool_names
+        assert "bash_process" in tool_names
 
     def test_bash_tool_auto_loaded_with_other_tools(self, mock_model):
         """Test that BashTool is auto-loaded even when other tools are passed."""
@@ -171,3 +171,4 @@ class TestAgentToolsUnion:
         tool_names = {t.get_name() for t in agent.tools}
         assert "my_tool" in tool_names
         assert "bash" in tool_names
+        assert "bash_process" in tool_names

@@ -9,7 +9,7 @@ from agiwo.agent.storage.base import RunStepStorage, InMemoryRunStepStorage
 from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
 from agiwo.agent.storage.mongo import MongoRunStepStorage
 from agiwo.observability.base import BaseTraceStorage
-from agiwo.observability.collector import InMemoryTraceStorage
+from agiwo.observability.memory_store import InMemoryTraceStorage
 from agiwo.observability.sqlite_store import SQLiteTraceStorage
 from agiwo.observability.store import MongoTraceStorage
 

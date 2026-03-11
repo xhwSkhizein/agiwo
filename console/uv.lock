@@ -46,6 +46,7 @@ requires-dist = [
     { name = "curl-cffi", specifier = ">=0.14.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
+    { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.4.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "lark-oapi", specifier = ">=1.5.3" },
     { name = "motor", specifier = ">=3.7.1" },
@@ -61,6 +62,7 @@ requires-dist = [
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.14.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.5" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "tenacity", specifier = ">=8.0.0" },
     { name = "tiktoken", specifier = ">=0.7.0" },
@@ -71,9 +73,11 @@ provides-extras = ["dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "import-linter", specifier = ">=2.4.0" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
     { name = "pytest-mock", specifier = ">=3.14.0" },
+    { name = "ruff", specifier = ">=0.15.5" },
 ]
 
 [[package]]

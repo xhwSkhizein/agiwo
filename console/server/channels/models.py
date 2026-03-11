@@ -7,9 +7,12 @@ implementations (Feishu, Slack, DingTalk, etc.).
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from agiwo.agent.schema import UserMessage
+
+if TYPE_CHECKING:
+    from server.channels.session_binding import SessionMutationPlan
 
 
 @dataclass
@@ -39,21 +42,62 @@ class InboundMessage:
 
 
 @dataclass
-class SessionRuntime:
-    session_key: str
-    agiwo_session_id: str
-    runtime_agent_id: str
-    scheduler_state_id: str
-    base_agent_id: str
+class ChannelChatContext:
+    id: str
+    scope_id: str
+    channel_instance_id: str
     chat_id: str
     chat_type: str
-    trigger_user_id: str
+    user_open_id: str
+    base_agent_id: str
+    current_session_id: str
+    created_at: datetime
     updated_at: datetime
 
 
 @dataclass
+class Session:
+    id: str
+    chat_context_id: str
+    base_agent_id: str
+    runtime_agent_id: str
+    scheduler_state_id: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass
+class SessionWithContext:
+    session: Session
+    chat_context: ChannelChatContext
+
+
+@dataclass
+class SessionSwitchResult:
+    previous_session: Session | None
+    current_session: Session
+    chat_context: ChannelChatContext
+
+
+@dataclass
+class UserSessionItem:
+    session: Session
+    chat_context: ChannelChatContext
+    is_current: bool
+    in_current_context: bool
+
+
+@dataclass
+class SessionCreateResult:
+    chat_context: ChannelChatContext
+    session: Session
+
+
+@dataclass
 class BatchContext:
-    session_key: str
+    chat_context_scope_id: str
+    channel_instance_id: str
     chat_id: str
     chat_type: str
     trigger_user_id: str
@@ -68,6 +112,22 @@ class BatchPayload:
     user_message: UserMessage
 
 
-class SessionRuntimeStore(Protocol):
-    async def get_session_runtime(self, session_key: str) -> SessionRuntime | None: ...
-    async def upsert_session_runtime(self, runtime: SessionRuntime) -> None: ...
+class ChannelChatSessionStore(Protocol):
+    async def get_chat_context(self, scope_id: str) -> ChannelChatContext | None: ...
+    async def get_chat_context_by_id(
+        self,
+        chat_context_id: str,
+    ) -> ChannelChatContext | None: ...
+    async def upsert_chat_context(self, chat_context: ChannelChatContext) -> None: ...
+    async def get_session(self, session_id: str) -> Session | None: ...
+    async def get_session_with_context(
+        self,
+        session_id: str,
+    ) -> SessionWithContext | None: ...
+    async def upsert_session(self, session: Session) -> None: ...
+    async def apply_session_mutation(
+        self,
+        mutation: "SessionMutationPlan",
+    ) -> None: ...
+    async def list_sessions_by_user(self, user_open_id: str) -> list[SessionWithContext]: ...
+    async def list_sessions_by_chat_context(self, chat_context_id: str) -> list[Session]: ...

@@ -2,22 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { EmptyStateMessage, TextStateMessage } from "@/components/state-message";
+import { TraceStatusBadge } from "@/components/trace-status-badge";
 import { listTraces } from "@/lib/api";
 import type { TraceListItem } from "@/lib/api";
-
-function StatusBadge({ status }: { status: string }) {
-  const cls =
-    status === "ok"
-      ? "bg-green-900/50 text-green-400"
-      : status === "error"
-      ? "bg-red-900/50 text-red-400"
-      : status === "running"
-      ? "bg-blue-900/50 text-blue-400"
-      : "bg-zinc-800 text-zinc-400";
-  return (
-    <span className={`text-xs px-1.5 py-0.5 rounded ${cls}`}>{status}</span>
-  );
-}
+import { formatTokenCount, formatUsd } from "@/lib/metrics";
+import { formatRoundedMs } from "@/lib/time";
 
 export default function TracesPage() {
   const [traces, setTraces] = useState<TraceListItem[]>([]);
@@ -40,9 +30,9 @@ export default function TracesPage() {
       </div>
 
       {loading ? (
-        <div className="text-zinc-500">Loading...</div>
+        <TextStateMessage>Loading...</TextStateMessage>
       ) : traces.length === 0 ? (
-        <div className="text-zinc-500 text-center py-12">No traces found</div>
+        <EmptyStateMessage>No traces found</EmptyStateMessage>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-zinc-800">
           <table className="w-full text-sm">
@@ -51,7 +41,11 @@ export default function TracesPage() {
                 <th className="text-left px-4 py-3">Input</th>
                 <th className="text-left px-4 py-3">Agent</th>
                 <th className="text-center px-4 py-3">Status</th>
-                <th className="text-right px-4 py-3">Tokens</th>
+                <th className="text-right px-4 py-3">Cost</th>
+                <th className="text-right px-4 py-3">Input</th>
+                <th className="text-right px-4 py-3">Output</th>
+                <th className="text-right px-4 py-3">Total</th>
+                <th className="text-right px-4 py-3">Cache R/C</th>
                 <th className="text-right px-4 py-3">LLM</th>
                 <th className="text-right px-4 py-3">Tools</th>
                 <th className="text-right px-4 py-3">Duration</th>
@@ -75,10 +69,22 @@ export default function TracesPage() {
                     {t.agent_id || "-"}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <StatusBadge status={t.status} />
+                    <TraceStatusBadge status={t.status} />
+                  </td>
+                  <td className="px-4 py-3 text-right text-zinc-200">
+                    {formatUsd(t.total_token_cost)}
                   </td>
                   <td className="px-4 py-3 text-right text-zinc-400">
-                    {t.total_tokens.toLocaleString()}
+                    {formatTokenCount(t.total_input_tokens)}
+                  </td>
+                  <td className="px-4 py-3 text-right text-zinc-400">
+                    {formatTokenCount(t.total_output_tokens)}
+                  </td>
+                  <td className="px-4 py-3 text-right text-zinc-400">
+                    {formatTokenCount(t.total_tokens)}
+                  </td>
+                  <td className="px-4 py-3 text-right text-zinc-500">
+                    {formatTokenCount(t.total_cache_read_tokens)} / {formatTokenCount(t.total_cache_creation_tokens)}
                   </td>
                   <td className="px-4 py-3 text-right text-zinc-400">
                     {t.total_llm_calls}
@@ -87,7 +93,7 @@ export default function TracesPage() {
                     {t.total_tool_calls}
                   </td>
                   <td className="px-4 py-3 text-right text-zinc-400">
-                    {t.duration_ms ? `${Math.round(t.duration_ms)}ms` : "-"}
+                    {formatRoundedMs(t.duration_ms)}
                   </td>
                 </tr>
               ))}

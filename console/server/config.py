@@ -11,6 +11,8 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agiwo.config.settings import settings as sdk_settings
+from agiwo.llm.config_policy import sanitize_model_params_data
+from agiwo.config.settings import ModelProvider
 
 
 class ConsoleConfig(BaseSettings):
@@ -55,15 +57,7 @@ class ConsoleConfig(BaseSettings):
     default_agent_id: str = "Walaha000"
     default_agent_name: str = "Walaha"
     default_agent_description: str = ""
-    default_agent_model_provider: Literal[
-        "openai",
-        "openai-compatible",
-        "deepseek",
-        "anthropic",
-        "anthropic-compatible",
-        "nvidia",
-        "bedrock-anthropic",
-    ] = "openai-compatible"
+    default_agent_model_provider: ModelProvider = "openai-compatible"
     default_agent_model_name: str = "codex-5.3"
     default_agent_model_params: dict[str, Any] = Field(default_factory=dict)
     default_agent_system_prompt: str = ""
@@ -106,22 +100,10 @@ class ConsoleConfig(BaseSettings):
             return "memory"
         return self.trace_storage_type
 
-    @property
-    def scheduler_state_storage_type(self) -> Literal["memory", "sqlite"]:
-        """Scheduler state storage type derived from metadata backend support."""
-        if self.metadata_storage_type == "sqlite":
-            return "sqlite"
-        return "memory"
-
     @field_validator("default_agent_model_params", mode="before")
     @classmethod
     def _normalize_default_agent_model_params(cls, value: Any) -> dict[str, Any]:
-        if not isinstance(value, dict):
+        sanitized = sanitize_model_params_data(value)
+        if not isinstance(sanitized, dict):
             return {}
-        normalized = dict(value)
-        if "api_key" in normalized:
-            raise ValueError(
-                "AGIWO_CONSOLE_DEFAULT_AGENT_MODEL_PARAMS does not support api_key; "
-                "use api_key_env_name"
-            )
-        return normalized
+        return sanitized

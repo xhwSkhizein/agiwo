@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass, replace
-from typing import Any
 import time
+from typing import Any
 
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.tool.base import BaseTool, ToolResult
@@ -67,19 +67,19 @@ class ToolExecutor:
                     tc, context=context, abort_signal=abort_signal
                 )
             except asyncio.CancelledError:
-                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
-                tool_name = fn.get("name", "unknown")
-                call_id = tc.get("id", "") if isinstance(tc, dict) else ""
-                return ToolResult.error(
+                fn = _get_function_payload(tc)
+                tool_name = _get_string(fn, "name", "unknown")
+                call_id = _get_string(tc, "id")
+                return ToolResult.failed(
                     tool_call_id=call_id,
                     tool_name=tool_name,
                     error="Tool execution was cancelled",
                     start_time=time.time(),
                 )
             except Exception as e:  # Defensive: should not propagate
-                fn = tc.get("function", {}) if isinstance(tc, dict) else {}
-                tool_name = fn.get("name", "unknown")
-                call_id = tc.get("id", "") if isinstance(tc, dict) else ""
+                fn = _get_function_payload(tc)
+                tool_name = _get_string(fn, "name", "unknown")
+                call_id = _get_string(tc, "id")
                 logger.error(
                     "tool_batch_execute_error",
                     tool_name=tool_name,
@@ -87,7 +87,7 @@ class ToolExecutor:
                     error=str(e),
                     exc_info=True,
                 )
-                return ToolResult.error(
+                return ToolResult.failed(
                     tool_call_id=call_id,
                     tool_name=tool_name,
                     error=f"Tool execution failed: {e}",
@@ -102,40 +102,11 @@ class ToolExecutor:
         context: ExecutionContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
-        call_id = tool_call.get("id")
-        fn_name = tool_call.get("function", {}).get("name")
-        fn_args = tool_call.get("function", {}).get("arguments", {})
-
         start_time = time.time()
-        if not fn_name:
-            return ToolResult.error(
-                tool_call_id=call_id,
-                tool_name="unknown",
-                error="Tool name missing in tool call",
-                start_time=start_time,
-            )
-
-        tool: BaseTool | None = self.tools_map.get(fn_name)
-        if not tool:
-            return ToolResult.error(
-                tool_call_id=call_id,
-                tool_name=fn_name,
-                error=f"Tool {fn_name} not found",
-                start_time=start_time,
-            )
-
-        # Parse arguments
-        try:
-            args = parse_json_tool_args(fn_args)
-        except ValueError as e:
-            return ToolResult.error(
-                tool_call_id=call_id,
-                tool_name=fn_name,
-                error=str(e),
-                start_time=start_time,
-            )
-
-        args["tool_call_id"] = call_id
+        resolved = self._resolve_tool_call(tool_call, start_time)
+        if isinstance(resolved, ToolResult):
+            return resolved
+        call_id, fn_name, tool, args = resolved
 
         # Set timeout
         timeout_seconds = (
@@ -189,7 +160,7 @@ class ToolExecutor:
             return result
         except asyncio.CancelledError:
             logger.info("tool_execution_cancelled", tool_name=fn_name)
-            return ToolResult.error(
+            return ToolResult.failed(
                 tool_call_id=call_id,
                 tool_name=fn_name,
                 error="Tool execution was cancelled",
@@ -202,39 +173,59 @@ class ToolExecutor:
                 error=str(e),
                 exc_info=True,
             )
-            return ToolResult.error(
+            return ToolResult.failed(
                 tool_call_id=call_id,
                 tool_name=fn_name,
                 error=f"Tool execution failed: {e}",
                 start_time=start_time,
             )
 
-    def _create_denied_result(
+    def _resolve_tool_call(
         self,
-        call_id: str,
-        tool_name: str,
-        reason: str,
+        tool_call: dict[str, Any],
         start_time: float,
-    ) -> ToolResult:
-        """
-        Create authorization denied ToolResult.
+    ) -> tuple[str, str, BaseTool, dict[str, Any]] | ToolResult:
+        call_id = _get_string(tool_call, "id")
+        function_payload = _get_function_payload(tool_call)
+        fn_name = _get_string(function_payload, "name")
+        if not fn_name:
+            return ToolResult.failed(
+                tool_call_id=call_id,
+                tool_name="unknown",
+                error="Tool name missing in tool call",
+                start_time=start_time,
+            )
 
-        Critical: Must return explicit ToolResult with error information,
-        so LLM can understand why tool call failed.
-        """
-        end_time = time.time()
-        return ToolResult(
-            tool_name=tool_name,
-            tool_call_id=call_id,
-            input_args={},
-            content=(
-                f"Tool execution denied: {reason}. "
-                "Please ask the user for permission or use a different approach."
-            ),
-            output=None,
-            error=f"Permission denied: {reason}",
-            start_time=start_time,
-            end_time=end_time,
-            duration=end_time - start_time,
-            is_success=False,
-        )
+        tool = self.tools_map.get(fn_name)
+        if tool is None:
+            return ToolResult.failed(
+                tool_call_id=call_id,
+                tool_name=fn_name,
+                error=f"Tool {fn_name} not found",
+                start_time=start_time,
+            )
+
+        try:
+            args = parse_json_tool_args(function_payload.get("arguments", {}))
+        except ValueError as e:
+            return ToolResult.failed(
+                tool_call_id=call_id,
+                tool_name=fn_name,
+                error=str(e),
+                start_time=start_time,
+            )
+
+        args["tool_call_id"] = call_id
+        return call_id, fn_name, tool, args
+
+
+def _get_function_payload(tool_call: dict[str, Any]) -> dict[str, Any]:
+    function_payload = tool_call.get("function")
+    if isinstance(function_payload, dict):
+        return function_payload
+    return {}
+
+
+def _get_string(payload: dict[str, Any], key: str, default: str = "") -> str:
+    value = payload.get(key)
+    return value if isinstance(value, str) else default

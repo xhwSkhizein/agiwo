@@ -1,4 +1,4 @@
-"""Coding-agent style BashTool tests with real Codex smoke coverage."""
+"""Coding-agent style bash tool tests with separate process management."""
 
 import asyncio
 import shlex
@@ -11,12 +11,15 @@ from unittest.mock import MagicMock
 import pytest
 
 from agiwo.agent.execution_context import ExecutionContext
+from agiwo.tool.builtin.bash_tool.process_tool import (
+    BashProcessTool,
+    BashProcessToolConfig,
+)
 from agiwo.tool.builtin.bash_tool.sandbox.local import LocalSandbox
 from agiwo.tool.builtin.bash_tool.tool import BashTool, BashToolConfig
 
 
 def has_codex_binary() -> bool:
-    """Return True if Codex CLI is available in current PATH."""
     return shutil.which("codex") is not None
 
 
@@ -34,26 +37,23 @@ def mock_context():
 
 
 @pytest.fixture
-def local_bash_tool(tmp_path: Path) -> BashTool:
+def local_tools(tmp_path: Path) -> tuple[BashTool, BashProcessTool]:
     sandbox = LocalSandbox(workspace_dir=str(tmp_path), max_processes=10)
-    return BashTool(
-        BashToolConfig(
-            sandbox=sandbox,
-            cwd=".",
-        )
-    )
+    bash_tool = BashTool(BashToolConfig(sandbox=sandbox, cwd="."))
+    process_tool = BashProcessTool(BashProcessToolConfig(sandbox=sandbox))
+    return bash_tool, process_tool
 
 
 async def _wait_for_job_exit(
-    tool: BashTool,
+    process_tool: BashProcessTool,
     context: ExecutionContext,
     job_id: str,
     timeout_seconds: float = 8.0,
 ) -> None:
     deadline = time.time() + timeout_seconds
     while time.time() < deadline:
-        status_result = await tool.execute(
-            {"command": f"bashctl status {job_id}", "tool_call_id": "tc_wait_status"},
+        status_result = await process_tool.execute(
+            {"action": "status", "job_id": job_id, "tool_call_id": "tc_wait_status"},
             context,
         )
         if status_result.output.get("state") != "running":
@@ -63,7 +63,7 @@ async def _wait_for_job_exit(
 
 
 async def _wait_for_log_contains(
-    tool: BashTool,
+    process_tool: BashProcessTool,
     context: ExecutionContext,
     job_id: str,
     expected: str,
@@ -72,9 +72,12 @@ async def _wait_for_log_contains(
     deadline = time.time() + timeout_seconds
     latest = ""
     while time.time() < deadline:
-        logs_result = await tool.execute(
+        logs_result = await process_tool.execute(
             {
-                "command": f"bashctl logs {job_id} --stream stdout -n 400",
+                "action": "logs",
+                "job_id": job_id,
+                "stream": "stdout",
+                "tail": 400,
                 "tool_call_id": "tc_wait_logs",
             },
             context,
@@ -87,20 +90,19 @@ async def _wait_for_log_contains(
 
 
 class TestBashToolCodingAgentUsage:
-    """Validate simplified coding-agent flows against BashTool."""
-
     @skip_without_codex
     @pytest.mark.asyncio
     async def test_codex_foreground_with_cwd_and_pty(
         self,
-        local_bash_tool: BashTool,
+        local_tools: tuple[BashTool, BashProcessTool],
         mock_context: ExecutionContext,
         tmp_path: Path,
     ):
+        bash_tool, _ = local_tools
         project_dir = tmp_path / "project_fg"
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        result = await local_bash_tool.execute(
+        result = await bash_tool.execute(
             {
                 "command": "pwd && codex --version",
                 "cwd": "project_fg",
@@ -118,16 +120,17 @@ class TestBashToolCodingAgentUsage:
 
     @skip_without_codex
     @pytest.mark.asyncio
-    async def test_codex_background_and_bashctl_flow(
+    async def test_codex_background_and_process_tool_flow(
         self,
-        local_bash_tool: BashTool,
+        local_tools: tuple[BashTool, BashProcessTool],
         mock_context: ExecutionContext,
         tmp_path: Path,
     ):
+        bash_tool, process_tool = local_tools
         project_dir = tmp_path / "project_bg"
         project_dir.mkdir(parents=True, exist_ok=True)
 
-        start_result = await local_bash_tool.execute(
+        start_result = await bash_tool.execute(
             {
                 "command": "pwd && codex --help",
                 "cwd": "project_bg",
@@ -142,19 +145,22 @@ class TestBashToolCodingAgentUsage:
         assert start_result.output["mode"] == "pty"
         job_id = start_result.output["job_id"]
 
-        status_result = await local_bash_tool.execute(
-            {"command": f"bashctl status {job_id}", "tool_call_id": "tc_codex_bg_status"},
+        status_result = await process_tool.execute(
+            {"action": "status", "job_id": job_id, "tool_call_id": "tc_codex_bg_status"},
             mock_context,
         )
         assert status_result.output["ok"] is True
         assert status_result.output["mode"] == "pty"
         assert status_result.output["state"] in {"running", "exited"}
 
-        await _wait_for_job_exit(local_bash_tool, mock_context, job_id)
+        await _wait_for_job_exit(process_tool, mock_context, job_id)
 
-        logs_result = await local_bash_tool.execute(
+        logs_result = await process_tool.execute(
             {
-                "command": f"bashctl logs {job_id} --stream stdout -n 400",
+                "action": "logs",
+                "job_id": job_id,
+                "stream": "stdout",
+                "tail": 400,
                 "tool_call_id": "tc_codex_bg_logs",
             },
             mock_context,
@@ -164,8 +170,8 @@ class TestBashToolCodingAgentUsage:
         assert str(project_dir) in logs_result.output["stdout"]
         assert "codex" in logs_result.output["stdout"].lower()
 
-        paths_result = await local_bash_tool.execute(
-            {"command": f"bashctl paths {job_id}", "tool_call_id": "tc_codex_bg_paths"},
+        paths_result = await process_tool.execute(
+            {"action": "paths", "job_id": job_id, "tool_call_id": "tc_codex_bg_paths"},
             mock_context,
         )
         assert paths_result.output["ok"] is True
@@ -173,33 +179,43 @@ class TestBashToolCodingAgentUsage:
         assert paths_result.output["stdout_path"].endswith(".stdout")
         assert paths_result.output["stderr_path"].endswith(".stderr")
 
-        jobs_result = await local_bash_tool.execute(
-            {"command": "bashctl jobs", "tool_call_id": "tc_codex_bg_jobs"},
+        jobs_result = await process_tool.execute(
+            {"action": "jobs", "tool_call_id": "tc_codex_bg_jobs"},
             mock_context,
         )
         assert jobs_result.output["ok"] is True
         assert job_id in jobs_result.output["stdout"]
 
-        running_jobs_result = await local_bash_tool.execute(
-            {"command": "bashctl jobs --running", "tool_call_id": "tc_codex_bg_jobs_running"},
+        running_jobs_result = await process_tool.execute(
+            {
+                "action": "jobs",
+                "running_only": True,
+                "tool_call_id": "tc_codex_bg_jobs_running",
+            },
             mock_context,
         )
         assert running_jobs_result.output["ok"] is True
 
-        stop_result = await local_bash_tool.execute(
-            {"command": f"bashctl stop {job_id} --force", "tool_call_id": "tc_codex_bg_stop"},
+        stop_result = await process_tool.execute(
+            {
+                "action": "stop",
+                "job_id": job_id,
+                "force": True,
+                "tool_call_id": "tc_codex_bg_stop",
+            },
             mock_context,
         )
         assert stop_result.output["ok"] is True
         assert stop_result.output["job_id"] == job_id
 
     @pytest.mark.asyncio
-    async def test_bashctl_input_for_background_pty_job(
+    async def test_process_tool_input_for_background_pty_job(
         self,
-        local_bash_tool: BashTool,
+        local_tools: tuple[BashTool, BashProcessTool],
         mock_context: ExecutionContext,
         tmp_path: Path,
     ):
+        bash_tool, process_tool = local_tools
         project_dir = tmp_path / "project_input"
         project_dir.mkdir(parents=True, exist_ok=True)
 
@@ -212,7 +228,7 @@ class TestBashToolCodingAgentUsage:
         )
         command = f"{shlex.quote(sys.executable)} -c {shlex.quote(script)}"
 
-        start_result = await local_bash_tool.execute(
+        start_result = await bash_tool.execute(
             {
                 "command": command,
                 "cwd": "project_input",
@@ -226,9 +242,11 @@ class TestBashToolCodingAgentUsage:
         assert start_result.output["mode"] == "pty"
         job_id = start_result.output["job_id"]
 
-        input_result = await local_bash_tool.execute(
+        input_result = await process_tool.execute(
             {
-                "command": f"bashctl input {job_id} hello-from-coding-agent",
+                "action": "input",
+                "job_id": job_id,
+                "text": "hello-from-coding-agent",
                 "tool_call_id": "tc_input_send",
             },
             mock_context,
@@ -237,7 +255,7 @@ class TestBashToolCodingAgentUsage:
         assert input_result.output["bytes"] > 0
 
         logs_text = await _wait_for_log_contains(
-            local_bash_tool,
+            process_tool,
             mock_context,
             job_id,
             "ACK:hello-from-coding-agent",

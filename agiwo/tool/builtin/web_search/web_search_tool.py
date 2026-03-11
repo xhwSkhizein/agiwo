@@ -5,8 +5,8 @@ from datetime import datetime
 from typing import Any
 
 from agiwo.agent.execution_context import ExecutionContext
+from agiwo.config.settings import settings
 from agiwo.tool.base import BaseTool, ToolResult
-from agiwo.tool.builtin.config import WebSearchApiConfig
 from agiwo.tool.builtin.http_client import AsyncHttpClient
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.tool.storage.citation import (
@@ -33,24 +33,20 @@ class WebSearchTool(BaseTool):
     def __init__(
         self,
         *,
-        config: WebSearchApiConfig | None = None,
         citation_store_config: CitationStoreConfig | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__()
-        self._config = config or WebSearchApiConfig()
-        self.timeout_seconds = self._config.timeout_seconds
-        self.max_results = self._config.max_results
-        self.serper_api_key = (
-            self._config.serper_api_key.get_secret_value()
-            if self._config.serper_api_key is not None
-            else None
-        )
+        self.timeout_seconds = settings.web_search_api_timeout
+        self.max_results = settings.web_search_api_max_results
+        self.recency_days = settings.web_search_api_recency_days
+        key = settings.web_search_serper_api_key
+        self.serper_api_key = key.get_secret_value() if key is not None else None
         self._citation_source_store = create_citation_store(citation_store_config)
         self._http_client = AsyncHttpClient(
-            base_url=self._config.base_url,
-            timeout=self._config.timeout_seconds,
-            max_retries=self._config.max_retries,
+            base_url=settings.web_search_api_base_url,
+            timeout=self.timeout_seconds,
+            max_retries=settings.web_search_api_max_retries,
         )
 
     def get_name(self) -> str:
@@ -68,8 +64,7 @@ Use this tool when you need to:
 - Discover relevant web resources
 - Get multiple perspectives on a topic
 
-To fetch full content from a search result, use web_reader with the result index:
-> web_reader(index=0) => Fetch content from the first search result"""
+To fetch full content from a search result, use web_reader with the result index: web_reader(index=0) => Fetch content from the first search result"""
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -86,14 +81,11 @@ To fetch full content from a search result, use web_reader with the result index
     def is_concurrency_safe(self) -> bool:
         return True
 
-    def needs_permissions(self, parameters: dict[str, Any]) -> bool:
-        return False
-
     def _contains_chinese(self, text: str) -> bool:
         return any("\u4e00" <= char <= "\u9fff" for char in text)
 
     def _build_recency_filter(self) -> str | None:
-        days = self._config.recency_days
+        days = self.recency_days
         if days <= 0:
             return None
         if days <= 1:
@@ -313,22 +305,42 @@ To fetch full content from a search result, use web_reader with the result index
 
         try:
             if abort_signal and abort_signal.is_aborted():
-                return self._create_abort_result(parameters, start_time)
+                return ToolResult.aborted(
+                    tool_name=self.name,
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args=parameters,
+                    start_time=start_time,
+                )
 
             query = parameters.get("query")
             if not isinstance(query, str) or not query.strip():
-                return self._create_error_result(
-                    parameters, "Error: query must be a non-empty string", start_time
+                return ToolResult.failed(
+                    tool_name=self.name,
+                    error="Error: query must be a non-empty string",
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args=parameters,
+                    start_time=start_time,
                 )
             query = query.strip()
             session_id = str(parameters.get("session_id") or context.session_id or "default")
 
             raw_results = await self._google_search_with_serper(query)
             if isinstance(raw_results, str):
-                return self._create_error_result(parameters, raw_results, start_time)
+                return ToolResult.failed(
+                    tool_name=self.name,
+                    error=raw_results,
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args=parameters,
+                    start_time=start_time,
+                )
 
             if abort_signal and abort_signal.is_aborted():
-                return self._create_abort_result(parameters, start_time)
+                return ToolResult.aborted(
+                    tool_name=self.name,
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args=parameters,
+                    start_time=start_time,
+                )
 
             result_text, citation_ids = await self._process_and_format_results(
                 query=query,
@@ -336,9 +348,9 @@ To fetch full content from a search result, use web_reader with the result index
                 session_id=session_id,
             )
 
-            return ToolResult(
+            return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=parameters.get("tool_call_id", ""),
+                tool_call_id=str(parameters.get("tool_call_id", "")),
                 input_args=parameters,
                 content=result_text,
                 output={
@@ -347,14 +359,13 @@ To fetch full content from a search result, use web_reader with the result index
                     "citation_ids": citation_ids,
                 },
                 start_time=start_time,
-                end_time=time.time(),
-                duration=time.time() - start_time,
-                is_success=True,
             )
         except Exception as exc:  # noqa: BLE001
             error_message = str(exc) if str(exc) else "Unknown error occurred"
-            return self._create_error_result(
-                parameters,
-                f"Error performing web search: {error_message}",
-                start_time,
+            return ToolResult.failed(
+                tool_name=self.name,
+                error=f"Error performing web search: {error_message}",
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args=parameters,
+                start_time=start_time,
             )

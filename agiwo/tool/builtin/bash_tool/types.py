@@ -1,15 +1,7 @@
 """Type definitions for BashTool."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol
-
-if TYPE_CHECKING:
-    from agiwo.tool.builtin.bash_tool.security import (
-        CommandRiskEvaluator,
-        CommandSafetyPolicy,
-    )
+from typing import Literal, Protocol
 
 
 @dataclass
@@ -189,40 +181,3 @@ class AfterBashCallOutput:
     """Output from on_after_bash_call callback."""
 
     result: CommandResult
-
-
-@dataclass
-class CreateBashToolkitOptions:
-    """Options for creating a BashToolkit."""
-
-    destination: str | None = None
-    files: dict[str, str | bytes] | None = None
-    sandbox: Sandbox | None = None
-    extra_instructions: str | None = None
-    on_before_bash_call: (
-        Callable[[BeforeBashCallInput], BeforeBashCallOutput | None] | None
-    ) = None
-    on_after_bash_call: (
-        Callable[[AfterBashCallInput], AfterBashCallOutput | None] | None
-    ) = None
-    command_risk_evaluator: CommandRiskEvaluator | None = None
-    command_safety_policy: CommandSafetyPolicy | None = None
-    max_output_length: int = 30000
-    max_files: int = 1000
-    max_processes: int = 10
-
-
-class BashToolkit:
-    """Container for bash tools and sandbox."""
-
-    def __init__(
-        self,
-        tools: dict[str, Any],
-        sandbox: Sandbox,
-    ) -> None:
-        self.tools = tools
-        self.sandbox = sandbox
-
-    def __getitem__(self, key: str) -> Any:
-        """Allow dict-like access to tools."""
-        return self.tools[key]

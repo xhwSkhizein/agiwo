@@ -4,13 +4,26 @@ Local embedding models using llama-cpp-python.
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Protocol
+
+try:
+    from llama_cpp import Llama
+except ImportError:
+    Llama = None
 
 from agiwo.config.settings import load_settings
 from agiwo.embedding.base import EmbeddingError, EmbeddingModel
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class LlamaEmbeddingClient(Protocol):
+    def embed(self, text: str) -> list[float] | list[list[float]]:
+        ...
+
+    def n_embd(self) -> int:
+        ...
 
 
 @dataclass
@@ -37,7 +50,7 @@ class LocalEmbedding(EmbeddingModel):
     n_ctx: int = 2048
     n_batch: int = 512
     n_threads: int | None = None
-    _llama: Any = field(default=None, repr=False)
+    _llama: LlamaEmbeddingClient | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.model_path is None:
@@ -65,7 +78,7 @@ class LocalEmbedding(EmbeddingModel):
 
         return embeddings
 
-    def _get_llama(self) -> Any:
+    def _get_llama(self) -> LlamaEmbeddingClient:
         """Get or create Llama instance."""
         if self._llama is not None:
             return self._llama
@@ -80,13 +93,11 @@ class LocalEmbedding(EmbeddingModel):
         if not model_path.exists():
             raise EmbeddingError(f"Model file not found: {model_path}")
 
-        try:
-            from llama_cpp import Llama
-        except ImportError as e:
+        if Llama is None:
             raise EmbeddingError(
                 "llama-cpp-python not installed. "
                 "Install with: pip install llama-cpp-python"
-            ) from e
+            )
 
         logger.info("loading_local_embedding_model", path=str(model_path))
 

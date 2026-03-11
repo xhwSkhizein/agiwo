@@ -1,28 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
+import { MonoLink, MonoText } from "@/components/mono-text";
+import { SchedulerStatusBadge } from "@/components/scheduler-status-badge";
+import { EmptyStateMessage, TextStateMessage } from "@/components/state-message";
 import { UserInputCompact } from "@/components/user-input-detail";
 import {
   listAgentStates,
   getSchedulerStats,
 } from "@/lib/api";
 import type { AgentStateListItem, SchedulerStats } from "@/lib/api";
-
-const STATUS_STYLES: Record<string, string> = {
-  pending: "bg-yellow-900/50 text-yellow-400",
-  running: "bg-blue-900/50 text-blue-400",
-  sleeping: "bg-purple-900/50 text-purple-400",
-  completed: "bg-green-900/50 text-green-400",
-  failed: "bg-red-900/50 text-red-400",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  const cls = STATUS_STYLES[status] || "bg-zinc-800 text-zinc-400";
-  return (
-    <span className={`text-xs px-1.5 py-0.5 rounded ${cls}`}>{status}</span>
-  );
-}
+import {
+  formatTokenCount,
+  formatUsd,
+  normalizeRunMetricsSummary,
+} from "@/lib/metrics";
+import { formatLocalDateTime } from "@/lib/time";
+import { formatWakeConditionSummary } from "@/lib/wake-condition";
 
 function StatMini({ label, value, active }: { label: string; value: number; active?: boolean }) {
   return (
@@ -38,23 +32,11 @@ function StatMini({ label, value, active }: { label: string; value: number; acti
 }
 
 function WakeInfo({ wc }: { wc: AgentStateListItem["wake_condition"] }) {
-  if (!wc) return <span className="text-zinc-600">-</span>;
-  if (wc.type === "children_complete") {
-    return (
-      <span className="text-xs text-zinc-400">
-        children {wc.completed_children}/{wc.total_children}
-      </span>
-    );
-  }
-  if (wc.type === "delay" || wc.type === "interval") {
-    const label = wc.time_value != null && wc.time_unit
-      ? `${wc.time_value} ${wc.time_unit}`
-      : wc.wakeup_at
-      ? new Date(wc.wakeup_at).toLocaleTimeString()
-      : wc.type;
-    return <span className="text-xs text-zinc-400">{wc.type}: {label}</span>;
-  }
-  return <span className="text-xs text-zinc-400">{wc.type}</span>;
+  return (
+    <span className={wc ? "text-xs text-zinc-400" : "text-zinc-600"}>
+      {formatWakeConditionSummary(wc)}
+    </span>
+  );
 }
 
 const STATUS_FILTERS = [
@@ -72,23 +54,28 @@ export default function SchedulerPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("");
 
-  const fetchData = (statusFilter: string) => {
+  const loadData = useCallback(async (statusFilter: string) => {
     setLoading(true);
     const params: { status?: string; limit?: number } = { limit: 200 };
-    if (statusFilter) params.status = statusFilter;
-    Promise.all([
-      listAgentStates(params).catch(() => []),
-      getSchedulerStats().catch(() => null),
-    ]).then(([s, st]) => {
-      setStates(s);
-      if (st) setStats(st);
+    if (statusFilter) {
+      params.status = statusFilter;
+    }
+
+    try {
+      const [nextStates, nextStats] = await Promise.all([
+        listAgentStates(params).catch(() => []),
+        getSchedulerStats().catch(() => null),
+      ]);
+      setStates(nextStates);
+      setStats(nextStats);
+    } finally {
       setLoading(false);
-    });
-  };
+    }
+  }, []);
 
   useEffect(() => {
-    fetchData(filter);
-  }, [filter]);
+    void loadData(filter);
+  }, [filter, loadData]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -114,7 +101,9 @@ export default function SchedulerPage() {
         {STATUS_FILTERS.map((f) => (
           <button
             key={f.value}
-            onClick={() => setFilter(f.value)}
+            onClick={() => {
+              setFilter(f.value);
+            }}
             className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
               filter === f.value
                 ? "bg-zinc-700 text-white"
@@ -125,7 +114,9 @@ export default function SchedulerPage() {
           </button>
         ))}
         <button
-          onClick={() => fetchData(filter)}
+          onClick={() => {
+            void loadData(filter);
+          }}
           className="ml-auto px-3 py-1.5 text-xs rounded-md bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
         >
           Refresh
@@ -133,11 +124,11 @@ export default function SchedulerPage() {
       </div>
 
       {loading ? (
-        <div className="text-zinc-500">Loading...</div>
+        <TextStateMessage>Loading...</TextStateMessage>
       ) : states.length === 0 ? (
-        <div className="text-zinc-500 text-center py-12">
+        <EmptyStateMessage>
           No agent states found
-        </div>
+        </EmptyStateMessage>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-zinc-800">
           <table className="w-full text-sm">
@@ -146,44 +137,60 @@ export default function SchedulerPage() {
                 <th className="text-left px-4 py-3">Agent</th>
                 <th className="text-left px-4 py-3">Task</th>
                 <th className="text-center px-4 py-3">Status</th>
+                <th className="text-right px-4 py-3">Cost</th>
+                <th className="text-right px-4 py-3">Tokens(In/Out/Total)</th>
+                <th className="text-right px-4 py-3">Cache R/C</th>
+                <th className="text-right px-4 py-3">Runs</th>
                 <th className="text-left px-4 py-3">Wake Condition</th>
                 <th className="text-left px-4 py-3">Parent</th>
                 <th className="text-right px-4 py-3">Updated</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800">
-              {states.map((s) => (
-                <tr
-                  key={s.id}
-                  className="hover:bg-zinc-900/50 transition-colors"
-                >
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/scheduler/${s.id}`}
-                      className="text-zinc-200 hover:text-white font-mono text-xs"
-                    >
-                      {s.id}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 max-w-xs">
-                    <UserInputCompact input={s.task} maxLength={60} />
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    <StatusBadge status={s.status} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <WakeInfo wc={s.wake_condition} />
-                  </td>
-                  <td className="px-4 py-3 text-zinc-500 text-xs font-mono">
-                    {s.parent_id || "-"}
-                  </td>
-                  <td className="px-4 py-3 text-right text-zinc-500 text-xs">
-                    {s.updated_at
-                      ? new Date(s.updated_at).toLocaleString()
-                      : "-"}
-                  </td>
-                </tr>
-              ))}
+              {states.map((s) => {
+                const metrics = normalizeRunMetricsSummary(s.metrics);
+                return (
+                  <tr
+                    key={s.id}
+                    className="hover:bg-zinc-900/50 transition-colors"
+                  >
+                    <td className="px-4 py-3">
+                      <MonoLink href={`/scheduler/${s.id}`}>
+                        {s.id}
+                      </MonoLink>
+                    </td>
+                    <td className="px-4 py-3 max-w-xs">
+                      <UserInputCompact input={s.task} maxLength={60} />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <SchedulerStatusBadge status={s.status} />
+                    </td>
+                    <td className="px-4 py-3 text-right text-zinc-200">
+                      {formatUsd(metrics.token_cost)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-zinc-400 text-xs">
+                      {formatTokenCount(metrics.input_tokens)} / {formatTokenCount(metrics.output_tokens)} / {formatTokenCount(metrics.total_tokens)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-zinc-500 text-xs">
+                      {formatTokenCount(metrics.cache_read_tokens)} / {formatTokenCount(metrics.cache_creation_tokens)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-zinc-500 text-xs">
+                      {metrics.run_count}
+                    </td>
+                    <td className="px-4 py-3">
+                      <WakeInfo wc={s.wake_condition} />
+                    </td>
+                    <td className="px-4 py-3 text-zinc-500">
+                      <MonoText className="text-zinc-500 text-xs font-mono">
+                        {s.parent_id || "-"}
+                      </MonoText>
+                    </td>
+                    <td className="px-4 py-3 text-right text-zinc-500 text-xs">
+                      {formatLocalDateTime(s.updated_at)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

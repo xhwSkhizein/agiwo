@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 
 import { AgentForm } from "@/components/agent-form";
+import { BackHeader } from "@/components/back-header";
+import { FullPageMessage } from "@/components/state-message";
 import { AgentConfig, AgentConfigCreate, getAgent, updateAgent } from "@/lib/api";
 
 export default function EditAgentPage() {
@@ -39,32 +39,24 @@ export default function EditAgentPage() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-zinc-500">Loading...</div>
-      </div>
-    );
+    return <FullPageMessage>Loading...</FullPageMessage>;
   }
 
   if (agent === null) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-red-400">{error ?? "Agent not found"}</div>
-      </div>
+      <FullPageMessage className="text-red-400">
+        {error ?? "Agent not found"}
+      </FullPageMessage>
     );
   }
 
   return (
     <div className="p-6 max-w-2xl mx-auto space-y-6">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/agents"
-          className="p-1.5 rounded hover:bg-zinc-800 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <h1 className="text-xl font-semibold">Edit Agent</h1>
-      </div>
+      <BackHeader
+        href="/agents"
+        title="Edit Agent"
+        subtitle={null}
+      />
 
       <AgentForm
         initialAgent={agent}

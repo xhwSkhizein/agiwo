@@ -1,16 +1,21 @@
 """MongoDB implementation of CitationSourceRepository."""
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
-
+from agiwo.utils.storage_support.mongo_runtime import (
+    MongoCollectionRuntime,
+    MongoIndexSpec,
+)
 from agiwo.tool.storage.citation.models import (
     CitationSourceRaw,
     CitationSourceSimplified,
 )
+from agiwo.tool.storage.citation.utils import (
+    reorder_simplified_sources,
+    sort_simplified_sources,
+    to_simplified_source,
+)
 from agiwo.utils.logging import get_logger
-from agiwo.utils.mongo_pool import get_shared_mongo_client, release_shared_mongo_client
 
 logger = get_logger(__name__)
 
@@ -28,39 +33,32 @@ class MongoCitationStore:
         self.db_name = db_name
         self.collection_name = collection_name or "citation_sources"
         self.client: Any = None
-        self.db: AsyncIOMotorDatabase[Any] | None = None
-        self.citations_collection: AsyncIOMotorCollection[Any] | None = None
+        self.db: Any = None
+        self.citations_collection: Any = None
+        self._runtime = MongoCollectionRuntime(
+            uri=uri,
+            db_name=db_name,
+            logger=logger,
+            connect_event="mongodb_citation_store_connected",
+            disconnect_event="mongodb_citation_store_disconnected",
+        )
 
-    async def _ensure_connection(self):
+    async def _ensure_connection(self) -> None:
         """Ensure database connection is established."""
-        if self.client is None:
-            self.client = await get_shared_mongo_client(self.uri)
-            self.db = self.client[self.db_name]
-            self.citations_collection = self.db[self.collection_name]
+        if self.client is not None:
+            return
 
-            if self.citations_collection is None:
-                raise RuntimeError("Failed to get citations collection")
-            await self.citations_collection.create_index("citation_id", unique=True)
-            await self.citations_collection.create_index("session_id")
-            await self.citations_collection.create_index(
-                [("session_id", 1), ("index", 1)]
-            )
-            await self.citations_collection.create_index("created_at")
-
-            logger.info(
-                "mongodb_citation_store_connected",
-                uri=self.uri,
-                db_name=self.db_name,
-            )
-        else:
-            # Check if client is still open
-            try:
-                # This might not be perfect for motor, but it's a hint
-                # For motor, we usually trust the connection pool
-                pass
-            except Exception:
-                self.client = None
-                await self._ensure_connection()
+        self.citations_collection = await self._runtime.ensure_collection(
+            self.collection_name,
+            indexes=[
+                MongoIndexSpec("citation_id", unique=True),
+                MongoIndexSpec("session_id"),
+                MongoIndexSpec([("session_id", 1), ("index", 1)]),
+                MongoIndexSpec("created_at"),
+            ],
+        )
+        self.client = self._runtime.client
+        self.db = self._runtime.db
 
     async def store_citation_sources(
         self,
@@ -133,29 +131,19 @@ class MongoCitationStore:
         await self._ensure_connection()
 
         try:
+            if not citation_ids:
+                return []
             if self.citations_collection is None:
                 raise RuntimeError("Database collection not initialized")
             cursor = self.citations_collection.find(
                 {"citation_id": {"$in": citation_ids}, "session_id": session_id}
-            )
+            ).sort("created_at", 1)
 
-            simplified = []
+            simplified: list[CitationSourceSimplified] = []
             async for doc in cursor:
                 source = CitationSourceRaw.model_validate(doc)
-                simplified.append(
-                    CitationSourceSimplified(
-                        citation_id=source.citation_id,
-                        source_type=source.source_type,
-                        url=source.url,
-                        index=source.index,
-                        title=source.title,
-                        snippet=source.snippet,
-                        date_published=source.date_published,
-                        source=source.source,
-                        created_at=source.created_at,
-                    )
-                )
-            return simplified
+                simplified.append(to_simplified_source(source))
+            return reorder_simplified_sources(simplified, citation_ids)
         except Exception as e:
             logger.error(
                 "get_simplified_sources_failed",
@@ -174,25 +162,15 @@ class MongoCitationStore:
         try:
             if self.citations_collection is None:
                 raise RuntimeError("Database collection not initialized")
-            cursor = self.citations_collection.find({"session_id": session_id})
+            cursor = self.citations_collection.find({"session_id": session_id}).sort(
+                "created_at", 1
+            )
 
-            simplified = []
+            simplified: list[CitationSourceSimplified] = []
             async for doc in cursor:
                 source = CitationSourceRaw.model_validate(doc)
-                simplified.append(
-                    CitationSourceSimplified(
-                        citation_id=source.citation_id,
-                        source_type=source.source_type,
-                        url=source.url,
-                        index=source.index,
-                        title=source.title,
-                        snippet=source.snippet,
-                        date_published=source.date_published,
-                        source=source.source,
-                        created_at=source.created_at,
-                    )
-                )
-            return simplified
+                simplified.append(to_simplified_source(source))
+            return sort_simplified_sources(simplified)
         except Exception as e:
             logger.error(
                 "get_session_citations_failed",
@@ -278,11 +256,10 @@ class MongoCitationStore:
     async def disconnect(self) -> None:
         """Release MongoDB connection back to the shared pool."""
         if self.client is not None:
-            await release_shared_mongo_client(self.uri)
+            await self._runtime.disconnect()
             self.client = None
             self.db = None
             self.citations_collection = None
-            logger.info("mongodb_citation_store_disconnected")
 
 
 __all__ = ["MongoCitationStore"]

@@ -1,18 +1,24 @@
 """SQLite implementation of CitationSourceRepository."""
 
 import json
-import os
 from datetime import datetime
 from typing import Any
 
 import aiosqlite
 
+from agiwo.utils.storage_support.sqlite_runtime import (
+    SQLiteConnectionRuntime,
+    execute_statements,
+)
 from agiwo.tool.storage.citation.models import (
     CitationSourceRaw,
     CitationSourceSimplified,
 )
+from agiwo.tool.storage.citation.utils import (
+    reorder_simplified_sources,
+    sort_simplified_sources,
+)
 from agiwo.utils.logging import get_logger
-from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 
 logger = get_logger(__name__)
 _INDEX_COLUMN = "citation_index"
@@ -22,73 +28,63 @@ class SQLiteCitationStore:
     """SQLite implementation of Citation Store."""
 
     def __init__(self, db_path: str = "agiwo.db") -> None:
-        self.db_path = os.path.expanduser(db_path)
+        self.db_path = db_path
         self._connection: aiosqlite.Connection | None = None
-        self._initialized = False
+        self._runtime = SQLiteConnectionRuntime(
+            db_path=db_path,
+            logger=logger,
+            connect_event="sqlite_citation_store_connected",
+        )
 
     async def connect(self) -> None:
         """Initialize database connection using shared pool."""
-        if self._initialized:
-            return
-
-        self._connection = await get_shared_connection(self.db_path)
-        await self._create_tables()
-        self._initialized = True
-
-        logger.info("sqlite_citation_store_connected", db_path=self.db_path)
+        self._connection = await self._runtime.ensure_connection(
+            self._initialize_schema
+        )
 
     async def disconnect(self) -> None:
         """Release database connection back to pool."""
         if self._connection:
-            await release_shared_connection(self.db_path)
+            await self._runtime.disconnect()
             self._connection = None
-            self._initialized = False
 
-    async def _create_tables(self) -> None:
+    async def _initialize_schema(self, connection: aiosqlite.Connection) -> None:
         """Create database tables and indexes."""
-        if self._connection is None:
-            raise RuntimeError("Database connection not established")
-
-        await self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS citation_sources (
-                citation_id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                source_type TEXT NOT NULL,
-                url TEXT NOT NULL,
-                title TEXT,
-                snippet TEXT,
-                date_published TEXT,
-                source TEXT,
-                full_content TEXT,
-                processed_content TEXT,
-                original_content TEXT,
-                related_citation_id TEXT,
-                related_index INTEGER,
-                query TEXT,
-                parameters TEXT,
-                citation_index INTEGER,
-                created_at TEXT NOT NULL
-            )
-        """
+        await execute_statements(
+            connection,
+            [
+                """
+                CREATE TABLE IF NOT EXISTS citation_sources (
+                    citation_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    title TEXT,
+                    snippet TEXT,
+                    date_published TEXT,
+                    source TEXT,
+                    full_content TEXT,
+                    processed_content TEXT,
+                    original_content TEXT,
+                    related_citation_id TEXT,
+                    related_index INTEGER,
+                    query TEXT,
+                    parameters TEXT,
+                    citation_index INTEGER,
+                    created_at TEXT NOT NULL
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_citation_session_id ON citation_sources(session_id)",
+                "CREATE INDEX IF NOT EXISTS idx_citation_session_index "
+                f"ON citation_sources(session_id, {_INDEX_COLUMN})",
+                "CREATE INDEX IF NOT EXISTS idx_citation_created_at ON citation_sources(created_at)",
+            ],
         )
-
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_citation_session_id ON citation_sources(session_id)"
-        )
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_citation_session_index "
-            f"ON citation_sources(session_id, {_INDEX_COLUMN})"
-        )
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_citation_created_at ON citation_sources(created_at)"
-        )
-
-        await self._connection.commit()
+        await connection.commit()
 
     async def _ensure_connection(self) -> None:
         """Ensure database connection is established."""
-        if not self._initialized:
+        if self._connection is None:
             await self.connect()
 
     def _serialize_citation(self, source: CitationSourceRaw) -> dict:
@@ -218,23 +214,13 @@ class SQLiteCitationStore:
 
             if self._connection is None:
                 raise RuntimeError("Database connection not established")
-            simplified = []
+            simplified: list[CitationSourceSimplified] = []
             async with self._connection.execute(query, params) as cursor:
                 async for row in cursor:
                     simplified.append(
-                        CitationSourceSimplified(
-                            citation_id=row["citation_id"],
-                            source_type=row["source_type"],
-                            url=row["url"],
-                            index=row["index"],
-                            title=row["title"],
-                            snippet=row["snippet"],
-                            date_published=row["date_published"],
-                            source=row["source"],
-                            created_at=row["created_at"],
-                        )
+                        CitationSourceSimplified.model_validate(dict(row))
                     )
-            return simplified
+            return reorder_simplified_sources(simplified, citation_ids)
         except Exception as e:
             logger.error(
                 "get_simplified_sources_failed",
@@ -261,23 +247,13 @@ class SQLiteCitationStore:
 
             if self._connection is None:
                 raise RuntimeError("Database connection not established")
-            simplified = []
+            simplified: list[CitationSourceSimplified] = []
             async with self._connection.execute(query, (session_id,)) as cursor:
                 async for row in cursor:
                     simplified.append(
-                        CitationSourceSimplified(
-                            citation_id=row["citation_id"],
-                            source_type=row["source_type"],
-                            url=row["url"],
-                            index=row["index"],
-                            title=row["title"],
-                            snippet=row["snippet"],
-                            date_published=row["date_published"],
-                            source=row["source"],
-                            created_at=row["created_at"],
-                        )
+                        CitationSourceSimplified.model_validate(dict(row))
                     )
-            return simplified
+            return sort_simplified_sources(simplified)
         except Exception as e:
             logger.error(
                 "get_session_citations_failed",

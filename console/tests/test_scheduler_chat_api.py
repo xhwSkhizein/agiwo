@@ -4,10 +4,15 @@ Integration tests for the Scheduler Chat API endpoints.
 Tests the /api/scheduler/chat/* routes using httpx TestClient.
 """
 
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
 import pytest
 
 from httpx import ASGITransport, AsyncClient
 
+from agiwo.agent.schema import EventType, StepDelta, StreamEvent
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -15,20 +20,21 @@ from agiwo.scheduler.models import (
     SchedulerConfig,
 )
 from agiwo.scheduler.scheduler import Scheduler
-from agiwo.scheduler.store import InMemoryAgentStateStorage
 
 from server.app import create_app
 from server.dependencies import (
-    get_storage_manager,
-    set_storage_manager,
-    set_console_config,
-    set_agent_registry,
-    set_scheduler,
-    get_scheduler,
+    ConsoleRuntime,
+    bind_console_runtime,
+    clear_console_runtime,
+    get_console_runtime_from_app,
 )
 from server.config import ConsoleConfig
-from server.services.agent_registry import AgentRegistry
+from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_manager import StorageManager
+
+
+def _runtime(client: AsyncClient) -> ConsoleRuntime:
+    return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
 
 
 @pytest.fixture
@@ -41,26 +47,31 @@ async def client():
         trace_storage_type="memory",
         metadata_storage_type="memory",
     )
-    set_console_config(config)
     sm = StorageManager(config)
-    sm.agent_state_storage = InMemoryAgentStateStorage()
-    set_storage_manager(sm)
 
     registry = AgentRegistry(config)
     await registry.initialize()
-    set_agent_registry(registry)
 
     scheduler_config = SchedulerConfig(
         state_storage=AgentStateStorageConfig(storage_type="memory"),
     )
     scheduler = Scheduler(scheduler_config)
     await scheduler.start()
-    set_scheduler(scheduler)
+    bind_console_runtime(
+        app,
+        ConsoleRuntime(
+            config=config,
+            storage_manager=sm,
+            agent_registry=registry,
+            scheduler=scheduler,
+        ),
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
+    clear_console_runtime(app)
     await scheduler.stop()
     await registry.close()
     await sm.close()
@@ -79,7 +90,8 @@ class TestSchedulerChatCancel:
     @pytest.mark.asyncio
     async def test_cancel_completed_state(self, client):
         """Cancel returns 404 when state is already completed."""
-        scheduler = get_scheduler()
+        scheduler = _runtime(client).scheduler
+        assert scheduler is not None
         state = AgentState(
             id="completed-state",
             session_id="sess-1",
@@ -98,7 +110,8 @@ class TestSchedulerChatCancel:
     @pytest.mark.asyncio
     async def test_cancel_running_state(self, client):
         """Cancel succeeds for a running state."""
-        scheduler = get_scheduler()
+        scheduler = _runtime(client).scheduler
+        assert scheduler is not None
         state = AgentState(
             id="running-state",
             session_id="sess-2",
@@ -123,7 +136,8 @@ class TestSchedulerChatCancel:
     @pytest.mark.asyncio
     async def test_cancel_sleeping_state(self, client):
         """Cancel succeeds for a sleeping state."""
-        scheduler = get_scheduler()
+        scheduler = _runtime(client).scheduler
+        assert scheduler is not None
         state = AgentState(
             id="sleeping-state",
             session_id="sess-3",
@@ -142,7 +156,8 @@ class TestSchedulerChatCancel:
     @pytest.mark.asyncio
     async def test_cancel_cascades_to_children(self, client):
         """Cancel cascades to active child states."""
-        scheduler = get_scheduler()
+        scheduler = _runtime(client).scheduler
+        assert scheduler is not None
 
         parent = AgentState(
             id="parent-cancel",
@@ -196,3 +211,73 @@ class TestSchedulerChatEndpoint:
             json={"message": "hello"},
         )
         assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_chat_streams_scheduler_events_and_completion(
+        self,
+        client,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        registry = _runtime(client).agent_registry
+        await registry.create_agent(
+            AgentConfigRecord(
+                id="agent-1",
+                name="scheduler-agent",
+                model_provider="openai",
+                model_name="gpt-test",
+            )
+        )
+
+        class FakeStreamingAgent:
+            def __init__(self) -> None:
+                self.closed = False
+                self.hooks = None
+
+            async def close(self) -> None:
+                self.closed = True
+
+        fake_agent = FakeStreamingAgent()
+        monkeypatch.setattr(
+            "server.services.conversation_sse.build_agent",
+            AsyncMock(return_value=fake_agent),
+        )
+
+        scheduler = _runtime(client).scheduler
+        assert scheduler is not None
+
+        async def fake_submit(agent, message: str, *, session_id: str, abort_signal):
+            del abort_signal
+            assert agent is fake_agent
+            assert message == "hello"
+            assert session_id == "session-1"
+            assert fake_agent.hooks is not None
+            await fake_agent.hooks.on_event(
+                StreamEvent(
+                    type=EventType.STEP_DELTA,
+                    run_id="run-1",
+                    delta=StepDelta(content="hello"),
+                    timestamp=datetime(2026, 3, 10),
+                )
+            )
+            return "state-1"
+
+        async def fake_wait_for(state_id: str, timeout: int):
+            assert state_id == "state-1"
+            assert timeout == 600
+            return SimpleNamespace(response="done", termination_reason=None)
+
+        monkeypatch.setattr(scheduler, "submit", fake_submit)
+        monkeypatch.setattr(scheduler, "wait_for", fake_wait_for)
+
+        async with client.stream(
+            "POST",
+            "/api/scheduler/chat/agent-1",
+            json={"message": "hello", "session_id": "session-1"},
+        ) as response:
+            assert response.status_code == 200
+            lines = [line async for line in response.aiter_lines()]
+
+        assert any(line == "event: step_delta" for line in lines)
+        assert any(line == "event: scheduler_completed" for line in lines)
+        assert any('"state_id": "state-1"' in line for line in lines)
+        assert fake_agent.closed is True

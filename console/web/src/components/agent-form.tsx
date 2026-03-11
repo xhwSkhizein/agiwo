@@ -45,9 +45,8 @@ type AgentFormState = {
   configRoot: string;
   maxSteps: number;
   runTimeout: number;
-  maxContextWindowTokens: number;
-  maxTokensPerRun: number;
-  maxRunTokenCost: string;
+  maxInputTokensPerCall: string;
+  maxRunCost: string;
   enableTerminationSummary: boolean;
   terminationSummaryPrompt: string;
   enableSkill: boolean;
@@ -55,7 +54,8 @@ type AgentFormState = {
   relevantMemoryMaxToken: number;
   streamCleanupTimeout: number;
   compactPrompt: string;
-  maxOutputTokensPerCall: number;
+  maxOutputTokens: number;
+  maxContextWindow: number;
   temperature: number;
   topP: number;
   frequencyPenalty: number;
@@ -77,9 +77,8 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   configRoot: "",
   maxSteps: 10,
   runTimeout: 600,
-  maxContextWindowTokens: 32768,
-  maxTokensPerRun: 131072,
-  maxRunTokenCost: "",
+  maxInputTokensPerCall: "",
+  maxRunCost: "",
   enableTerminationSummary: true,
   terminationSummaryPrompt: "",
   enableSkill: false,
@@ -87,7 +86,8 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   relevantMemoryMaxToken: 2048,
   streamCleanupTimeout: 300,
   compactPrompt: "",
-  maxOutputTokensPerCall: 4096,
+  maxOutputTokens: 4096,
+  maxContextWindow: 200000,
   temperature: 0.7,
   topP: 1.0,
   frequencyPenalty: 0.0,
@@ -126,11 +126,13 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     configRoot: agent.options?.config_root ?? "",
     maxSteps: agent.options?.max_steps ?? 10,
     runTimeout: agent.options?.run_timeout ?? 600,
-    maxContextWindowTokens: agent.options?.max_context_window_tokens ?? 32768,
-    maxTokensPerRun: agent.options?.max_tokens_per_run ?? 131072,
-    maxRunTokenCost:
-      typeof agent.options?.max_run_token_cost === "number"
-        ? String(agent.options.max_run_token_cost)
+    maxInputTokensPerCall:
+      typeof agent.options?.max_input_tokens_per_call === "number"
+        ? String(agent.options.max_input_tokens_per_call)
+        : "",
+    maxRunCost:
+      typeof agent.options?.max_run_cost === "number"
+        ? String(agent.options.max_run_cost)
         : "",
     enableTerminationSummary:
       agent.options?.enable_termination_summary ?? true,
@@ -140,8 +142,8 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     relevantMemoryMaxToken: agent.options?.relevant_memory_max_token ?? 2048,
     streamCleanupTimeout: agent.options?.stream_cleanup_timeout ?? 300,
     compactPrompt: agent.options?.compact_prompt ?? "",
-    maxOutputTokensPerCall:
-      agent.model_params?.max_output_tokens_per_call ?? 4096,
+    maxOutputTokens: agent.model_params?.max_output_tokens ?? 4096,
+    maxContextWindow: agent.model_params?.max_context_window ?? 200000,
     temperature: agent.model_params?.temperature ?? 0.7,
     topP: agent.model_params?.top_p ?? 1.0,
     frequencyPenalty: agent.model_params?.frequency_penalty ?? 0.0,
@@ -234,12 +236,14 @@ export function AgentForm({
         config_root: form.configRoot,
         max_steps: form.maxSteps,
         run_timeout: form.runTimeout,
-        max_context_window_tokens: form.maxContextWindowTokens,
-        max_tokens_per_run: form.maxTokensPerRun,
-        max_run_token_cost:
-          form.maxRunTokenCost.trim() === ""
+        max_input_tokens_per_call:
+          form.maxInputTokensPerCall.trim() === ""
             ? undefined
-            : Number(form.maxRunTokenCost),
+            : Number(form.maxInputTokensPerCall),
+        max_run_cost:
+          form.maxRunCost.trim() === ""
+            ? undefined
+            : Number(form.maxRunCost),
         enable_termination_summary: form.enableTerminationSummary,
         termination_summary_prompt: form.terminationSummaryPrompt,
         enable_skill: form.enableSkill,
@@ -254,7 +258,8 @@ export function AgentForm({
           form.apiKeyEnvName.trim() === ""
             ? undefined
             : form.apiKeyEnvName.trim(),
-        max_output_tokens_per_call: form.maxOutputTokensPerCall,
+        max_output_tokens: form.maxOutputTokens,
+        max_context_window: form.maxContextWindow,
         temperature: form.temperature,
         top_p: form.topP,
         frequency_penalty: form.frequencyPenalty,
@@ -458,40 +463,26 @@ export function AgentForm({
         </div>
         <div>
           <label className="block text-sm text-zinc-400 mb-1.5">
-            Max Context Window Tokens
+            Max Input Tokens Per Call
           </label>
           <input
             type="number"
-            value={form.maxContextWindowTokens}
-            onChange={(e) =>
-              setField("maxContextWindowTokens", Number(e.target.value))
-            }
-            min={256}
+            value={form.maxInputTokensPerCall}
+            onChange={(e) => setField("maxInputTokensPerCall", e.target.value)}
+            min={1}
             max={512000}
+            placeholder="Auto (max_context_window - max_output_tokens)"
             className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
           />
         </div>
         <div>
           <label className="block text-sm text-zinc-400 mb-1.5">
-            Max Tokens Per Run
+            Max Run Cost (USD)
           </label>
           <input
             type="number"
-            value={form.maxTokensPerRun}
-            onChange={(e) => setField("maxTokensPerRun", Number(e.target.value))}
-            min={256}
-            max={512000}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Max Run Token Cost (USD)
-          </label>
-          <input
-            type="number"
-            value={form.maxRunTokenCost}
-            onChange={(e) => setField("maxRunTokenCost", e.target.value)}
+            value={form.maxRunCost}
+            onChange={(e) => setField("maxRunCost", e.target.value)}
             min={0}
             step={0.000001}
             placeholder="Optional"
@@ -609,16 +600,31 @@ export function AgentForm({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className="block text-sm text-zinc-400 mb-1.5">
-            Max Output Tokens Per Call
+            Max Output Tokens
           </label>
           <input
             type="number"
-            value={form.maxOutputTokensPerCall}
+            value={form.maxOutputTokens}
             onChange={(e) =>
-              setField("maxOutputTokensPerCall", Number(e.target.value))
+              setField("maxOutputTokens", Number(e.target.value))
             }
             min={1}
             max={128000}
+            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-zinc-400 mb-1.5">
+            Max Context Window
+          </label>
+          <input
+            type="number"
+            value={form.maxContextWindow}
+            onChange={(e) =>
+              setField("maxContextWindow", Number(e.target.value))
+            }
+            min={1}
+            max={512000}
             className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
           />
         </div>

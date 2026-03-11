@@ -5,13 +5,16 @@ from agiwo.agent.memory_hooks import (
     DefaultMemoryHook,
     create_default_memory_hooks,
 )
+from agiwo.agent.memory_types import MemoryRecord
 from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig
-from agiwo.agent.schema import (
+from agiwo.agent.input import (
     ChannelContext,
     ContentPart,
     ContentType,
     UserInput,
     UserMessage,
+)
+from agiwo.agent.runtime import (
     EventType,
     MessageRole,
     Run,
@@ -23,7 +26,6 @@ from agiwo.agent.schema import (
     StepRecord,
     StreamEvent,
     TerminationReason,
-    MemoryRecord,
 )
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.storage.base import RunStepStorage, InMemoryRunStepStorage

@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from agiwo.embedding import EmbeddingFactory, OpenAIEmbedding
-from agiwo.tool.builtin.config import MemoryConfig
 from agiwo.tool.builtin.retrieval_tool.store import MemoryIndexStore
 
 
@@ -204,8 +203,7 @@ We decided to use PostgreSQL for the following reasons:
 - Alice: Create migration scripts
 """)
 
-        config = MemoryConfig(embedding_provider="disabled")
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
 
         await store.sync_files()
 
@@ -255,8 +253,7 @@ FastAPI was selected for the backend:
 - Set up monitoring
 """)
 
-        config = MemoryConfig(embedding_provider="openai")
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="openai")
 
         await store.sync_files()
 
@@ -281,8 +278,7 @@ FastAPI was selected for the backend:
     async def test_incremental_indexing(self, temp_workspace):
         """Test that incremental indexing works correctly."""
         memory_dir = temp_workspace / "MEMORY"
-        config = MemoryConfig(embedding_provider="disabled")
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
 
         (memory_dir / "notes.md").write_text("Initial content about Python.")
         await store.sync_files()
@@ -307,8 +303,7 @@ FastAPI was selected for the backend:
     async def test_file_deletion_handling(self, temp_workspace):
         """Test that deleted files are removed from index."""
         memory_dir = temp_workspace / "MEMORY"
-        config = MemoryConfig(embedding_provider="disabled")
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
 
         temp_file = memory_dir / "temporary.md"
         temp_file.write_text("Temporary content about Redis caching.")
@@ -344,8 +339,7 @@ FastAPI was selected for the backend:
 - 实现数据同步功能
 """)
 
-        config = MemoryConfig(embedding_provider="disabled")
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
 
         await store.sync_files()
 
@@ -380,8 +374,7 @@ Machine learning applications are everywhere.
             "Unrelated content about gardening tips."
         )
 
-        config = MemoryConfig(embedding_provider="disabled")
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
 
         await store.sync_files()
 
@@ -407,8 +400,7 @@ Machine learning applications are everywhere.
         ])
         (memory_dir / "test.md").write_text(content)
 
-        config = MemoryConfig(embedding_provider="disabled")
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
 
         await store.sync_files()
 

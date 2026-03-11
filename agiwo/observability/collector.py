@@ -5,16 +5,17 @@ Uses middleware pattern to wrap event streams without modifying core execution l
 """
 
 import asyncio
-import json
-from datetime import datetime, timezone
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 from uuid import uuid4
 
-from agiwo.agent.schema import EventType, LLMCallContext, StepRecord, StreamEvent
-from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
-from agiwo.observability.otlp_exporter import get_otlp_exporter
-from agiwo.utils.logging import get_logger
+from agiwo.agent.schema import EventType, StepRecord, StreamEvent
 from agiwo.observability.base import BaseTraceStorage
+from agiwo.observability.span_builder import (
+    build_assistant_step_span,
+    build_tool_step_span,
+)
+from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
+from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -128,16 +129,8 @@ class TraceCollector:
         if self.store:
             try:
                 await self.store.save_trace(trace)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - observability boundary
                 logger.error("trace_save_failed", trace_id=trace.trace_id, error=str(e))
-
-        # Export to OTLP (async, non-blocking)
-        try:
-            exporter = get_otlp_exporter()
-            if exporter.enabled:
-                await exporter.export_trace(trace)
-        except Exception as e:
-            logger.warning("otlp_export_failed", trace_id=trace.trace_id, error=str(e))
 
         # Reset state
         self._trace = None
@@ -167,7 +160,7 @@ class TraceCollector:
 
         try:
             await self.store.save_trace(self._trace)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - observability boundary
             # Log but don't raise - incremental saves should not break execution
             logger.warning(
                 "trace_incremental_save_failed",
@@ -232,228 +225,191 @@ class TraceCollector:
             tuple[Span | None, dict[str, StepRecord]]: (current_span, updated_cache)
         """
 
-        event_type = event.type
+        if event.type == EventType.RUN_STARTED:
+            return self._handle_run_started(event, trace, span_stack, current_span)
+        if event.type == EventType.STEP_COMPLETED:
+            return self._handle_step_completed(
+                event,
+                trace,
+                span_stack,
+                current_span,
+                assistant_step_cache,
+            )
+        if event.type == EventType.RUN_COMPLETED:
+            return self._handle_run_completed(event, trace, span_stack)
+        if event.type == EventType.RUN_FAILED:
+            return self._handle_run_failed(event, span_stack)
+        return current_span, {}
 
-        # === RUN_STARTED ===
-        if event_type == EventType.RUN_STARTED:
-            data = event.data or {}
-            agent_name = event.agent_id or data.get("agent_id") or "agent"
-            is_nested = event.parent_run_id is not None
+    def _handle_run_started(
+        self,
+        event: StreamEvent,
+        trace: Trace,
+        span_stack: dict[str, Span],
+        current_span: Span | None,
+    ) -> tuple[Span | None, dict[str, StepRecord]]:
+        data = event.data or {}
+        agent_name = event.agent_id or data.get("agent_id") or "agent"
 
-            # Check if this is a nested execution
-            if is_nested:
-                # Find parent span for nested execution
-                parent_span = self._find_parent_span_for_nested(
-                    event, span_stack, current_span
-                )
-
-                # Create nested Agent Span
-                span = Span(
-                    trace_id=trace.trace_id,
-                    parent_span_id=parent_span.span_id if parent_span else None,
-                    kind=SpanKind.AGENT,
-                    name=agent_name,
-                    depth=(parent_span.depth + 1) if parent_span else 1,
-                    attributes={
-                        "agent_id": agent_name,
-                        "nested": True,
-                        "parent_run_id": event.parent_run_id,
-                        "session_id": data.get("session_id"),
-                    },
-                    run_id=event.run_id,
-                )
-                trace.add_span(span)
-                span_stack[event.run_id] = span
-                return span, {}
-
-            # Agent span (top-level or nested)
-            parent = current_span
+        if event.parent_run_id is not None:
+            parent_span = self._find_parent_span_for_nested(
+                event,
+                span_stack,
+                current_span,
+            )
             span = Span(
                 trace_id=trace.trace_id,
-                parent_span_id=parent.span_id if parent else None,
+                parent_span_id=parent_span.span_id if parent_span else None,
                 kind=SpanKind.AGENT,
                 name=agent_name,
-                depth=(parent.depth + 1) if parent else 0,
+                depth=(parent_span.depth + 1) if parent_span else 1,
                 attributes={
                     "agent_id": agent_name,
+                    "nested": True,
+                    "parent_run_id": event.parent_run_id,
                     "session_id": data.get("session_id"),
                 },
+                run_id=event.run_id,
             )
-            if not trace.root_span_id:
-                trace.root_span_id = span.span_id
-
             trace.add_span(span)
             span_stack[event.run_id] = span
             return span, {}
 
-        # === STEP_COMPLETED ===
-        elif event_type == EventType.STEP_COMPLETED:
-            if not event.step:
-                return current_span, {}
+        parent = current_span
+        span = Span(
+            trace_id=trace.trace_id,
+            parent_span_id=parent.span_id if parent else None,
+            kind=SpanKind.AGENT,
+            name=agent_name,
+            depth=(parent.depth + 1) if parent else 0,
+            attributes={
+                "agent_id": agent_name,
+                "session_id": data.get("session_id"),
+            },
+            run_id=event.run_id,
+        )
+        if not trace.root_span_id:
+            trace.root_span_id = span.span_id
 
-            step = event.step
-            updated_cache = {}
+        trace.add_span(span)
+        span_stack[event.run_id] = span
+        return span, {}
 
-            # Cache Assistant Step for tool call parameter extraction
-            if step.role.value == "assistant" and step.tool_calls:
-                for tool_call in step.tool_calls:
-                    tool_call_id = tool_call.get("id")
-                    if tool_call_id:
-                        updated_cache[tool_call_id] = step
+    def _handle_step_completed(
+        self,
+        event: StreamEvent,
+        trace: Trace,
+        span_stack: dict[str, Span],
+        current_span: Span | None,
+        assistant_step_cache: dict[str, StepRecord],
+    ) -> tuple[Span | None, dict[str, StepRecord]]:
+        if not event.step:
+            return current_span, {}
 
-            if step.role.value == "tool":
-                # Tool call Span - use Step timestamps
-                start_time, end_time, duration_ms = self._extract_step_times(step)
+        step = event.step
+        updated_cache = self._cache_assistant_tool_calls(step)
 
-                (
-                    parent_span_id,
-                    _parent_span,
-                    parent_depth,
-                ) = self._resolve_parent_span(step, span_stack, current_span)
+        if step.role.value == "tool":
+            return self._handle_tool_step_completed(
+                step,
+                trace,
+                span_stack,
+                current_span,
+                assistant_step_cache,
+                updated_cache,
+            )
+        if step.role.value == "assistant":
+            return self._handle_assistant_step_completed(
+                step,
+                event,
+                trace,
+                span_stack,
+                current_span,
+                updated_cache,
+            )
+        return current_span, updated_cache
 
-                # Extract tool input arguments from Assistant Step
-                tool_input_args = {}
-                if step.tool_call_id:
-                    assistant_step = assistant_step_cache.get(step.tool_call_id)
-                    if assistant_step and assistant_step.tool_calls:
-                        # Find matching tool_call in Assistant Step
-                        for tc in assistant_step.tool_calls:
-                            if tc.get("id") == step.tool_call_id:
-                                fn_args_str = tc.get("function", {}).get(
-                                    "arguments", "{}"
-                                )
-                                try:
-                                    if isinstance(fn_args_str, str):
-                                        tool_input_args = json.loads(fn_args_str)
-                                    else:
-                                        tool_input_args = fn_args_str or {}
-                                except json.JSONDecodeError:
-                                    tool_input_args = {}
-                                break
+    def _handle_tool_step_completed(
+        self,
+        step: StepRecord,
+        trace: Trace,
+        span_stack: dict[str, Span],
+        current_span: Span | None,
+        assistant_step_cache: dict[str, StepRecord],
+        updated_cache: dict[str, StepRecord],
+    ) -> tuple[Span | None, dict[str, StepRecord]]:
+        span = build_tool_step_span(
+            trace_id=trace.trace_id,
+            step=step,
+            assistant_step_cache=assistant_step_cache,
+            span_stack=span_stack,
+            current_span=current_span,
+        )
+        trace.add_span(span)
+        return current_span, updated_cache
 
-                # Build tool_details
-                tool_details = self._build_tool_details(step, tool_input_args)
+    def _handle_assistant_step_completed(
+        self,
+        step: StepRecord,
+        event: StreamEvent,
+        trace: Trace,
+        span_stack: dict[str, Span],
+        current_span: Span | None,
+        updated_cache: dict[str, StepRecord],
+    ) -> tuple[Span | None, dict[str, StepRecord]]:
+        span = build_assistant_step_span(
+            trace_id=trace.trace_id,
+            step=step,
+            llm=event.llm,
+            span_stack=span_stack,
+            current_span=current_span,
+            preview_length=self.PREVIEW_LENGTH,
+        )
+        trace.add_span(span)
+        return current_span, updated_cache
 
-                # Determine status
-                is_error = step.content and step.content.startswith("Error:")
-                status = SpanStatus.ERROR if is_error else SpanStatus.OK
-                error_message = step.content if is_error else None
+    def _handle_run_completed(
+        self,
+        event: StreamEvent,
+        trace: Trace,
+        span_stack: dict[str, Span],
+    ) -> tuple[Span | None, dict[str, StepRecord]]:
+        span = span_stack.get(event.run_id)
+        if span:
+            response = event.data.get("response") if event.data else None
+            span.complete(
+                status=SpanStatus.OK,
+                output_preview=response[: self.PREVIEW_LENGTH]
+                if response
+                else None,
+            )
+            trace.final_output = response
+        return span_stack.get(event.run_id), {}
 
-                span = Span(
-                    trace_id=trace.trace_id,
-                    parent_span_id=parent_span_id,
-                    kind=SpanKind.TOOL_CALL,
-                    name=step.name or "tool",
-                    depth=parent_depth + 1,
-                    attributes={
-                        "tool_name": step.name,
-                        "tool_call_id": step.tool_call_id,
-                        "tool_id": step.tool_call_id,
-                    },
-                    tool_details=tool_details,
-                    step_id=step.id,
-                    run_id=step.run_id,
-                    start_time=start_time,
-                    end_time=end_time,
-                    duration_ms=duration_ms
-                    or (step.metrics.duration_ms if step.metrics else None),
-                    status=status,
-                    error_message=error_message,
-                )
+    def _handle_run_failed(
+        self,
+        event: StreamEvent,
+        span_stack: dict[str, Span],
+    ) -> tuple[Span | None, dict[str, StepRecord]]:
+        span = span_stack.get(event.run_id)
+        if span:
+            error = event.data.get("error") if event.data else "Unknown error"
+            span.complete(status=SpanStatus.ERROR, error_message=error)
+        return span_stack.get(event.run_id), {}
 
-                if step.metrics:
-                    span.metrics = {
-                        "tool.exec_time_ms": step.metrics.duration_ms,
-                        "duration_ms": span.duration_ms,
-                    }
+    def _cache_assistant_tool_calls(
+        self,
+        step: StepRecord,
+    ) -> dict[str, StepRecord]:
+        if step.role.value != "assistant" or not step.tool_calls:
+            return {}
 
-                trace.add_span(span)
-                return current_span, updated_cache
-
-            elif step.role.value == "assistant":
-                # LLM call Span - use Step timestamps and context
-                start_time, end_time, duration_ms = self._extract_step_times(step)
-
-                (
-                    parent_span_id,
-                    _parent_span,
-                    parent_depth,
-                ) = self._resolve_parent_span(step, span_stack, current_span)
-
-                # Build name
-                name = (
-                    step.metrics.model_name
-                    if step.metrics and step.metrics.model_name
-                    else "llm"
-                )
-
-                span = Span(
-                    trace_id=trace.trace_id,
-                    parent_span_id=parent_span_id,
-                    kind=SpanKind.LLM_CALL,
-                    name=name,
-                    depth=parent_depth + 1,
-                    attributes={
-                        "model_name": step.metrics.model_name if step.metrics else None,
-                        "provider": step.metrics.provider if step.metrics else None,
-                        "has_tool_calls": bool(step.tool_calls),
-                    },
-                    step_id=step.id,
-                    run_id=step.run_id,
-                    start_time=start_time,
-                    end_time=end_time,
-                    duration_ms=duration_ms,
-                    status=SpanStatus.OK,
-                    output_preview=step.content[: self.PREVIEW_LENGTH]
-                    if step.content
-                    else None,
-                    llm_details=self._build_llm_details(step, event.llm),
-                )
-
-                if step.metrics:
-                    span.metrics = {
-                        "tokens.input": step.metrics.input_tokens,
-                        "tokens.output": step.metrics.output_tokens,
-                        "tokens.total": step.metrics.total_tokens,
-                        "tokens.cache_read": step.metrics.cache_read_tokens,
-                        "tokens.cache_creation": step.metrics.cache_creation_tokens,
-                        "first_token_ms": step.metrics.first_token_latency_ms,
-                        "duration_ms": duration_ms,
-                        "model": step.metrics.model_name,
-                        "provider": step.metrics.provider,
-                    }
-
-                if span.end_time:
-                    span.complete(status=SpanStatus.OK)
-
-                trace.add_span(span)
-                return current_span, updated_cache
-            else:
-                return current_span, updated_cache
-
-        # === RUN_COMPLETED ===
-        elif event_type == EventType.RUN_COMPLETED:
-            span = span_stack.get(event.run_id)
-            if span:
-                response = event.data.get("response") if event.data else None
-                span.complete(
-                    status=SpanStatus.OK,
-                    output_preview=response[: self.PREVIEW_LENGTH]
-                    if response
-                    else None,
-                )
-                trace.final_output = response
-            return span_stack.get(event.run_id), {}
-
-        # === RUN_FAILED ===
-        elif event_type == EventType.RUN_FAILED:
-            span = span_stack.get(event.run_id)
-            if span:
-                error = event.data.get("error") if event.data else "Unknown error"
-                span.complete(status=SpanStatus.ERROR, error_message=error)
-            return span_stack.get(event.run_id), {}
-
-        return current_span, {}
+        updated_cache: dict[str, StepRecord] = {}
+        for tool_call in step.tool_calls:
+            tool_call_id = tool_call.get("id")
+            if tool_call_id:
+                updated_cache[tool_call_id] = step
+        return updated_cache
 
     def _find_parent_span_for_nested(
         self,
@@ -490,195 +446,4 @@ class TraceCollector:
 
         return None
 
-    def _normalize_time(self, value: datetime | None) -> datetime | None:
-        if value and value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value
-
-    def _extract_step_times(
-        self, step: StepRecord
-    ) -> tuple[datetime | None, datetime | None, float | None]:
-        start_time = (
-            step.metrics.start_at if step.metrics and step.metrics.start_at else None
-        ) or step.created_at
-        end_time = step.metrics.end_at if step.metrics else None
-        duration_ms = step.metrics.duration_ms if step.metrics else None
-        return (
-            self._normalize_time(start_time),
-            self._normalize_time(end_time),
-            duration_ms,
-        )
-
-    def _resolve_parent_span(
-        self,
-        step: StepRecord,
-        span_stack: dict[str, Span],
-        current_span: Span | None,
-    ) -> tuple[str | None, Span | None, int]:
-        parent_span_id: str | None = None
-
-        run_span = span_stack.get(step.run_id)
-        if run_span:
-            parent_span_id = run_span.span_id
-
-        if not parent_span_id and step.parent_run_id:
-            parent_agent_span = span_stack.get(step.parent_run_id)
-            if parent_agent_span:
-                parent_span_id = parent_agent_span.span_id
-
-        if not parent_span_id and current_span:
-            parent_span_id = current_span.span_id
-
-        parent = None
-        if parent_span_id:
-            for span in span_stack.values():
-                if span.span_id == parent_span_id:
-                    parent = span
-                    break
-        if not parent:
-            parent = span_stack.get(step.run_id) or current_span
-        parent_depth = parent.depth if parent else 0
-        return parent_span_id, parent, parent_depth
-
-    def _build_tool_details(
-        self,
-        tool_step: StepRecord,
-        input_args: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Build complete tool call details from Tool Step and input arguments."""
-        is_error = tool_step.content and tool_step.content.startswith("Error:")
-
-        details: dict[str, Any] = {
-            "tool_name": tool_step.name,
-            "tool_id": tool_step.tool_call_id,
-            "tool_call_id": tool_step.tool_call_id,
-            "input_args": input_args,  # Complete arguments, not truncated
-            "output": tool_step.content,  # Complete execution result, not truncated
-            "content_for_user": tool_step.content_for_user,
-            "error": tool_step.content if is_error else None,
-            "status": "error" if is_error else "completed",
-        }
-
-        # Add metrics if available
-        if tool_step.metrics:
-            details["metrics"] = {
-                "duration_ms": tool_step.metrics.duration_ms,
-            }
-
-        return details
-
-    def _build_llm_details(
-        self, step: StepRecord, llm: LLMCallContext | None
-    ) -> dict[str, Any]:
-        """Build complete LLM call details from Step and LLM context."""
-        if not llm:
-            return {}
-
-        details: dict[str, Any] = {
-            "request": llm.request_params or {},
-            "messages": llm.messages,
-            "tools": llm.tools,
-            "response_content": step.content,
-            "response_tool_calls": step.tool_calls,
-            "finish_reason": llm.finish_reason,
-            "status": "completed",
-        }
-
-        # Add metrics if available
-        if step.metrics:
-            details["metrics"] = {
-                "duration_ms": step.metrics.duration_ms,
-                "first_token_ms": step.metrics.first_token_latency_ms,
-                "input_tokens": step.metrics.input_tokens,
-                "output_tokens": step.metrics.output_tokens,
-                "total_tokens": step.metrics.total_tokens,
-                "cache_read_tokens": step.metrics.cache_read_tokens,
-                "cache_creation_tokens": step.metrics.cache_creation_tokens,
-            }
-
-        return details
-
-
-def create_collector(store=None) -> TraceCollector:
-    """Create TraceCollector instance"""
-    return TraceCollector(store)
-
-
-class InMemoryTraceStorage(BaseTraceStorage):
-    """
-    In-memory implementation of BaseTraceStorage.
-
-    Simple memory-only storage with ring buffer for real-time access.
-    No persistence - traces are lost when process exits.
-    """
-
-    def __init__(self, buffer_size: int = 200) -> None:
-        from collections import deque
-
-        self._buffer: deque[Trace] = deque(maxlen=buffer_size)
-        self._subscribers: list[asyncio.Queue] = []
-        self._initialized = True  # No async init needed
-
-    async def initialize(self) -> None:
-        """No-op for in-memory storage."""
-        pass
-
-    async def save_trace(self, trace: Trace) -> None:
-        """Save trace to in-memory buffer."""
-        self._buffer.append(trace)
-        # Notify subscribers
-        for queue in self._subscribers:
-            try:
-                queue.put_nowait(trace)
-            except asyncio.QueueFull:
-                pass
-
-    async def get_trace(self, trace_id: str) -> Trace | None:
-        """Get a trace by ID from buffer."""
-        for trace in self._buffer:
-            if trace.trace_id == trace_id:
-                return trace
-        return None
-
-    async def query_traces(self, query) -> list[Trace]:
-        """Query traces from buffer (limited filtering)."""
-        from agiwo.observability.base import TraceQuery
-
-        if isinstance(query, dict):
-            query = TraceQuery(**query)
-
-        results = list(self._buffer)
-
-        if query.agent_id:
-            results = [t for t in results if t.agent_id == query.agent_id]
-        if query.session_id:
-            results = [t for t in results if t.session_id == query.session_id]
-        if query.user_id:
-            results = [t for t in results if t.user_id == query.user_id]
-        if query.status:
-            results = [t for t in results if t.status == query.status]
-
-        return results[: query.limit]
-
-    def get_recent(self, limit: int = 20) -> list[Trace]:
-        """Get recent traces from buffer."""
-        return list(self._buffer)[-limit:]
-
-    def subscribe(self) -> asyncio.Queue:
-        """Subscribe to real-time trace updates."""
-        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-        self._subscribers.append(queue)
-        return queue
-
-    def unsubscribe(self, queue: asyncio.Queue) -> None:
-        """Unsubscribe from updates."""
-        if queue in self._subscribers:
-            self._subscribers.remove(queue)
-
-    async def close(self) -> None:
-        """Clear buffer and subscribers."""
-        self._buffer.clear()
-        self._subscribers.clear()
-
-
-__all__ = ["TraceCollector", "create_collector", "InMemoryTraceStorage"]
+__all__ = ["TraceCollector"]

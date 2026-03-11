@@ -82,7 +82,7 @@ class Span(BaseModel):
     llm_details: dict[str, Any] | None = Field(default=None)
     # When kind == LLM_CALL, contains complete LLM call information:
     # {
-    #   "request": {...},           # Request parameters (temperature, max_tokens, etc.)
+    #   "request": {...},           # Request parameters (temperature, max_output_tokens, etc.)
     #   "messages": [...],          # Complete message list sent to LLM
     #   "tools": [...],             # Tool definitions
     #   "response_content": "...",   # Complete response content
@@ -191,10 +191,13 @@ class Trace(BaseModel):
 
     # === Aggregated Metrics ===
     total_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
     total_llm_calls: int = 0
     total_tool_calls: int = 0
     total_cache_read_tokens: int = 0
     total_cache_creation_tokens: int = 0
+    total_token_cost: float = 0.0
     max_depth: int = 0
 
     # === Input/Output ===
@@ -210,9 +213,12 @@ class Trace(BaseModel):
         if span.kind == SpanKind.LLM_CALL:
             self.total_llm_calls += 1
             if span.metrics:
-                self.total_tokens += span.metrics.get("tokens.total", 0) or span.metrics.get("total_tokens", 0)
-                self.total_cache_read_tokens += span.metrics.get("tokens.cache_read", 0) or span.metrics.get("cache_read_tokens", 0)
-                self.total_cache_creation_tokens += span.metrics.get("tokens.cache_creation", 0) or span.metrics.get("cache_creation_tokens", 0)
+                self.total_tokens += int(span.metrics.get("tokens.total", 0) or 0)
+                self.total_input_tokens += int(span.metrics.get("tokens.input", 0) or 0)
+                self.total_output_tokens += int(span.metrics.get("tokens.output", 0) or 0)
+                self.total_cache_read_tokens += int(span.metrics.get("tokens.cache_read", 0) or 0)
+                self.total_cache_creation_tokens += int(span.metrics.get("tokens.cache_creation", 0) or 0)
+                self.total_token_cost += float(span.metrics.get("token_cost", 0.0) or 0.0)
         elif span.kind == SpanKind.TOOL_CALL:
             self.total_tool_calls += 1
 

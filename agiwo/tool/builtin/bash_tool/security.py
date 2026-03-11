@@ -1,7 +1,5 @@
 """Command safety checks for BashTool."""
 
-from __future__ import annotations
-
 import fnmatch
 import inspect
 import re

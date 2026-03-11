@@ -106,7 +106,7 @@ class AgentTool(BaseTool):
                 f"Maximum nesting depth ({self.max_depth}) exceeded. "
                 f"Current call chain: {' -> '.join(call_stack)} -> {self._agent.name}"
             )
-            return ToolResult.error(
+            return ToolResult.failed(
                 tool_name=self.get_name(),
                 error=error_msg,
                 tool_call_id=toolcall_id,
@@ -120,7 +120,7 @@ class AgentTool(BaseTool):
                 f"Circular reference detected: {self._agent.name} is in call stack. "
                 f"Current call chain: {' -> '.join(call_stack)}"
             )
-            return ToolResult.error(
+            return ToolResult.failed(
                 tool_name=self.get_name(),
                 error=error_msg,
                 tool_call_id=toolcall_id,
@@ -155,23 +155,28 @@ class AgentTool(BaseTool):
         except MaxDepthExceededError as e:
             error = str(e)
             response_text = f"Max depth exceeded: {error}"
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             error = str(e)
             response_text = f"Error executing {self._agent.name}: {error}"
 
-        end_time = time.time()
+        if error is not None:
+            return ToolResult.failed(
+                tool_name=self.get_name(),
+                error=error,
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args={"task": task, "context": extra_context},
+                start_time=start_time,
+                content=response_text,
+                output=response_text,
+            )
 
-        return ToolResult(
+        return ToolResult.success(
             tool_name=self.get_name(),
-            tool_call_id=parameters.get("tool_call_id", ""),
+            tool_call_id=str(parameters.get("tool_call_id", "")),
             input_args={"task": task, "context": extra_context},
             content=response_text,
             output=response_text,
-            error=error,
             start_time=start_time,
-            end_time=end_time,
-            duration=end_time - start_time,
-            is_success=error is None,
         )
 
 

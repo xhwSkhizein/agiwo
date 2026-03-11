@@ -15,13 +15,14 @@ Usage:
         print(event)
 """
 
-import time
 import asyncio
+import copy
+import time
 from pathlib import Path
 from typing import AsyncIterator
 from uuid import uuid4
 
-import itertools
+import secrets
 
 from agiwo.agent.schema import (
     UserInput,
@@ -30,6 +31,7 @@ from agiwo.agent.schema import (
 )
 from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
 from agiwo.agent.inner.event_emitter import EventEmitter
+from agiwo.agent.inner.run_payloads import build_run_completed_event_data
 from agiwo.agent.inner.storage_sink import StorageSink
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.agent.inner.system_prompt_builder import DefaultSystemPromptBuilder
@@ -40,7 +42,6 @@ from agiwo.llm.base import Model
 from agiwo.skill.manager import SkillManager
 from agiwo.tool.base import BaseTool
 from agiwo.tool.builtin.registry import DEFAULT_TOOLS
-from agiwo.tool.builtin.config import MemoryConfig
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.schema import Run, RunOutput, RunStatus, StreamEvent, StepRecord
 from agiwo.agent.storage.base import RunStepStorage
@@ -50,6 +51,7 @@ from agiwo.observability.collector import TraceCollector
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.agent.inner.executor import AgentExecutor
 from agiwo.agent.options import AgentOptions
+from agiwo.tool.builtin.bash_tool import ensure_bash_tool_pair
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -107,7 +109,7 @@ class Agent:
         self.description = description
         self.model = model
         # 合并传入的 tools 和 DEFAULT_TOOLS，用户传入的优先，同名工具不重复
-        tools = tools or []
+        tools = ensure_bash_tool_pair(tools or [])
         user_tool_names = {t.get_name() for t in tools}
         default_tools = [cls() for name, cls in DEFAULT_TOOLS.items() if name not in user_tool_names]
         self.tools = tools + default_tools
@@ -116,11 +118,10 @@ class Agent:
 
         # 自动注入默认 memory retrieve hook（如果用户未提供）
         if self.hooks.on_memory_retrieve is None:
-            memory_config = MemoryConfig(
+            memory_hook = DefaultMemoryHook(
                 embedding_provider="auto",
                 top_k=5,
             )
-            memory_hook = DefaultMemoryHook(memory_config)
             self.hooks.on_memory_retrieve = memory_hook.retrieve_memories
             logger.debug("default_memory_hook_injected", agent_id=self.id)
 
@@ -165,19 +166,49 @@ class Agent:
             return self._system_prompt
         return await self._prompt_builder.get_system_prompt()
 
+    async def derive_child(
+        self,
+        *,
+        child_id: str,
+        instruction: str | None = None,
+        system_prompt_override: str | None = None,
+        exclude_tool_names: set[str] | None = None,
+    ) -> "Agent":
+        """Create a child agent inheriting the current agent's effective configuration."""
+        child_options = copy.deepcopy(self.options) if self.options else None
+        if child_options is not None:
+            child_options.enable_termination_summary = True
+
+        system_prompt = system_prompt_override or await self.get_effective_system_prompt()
+        if instruction:
+            system_prompt += (
+                f"\n\n<task-instruction>\n{instruction}\n</task-instruction>"
+            )
+
+        tools = self.tools
+        if exclude_tool_names:
+            tools = [tool for tool in self.tools if tool.get_name() not in exclude_tool_names]
+
+        return Agent(
+            name=self.name,
+            description=self.description,
+            model=self.model,
+            id=child_id,
+            tools=tools,
+            system_prompt=system_prompt,
+            options=child_options,
+            hooks=self.hooks,
+        )
+
     @property
     def system_prompt(self) -> str | None:
         """Get the built system prompt (available after first execution)."""
         return self._system_prompt
 
-    # Class-level counter for generating sequential agent IDs per name
-    _instance_counters: dict[str, itertools.count] = {}
-
     def _generate_default_id(self) -> str:
-        """Generate semantic default ID: name + counter sequence for readability."""
-        counter = Agent._instance_counters.setdefault(self.name, itertools.count(1))
-        seq = next(counter)
-        return f"{self.name}-{seq:03d}"
+        """Generate semantic default ID: name + short random hex suffix."""
+        suffix = secrets.token_hex(3)
+        return f"{self.name}-{suffix}"
 
     def _create_session_storage(self) -> SessionStorage:
         """Create SessionStorage based on RunStepStorage configuration."""
@@ -414,21 +445,7 @@ class Agent:
             if self.hooks.on_memory_write and result.response:
                 await self.hooks.on_memory_write(user_input, result, context)
 
-            # Emit RUN_COMPLETED
-            metrics = result.metrics
-            data: dict = {
-                "response": result.response or "",
-                "metrics": {
-                    "duration": metrics.duration_ms if metrics else 0,
-                    "total_tokens": metrics.total_tokens if metrics else 0,
-                    "input_tokens": metrics.input_tokens if metrics else 0,
-                    "output_tokens": metrics.output_tokens if metrics else 0,
-                    "tool_calls_count": metrics.tool_calls_count if metrics else 0,
-                },
-            }
-            if result.termination_reason:
-                data["termination_reason"] = result.termination_reason
-            await emitter.emit_run_completed(data)
+            await emitter.emit_run_completed(build_run_completed_event_data(result))
             return result
 
         except Exception as e:
@@ -524,7 +541,7 @@ class Agent:
                     await task
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 logger.warning("stream_task_cancelled_timeout", agent_id=self.id)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - cleanup boundary
                 logger.error("stream_task_cleanup_error", error=str(e))
 
         if task.done() and not task.cancelled():
@@ -546,10 +563,10 @@ class Agent:
                 await task
             except asyncio.CancelledError:
                 return
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - cleanup boundary
                 logger.error("stream_drain_task_cleanup_error", error=str(e))
                 return
         except asyncio.CancelledError:
             return
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - cleanup boundary
             logger.error("stream_drain_task_failed", error=str(e), exc_info=True)

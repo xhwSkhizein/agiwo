@@ -96,7 +96,7 @@ class SkillTool(BaseTool):
         skill_name = parameters.get("skill_name")
 
         if not skill_name:
-            return ToolResult.error(
+            return ToolResult.failed(
                 tool_name=self.name,
                 error="Missing required parameter: skill_name",
                 tool_call_id=parameters.get("tool_call_id", ""),
@@ -105,7 +105,7 @@ class SkillTool(BaseTool):
             )
 
         if not isinstance(skill_name, str):
-            return ToolResult.error(
+            return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Invalid skill_name type: expected string, got {type(skill_name)}",
                 tool_call_id=parameters.get("tool_call_id", ""),
@@ -116,7 +116,7 @@ class SkillTool(BaseTool):
         # Check if skill exists
         metadata = self.registry.get_metadata(skill_name)
         if not metadata:
-            return ToolResult.error(
+            return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Skill '{skill_name}' not found. Available skills: {', '.join(self.registry.list_available())}",
                 tool_call_id=parameters.get("tool_call_id", ""),
@@ -131,15 +131,13 @@ class SkillTool(BaseTool):
             # Resolve {baseDir} variable (already done in load_skill, but ensure)
             resolved_body = self.loader.resolve_base_dir(skill_name, skill_content.body)
 
-            end_time = time.time()
-
             logger.info(
                 "skill_activated",
                 skill_name=skill_name,
-                duration_ms=(end_time - start_time) * 1000,
+                duration_ms=(time.time() - start_time) * 1000,
             )
 
-            return ToolResult(
+            return ToolResult.success(
                 tool_name=self.name,
                 tool_call_id=parameters.get("tool_call_id", ""),
                 input_args=parameters,
@@ -149,27 +147,24 @@ class SkillTool(BaseTool):
                     "skill_name": skill_name,
                     "metadata": metadata.model_dump(),
                 },
-                is_success=True,
                 start_time=start_time,
-                end_time=end_time,
-                duration=end_time - start_time,
             )
 
         except SkillNotFoundError as e:
-            return ToolResult.error(
+            return ToolResult.failed(
                 tool_name=self.name,
                 error=str(e),
                 tool_call_id=parameters.get("tool_call_id", ""),
                 input_args=parameters,
                 start_time=start_time,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(
                 "skill_activation_failed",
                 skill_name=skill_name,
                 error=str(e),
             )
-            return ToolResult.error(
+            return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Failed to activate skill '{skill_name}': {e}",
                 tool_call_id=parameters.get("tool_call_id", ""),

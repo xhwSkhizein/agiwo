@@ -1,96 +1,57 @@
-"""
-Chat API router — real-time Agent conversation via SSE.
-"""
+"""Chat API router — real-time Agent conversation via SSE."""
 
-import json
-from typing import Any
-from uuid import uuid4
+from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
-from server.dependencies import get_agent_registry, get_console_config, get_storage_manager
+from agiwo.agent.agent import Agent
+
+from server.dependencies import ConsoleRuntime, ConsoleRuntimeDep
+from server.domain.sessions import session_aggregate_to_chat_summary
 from server.schemas import ChatRequest
-from server.services.agent_builder import build_agent, serialize_event
+from server.services.conversation_sse import (
+    create_conversation_response,
+    stream_event_message,
+)
+from server.services.session_summary import collect_session_aggregates
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
+async def _stream_chat_events(
+    runtime: ConsoleRuntime,
+    agent: Agent,
+    message: str,
+    session_id: str,
+) -> AsyncIterator[dict[str, str]]:
+    del runtime
+    async for event in agent.run_stream(message, session_id=session_id):
+        yield stream_event_message(event)
+
+
 @router.post("/{agent_id}")
-async def chat(agent_id: str, body: ChatRequest) -> EventSourceResponse:
-    """
-    Send a message to an agent and stream the response via SSE.
-
-    The response streams StreamEvent objects in real-time, including:
-    - step_delta: Token-by-token content
-    - step_completed: Completed assistant/tool steps
-    - run_started / run_completed / run_failed: Lifecycle events
-    """
-    registry = get_agent_registry()
-    agent_config = await registry.get_agent(agent_id)
-    if agent_config is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
-    console_config = get_console_config()
-    try:
-        agent = await build_agent(agent_config, console_config, registry)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    session_id = body.session_id or str(uuid4())
-
-    async def event_generator():
-        try:
-            async for event in agent.run_stream(
-                body.message,
-                session_id=session_id,
-            ):
-                yield {"event": event.type.value, "data": serialize_event(event)}
-        except Exception as e:
-            yield {"event": "error", "data": json.dumps({"error": str(e)})}
-        finally:
-            await agent.close()
-
-    return EventSourceResponse(event_generator())
+async def chat(
+    agent_id: str,
+    body: ChatRequest,
+    runtime: ConsoleRuntimeDep,
+) -> EventSourceResponse:
+    """Send a message to an agent and stream the response via SSE."""
+    return await create_conversation_response(
+        agent_id,
+        body.message,
+        body.session_id,
+        runtime,
+        _stream_chat_events,
+    )
 
 
 @router.get("/{agent_id}/sessions")
-async def list_agent_sessions(agent_id: str):
+async def list_agent_sessions(
+    agent_id: str,
+    runtime: ConsoleRuntimeDep,
+):
     """Get conversation sessions for a specific agent."""
-    storage = get_storage_manager().run_step_storage
-    runs = await storage.list_runs(limit=500)
-
-    session_map: dict[str, dict[str, Any]] = {}
-    for run in runs:
-        if run.agent_id != agent_id:
-            continue
-        sid = run.session_id
-        if sid not in session_map:
-            session_map[sid] = {
-                "session_id": sid,
-                "runs": [],
-                "last_input": None,
-                "last_response": None,
-                "updated_at": None,
-            }
-        session_map[sid]["runs"].append(run)
-        if run.user_input:
-            session_map[sid]["last_input"] = (
-                run.user_input if isinstance(run.user_input, str) else str(run.user_input)
-            )
-        if run.response_content:
-            session_map[sid]["last_response"] = run.response_content
-        if run.updated_at:
-            if session_map[sid]["updated_at"] is None or run.updated_at > session_map[sid]["updated_at"]:
-                session_map[sid]["updated_at"] = run.updated_at
-
-    sessions = sorted(session_map.values(), key=lambda s: s["updated_at"] or "", reverse=True)
-    return [
-        {
-            "session_id": s["session_id"],
-            "run_count": len(s["runs"]),
-            "last_input": s["last_input"][:200] if s["last_input"] else None,
-            "last_response": s["last_response"][:200] if s["last_response"] else None,
-            "updated_at": s["updated_at"].isoformat() if hasattr(s["updated_at"], "isoformat") else str(s["updated_at"]) if s["updated_at"] else None,
-        }
-        for s in sessions
-    ]
+    storage = runtime.storage_manager.run_step_storage
+    sessions = await collect_session_aggregates(storage, agent_id=agent_id)
+    return [session_aggregate_to_chat_summary(session) for session in sessions]

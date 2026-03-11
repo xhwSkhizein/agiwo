@@ -4,10 +4,30 @@ Global settings from environment variables.
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
-from pydantic import AliasChoices, Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+ModelProvider = Literal[
+    "openai",
+    "openai-compatible",
+    "deepseek",
+    "anthropic",
+    "anthropic-compatible",
+    "nvidia",
+    "bedrock-anthropic",
+]
+
+ALL_MODEL_PROVIDERS: tuple[str, ...] = get_args(ModelProvider)
+COMPATIBLE_MODEL_PROVIDERS = frozenset({"openai-compatible", "anthropic-compatible"})
+_PROVIDER_DEFAULT_MODEL_NAME_ATTRS: dict[str, str] = {
+    "openai": "openai_model_name",
+    "deepseek": "deepseek_model_name",
+    "anthropic": "anthropic_model_name",
+    "nvidia": "nvidia_model_name",
+}
 
 
 class AgiwoSettings(BaseSettings):
@@ -27,11 +47,12 @@ class AgiwoSettings(BaseSettings):
         protected_namespaces=(),
     )
 
-    # Core settings
+    # === Core ===
     debug: bool = False
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_json: bool = False
 
+    # === Paths / Storage ===
     # Root path - all other paths are relative to this unless absolute
     root_path: str = ".agiwo"
 
@@ -49,7 +70,7 @@ class AgiwoSettings(BaseSettings):
     trace_collection_name: str | None = "agiwo_traces"
     trace_buffer_size: int = 200
 
-    # Model Provider Settings
+    # === Provider Defaults ===
     # OpenAI
     openai_api_key: SecretStr | None = Field(
         default=None,
@@ -104,16 +125,8 @@ class AgiwoSettings(BaseSettings):
         validation_alias=AliasChoices("AWS_PROFILE"),
     )
 
-    # Tool model defaults
-    tool_default_model_provider: Literal[
-        "openai",
-        "openai-compatible",
-        "deepseek",
-        "anthropic",
-        "anthropic-compatible",
-        "nvidia",
-        "bedrock-anthropic",
-    ] = Field(
+    # === Tool Model Defaults ===
+    tool_default_model_provider: ModelProvider = Field(
         default="deepseek",
         validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_PROVIDER"),
     )
@@ -147,7 +160,7 @@ class AgiwoSettings(BaseSettings):
         validation_alias=AliasChoices("AGIWO_TOOL_DEFAULT_MODEL_MAX_TOKENS"),
     )
 
-    # Observability - OTLP Export
+    # === Observability / OTLP ===
     otlp_enabled: bool = False
     otlp_endpoint: str | None = None  # e.g., "http://localhost:4317" for gRPC
     otlp_protocol: Literal["grpc", "http"] = "grpc"
@@ -156,7 +169,7 @@ class AgiwoSettings(BaseSettings):
         default=1.0, ge=0.0, le=1.0
     )  # 1.0 = 100% sampling
 
-    # Embedding settings
+    # === Embedding ===
     embedding_provider: str = "auto"  # openai | openai-like | local | auto | disabled
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
@@ -173,7 +186,7 @@ class AgiwoSettings(BaseSettings):
         validation_alias=AliasChoices("AGIWO_LOCAL_EMBEDDING_MODEL_PATH"),
     )
 
-    # Memory retrieval settings
+    # === Memory Retrieval ===
     memory_chunk_tokens: int = 400
     memory_chunk_overlap: int = 80
     memory_top_k: int = 5
@@ -184,7 +197,7 @@ class AgiwoSettings(BaseSettings):
     memory_mmr_enabled: bool = False
     memory_mmr_lambda: float = 0.5
 
-    # Builtin tools settings
+    # === Builtin Tools ===
     web_search_api_base_url: str = Field(
         default="https://google.serper.dev",
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_SEARCH_API_BASE_URL"),
@@ -220,6 +233,7 @@ class AgiwoSettings(BaseSettings):
         validation_alias=AliasChoices("AGIWO_TOOL_WEB_READER_API_MAX_CONTENT_LENGTH"),
     )
 
+    # === Skills ===
     # Skills configuration (paths relative to root_path if not absolute)
     skills_dirs: list[str] = Field(
         default_factory=lambda: ["examples/skills", "skills"],
@@ -227,7 +241,7 @@ class AgiwoSettings(BaseSettings):
     )
     is_skills_enabled: bool = True
 
-    # Scheduler pending-event debounce settings
+    # === Scheduler ===
     event_debounce_min_count: int = Field(
         default=1,
         description="Minimum number of pending events to trigger a debounce wake",
@@ -237,12 +251,12 @@ class AgiwoSettings(BaseSettings):
         description="Maximum seconds to wait before triggering a debounce wake regardless of count",
     )
 
-    # Context Compact settings
+    # === Compact ===
     compact_threshold_ratio: float = Field(
         default=0.9,
         ge=0.1,
         le=1.0,
-        description="Trigger compact when context tokens reach this ratio of max_context_window_tokens",
+        description="Trigger compact when context tokens reach this ratio of model max_context_window",
     )
     compact_model: str | None = Field(
         default=None,
@@ -261,6 +275,20 @@ class AgiwoSettings(BaseSettings):
         default="Understood. I have the context from the summary. Continuing.",
         description="Assistant response text after compact summary",
     )
+
+    @model_validator(mode="after")
+    def _validate_tool_model_defaults(self) -> "AgiwoSettings":
+        if self.tool_default_model_name is not None:
+            return self
+        if (
+            self.get_default_model_name_for_provider(self.tool_default_model_provider)
+            is not None
+        ):
+            return self
+        raise ValueError(
+            "AGIWO_TOOL_DEFAULT_MODEL_NAME is required when "
+            f"AGIWO_TOOL_DEFAULT_MODEL_PROVIDER='{self.tool_default_model_provider}'"
+        )
 
     def resolve_path(self, path: str | None) -> Path | None:
         """Resolve a path relative to root_path if it's not absolute.
@@ -306,15 +334,10 @@ class AgiwoSettings(BaseSettings):
         return self._secret_to_str(self.anthropic_api_key)
 
     def get_default_model_name_for_provider(self, provider: str) -> str | None:
-        if provider == "openai":
-            return self.openai_model_name
-        if provider == "deepseek":
-            return self.deepseek_model_name
-        if provider == "anthropic":
-            return self.anthropic_model_name
-        if provider == "nvidia":
-            return self.nvidia_model_name
-        return None
+        attr_name = _PROVIDER_DEFAULT_MODEL_NAME_ATTRS.get(provider)
+        if attr_name is None:
+            return None
+        return getattr(self, attr_name)
 
     def get_tool_model_provider(self) -> str:
         return self.tool_default_model_provider

@@ -3,6 +3,7 @@ Repository interface and in-memory implementation.
 """
 
 import asyncio
+import bisect
 from abc import ABC, abstractmethod
 
 from agiwo.agent.schema import Run, StepRecord
@@ -150,6 +151,8 @@ class InMemoryRunStepStorage(RunStepStorage):
     def __init__(self) -> None:
         self.runs: dict[str, Run] = {}
         self.steps: dict[str, list[StepRecord]] = {}  # session_id -> list[StepRecord]
+        self._id_index: dict[str, dict[str, int]] = {}  # session_id -> {step_id -> list_index}
+        self._seq_index: dict[str, dict[int, int]] = {}  # session_id -> {sequence -> list_index}
         self._sequence_counters: dict[str, int] = {}  # session_id -> counter
         self._sequence_locks: dict[str, asyncio.Lock] = {}  # session_id -> lock
 
@@ -184,6 +187,16 @@ class InMemoryRunStepStorage(RunStepStorage):
 
     # --- Step Operations ---
 
+    def _rebuild_indexes(self, session_id: str) -> None:
+        """Rebuild id/seq indexes from the steps list."""
+        id_idx: dict[str, int] = {}
+        seq_idx: dict[int, int] = {}
+        for i, s in enumerate(self.steps.get(session_id, [])):
+            id_idx[s.id] = i
+            seq_idx[s.sequence] = i
+        self._id_index[session_id] = id_idx
+        self._seq_index[session_id] = seq_idx
+
     async def save_step(self, step: StepRecord) -> None:
         """
         Save or update a step.
@@ -191,36 +204,41 @@ class InMemoryRunStepStorage(RunStepStorage):
         Handles idempotency: if a step with same (session_id, sequence) exists,
         updates it instead of creating a duplicate.
         """
-        if step.session_id not in self.steps:
-            self.steps[step.session_id] = []
+        sid = step.session_id
+        if sid not in self.steps:
+            self.steps[sid] = []
+            self._id_index[sid] = {}
+            self._seq_index[sid] = {}
 
-        # First, try to find by step.id
-        existing_idx = None
-        for i, s in enumerate(self.steps[step.session_id]):
-            if s.id == step.id:
-                existing_idx = i
-                break
+        id_idx = self._id_index[sid]
+        seq_idx = self._seq_index[sid]
+        step_list = self.steps[sid]
 
-        if existing_idx is not None:
-            # Update existing step by id
-            self.steps[step.session_id][existing_idx] = step
-        else:
-            # Check if step with same (session_id, sequence) exists
-            seq_existing_idx = None
-            for i, s in enumerate(self.steps[step.session_id]):
-                if s.session_id == step.session_id and s.sequence == step.sequence:
-                    seq_existing_idx = i
-                    break
+        # O(1) lookup by step.id
+        if step.id in id_idx:
+            idx = id_idx[step.id]
+            old = step_list[idx]
+            step_list[idx] = step
+            if old.sequence != step.sequence:
+                del seq_idx[old.sequence]
+                seq_idx[step.sequence] = idx
+            return
 
-            if seq_existing_idx is not None:
-                # Update existing step by (session_id, sequence)
-                self.steps[step.session_id][seq_existing_idx] = step
-            else:
-                # Insert new step
-                self.steps[step.session_id].append(step)
+        # O(1) lookup by sequence
+        if step.sequence in seq_idx:
+            idx = seq_idx[step.sequence]
+            old = step_list[idx]
+            del id_idx[old.id]
+            step_list[idx] = step
+            id_idx[step.id] = idx
+            return
 
-            # Keep steps sorted by sequence
-            self.steps[step.session_id].sort(key=lambda s: s.sequence)
+        # New step: bisect insert to maintain sort order
+        sequences = [s.sequence for s in step_list]
+        pos = bisect.bisect_left(sequences, step.sequence)
+        step_list.insert(pos, step)
+        # Rebuild indexes after insert (shifted positions)
+        self._rebuild_indexes(sid)
 
     async def save_steps_batch(self, steps: list[StepRecord]) -> None:
         for step in steps:
@@ -260,6 +278,7 @@ class InMemoryRunStepStorage(RunStepStorage):
         self.steps[session_id] = [
             s for s in self.steps[session_id] if s.sequence < start_seq
         ]
+        self._rebuild_indexes(session_id)
         return original_count - len(self.steps[session_id])
 
     async def get_step_count(self, session_id: str) -> int:

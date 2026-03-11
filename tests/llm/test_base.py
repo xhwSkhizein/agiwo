@@ -37,24 +37,24 @@ def test_model_validation_temperature():
             name="test",
             temperature=3.0,
             top_p=1.0,
-            max_tokens=100,
+            max_output_tokens=100,
             frequency_penalty=0.0,
             presence_penalty=0.0,
         )
 
 
-def test_model_validation_max_tokens():
+def test_model_validation_max_output_tokens():
     class TestModel(Model):
         async def arun_stream(self, messages, tools=None):
             yield StreamChunk()
 
-    with pytest.raises(ValueError, match="max_tokens must be at least"):
+    with pytest.raises(ValueError, match="max_output_tokens must be at least"):
         TestModel(
             id="test",
             name="test",
             temperature=0.7,
             top_p=1.0,
-            max_tokens=0,
+            max_output_tokens=0,
             frequency_penalty=0.0,
             presence_penalty=0.0,
         )

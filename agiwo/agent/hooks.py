@@ -8,9 +8,10 @@ without subclassing the Agent. All hooks are optional and async.
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from agiwo.agent.schema import UserInput
 from agiwo.agent.execution_context import ExecutionContext
-from agiwo.agent.schema import RunOutput, StepRecord, StreamEvent, MemoryRecord
+from agiwo.agent.input import UserInput
+from agiwo.agent.memory_types import MemoryRecord
+from agiwo.agent.runtime import RunOutput, StepRecord, StreamEvent
 from agiwo.tool.base import ToolResult
 
 

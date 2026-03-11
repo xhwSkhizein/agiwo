@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import SecretStr
@@ -6,7 +6,7 @@ from pydantic import SecretStr
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import StreamChunk
-from agiwo.tool.builtin.config import WebReaderApiConfig, WebSearchApiConfig
+from agiwo.tool.builtin.config import WebReaderApiConfig
 from agiwo.tool.builtin.html_extract import HtmlContent
 from agiwo.tool.builtin.web_reader.web_reader_tool import WebReaderTool
 from agiwo.tool.builtin.web_search.web_search_tool import WebSearchTool
@@ -35,13 +35,19 @@ class StubToolModel:
 
 
 def test_web_tool_schemas_and_descriptions_match_runtime_support() -> None:
-    search_tool = WebSearchTool(
-        config=WebSearchApiConfig(serper_api_key=None),
-        citation_store_config=CitationStoreConfig(
-            storage_type="memory",
-            collection_name="test-web-schema-search",
-        ),
-    )
+    with patch("agiwo.tool.builtin.web_search.web_search_tool.settings") as mock_settings:
+        mock_settings.web_search_serper_api_key = None
+        mock_settings.web_search_api_timeout = 10
+        mock_settings.web_search_api_max_results = 5
+        mock_settings.web_search_api_recency_days = 0
+        mock_settings.web_search_api_base_url = "https://google.serper.dev"
+        mock_settings.web_search_api_max_retries = 2
+        search_tool = WebSearchTool(
+            citation_store_config=CitationStoreConfig(
+                storage_type="memory",
+                collection_name="test-web-schema-search",
+            ),
+        )
     reader_tool = WebReaderTool(
         config=WebReaderApiConfig(),
         citation_store_config=CitationStoreConfig(
@@ -58,13 +64,19 @@ def test_web_tool_schemas_and_descriptions_match_runtime_support() -> None:
 
 @pytest.mark.asyncio
 async def test_web_search_without_api_key_returns_runtime_error() -> None:
-    tool = WebSearchTool(
-        config=WebSearchApiConfig(serper_api_key=None),
-        citation_store_config=CitationStoreConfig(
-            storage_type="memory",
-            collection_name="test-web-no-key",
-        ),
-    )
+    with patch("agiwo.tool.builtin.web_search.web_search_tool.settings") as mock_settings:
+        mock_settings.web_search_serper_api_key = None
+        mock_settings.web_search_api_timeout = 10
+        mock_settings.web_search_api_max_results = 5
+        mock_settings.web_search_api_recency_days = 0
+        mock_settings.web_search_api_base_url = "https://google.serper.dev"
+        mock_settings.web_search_api_max_retries = 2
+        tool = WebSearchTool(
+            citation_store_config=CitationStoreConfig(
+                storage_type="memory",
+                collection_name="test-web-no-key",
+            ),
+        )
 
     result = await tool.execute({"query": "latest agiwo"}, _make_context("no-key"))
 
@@ -159,10 +171,16 @@ async def test_web_search_and_reader_share_citations_via_config() -> None:
         storage_type="memory",
         collection_name="test-web-shared-citations",
     )
-    search_tool = WebSearchTool(
-        config=WebSearchApiConfig(serper_api_key=SecretStr("test-key")),
-        citation_store_config=citation_config,
-    )
+    with patch("agiwo.tool.builtin.web_search.web_search_tool.settings") as mock_settings:
+        mock_settings.web_search_serper_api_key = SecretStr("test-key")
+        mock_settings.web_search_api_timeout = 10
+        mock_settings.web_search_api_max_results = 5
+        mock_settings.web_search_api_recency_days = 0
+        mock_settings.web_search_api_base_url = "https://google.serper.dev"
+        mock_settings.web_search_api_max_retries = 2
+        search_tool = WebSearchTool(
+            citation_store_config=citation_config,
+        )
     search_tool._http_client.post_json = AsyncMock(
         return_value={
             "organic": [

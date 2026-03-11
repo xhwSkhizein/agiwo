@@ -5,18 +5,15 @@ Provides automatic memory retrieval hook using HybridSearcher.
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from agiwo.config.settings import settings
 from agiwo.agent.execution_context import ExecutionContext
-from agiwo.agent.schema import MemoryRecord, UserInput, extract_text
 from agiwo.agent.hooks import AgentHooks
-from agiwo.tool.builtin.config import MemoryConfig
+from agiwo.agent.input import UserInput
+from agiwo.agent.input_codec import extract_text
+from agiwo.agent.memory_types import MemoryRecord
 from agiwo.tool.builtin.retrieval_tool.store import MemoryIndexStore
 from agiwo.utils.logging import get_logger
-
-if TYPE_CHECKING:
-    from agiwo.agent.hooks import AgentHooks
 
 logger = get_logger(__name__)
 
@@ -26,8 +23,14 @@ class DefaultMemoryHook:
 
     _stores: dict[str, MemoryIndexStore] = {}
 
-    def __init__(self, config: MemoryConfig | None = None):
-        self._config = config or MemoryConfig()
+    def __init__(
+        self,
+        *,
+        embedding_provider: str | None = None,
+        top_k: int | None = None,
+    ):
+        self._embedding_provider = embedding_provider
+        self._top_k = top_k if top_k is not None else settings.memory_top_k
 
     async def retrieve_memories(
         self, user_input: UserInput, context: ExecutionContext
@@ -53,8 +56,8 @@ class DefaultMemoryHook:
         # Sync files and search
         try:
             await store.sync_files()
-            results = await store.search(query, top_k=self._config.top_k)
-        except Exception as e:
+            results = await store.search(query, top_k=self._top_k)
+        except Exception as e:  # noqa: BLE001 - memory retrieval boundary
             logger.warning("memory_retrieve_error", error=str(e), query=query[:50])
             return []
 
@@ -103,12 +106,17 @@ class DefaultMemoryHook:
         """Get or create a MemoryIndexStore for the workspace."""
         key = str(workspace_dir)
         if key not in self._stores:
-            self._stores[key] = MemoryIndexStore(workspace_dir, self._config)
+            store_kwargs = {}
+            if self._embedding_provider:
+                store_kwargs["embedding_provider"] = self._embedding_provider
+            self._stores[key] = MemoryIndexStore(workspace_dir, **store_kwargs)
         return self._stores[key]
 
 
 def create_default_memory_hooks(
-    config: MemoryConfig | None = None,
+    *,
+    embedding_provider: str | None = None,
+    top_k: int | None = None,
 ) -> "AgentHooks":
     """
     Create AgentHooks with default memory retrieve hook.
@@ -122,7 +130,10 @@ def create_default_memory_hooks(
         hooks.on_after_run = my_custom_hook
         agent = Agent(..., hooks=hooks)
     """
-    memory_hook = DefaultMemoryHook(config)
+    memory_hook = DefaultMemoryHook(
+        embedding_provider=embedding_provider,
+        top_k=top_k,
+    )
 
     return AgentHooks(
         on_memory_retrieve=memory_hook.retrieve_memories,

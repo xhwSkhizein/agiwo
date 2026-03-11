@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from agiwo.tool.builtin.config import MemoryConfig
 from agiwo.tool.builtin.retrieval_tool.chunker import MemoryChunk, MemoryChunker
 from agiwo.tool.builtin.retrieval_tool.store import MemoryIndexStore
 
@@ -80,30 +79,22 @@ class TestMemoryIndexStore:
             memory_dir.mkdir()
             yield workspace
 
-    @pytest.fixture
-    def config(self):
-        return MemoryConfig(
-            embedding_provider="disabled",
-            chunk_tokens=100,
-            chunk_overlap_tokens=20,
-        )
-
     @pytest.mark.asyncio
-    async def test_sync_empty_directory(self, temp_workspace, config):
-        store = MemoryIndexStore(temp_workspace, config)
+    async def test_sync_empty_directory(self, temp_workspace):
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
         await store.sync_files()
         results = await store.search("test")
         assert results == []
         store.close()
 
     @pytest.mark.asyncio
-    async def test_index_single_file(self, temp_workspace, config):
+    async def test_index_single_file(self, temp_workspace):
         memory_dir = temp_workspace / "MEMORY"
         (memory_dir / "2025-01-15.md").write_text(
             "# Project Notes\n\nDecided to use SQLite for storage.\n"
         )
 
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
         await store.sync_files()
 
         results = await store.search("SQLite storage")
@@ -112,12 +103,12 @@ class TestMemoryIndexStore:
         store.close()
 
     @pytest.mark.asyncio
-    async def test_incremental_sync(self, temp_workspace, config):
+    async def test_incremental_sync(self, temp_workspace):
         memory_dir = temp_workspace / "MEMORY"
         file1 = memory_dir / "notes.md"
         file1.write_text("Initial content about Python.")
 
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
         await store.sync_files()
 
         results1 = await store.search("Python")
@@ -136,12 +127,12 @@ class TestMemoryIndexStore:
         store.close()
 
     @pytest.mark.asyncio
-    async def test_file_deletion_removes_from_index(self, temp_workspace, config):
+    async def test_file_deletion_removes_from_index(self, temp_workspace):
         memory_dir = temp_workspace / "MEMORY"
         file1 = memory_dir / "temp.md"
         file1.write_text("Temporary content about Redis.")
 
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
         await store.sync_files()
 
         results1 = await store.search("Redis")
@@ -156,14 +147,14 @@ class TestMemoryIndexStore:
         store.close()
 
     @pytest.mark.asyncio
-    async def test_bm25_only_mode(self, temp_workspace, config):
+    async def test_bm25_only_mode(self, temp_workspace):
         memory_dir = temp_workspace / "MEMORY"
         (memory_dir / "test.md").write_text(
             "# Architecture Decision\n\n"
             "We chose PostgreSQL over MySQL for better JSON support.\n"
         )
 
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
         await store.sync_files()
 
         results = await store.search("PostgreSQL JSON")
@@ -174,12 +165,12 @@ class TestMemoryIndexStore:
         store.close()
 
     @pytest.mark.asyncio
-    async def test_search_returns_line_numbers(self, temp_workspace, config):
+    async def test_search_returns_line_numbers(self, temp_workspace):
         memory_dir = temp_workspace / "MEMORY"
         content = "\n".join([f"Line {i}" for i in range(1, 11)])
         (memory_dir / "lines.md").write_text(content)
 
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
         await store.sync_files()
 
         results = await store.search("Line")
@@ -190,12 +181,12 @@ class TestMemoryIndexStore:
         store.close()
 
     @pytest.mark.asyncio
-    async def test_multiple_files(self, temp_workspace, config):
+    async def test_multiple_files(self, temp_workspace):
         memory_dir = temp_workspace / "MEMORY"
         (memory_dir / "file1.md").write_text("Content about apples and oranges.")
         (memory_dir / "file2.md").write_text("Content about bananas and grapes.")
 
-        store = MemoryIndexStore(temp_workspace, config)
+        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
         await store.sync_files()
 
         results1 = await store.search("apples")
@@ -207,26 +198,3 @@ class TestMemoryIndexStore:
         assert "file2.md" in results2[0].path
 
         store.close()
-
-
-class TestMemoryConfig:
-    """Tests for MemoryConfig."""
-
-    def test_default_values(self):
-        config = MemoryConfig()
-        assert config.embedding_provider == "auto"
-        assert config.chunk_tokens == 400
-        assert config.chunk_overlap_tokens == 80
-        assert config.top_k == 5
-        assert config.vector_weight == 0.7
-        assert config.bm25_weight == 0.3
-
-    def test_custom_values(self):
-        config = MemoryConfig(
-            embedding_provider="disabled",
-            chunk_tokens=200,
-            top_k=10,
-        )
-        assert config.embedding_provider == "disabled"
-        assert config.chunk_tokens == 200
-        assert config.top_k == 10

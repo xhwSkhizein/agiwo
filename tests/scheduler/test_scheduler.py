@@ -3,12 +3,15 @@
 import asyncio
 import shutil
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from agiwo.agent.agent import Agent
-from agiwo.agent.schema import TerminationReason
+from agiwo.agent.options import AgentOptions
+from agiwo.agent.schema import TerminationReason, extract_text
+from agiwo.utils.abort_signal import AbortSignal
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.scheduler.models import (
     AgentState,
@@ -47,7 +50,7 @@ def _cleanup_agiwo_workspace(agent_names: list[str]) -> None:
             # Create trash subdirectory if needed
             trash_dir.mkdir(parents=True, exist_ok=True)
             # Move to trash with timestamp to avoid conflicts
-            dest = trash_dir / f"{name}_{int(time.time())}"
+            dest = trash_dir / f"{name}_{time.time_ns()}"
             shutil.move(str(workspace), str(dest))
 
 
@@ -176,12 +179,11 @@ class TestSchedulerPrepareAgent:
         agent = Agent(name="test", description="test", model=model, id="test", tools=[])
 
         scheduler._prepare_agent(agent)
-        assert "test" in scheduler._agents
+        assert scheduler.get_registered_agent("test") is agent
         await scheduler.stop()
 
     @pytest.mark.asyncio
     async def test_prepare_enables_termination_summary(self):
-        from agiwo.agent.options import AgentOptions
         scheduler = Scheduler()
         model = MockModel()
         opts = AgentOptions(enable_termination_summary=False)
@@ -281,7 +283,7 @@ class TestSchedulerCreateChildAgent:
             task="sub-task",
             parent_id="parent",
         )
-        child = await scheduler._create_child_agent(state)
+        child = await scheduler._executor.create_child_agent(state)
 
         assert child.id == "child-1"
         assert child.name == "parent"
@@ -317,13 +319,42 @@ class TestSchedulerCreateChildAgent:
             parent_id="parent",
             config_overrides={"instruction": "Focus on specialized area."},
         )
-        child = await scheduler._create_child_agent(state)
+        child = await scheduler._executor.create_child_agent(state)
 
         # Check child inherited parent's fully built system_prompt
         child_prompt = await child.get_effective_system_prompt()
         assert "Default prompt" in child_prompt
         # Instruction is stored for runtime injection via <system-instruction> tag
         assert state.config_overrides["instruction"] == "Focus on specialized area."
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_create_child_with_system_prompt_override(self):
+        scheduler = Scheduler()
+        model = MockModel()
+        parent = Agent(
+            name="parent",
+            description="parent agent",
+            model=model,
+            id="parent",
+            tools=[],
+            system_prompt="Default prompt",
+        )
+        scheduler._prepare_agent(parent)
+
+        state = AgentState(
+            id="child-1",
+            session_id="sess",
+            status=AgentStateStatus.PENDING,
+            task="sub-task",
+            parent_id="parent",
+            config_overrides={"system_prompt": "You are a specialist."},
+        )
+        child = await scheduler._executor.create_child_agent(state)
+
+        child_prompt = await child.get_effective_system_prompt()
+        assert "You are a specialist." in child_prompt
+        assert "Default prompt" not in child_prompt
         await scheduler.stop()
 
 
@@ -354,7 +385,7 @@ class TestSchedulerWakeMessage:
                 completed_ids=["child-1"],
             ),
         )
-        msg = await scheduler._build_wake_message(state)
+        msg = await scheduler._executor._build_wake_message(state)
         assert "Child agents completed" in msg
         assert "Result A" in msg
         await scheduler.stop()
@@ -369,7 +400,7 @@ class TestSchedulerWakeMessage:
             task="root",
             wake_condition=WakeCondition(type=WakeType.TIMER),
         )
-        msg = await scheduler._build_wake_message(state)
+        msg = await scheduler._executor._build_wake_message(state)
         assert "delay" in msg.lower()
         await scheduler.stop()
 
@@ -383,7 +414,7 @@ class TestSchedulerWakeMessage:
             task="root",
             wake_condition=WakeCondition(type=WakeType.PERIODIC),
         )
-        msg = await scheduler._build_wake_message(state)
+        msg = await scheduler._executor._build_wake_message(state)
         assert "periodic" in msg.lower()
         await scheduler.stop()
 
@@ -400,8 +431,7 @@ class TestSchedulerWakeMessage:
                 submitted_task="Do X",
             ),
         )
-        msg = await scheduler._build_wake_message(state)
-        from agiwo.agent.schema import extract_text
+        msg = await scheduler._executor._build_wake_message(state)
         assert "Do X" in extract_text(msg)
         await scheduler.stop()
 
@@ -414,8 +444,78 @@ class TestSchedulerWakeMessage:
             status=AgentStateStatus.SLEEPING,
             task="root",
         )
-        msg = await scheduler._build_wake_message(state)
+        msg = await scheduler._executor._build_wake_message(state)
         assert "woken up" in msg.lower()
+        await scheduler.stop()
+
+
+class TestSchedulerExecutorCleanup:
+    @pytest.mark.asyncio
+    async def test_timeout_wake_cleans_abort_signal(self):
+        scheduler = Scheduler()
+        model = MockModel([_simple_completion("Recovered after timeout")])
+        agent = Agent(name="root", description="test", model=model, id="root", tools=[])
+        scheduler._prepare_agent(agent)
+        state = AgentState(
+            id="root",
+            session_id="sess",
+            status=AgentStateStatus.SLEEPING,
+            task="root",
+            wake_condition=WakeCondition(
+                type=WakeType.WAITSET,
+                wait_for=[],
+            ),
+        )
+        scheduler._runtime.set_abort_signal("root", AbortSignal())
+        await scheduler._executor.wake_for_timeout(state)
+
+        assert scheduler._runtime.get_abort_signal("root") is None
+        await scheduler.stop()
+
+
+class TestSchedulerTimeoutDispatch:
+    @pytest.mark.asyncio
+    async def test_enforce_timeouts_deduplicates_dispatched_state(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+        state = AgentState(
+            id="sleepy",
+            session_id="sess",
+            status=AgentStateStatus.SLEEPING,
+            task="wait",
+            wake_condition=WakeCondition(
+                type=WakeType.WAITSET,
+                timeout_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+            ),
+        )
+        await store.save_state(state)
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+        call_count = 0
+
+        async def fake_wake_for_timeout(target: AgentState) -> None:
+            nonlocal call_count
+            call_count += 1
+            started.set()
+            await release.wait()
+
+        scheduler._executor.wake_for_timeout = fake_wake_for_timeout  # type: ignore[method-assign]
+
+        await scheduler._tick_engine.enforce_timeouts()
+        await started.wait()
+
+        assert call_count == 1
+        assert "sleepy" in scheduler._runtime.dispatched_state_ids
+
+        await scheduler._tick_engine.enforce_timeouts()
+        await asyncio.sleep(0)
+
+        assert call_count == 1
+
+        release.set()
+        await asyncio.sleep(_TEST_SETTLE_WAIT)
+        scheduler._runtime.release_state_dispatch("sleepy")
         await scheduler.stop()
 
 
@@ -449,7 +549,7 @@ class TestSchedulerSignalPropagation:
         )
         await store.save_state(child1)
 
-        await scheduler._propagate_signals()
+        await scheduler._tick_engine.propagate_signals()
 
         parent_state = await store.get_state("parent")
         assert parent_state is not None
@@ -491,7 +591,7 @@ class TestSchedulerSignalPropagation:
         )
         await store.save_state(child1)
 
-        await scheduler._propagate_signals()
+        await scheduler._tick_engine.propagate_signals()
 
         parent_state = await store.get_state("parent")
         assert "child-1" in parent_state.wake_condition.completed_ids
@@ -542,7 +642,7 @@ class TestSchedulerSubmitTask:
         await scheduler.stop()
 
     @pytest.mark.asyncio
-    async def test_submit_task_rejects_non_sleeping(self):
+    async def test_submit_task_rejects_running(self):
         scheduler = Scheduler(_fast_config())
         store = scheduler._store
 
@@ -556,8 +656,54 @@ class TestSchedulerSubmitTask:
         )
         await store.save_state(state)
 
-        with pytest.raises(RuntimeError, match="not SLEEPING"):
+        with pytest.raises(RuntimeError, match="SLEEPING, COMPLETED, or FAILED"):
             await scheduler.submit_task("root", "New work")
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_submit_task_accepts_completed(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        state = AgentState(
+            id="root",
+            session_id="sess",
+            status=AgentStateStatus.COMPLETED,
+            task="initial",
+            parent_id=None,
+            is_persistent=True,
+        )
+        await store.save_state(state)
+
+        await scheduler.submit_task("root", "Resume work")
+        updated = await store.get_state("root")
+        assert updated is not None
+        assert updated.status == AgentStateStatus.SLEEPING
+        assert updated.wake_condition is not None
+        assert updated.wake_condition.submitted_task == "Resume work"
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_submit_task_accepts_failed(self):
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        state = AgentState(
+            id="root",
+            session_id="sess",
+            status=AgentStateStatus.FAILED,
+            task="initial",
+            parent_id=None,
+            is_persistent=True,
+        )
+        await store.save_state(state)
+
+        await scheduler.submit_task("root", "Retry work")
+        updated = await store.get_state("root")
+        assert updated is not None
+        assert updated.status == AgentStateStatus.SLEEPING
+        assert updated.wake_condition is not None
+        assert updated.wake_condition.submitted_task == "Retry work"
         await scheduler.stop()
 
 
@@ -607,7 +753,6 @@ class TestSchedulerHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_emits_warning_for_stuck_agent(self):
         """Stuck RUNNING child agent should generate a HEALTH_WARNING pending event for parent."""
-        from datetime import datetime, timedelta, timezone
         scheduler = Scheduler(_fast_config())
         store = scheduler._store
         await scheduler.start()
@@ -632,7 +777,7 @@ class TestSchedulerHealthCheck:
         await store.save_state(parent)
         await store.save_state(child)
 
-        await scheduler._check_health()
+        await scheduler._tick_engine.check_health()
 
         events = await store.get_pending_events("parent-1", "sess")
         assert len(events) == 1
@@ -643,7 +788,6 @@ class TestSchedulerHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_no_warning_for_healthy_agent(self):
         """Agent with recent activity should NOT generate health warning."""
-        from datetime import datetime, timedelta, timezone
         scheduler = Scheduler(_fast_config())
         store = scheduler._store
         await scheduler.start()
@@ -659,7 +803,7 @@ class TestSchedulerHealthCheck:
         await store.save_state(parent)
         await store.save_state(child)
 
-        await scheduler._check_health()
+        await scheduler._tick_engine.check_health()
 
         events = await store.get_pending_events("parent-2", "sess")
         assert len(events) == 0
@@ -668,7 +812,6 @@ class TestSchedulerHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_deduplicates_warnings(self):
         """Second health check should not emit duplicate warning if one already exists."""
-        from datetime import datetime, timedelta, timezone
         scheduler = Scheduler(_fast_config())
         store = scheduler._store
         await scheduler.start()
@@ -684,8 +827,8 @@ class TestSchedulerHealthCheck:
         await store.save_state(parent)
         await store.save_state(child)
 
-        await scheduler._check_health()
-        await scheduler._check_health()  # Second check — should not duplicate
+        await scheduler._tick_engine.check_health()
+        await scheduler._tick_engine.check_health()  # Second check — should not duplicate
 
         events = await store.get_pending_events("parent-3", "sess")
         assert len(events) == 1
@@ -696,7 +839,6 @@ class TestSchedulerDebounce:
     @pytest.mark.asyncio
     async def test_process_pending_events_wakes_sleeping_agent(self):
         """A SLEEPING parent agent with pending events should be woken."""
-        from datetime import datetime, timezone
         scheduler = Scheduler(_fast_config(event_debounce_min_count=1))
         store = scheduler._store
 
@@ -722,7 +864,7 @@ class TestSchedulerDebounce:
         await store.save_event(event)
 
         # _process_pending_events should detect and dispatch
-        await scheduler._process_pending_events()
+        await scheduler._tick_engine.process_pending_events()
 
         # Event should be deleted after dispatch
         remaining = await store.get_pending_events("parent-dbounce", "sess")
@@ -733,7 +875,6 @@ class TestSchedulerDebounce:
     @pytest.mark.asyncio
     async def test_process_pending_events_skips_non_sleeping(self):
         """Non-SLEEPING agents should NOT be woken via debounce."""
-        from datetime import datetime, timezone
         scheduler = Scheduler(_fast_config(event_debounce_min_count=1))
         store = scheduler._store
 
@@ -757,9 +898,9 @@ class TestSchedulerDebounce:
         )
         await store.save_event(event)
 
-        before_dispatched = len(scheduler._dispatched_state_ids)
-        await scheduler._process_pending_events()
-        after_dispatched = len(scheduler._dispatched_state_ids)
+        before_dispatched = len(scheduler._runtime.dispatched_state_ids)
+        await scheduler._tick_engine.process_pending_events()
+        after_dispatched = len(scheduler._runtime.dispatched_state_ids)
 
         # No new dispatch should have happened
         assert after_dispatched == before_dispatched

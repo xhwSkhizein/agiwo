@@ -1,6 +1,6 @@
 import re
 import uuid
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 import json
 
 from agiwo.config.settings import settings
@@ -78,28 +78,14 @@ class DeepseekModel(OpenAIModel):
         name: str = "deepseek-chat",
         api_key: str | None = None,
         base_url: str = "https://api.deepseek.com",
-        temperature: float = 0.7,
-        top_p: float = 1.0,
-        max_tokens: int = 4096,
-        frequency_penalty: float = 0.0,
-        presence_penalty: float = 0.0,
-        cache_hit_price: float = 0.0,
-        input_price: float = 0.0,
-        output_price: float = 0.0,
+        **model_kwargs: Any,
     ):
         super().__init__(
             id=id,
             name=name,
             api_key=api_key,
             base_url=base_url,
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            frequency_penalty=frequency_penalty,
-            presence_penalty=presence_penalty,
-            cache_hit_price=cache_hit_price,
-            input_price=input_price,
-            output_price=output_price,
+            **model_kwargs,
         )
         self.provider = "deepseek"
 

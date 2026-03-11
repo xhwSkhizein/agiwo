@@ -48,6 +48,9 @@ htmlcov/
 .hypothesis/
 *.cover
 *.log
+.ruff_cache
+.import_linter_cache
+.bash_tool
 
 # Environment variables
 .env

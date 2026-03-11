@@ -2,183 +2,37 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, User, Bot, Wrench, FileImage, FileAudio, FileVideo, FileText, Paperclip } from "lucide-react";
-import Link from "next/link";
-import { getSessionSteps } from "@/lib/api";
-import type { StepResponse, UserMessage, UserInput } from "@/lib/api";
-
-function ContentPartItem({ part }: { part: { type: string; text?: string; url?: string; mime_type?: string } }) {
-  const { type, text, url, mime_type } = part;
-
-  // Text content
-  if (type === "text" && text) {
-    return (
-      <div className="text-sm text-zinc-200 whitespace-pre-wrap break-words">
-        {text}
-      </div>
-    );
-  }
-
-  // Image
-  if (type === "image" || type === "image_url" || mime_type?.startsWith("image/")) {
-    return (
-      <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
-        <FileImage className="w-4 h-4 text-purple-400 shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <span className="text-xs text-zinc-400">[图片]</span>
-          {url && (
-            <a href={url} target="_blank" rel="noopener noreferrer" className="block text-xs text-blue-400 truncate hover:underline">
-              {url}
-            </a>
-          )}
-          {mime_type && <span className="text-xs text-zinc-600 ml-2">{mime_type}</span>}
-        </div>
-      </div>
-    );
-  }
-
-  // Audio
-  if (type === "audio" || type === "input_audio" || mime_type?.startsWith("audio/")) {
-    return (
-      <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
-        <FileAudio className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <span className="text-xs text-zinc-400">[音频]</span>
-          {url && <span className="block text-xs text-zinc-500 truncate">{url}</span>}
-          {mime_type && <span className="text-xs text-zinc-600 ml-2">{mime_type}</span>}
-        </div>
-      </div>
-    );
-  }
-
-  // Video
-  if (type === "video" || type === "video_url" || mime_type?.startsWith("video/")) {
-    return (
-      <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
-        <FileVideo className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <span className="text-xs text-zinc-400">[视频]</span>
-          {url && <span className="block text-xs text-zinc-500 truncate">{url}</span>}
-          {mime_type && <span className="text-xs text-zinc-600 ml-2">{mime_type}</span>}
-        </div>
-      </div>
-    );
-  }
-
-  // File
-  if (type === "file" || url) {
-    return (
-      <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
-        <Paperclip className="w-4 h-4 text-zinc-400 shrink-0 mt-0.5" />
-        <div className="min-w-0">
-          <span className="text-xs text-zinc-400">[文件]</span>
-          {url && (
-            <a href={url} target="_blank" rel="noopener noreferrer" className="block text-xs text-blue-400 truncate hover:underline">
-              {url}
-            </a>
-          )}
-          {mime_type && <span className="text-xs text-zinc-600 ml-2">{mime_type}</span>}
-        </div>
-      </div>
-    );
-  }
-
-  // Unknown type
-  return (
-    <div className="flex items-start gap-2 p-2 rounded bg-zinc-800/50">
-      <FileText className="w-4 h-4 text-zinc-500 shrink-0 mt-0.5" />
-      <div className="min-w-0 text-xs text-zinc-500">
-        <span className="text-zinc-400">[{type}]</span>
-        {text && <span className="ml-2">{text}</span>}
-        {url && <span className="block truncate">{url}</span>}
-      </div>
-    </div>
-  );
-}
-
-function UserMessageContent({ content }: { content: unknown }) {
-  // Try to parse as UserMessage
-  if (typeof content !== "object" || content === null) {
-    return <div className="text-sm text-zinc-200">{typeof content === "string" ? content : String(content)}</div>;
-  }
-
-  const typed = content as Record<string, unknown>;
-  const type = typed.__type;
-
-  // UserMessage format
-  if (type === "user_message") {
-    const userMsg = content as UserMessage;
-    const { content: parts, context } = userMsg;
-
-    return (
-      <div className="space-y-3">
-        {/* Content parts */}
-        {parts && parts.length > 0 && (
-          <div className="space-y-2">
-            {parts.map((part, i) => (
-              <ContentPartItem key={i} part={part} />
-            ))}
-          </div>
-        )}
-
-        {/* Context info */}
-        {context && (
-          <div className="pt-2 border-t border-zinc-800/50 space-y-2">
-            {/* Source */}
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Source</span>
-              <span className="text-xs px-2 py-0.5 rounded bg-emerald-900/30 text-emerald-400 border border-emerald-800/30">
-                {context.source}
-              </span>
-            </div>
-
-            {/* Metadata */}
-            {context.metadata && Object.keys(context.metadata).length > 0 && (
-              <div className="space-y-1">
-                <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Metadata</span>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                  {Object.entries(context.metadata).map(([key, value]) => (
-                    <div key={key} className="flex items-center gap-2 min-w-0">
-                      <span className="text-zinc-500 shrink-0">{key}:</span>
-                      <span className="text-zinc-300 truncate font-mono">
-                        {typeof value === "string" ? value : JSON.stringify(value)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ContentParts format
-  if (type === "content_parts") {
-    const parts = typed.parts as Array<{ type: string; text?: string; url?: string; mime_type?: string }> | undefined;
-    if (parts && parts.length > 0) {
-      return (
-        <div className="space-y-2">
-          {parts.map((part, i) => (
-            <ContentPartItem key={i} part={part} />
-          ))}
-        </div>
-      );
-    }
-  }
-
-  // Fallback to string representation
-  return <div className="text-sm text-zinc-200">{JSON.stringify(content, null, 2)}</div>;
-}
+import { User, Bot, Wrench } from "lucide-react";
+import { BackHeader } from "@/components/back-header";
+import { getSessionSteps, getSessionSummary, listRuns } from "@/lib/api";
+import type { RunResponse, SessionSummary, StepResponse, ToolCallPayload } from "@/lib/api";
+import { MetricCard } from "@/components/metric-card";
+import { MonoText } from "@/components/mono-text";
+import { EmptyStateMessage, TextStateMessage } from "@/components/state-message";
+import { TokenSummaryCards } from "@/components/token-summary-cards";
+import { TokenMetricsBadges } from "@/components/token-metrics-badges";
+import { UserInputDetail } from "@/components/user-input-detail";
+import {
+  formatDurationMs,
+  formatTokenCount,
+  formatUsd,
+  normalizeRunMetricsSummary,
+  parseGenericMetrics,
+} from "@/lib/metrics";
 
 function StepCard({ step }: { step: StepResponse }) {
   const isUser = step.role === "user";
   const isAssistant = step.role === "assistant";
   const isTool = step.role === "tool";
+  const metrics = parseGenericMetrics(step.metrics ?? undefined);
 
-  // For user steps, use the full UserMessageContent component
-  // For other steps, use simple text display
+  const getToolLabel = (toolCall: ToolCallPayload): string =>
+    toolCall.function?.name || "tool_call";
+  const getToolArgs = (toolCall: ToolCallPayload): string =>
+    toolCall.function?.arguments || JSON.stringify(toolCall);
+
+  const hasStructuredUserInput =
+    isUser && step.user_input !== null && step.user_input !== undefined;
   const content = step.content;
 
   return (
@@ -209,11 +63,15 @@ function StepCard({ step }: { step: StepResponse }) {
         </div>
       )}
 
-      {Boolean(content) && (
+      {hasStructuredUserInput && (
         <div className="max-h-96 overflow-auto">
-          {isUser ? (
-            <UserMessageContent content={content} />
-          ) : (
+          <UserInputDetail input={step.user_input} maxTextLength={2000} />
+        </div>
+      )}
+
+      {!hasStructuredUserInput && Boolean(content) && (
+        <div className="max-h-96 overflow-auto">
+          {(
             <div className="text-sm whitespace-pre-wrap break-words">
               {typeof content === "string"
                 ? content
@@ -230,15 +88,9 @@ function StepCard({ step }: { step: StepResponse }) {
               key={i}
               className="text-xs bg-zinc-800/50 rounded px-3 py-2 font-mono overflow-auto max-h-48"
             >
-              <span className="text-amber-400">
-                {(tc as Record<string, unknown>).function
-                  ? ((tc as Record<string, unknown>).function as Record<string, unknown>).name as string
-                  : "tool_call"}
-              </span>
+              <span className="text-amber-400">{getToolLabel(tc)}</span>
               <span className="text-zinc-500 ml-2">
-                {(tc as Record<string, unknown>).function
-                  ? ((tc as Record<string, unknown>).function as Record<string, unknown>).arguments as string
-                  : JSON.stringify(tc)}
+                {getToolArgs(tc)}
               </span>
             </div>
           ))}
@@ -246,16 +98,13 @@ function StepCard({ step }: { step: StepResponse }) {
       )}
 
       {step.metrics && (
-        <div className="mt-2 flex gap-3 text-xs text-zinc-500">
-          {(step.metrics as Record<string, unknown>).total_tokens != null && (
-            <span>{String((step.metrics as Record<string, unknown>).total_tokens)} tokens</span>
-          )}
-          {(step.metrics as Record<string, unknown>).duration_ms != null && (
-            <span>{Math.round(Number((step.metrics as Record<string, unknown>).duration_ms))}ms</span>
-          )}
-          {(step.metrics as Record<string, unknown>).model_name != null && (
-            <span>{String((step.metrics as Record<string, unknown>).model_name)}</span>
-          )}
+        <div className="mt-3">
+          <TokenMetricsBadges
+            metrics={metrics}
+            showDuration={true}
+            showModelName={true}
+            modelName={step.metrics?.model_name ?? null}
+          />
         </div>
       )}
     </div>
@@ -266,39 +115,126 @@ export default function SessionDetailPage() {
   const params = useParams();
   const sessionId = params.id as string;
   const [steps, setSteps] = useState<StepResponse[]>([]);
+  const [runs, setRuns] = useState<RunResponse[]>([]);
+  const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getSessionSteps(sessionId)
-      .then(setSteps)
-      .catch(() => setSteps([]))
+    Promise.all([
+      getSessionSteps(sessionId).catch(() => []),
+      getSessionSummary(sessionId).catch(() => null),
+      listRuns({ session_id: sessionId, limit: 200 }).catch(() => []),
+    ])
+      .then(([sessionSteps, sessionSummary, sessionRuns]) => {
+        setSteps(sessionSteps);
+        setSummary(sessionSummary);
+        setRuns(sessionRuns);
+      })
       .finally(() => setLoading(false));
   }, [sessionId]);
 
+  const runTotals = normalizeRunMetricsSummary(summary?.metrics);
+
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/sessions"
-          className="p-1.5 rounded hover:bg-zinc-800 transition-colors"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </Link>
-        <div>
-          <h1 className="text-xl font-semibold">Session Detail</h1>
-          <p className="text-xs text-zinc-500 font-mono mt-0.5">{sessionId}</p>
-        </div>
-      </div>
+    <div className="p-6 max-w-6xl mx-auto space-y-6">
+      <BackHeader
+        href="/sessions"
+        title="Session Detail"
+        subtitle={sessionId}
+      />
 
       {loading ? (
-        <div className="text-zinc-500">Loading steps...</div>
-      ) : steps.length === 0 ? (
-        <div className="text-zinc-500 text-center py-12">No steps found</div>
+        <TextStateMessage>Loading session metrics...</TextStateMessage>
       ) : (
-        <div className="space-y-3">
-          {steps.map((step) => (
-            <StepCard key={step.id} step={step} />
-          ))}
+        <div className="space-y-6">
+          <TokenSummaryCards
+            cost={runTotals.token_cost}
+            inputTokens={runTotals.input_tokens}
+            outputTokens={runTotals.output_tokens}
+            totalTokens={runTotals.total_tokens}
+            cacheReadTokens={runTotals.cache_read_tokens}
+            cacheCreationTokens={runTotals.cache_creation_tokens}
+            className="grid grid-cols-2 md:grid-cols-5 gap-3"
+            cardClassName="p-3"
+            labelClassName="text-[11px]"
+            valueClassName="text-sm font-medium"
+            extraCardsPosition="after"
+            extraCards={
+              <MetricCard
+                label="Runs / Steps / Tools"
+                className="p-3"
+                labelClassName="text-[11px]"
+                valueClassName="text-sm font-medium"
+                value={`${summary?.run_count ?? 0} / ${runTotals.step_count} / ${runTotals.tool_calls_count}`}
+              />
+            }
+          />
+
+          <div className="rounded-lg border border-zinc-800 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-900 text-zinc-500 text-xs uppercase tracking-wide">
+                <tr>
+                  <th className="text-left px-4 py-2.5">Run</th>
+                  <th className="text-right px-4 py-2.5">Cost</th>
+                  <th className="text-right px-4 py-2.5">Input</th>
+                  <th className="text-right px-4 py-2.5">Output</th>
+                  <th className="text-right px-4 py-2.5">Total</th>
+                  <th className="text-right px-4 py-2.5">Cache R/C</th>
+                  <th className="text-right px-4 py-2.5">Steps/Tools</th>
+                  <th className="text-right px-4 py-2.5">Duration</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800">
+                {runs.map((run) => {
+                  const metrics = parseGenericMetrics(
+                    run.metrics ?? undefined
+                  );
+                  return (
+                    <tr key={run.id} className="hover:bg-zinc-900/50">
+                      <td className="px-4 py-2.5 text-zinc-300">
+                        <MonoText className="text-xs font-mono text-zinc-300">
+                          {run.id}
+                        </MonoText>
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-zinc-200">
+                        {formatUsd(metrics.tokenCost)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-zinc-400">
+                        {formatTokenCount(metrics.inputTokens)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-zinc-400">
+                        {formatTokenCount(metrics.outputTokens)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-zinc-400">
+                        {formatTokenCount(metrics.totalTokens)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-zinc-500">
+                        {formatTokenCount(metrics.cacheReadTokens)} / {formatTokenCount(metrics.cacheCreationTokens)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-zinc-500">
+                        {metrics.stepCount} / {metrics.toolCallsCount}
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-zinc-500">
+                        {formatDurationMs(metrics.durationMs)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {steps.length === 0 ? (
+            <EmptyStateMessage className="text-zinc-500 text-center py-8">
+              No steps found
+            </EmptyStateMessage>
+          ) : (
+            <div className="space-y-3">
+              {steps.map((step) => (
+                <StepCard key={step.id} step={step} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

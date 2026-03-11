@@ -4,28 +4,32 @@ Command system base abstractions.
 Provides the core types for the channel command protocol:
 - CommandContext: request-scoped context
 - CommandResult: handler response
+- CommandSpec: declarative command definition
 - CommandHandler: abstract handler interface
 - CommandRegistry: parse + dispatch
 - HelpCommand: auto-generated help listing
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 
-from server.channels.models import SessionRuntime
+from server.channels.models import ChannelChatContext, Session
 
 
 @dataclass
 class CommandContext:
     """Request-scoped context passed to every command handler."""
 
-    session_key: str
+    chat_context_scope_id: str
+    channel_instance_id: str
     chat_id: str
     chat_type: str
     trigger_user_open_id: str
     trigger_message_id: str
     base_agent_id: str
-    runtime: SessionRuntime | None
+    chat_context: ChannelChatContext | None
+    current_session: Session | None
 
 
 @dataclass
@@ -33,6 +37,18 @@ class CommandResult:
     """Response produced by a command handler."""
 
     text: str
+
+
+CommandExecutor = Callable[[CommandContext, str], Awaitable[CommandResult]]
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    """Declarative definition for a slash command."""
+
+    name: str
+    description: str
+    execute: CommandExecutor
 
 
 class CommandHandler(ABC):
@@ -54,6 +70,24 @@ class CommandHandler(ABC):
     async def execute(self, ctx: CommandContext, args: str) -> CommandResult:
         """Execute the command and return a text response."""
         ...
+
+
+class DeclarativeCommandHandler(CommandHandler):
+    """Thin adapter that exposes a ``CommandSpec`` as a handler object."""
+
+    def __init__(self, spec: CommandSpec) -> None:
+        self._spec = spec
+
+    @property
+    def name(self) -> str:
+        return self._spec.name
+
+    @property
+    def description(self) -> str:
+        return self._spec.description
+
+    async def execute(self, ctx: CommandContext, args: str) -> CommandResult:
+        return await self._spec.execute(ctx, args)
 
 
 class CommandRegistry:
@@ -108,3 +142,22 @@ class HelpCommand(CommandHandler):
             handler = self._registry.handlers[cmd_name]
             lines.append(f"  /{cmd_name} — {handler.description}")
         return CommandResult(text="\n".join(lines))
+
+
+def register_command_specs(
+    registry: CommandRegistry,
+    specs: Iterable[CommandSpec],
+) -> None:
+    """Register declarative command specs onto an existing registry."""
+
+    for spec in specs:
+        registry.register(DeclarativeCommandHandler(spec))
+
+
+def build_command_registry(specs: Iterable[CommandSpec]) -> CommandRegistry:
+    """Create a registry from declarative command specs and append ``/help``."""
+
+    registry = CommandRegistry()
+    register_command_specs(registry, specs)
+    registry.register(HelpCommand(registry))
+    return registry

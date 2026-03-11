@@ -12,25 +12,25 @@ def test_create_model_builds_provider_specific_instance() -> None:
             provider="anthropic",
             model_name="claude-3-5-sonnet-20240620",
             temperature=0.1,
-            max_tokens=512,
+            max_output_tokens=512,
         )
     )
 
     assert isinstance(model, AnthropicModel)
     assert model.name == "claude-3-5-sonnet-20240620"
     assert model.temperature == 0.1
-    assert model.max_tokens == 512
+    assert model.max_output_tokens == 512
 
 
-def test_create_model_from_dict_maps_max_output_tokens_per_call() -> None:
+def test_create_model_from_dict_uses_max_output_tokens() -> None:
     model = create_model_from_dict(
         provider="deepseek",
         model_name="deepseek-chat",
-        params={"max_output_tokens_per_call": 321, "temperature": 0.05},
+        params={"max_output_tokens": 321, "temperature": 0.05},
     )
 
     assert isinstance(model, DeepseekModel)
-    assert model.max_tokens == 321
+    assert model.max_output_tokens == 321
     assert model.temperature == 0.05
 
 

@@ -4,8 +4,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { MessageSquare, Activity, Bot, Zap, CalendarClock } from "lucide-react";
 import { listSessions, listTraces, listAgents, getSchedulerStats } from "@/lib/api";
+import { EmptyStateMessage, FullPageMessage } from "@/components/state-message";
+import { SectionCard } from "@/components/section-card";
+import { TraceStatusBadge } from "@/components/trace-status-badge";
 import { UserInputCompact } from "@/components/user-input-detail";
 import type { SessionSummary, TraceListItem, AgentConfig, SchedulerStats } from "@/lib/api";
+import { formatRoundedMs } from "@/lib/time";
 
 function StatCard({
   label,
@@ -55,11 +59,7 @@ export default function DashboardPage() {
   }, []);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-zinc-500">Loading...</div>
-      </div>
-    );
+    return <FullPageMessage>Loading...</FullPageMessage>;
   }
 
   return (
@@ -90,16 +90,19 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900">
-          <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-            <h2 className="text-sm font-medium">Recent Sessions</h2>
+        <SectionCard
+          title="Recent Sessions"
+          action={
             <Link href="/sessions" className="text-xs text-zinc-500 hover:text-zinc-300">
               View all
             </Link>
-          </div>
+          }
+        >
           <div className="divide-y divide-zinc-800">
             {sessions.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-zinc-500 text-center">No sessions yet</p>
+              <EmptyStateMessage className="px-4 py-6 text-sm text-zinc-500 text-center">
+                No sessions yet
+              </EmptyStateMessage>
             ) : (
               sessions.map((s) => (
                 <Link
@@ -107,9 +110,9 @@ export default function DashboardPage() {
                   href={`/sessions/${s.session_id}`}
                   className="block px-4 py-3 hover:bg-zinc-800/50 transition-colors"
                 >
-                  <p className="text-sm truncate">
-                  <UserInputCompact input={s.last_user_input} maxLength={80} />
-                  </p>
+                  <div className="text-sm">
+                    <UserInputCompact input={s.last_user_input} maxLength={80} />
+                  </div>
                   <p className="text-xs text-zinc-500 mt-1">
                     {s.run_count} runs &middot; {s.agent_id || "unknown"}
                   </p>
@@ -117,18 +120,21 @@ export default function DashboardPage() {
               ))
             )}
           </div>
-        </div>
+        </SectionCard>
 
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900">
-          <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-            <h2 className="text-sm font-medium">Recent Traces</h2>
+        <SectionCard
+          title="Recent Traces"
+          action={
             <Link href="/traces" className="text-xs text-zinc-500 hover:text-zinc-300">
               View all
             </Link>
-          </div>
+          }
+        >
           <div className="divide-y divide-zinc-800">
             {traces.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-zinc-500 text-center">No traces yet</p>
+              <EmptyStateMessage className="px-4 py-6 text-sm text-zinc-500 text-center">
+                No traces yet
+              </EmptyStateMessage>
             ) : (
               traces.map((t) => (
                 <Link
@@ -140,27 +146,19 @@ export default function DashboardPage() {
                     <p className="text-sm truncate flex-1">
                       {t.input_query || t.trace_id}
                     </p>
-                    <span
-                      className={`ml-2 text-xs px-1.5 py-0.5 rounded ${
-                        t.status === "ok"
-                          ? "bg-green-900/50 text-green-400"
-                          : t.status === "error"
-                          ? "bg-red-900/50 text-red-400"
-                          : "bg-zinc-800 text-zinc-400"
-                      }`}
-                    >
-                      {t.status}
-                    </span>
+                    <div className="ml-2">
+                      <TraceStatusBadge status={t.status} />
+                    </div>
                   </div>
                   <p className="text-xs text-zinc-500 mt-1">
                     {t.total_tokens} tokens &middot; {t.total_tool_calls} tools &middot;{" "}
-                    {t.duration_ms ? `${Math.round(t.duration_ms)}ms` : "-"}
+                    {formatRoundedMs(t.duration_ms)}
                   </p>
                 </Link>
               ))
             )}
           </div>
-        </div>
+        </SectionCard>
       </div>
     </div>
   );

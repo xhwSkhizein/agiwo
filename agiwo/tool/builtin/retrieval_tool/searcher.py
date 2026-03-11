@@ -8,8 +8,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 
+from agiwo.config.settings import settings
 from agiwo.embedding import EmbeddingModel
-from agiwo.tool.builtin.config import MemoryConfig
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -54,22 +54,35 @@ class HybridSearcher:
     def __init__(
         self,
         conn: sqlite3.Connection,
-        config: MemoryConfig,
         embedder: EmbeddingModel | None,
         vec_available: bool,
+        *,
+        top_k: int | None = None,
+        vector_weight: float | None = None,
+        bm25_weight: float | None = None,
+        temporal_decay_enabled: bool | None = None,
+        temporal_decay_half_life_days: float | None = None,
+        mmr_enabled: bool | None = None,
+        mmr_lambda: float | None = None,
     ):
         self._conn = conn
-        self._config = config
         self._embedder = embedder
         self._vec_available = vec_available
+        self._top_k = top_k if top_k is not None else settings.memory_top_k
+        self._vector_weight = vector_weight if vector_weight is not None else settings.memory_vector_weight
+        self._bm25_weight = bm25_weight if bm25_weight is not None else settings.memory_bm25_weight
+        self._temporal_decay_enabled = temporal_decay_enabled if temporal_decay_enabled is not None else settings.memory_temporal_decay
+        self._temporal_decay_half_life_days = temporal_decay_half_life_days if temporal_decay_half_life_days is not None else settings.memory_temporal_decay_half_life
+        self._mmr_enabled = mmr_enabled if mmr_enabled is not None else settings.memory_mmr_enabled
+        self._mmr_lambda = mmr_lambda if mmr_lambda is not None else settings.memory_mmr_lambda
 
     async def search(self, query: str, top_k: int | None = None) -> list[SearchResult]:
         """Execute hybrid search with detailed logging."""
-        top_k = top_k or self._config.top_k
+        top_k = top_k or self._top_k
         fetch_limit = top_k * 5
 
         logger.info("hybrid_search_start", query=query, top_k=top_k, fetch_limit=fetch_limit)
-        logger.debug("search_config", vector_weight=self._config.vector_weight, bm25_weight=self._config.bm25_weight, mmr_enabled=self._config.mmr_enabled)
+        logger.debug("search_config", vector_weight=self._vector_weight, bm25_weight=self._bm25_weight, mmr_enabled=self._mmr_enabled)
 
         vector_results: dict[str, float] = {}
         bm25_results: dict[str, float] = {}
@@ -113,7 +126,7 @@ class HybridSearcher:
             top_merged=sorted(merged.items(), key=lambda x: x[1]["score"], reverse=True)[:3] if merged else [],
         )
 
-        if self._config.temporal_decay_enabled:
+        if self._temporal_decay_enabled:
             merged = self._apply_temporal_decay(merged)
             logger.debug("temporal_decay_applied")
 
@@ -123,7 +136,7 @@ class HybridSearcher:
         results = self._build_results(sorted_results)
         logger.debug("results_built", count=len(results))
 
-        if self._config.mmr_enabled and len(results) > top_k:
+        if self._mmr_enabled and len(results) > top_k:
             results_before_mmr = results
             results = self._mmr_rerank(results, top_k)
             logger.info(
@@ -307,8 +320,8 @@ class HybridSearcher:
 
             if has_vec and has_bm:
                 final = (
-                    self._config.vector_weight * v_score
-                    + self._config.bm25_weight * bm_score
+                    self._vector_weight * v_score
+                    + self._bm25_weight * bm_score
                 )
             elif has_vec:
                 final = v_score
@@ -330,7 +343,7 @@ class HybridSearcher:
         cursor = self._conn.cursor()
         date_pattern = re.compile(r"(\d{4}-\d{2}-\d{2})")
         today = datetime.now().date()
-        half_life = self._config.temporal_decay_half_life_days
+        half_life = self._temporal_decay_half_life_days
         lambda_decay = math.log(2) / half_life
 
         for chunk_id, data in merged.items():
@@ -398,7 +411,7 @@ class HybridSearcher:
         if not results:
             return results
 
-        lambda_param = self._config.mmr_lambda
+        lambda_param = self._mmr_lambda
         selected: list[SearchResult] = []
         candidates = list(results)
 

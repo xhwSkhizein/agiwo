@@ -4,6 +4,7 @@ Base interface for trace storage.
 
 import asyncio
 from abc import ABC, abstractmethod
+from collections import deque
 from datetime import datetime
 from typing import Any
 
@@ -34,6 +35,70 @@ class BaseTraceStorage(ABC):
     All trace store implementations must extend this class.
     """
 
+    def _initialize_runtime_state(
+        self,
+        *,
+        buffer_size: int,
+        subscriber_queue_maxsize: int = 100,
+    ) -> None:
+        self._buffer: deque[Trace] = deque(maxlen=buffer_size)
+        self._subscribers: list[asyncio.Queue[Trace]] = []
+        self._subscriber_queue_maxsize = subscriber_queue_maxsize
+
+    def _append_to_buffer(self, trace: Trace) -> None:
+        self._buffer.append(trace)
+
+    def _get_buffered_trace(self, trace_id: str) -> Trace | None:
+        for trace in self._buffer:
+            if trace.trace_id == trace_id:
+                return trace
+        return None
+
+    def _coerce_query(self, query: TraceQuery | dict[str, Any]) -> TraceQuery:
+        if isinstance(query, TraceQuery):
+            return query
+        return TraceQuery(**query)
+
+    def _matches_query(self, trace: Trace, query: TraceQuery) -> bool:
+        if query.agent_id and trace.agent_id != query.agent_id:
+            return False
+        if query.session_id and trace.session_id != query.session_id:
+            return False
+        if query.user_id and trace.user_id != query.user_id:
+            return False
+        if query.status and trace.status != query.status:
+            return False
+
+        start_time = trace.start_time
+        if query.start_time and (start_time is None or start_time < query.start_time):
+            return False
+        if query.end_time and (start_time is None or start_time > query.end_time):
+            return False
+
+        duration_ms = trace.duration_ms
+        if (
+            query.min_duration_ms is not None
+            and (duration_ms is None or duration_ms < query.min_duration_ms)
+        ):
+            return False
+        if (
+            query.max_duration_ms is not None
+            and (duration_ms is None or duration_ms > query.max_duration_ms)
+        ):
+            return False
+        return True
+
+    def _query_buffer(self, query: TraceQuery | dict[str, Any]) -> list[Trace]:
+        coerced = self._coerce_query(query)
+        results = [
+            trace
+            for trace in reversed(self._buffer)
+            if self._matches_query(trace, coerced)
+        ]
+        start = coerced.offset
+        end = start + coerced.limit
+        return results[start:end]
+
     async def initialize(self) -> None:
         """Initialize the store (e.g. create connections, tables). Called internally on first use."""
         pass
@@ -53,18 +118,29 @@ class BaseTraceStorage(ABC):
         """Query traces with filters."""
         ...
 
-    @abstractmethod
     def get_recent(self, limit: int = 20) -> list[Trace]:
         """Get recent traces from in-memory buffer."""
-        ...
+        return list(reversed(list(self._buffer)))[:limit]
 
     def subscribe(self) -> asyncio.Queue:
-        """Subscribe to real-time trace updates. Override if supported."""
-        raise NotImplementedError
+        """Subscribe to real-time trace updates."""
+        queue: asyncio.Queue[Trace] = asyncio.Queue(
+            maxsize=self._subscriber_queue_maxsize
+        )
+        self._subscribers.append(queue)
+        return queue
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
-        """Unsubscribe from updates. Override if supported."""
-        raise NotImplementedError
+        """Unsubscribe from updates."""
+        if queue in self._subscribers:
+            self._subscribers.remove(queue)
+
+    async def _notify_subscribers(self, trace: Trace) -> None:
+        for queue in self._subscribers:
+            try:
+                queue.put_nowait(trace)
+            except asyncio.QueueFull:
+                pass
 
     @abstractmethod
     async def close(self) -> None:

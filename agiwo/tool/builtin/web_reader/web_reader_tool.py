@@ -52,7 +52,7 @@ class WebReaderTool(BaseTool):
             api_key_env_name=self._config.api_key_env_name,
             temperature=self._config.model_temperature,
             top_p=self._config.model_top_p,
-            max_tokens=self._config.model_max_tokens,
+            max_output_tokens=self._config.model_max_tokens,
         )
         self._llm_model = None
         self._curl_cffi_client = SimpleAsyncClient(timeout=self._config.timeout_seconds)
@@ -110,9 +110,6 @@ class WebReaderTool(BaseTool):
 
     def is_concurrency_safe(self) -> bool:
         return True
-
-    def needs_permissions(self, parameters: dict[str, Any]) -> bool:
-        return False
 
     async def _fetch_content(self, url: str) -> tuple[HtmlContent | None, str | None]:
         content = await self._curl_cffi_client.fetch(url)
@@ -236,77 +233,45 @@ user's query is:
 
         try:
             if abort_signal and abort_signal.is_aborted():
-                return self._create_abort_result(parameters, start_time)
-
-            summarize = bool(parameters.get("summarize", False))
-            search_query = parameters.get("search_query")
-            if summarize and search_query:
-                return self._create_error_result(
-                    parameters,
-                    "Error: summarize and search_query are mutually exclusive",
-                    start_time,
+                return ToolResult.aborted(
+                    tool_name=self.name,
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args=parameters,
+                    start_time=start_time,
                 )
 
-            session_id = str(parameters.get("session_id") or context.session_id or "default")
-            index = parameters.get("index")
-            url = parameters.get("url")
+            resolved = await self._resolve_request(
+                parameters, context, start_time=start_time
+            )
+            if isinstance(resolved, ToolResult):
+                return resolved
 
-            existing_source: CitationSourceRaw | None = None
-            if index is not None:
-                if not isinstance(index, int):
-                    return self._create_error_result(
-                        parameters,
-                        "Error: index must be an integer",
-                        start_time,
-                    )
-                existing_source = await self._citation_source_store.get_source_by_index(
-                    session_id, index
-                )
-                if existing_source is None:
-                    return self._create_error_result(
-                        parameters,
-                        f"Search result with index {index} not found",
-                        start_time,
-                    )
-                url = existing_source.url
-                logger.info("web_reader_found_source_by_index", index=index, url=url)
-
-            if not isinstance(url, str) or not url.strip():
-                return self._create_error_result(
-                    parameters,
-                    "Error: url must be a non-empty string",
-                    start_time,
-                )
-            url = url.strip()
-
-            if abort_signal and abort_signal.is_aborted():
-                return self._create_abort_result(parameters, start_time)
+            session_id, url, summarize, search_query, existing_source = resolved
 
             content, fallback_error = await self._fetch_content(url)
             if content is None:
-                if fallback_error:
-                    return self._create_error_result(
-                        parameters, fallback_error, start_time
-                    )
-                return self._create_error_result(
-                    parameters, "Failed to fetch content", start_time
+                return ToolResult.failed(
+                    tool_name=self.name,
+                    error=fallback_error or "Failed to fetch content",
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args=parameters,
+                    start_time=start_time,
                 )
 
             if abort_signal and abort_signal.is_aborted():
-                return self._create_abort_result(parameters, start_time)
+                return ToolResult.aborted(
+                    tool_name=self.name,
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args=parameters,
+                    start_time=start_time,
+                )
 
-            processed_content = content.raw_text or content.text or ""
-            if summarize or len(processed_content) > self.max_length:
-                processed_content = await self._summarize_content(
-                    processed_content,
-                    abort_signal=abort_signal,
-                )
-            elif isinstance(search_query, str) and search_query.strip():
-                processed_content = await self._extract_by_query(
-                    processed_content,
-                    search_query.strip(),
-                    abort_signal=abort_signal,
-                )
+            processed_content = await self._process_content(
+                content.raw_text or content.text or "",
+                summarize=summarize,
+                search_query=search_query,
+                abort_signal=abort_signal,
+            )
 
             if len(processed_content) > self.max_length:
                 processed_content = truncate_middle(processed_content, self.max_length)
@@ -315,56 +280,24 @@ user's query is:
             original_content_dict.pop("raw_html", None)
             original_content_dict.pop("text", None)
 
-            citation_id: str | None = None
-            try:
-                if existing_source:
-                    citation_id = existing_source.citation_id
-                    await self._citation_source_store.update_citation_source(
-                        citation_id=citation_id,
-                        session_id=session_id,
-                        updates={
-                            "full_content": processed_content,
-                            "processed_content": processed_content,
-                            "original_content": original_content_dict,
-                            "parameters": {
-                                "search_query": search_query,
-                                "summarize": summarize,
-                            },
-                        },
-                    )
-                else:
-                    citation_id = generate_citation_id(prefix="reader")
-                    await self._citation_source_store.store_citation_sources(
-                        session_id=session_id,
-                        sources=[
-                            CitationSourceRaw(
-                                citation_id=citation_id,
-                                session_id=session_id,
-                                source_type=CitationSourceType.DIRECT_URL,
-                                url=url,
-                                title=content.title,
-                                full_content=processed_content,
-                                processed_content=processed_content,
-                                original_content=original_content_dict,
-                                parameters={
-                                    "search_query": search_query,
-                                    "summarize": summarize,
-                                },
-                                created_at=datetime.now(),
-                            )
-                        ],
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.error("citation_store_failed", error=str(exc), url=url)
-                citation_id = None
+            citation_id = await self._store_citation_source(
+                session_id=session_id,
+                url=url,
+                title=content.title,
+                processed_content=processed_content,
+                original_content=original_content_dict,
+                search_query=search_query,
+                summarize=summarize,
+                existing_source=existing_source,
+            )
 
             result_content = processed_content
             if citation_id:
                 result_content = f"[cite:{citation_id}]\n\n{processed_content}"
 
-            return ToolResult(
+            return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=parameters.get("tool_call_id", ""),
+                tool_call_id=str(parameters.get("tool_call_id", "")),
                 input_args=parameters,
                 content=result_content,
                 output={
@@ -375,9 +308,150 @@ user's query is:
                     "truncated": len(processed_content) >= self.max_length,
                 },
                 start_time=start_time,
-                end_time=time.time(),
-                duration=time.time() - start_time,
-                is_success=True,
             )
         except Exception as exc:  # noqa: BLE001
-            return self._create_error_result(parameters, f"Error: {exc!s}", start_time)
+            return ToolResult.failed(
+                tool_name=self.name,
+                error=f"Error: {exc!s}",
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args=parameters,
+                start_time=start_time,
+            )
+
+    async def _resolve_request(
+        self,
+        parameters: dict[str, Any],
+        context: ExecutionContext,
+        *,
+        start_time: float,
+    ) -> tuple[str, str, bool, str | None, CitationSourceRaw | None] | ToolResult:
+        summarize = bool(parameters.get("summarize", False))
+        search_query_value = parameters.get("search_query")
+        if summarize and search_query_value:
+            return ToolResult.failed(
+                tool_name=self.name,
+                error="Error: summarize and search_query are mutually exclusive",
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args=parameters,
+                start_time=start_time,
+            )
+
+        session_id = str(parameters.get("session_id") or context.session_id or "default")
+        existing_source: CitationSourceRaw | None = None
+        url = parameters.get("url")
+        index = parameters.get("index")
+        if index is not None:
+            if not isinstance(index, int):
+                return ToolResult.failed(
+                    tool_name=self.name,
+                    error="Error: index must be an integer",
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args=parameters,
+                    start_time=start_time,
+                )
+            existing_source = await self._citation_source_store.get_source_by_index(
+                session_id, index
+            )
+            if existing_source is None:
+                return ToolResult.failed(
+                    tool_name=self.name,
+                    error=f"Search result with index {index} not found",
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args=parameters,
+                    start_time=start_time,
+                )
+            url = existing_source.url
+            logger.info("web_reader_found_source_by_index", index=index, url=url)
+
+        if not isinstance(url, str) or not url.strip():
+            return ToolResult.failed(
+                tool_name=self.name,
+                error="Error: url must be a non-empty string",
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args=parameters,
+                start_time=start_time,
+            )
+
+        search_query = (
+            search_query_value.strip()
+            if isinstance(search_query_value, str) and search_query_value.strip()
+            else None
+        )
+        return session_id, url.strip(), summarize, search_query, existing_source
+
+    async def _process_content(
+        self,
+        content: str,
+        *,
+        summarize: bool,
+        search_query: str | None,
+        abort_signal: AbortSignal | None,
+    ) -> str:
+        if summarize or len(content) > self.max_length:
+            return await self._summarize_content(
+                content,
+                abort_signal=abort_signal,
+            )
+        if search_query:
+            return await self._extract_by_query(
+                content,
+                search_query,
+                abort_signal=abort_signal,
+            )
+        return content
+
+    async def _store_citation_source(
+        self,
+        *,
+        session_id: str,
+        url: str,
+        title: str | None,
+        processed_content: str,
+        original_content: dict[str, Any],
+        search_query: str | None,
+        summarize: bool,
+        existing_source: CitationSourceRaw | None,
+    ) -> str | None:
+        try:
+            if existing_source is not None:
+                citation_id = existing_source.citation_id
+                await self._citation_source_store.update_citation_source(
+                    citation_id=citation_id,
+                    session_id=session_id,
+                    updates={
+                        "full_content": processed_content,
+                        "processed_content": processed_content,
+                        "original_content": original_content,
+                        "parameters": {
+                            "search_query": search_query,
+                            "summarize": summarize,
+                        },
+                    },
+                )
+                return citation_id
+
+            citation_id = generate_citation_id(prefix="reader")
+            await self._citation_source_store.store_citation_sources(
+                session_id=session_id,
+                sources=[
+                    CitationSourceRaw(
+                        citation_id=citation_id,
+                        session_id=session_id,
+                        source_type=CitationSourceType.DIRECT_URL,
+                        url=url,
+                        title=title,
+                        full_content=processed_content,
+                        processed_content=processed_content,
+                        original_content=original_content,
+                        parameters={
+                            "search_query": search_query,
+                            "summarize": summarize,
+                        },
+                        created_at=datetime.now(),
+                    )
+                ],
+            )
+            return citation_id
+        except Exception as exc:  # noqa: BLE001
+            logger.error("citation_store_failed", error=str(exc), url=url)
+            return None

@@ -3,19 +3,24 @@ SQLite implementation of RunStepStorage.
 """
 
 import json
-import os
-from dataclasses import asdict, is_dataclass
-from datetime import datetime
-from pathlib import Path
-from typing import Any
 
 import aiosqlite
 
-from agiwo.agent.schema import Run, StepRecord
+from agiwo.agent.runtime import Run, StepRecord
 from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.storage.serialization import (
+    deserialize_run_from_storage,
+    deserialize_step_from_storage,
+    serialize_run_for_storage,
+    serialize_step_for_storage,
+)
+from agiwo.utils.storage_support.sqlite_runtime import (
+    SQLiteConnectionRuntime,
+    ensure_columns,
+    execute_statements,
+    get_table_columns,
+)
 from agiwo.utils.logging import get_logger
-from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
-from agiwo.utils.tojson import to_json
 
 logger = get_logger(__name__)
 
@@ -26,22 +31,21 @@ class SQLiteRunStepStorage(RunStepStorage):
     """
 
     def __init__(self, db_path: str = "agiwo.db") -> None:
-        self.db_path = os.path.expanduser(db_path)
+        self.db_path = db_path
         self._connection: aiosqlite.Connection | None = None
-        self._initialized = False
+        self._runtime = SQLiteConnectionRuntime(
+            db_path=db_path,
+            logger=logger,
+            connect_event="sqlite_run_step_storage_connected",
+        )
+
+    @property
+    def _initialized(self) -> bool:
+        return self._runtime.initialized
 
     async def connect(self) -> None:
         """Initialize database connection and create tables using shared pool."""
-        if self._initialized:
-            return
-
-        # Use shared connection pool
-        self._connection = await get_shared_connection(self.db_path)
-
-        await self._create_tables()
-        self._initialized = True
-
-        logger.info("sqlite_run_step_storage_connected", db_path=self.db_path)
+        self._connection = await self._runtime.ensure_connection(self._initialize_schema)
 
     async def initialize(self) -> None:
         """Backward-compatible alias for connect()."""
@@ -54,249 +58,164 @@ class SQLiteRunStepStorage(RunStepStorage):
     async def disconnect(self) -> None:
         """Release connection back to pool."""
         if self._connection:
-            await release_shared_connection(self.db_path)
+            await self._runtime.disconnect()
             self._connection = None
-            self._initialized = False
 
-    async def _create_tables(self) -> None:
+    async def _initialize_schema(self, connection: aiosqlite.Connection) -> None:
         """Create database tables and indexes."""
-        if not self._connection:
-            raise RuntimeError("Database connection not established")
-
-        # Create runs table
-        await self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS runs (
-                id TEXT PRIMARY KEY,
-                agent_id TEXT NOT NULL,
-                runnable_type TEXT NOT NULL DEFAULT 'agent',
-                session_id TEXT NOT NULL,
-                user_id TEXT,
-                user_input TEXT NOT NULL,
-                status TEXT NOT NULL,
-                response_content TEXT,
-                metrics TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                parent_run_id TEXT,
-                trace_id TEXT
-            )
-        """
+        await execute_statements(
+            connection,
+            [
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                    id TEXT PRIMARY KEY,
+                    agent_id TEXT NOT NULL,
+                    runnable_type TEXT NOT NULL DEFAULT 'agent',
+                    session_id TEXT NOT NULL,
+                    user_id TEXT,
+                    user_input TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    response_content TEXT,
+                    metrics TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    parent_run_id TEXT,
+                    trace_id TEXT
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS steps (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    agent_id TEXT,
+                    runnable_type TEXT,
+                    role TEXT NOT NULL,
+                    content TEXT,
+                    reasoning_content TEXT,
+                    tool_calls TEXT,
+                    tool_call_id TEXT,
+                    name TEXT,
+                    metrics TEXT,
+                    created_at TEXT NOT NULL,
+                    parent_run_id TEXT,
+                    trace_id TEXT,
+                    span_id TEXT,
+                    parent_span_id TEXT,
+                    depth INTEGER DEFAULT 0,
+                    llm_messages TEXT,
+                    llm_tools TEXT,
+                    llm_request_params TEXT,
+                    UNIQUE(session_id, sequence)
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS counters (
+                    session_id TEXT PRIMARY KEY,
+                    sequence INTEGER NOT NULL DEFAULT 0
+                )
+                """,
+                "CREATE INDEX IF NOT EXISTS idx_runs_agent_id ON runs(agent_id)",
+                "CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id)",
+                "CREATE INDEX IF NOT EXISTS idx_runs_session_id ON runs(session_id)",
+                "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_steps_session_seq ON steps(session_id, sequence)",
+                "CREATE INDEX IF NOT EXISTS idx_steps_session_run_seq ON steps(session_id, run_id, sequence)",
+                "CREATE INDEX IF NOT EXISTS idx_steps_session_tool_call_id ON steps(session_id, tool_call_id)",
+                "CREATE INDEX IF NOT EXISTS idx_steps_created_at ON steps(created_at)",
+            ],
         )
-
-        # Create steps table
-        await self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS steps (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                run_id TEXT NOT NULL,
-                sequence INTEGER NOT NULL,
-                agent_id TEXT,
-                runnable_type TEXT,
-                role TEXT NOT NULL,
-                content TEXT,
-                reasoning_content TEXT,
-                tool_calls TEXT,
-                tool_call_id TEXT,
-                name TEXT,
-                metrics TEXT,
-                created_at TEXT NOT NULL,
-                parent_run_id TEXT,
-                trace_id TEXT,
-                span_id TEXT,
-                parent_span_id TEXT,
-                depth INTEGER DEFAULT 0,
-                llm_messages TEXT,
-                llm_tools TEXT,
-                llm_request_params TEXT,
-                UNIQUE(session_id, sequence)
-            )
-        """
-        )
-
-        # Create counters table for atomic sequence allocation
-        await self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS counters (
-                session_id TEXT PRIMARY KEY,
-                sequence INTEGER NOT NULL DEFAULT 0
-            )
-        """
-        )
-
-        # Create indexes for runs
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_runs_agent_id ON runs(agent_id)"
-        )
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id)"
-        )
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_runs_session_id ON runs(session_id)"
-        )
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at)"
-        )
-
-        # Create indexes for steps
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_steps_session_seq ON steps(session_id, sequence)"
-        )
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_steps_session_run_seq "
-            "ON steps(session_id, run_id, sequence)"
-        )
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_steps_session_tool_call_id "
-            "ON steps(session_id, tool_call_id)"
-        )
-        await self._connection.execute(
-            "CREATE INDEX IF NOT EXISTS idx_steps_created_at ON steps(created_at)"
-        )
-
-        await self._connection.commit()
-
-        # Migrate existing tables to add missing columns if needed
+        await connection.commit()
         await self._migrate_tables()
 
     async def _migrate_tables(self) -> None:
         """Migrate existing tables to add missing columns if needed."""
-        if not self._connection:
+        connection = self._connection
+        if not connection:
             return
 
         try:
-            runs_columns = await self._get_table_columns("runs")
-            steps_columns = await self._get_table_columns("steps")
+            runs_columns = await get_table_columns(connection, "runs")
+            steps_columns = await get_table_columns(connection, "steps")
 
             # --- runs table ---
-            await self._ensure_column("runs", "agent_id", "TEXT", runs_columns)
-            await self._ensure_column(
+            await ensure_columns(
+                connection,
                 "runs",
-                "runnable_type",
-                "TEXT NOT NULL DEFAULT 'agent'",
-                runs_columns,
+                {
+                    "agent_id": "TEXT",
+                    "runnable_type": "TEXT NOT NULL DEFAULT 'agent'",
+                    "response_content": "TEXT",
+                    "metrics": "TEXT",
+                    "updated_at": "TEXT",
+                    "parent_run_id": "TEXT",
+                    "trace_id": "TEXT",
+                },
+                existing=runs_columns,
             )
-            await self._ensure_column("runs", "response_content", "TEXT", runs_columns)
-            await self._ensure_column("runs", "metrics", "TEXT", runs_columns)
-            await self._ensure_column("runs", "updated_at", "TEXT", runs_columns)
-            await self._ensure_column("runs", "parent_run_id", "TEXT", runs_columns)
-            await self._ensure_column("runs", "trace_id", "TEXT", runs_columns)
 
             # Backfill agent_id from runnable_id if present in old schema
             if "runnable_id" in runs_columns and "agent_id" in runs_columns:
-                await self._connection.execute(
+                await connection.execute(
                     "UPDATE runs SET agent_id = runnable_id WHERE agent_id IS NULL"
                 )
 
             # --- steps table ---
-            await self._ensure_column("steps", "agent_id", "TEXT", steps_columns)
-            await self._ensure_column(
+            await ensure_columns(
+                connection,
                 "steps",
-                "runnable_type",
-                "TEXT NOT NULL DEFAULT 'agent'",
-                steps_columns,
+                {
+                    "agent_id": "TEXT",
+                    "runnable_type": "TEXT NOT NULL DEFAULT 'agent'",
+                    "content_for_user": "TEXT",
+                    "reasoning_content": "TEXT",
+                    "tool_calls": "TEXT",
+                    "tool_call_id": "TEXT",
+                    "name": "TEXT",
+                    "metrics": "TEXT",
+                    "parent_run_id": "TEXT",
+                    "trace_id": "TEXT",
+                    "span_id": "TEXT",
+                    "parent_span_id": "TEXT",
+                    "depth": "INTEGER DEFAULT 0",
+                    "llm_messages": "TEXT",
+                    "llm_tools": "TEXT",
+                    "llm_request_params": "TEXT",
+                    "user_input": "TEXT",
+                },
+                existing=steps_columns,
             )
-            await self._ensure_column(
-                "steps", "content_for_user", "TEXT", steps_columns
-            )
-            await self._ensure_column(
-                "steps", "reasoning_content", "TEXT", steps_columns
-            )
-            await self._ensure_column("steps", "tool_calls", "TEXT", steps_columns)
-            await self._ensure_column("steps", "tool_call_id", "TEXT", steps_columns)
-            await self._ensure_column("steps", "name", "TEXT", steps_columns)
-            await self._ensure_column("steps", "metrics", "TEXT", steps_columns)
-            await self._ensure_column("steps", "parent_run_id", "TEXT", steps_columns)
-            await self._ensure_column("steps", "trace_id", "TEXT", steps_columns)
-            await self._ensure_column("steps", "span_id", "TEXT", steps_columns)
-            await self._ensure_column("steps", "parent_span_id", "TEXT", steps_columns)
-            await self._ensure_column(
-                "steps", "depth", "INTEGER DEFAULT 0", steps_columns
-            )
-            await self._ensure_column("steps", "llm_messages", "TEXT", steps_columns)
-            await self._ensure_column("steps", "llm_tools", "TEXT", steps_columns)
-            await self._ensure_column(
-                "steps", "llm_request_params", "TEXT", steps_columns
-            )
-            await self._ensure_column("steps", "user_input", "TEXT", steps_columns)
 
             if "runnable_id" in steps_columns and "agent_id" in steps_columns:
-                await self._connection.execute(
+                await connection.execute(
                     "UPDATE steps SET agent_id = runnable_id WHERE agent_id IS NULL"
                 )
 
             # Ensure indexes exist for new columns
-            await self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_runs_agent_id ON runs(agent_id)"
-            )
-            await self._connection.execute(
-                "CREATE INDEX IF NOT EXISTS idx_steps_session_run_seq "
-                "ON steps(session_id, run_id, sequence)"
+            await execute_statements(
+                connection,
+                [
+                    "CREATE INDEX IF NOT EXISTS idx_runs_agent_id ON runs(agent_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_steps_session_run_seq "
+                    "ON steps(session_id, run_id, sequence)",
+                ],
             )
 
-            await self._connection.commit()
-        except Exception as e:
+            await connection.commit()
+        except Exception as e:  # noqa: BLE001 - sqlite migration boundary
             logger.debug("migration_skipped", error=str(e))
-
-    async def _get_table_columns(self, table_name: str) -> set[str]:
-        if not self._connection:
-            return set()
-        async with self._connection.execute(
-            f"PRAGMA table_info({table_name})"
-        ) as cursor:
-            rows = await cursor.fetchall()
-        return {row[1] for row in rows}
-
-    async def _ensure_column(
-        self,
-        table_name: str,
-        column_name: str,
-        column_def: str,
-        existing: set[str],
-    ) -> None:
-        if column_name in existing:
-            return
-        await self._connection.execute(
-            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}"
-        )
-        existing.add(column_name)
 
     async def _ensure_connection(self) -> None:
         """Ensure database connection is established."""
-        if not self._initialized:
+        if self._connection is None:
             await self.connect()
 
     def _serialize_model(self, model: Run | StepRecord) -> dict:
-        """Serialize Pydantic model or dataclass to dict, handling nested models."""
-        data = self._model_to_dict(model)
-        # Convert nested models to JSON strings
         if isinstance(model, Run):
-            if model.metrics:
-                data["metrics"] = self._serialize_metrics(model.metrics)
-            # Handle complex user_input types (UserMessage or list[ContentPart])
-            if model.user_input is not None and not isinstance(model.user_input, str):
-                from agiwo.agent.schema import serialize_user_input
-                data["user_input"] = serialize_user_input(model.user_input)
-        elif isinstance(model, StepRecord) and model.metrics:
-            data["metrics"] = self._serialize_metrics(model.metrics)
-
-        # Convert list/dict fields to JSON strings
-        if isinstance(model, StepRecord):
-            if model.tool_calls:
-                data["tool_calls"] = json.dumps(model.tool_calls)
-            # Serialize user_input for user steps (source of truth)
-            if model.user_input is not None:
-                from agiwo.agent.schema import serialize_user_input
-                data["user_input"] = serialize_user_input(model.user_input)
-            # For user steps, don't store content (it's derived from user_input)
-            if model.role.value == "user" and model.user_input is not None:
-                data.pop("content", None)
-
-        # Convert datetime to ISO format string
-        for field_name in ("created_at", "updated_at"):
-            if field_name in data and not isinstance(data[field_name], str):
-                data[field_name] = data[field_name].isoformat()
+            data = serialize_run_for_storage(model)
+        else:
+            data = serialize_step_for_storage(model)
 
         # Map Run model fields to database columns
         if isinstance(model, Run):
@@ -310,29 +229,11 @@ class SQLiteRunStepStorage(RunStepStorage):
                 data["agent_id"] = data.pop("agent_id")
                 data["runnable_type"] = "agent"
 
+        if "metrics" in data:
+            data["metrics"] = json.dumps(data["metrics"])
+        if "tool_calls" in data:
+            data["tool_calls"] = json.dumps(data["tool_calls"])
         return data
-
-    def _model_to_dict(self, model: Run | StepRecord) -> dict:
-        data = asdict(model)
-        return {k: v for k, v in data.items() if v is not None}
-
-    def _serialize_metrics(self, metrics: Any) -> str:
-        if is_dataclass(metrics):
-            payload = asdict(metrics)
-        else:
-            payload = to_json(metrics)
-        return json.dumps(self._normalize_datetimes(payload))
-
-    def _normalize_datetimes(self, value: Any) -> Any:
-        if isinstance(value, datetime):
-            return value.isoformat()
-        if isinstance(value, dict):
-            return {k: self._normalize_datetimes(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [self._normalize_datetimes(v) for v in value]
-        if isinstance(value, tuple):
-            return [self._normalize_datetimes(v) for v in value]
-        return value
 
     def _deserialize_run(self, row: aiosqlite.Row) -> Run:
         """Deserialize database row to Run model."""
@@ -340,25 +241,12 @@ class SQLiteRunStepStorage(RunStepStorage):
 
         # Parse JSON fields
         if data.get("metrics"):
-            metrics_data = json.loads(data["metrics"])
-            from agiwo.agent.schema import RunMetrics
-
-            # RunMetrics is a dataclass
-            data["metrics"] = RunMetrics(**metrics_data)
+            data["metrics"] = json.loads(data["metrics"])
 
         # Deserialize user_input from JSON string
-        if data.get("user_input") and isinstance(data["user_input"], str):
-            from agiwo.agent.schema import deserialize_user_input
-            data["user_input"] = deserialize_user_input(data["user_input"])
-
-        # Map database columns to Run model fields
         if "agent_id" in data:
             data["agent_id"] = data.pop("agent_id")
-        # Remove runnable_type as it's not in the Run model
-        data.pop("runnable_type", None)
-
-        # Run is a dataclass, so use direct instantiation
-        return Run(**data)
+        return deserialize_run_from_storage(data)
 
     def _deserialize_step(self, row: aiosqlite.Row) -> StepRecord:
         """Deserialize database row to StepRecord model."""
@@ -366,11 +254,7 @@ class SQLiteRunStepStorage(RunStepStorage):
 
         # Parse JSON fields
         if data.get("metrics"):
-            metrics_data = json.loads(data["metrics"])
-            from agiwo.agent.schema import StepMetrics
-
-            # StepMetrics is a dataclass
-            data["metrics"] = StepMetrics(**metrics_data)
+            data["metrics"] = json.loads(data["metrics"])
         if data.get("tool_calls"):
             data["tool_calls"] = json.loads(data["tool_calls"])
         data.pop("llm_messages", None)
@@ -380,33 +264,9 @@ class SQLiteRunStepStorage(RunStepStorage):
         data.pop("span_id", None)
         data.pop("parent_span_id", None)
 
-        # Deserialize user_input and compute content for user steps
-        if data.get("user_input"):
-            from agiwo.agent.schema import (
-                deserialize_user_input,
-                normalize_to_message,
-                to_message_content,
-            )
-            data["user_input"] = deserialize_user_input(data["user_input"])
-            # For user steps, derive content from user_input if not stored
-            if data.get("role") == "user" and not data.get("content"):
-                user_msg = normalize_to_message(data["user_input"])
-                data["content"] = to_message_content(user_msg.content)
-
-        # Map database columns to Step model fields
         if "agent_id" in data:
             data["agent_id"] = data.pop("agent_id")
-        # Remove runnable_type as it's not in the Step model
-        data.pop("runnable_type", None)
-
-        # Convert role string to MessageRole enum
-        if "role" in data and isinstance(data["role"], str):
-            from agiwo.agent.schema import MessageRole
-
-            data["role"] = MessageRole(data["role"])
-
-        # Step is a dataclass, so use direct instantiation
-        return StepRecord(**data)
+        return deserialize_step_from_storage(data)
 
     # --- Run Operations ---
 

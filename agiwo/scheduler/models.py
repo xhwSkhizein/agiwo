@@ -71,6 +71,31 @@ def to_seconds(value: float, unit: TimeUnit) -> float:
 
 
 @dataclass
+class ChildAgentConfigOverrides:
+    """Typed overrides used when deriving a scheduler child agent."""
+
+    instruction: str | None = None
+    system_prompt: str | None = None
+
+    def to_dict(self) -> dict:
+        data: dict[str, str] = {}
+        if self.instruction:
+            data["instruction"] = self.instruction
+        if self.system_prompt:
+            data["system_prompt"] = self.system_prompt
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> "ChildAgentConfigOverrides":
+        if not data:
+            return cls()
+        return cls(
+            instruction=data.get("instruction"),
+            system_prompt=data.get("system_prompt"),
+        )
+
+
+@dataclass
 class WakeCondition:
     """Condition under which a sleeping agent should be woken."""
 
@@ -185,6 +210,7 @@ class AgentState:
     wake_condition: WakeCondition | None = None
     result_summary: str | None = None
     signal_propagated: bool = False
+    agent_config_id: str | None = None
     is_persistent: bool = False
     depth: int = 0
     wake_count: int = 0

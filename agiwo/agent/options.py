@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
 from agiwo.config.settings import settings
 
 
@@ -63,9 +65,8 @@ class AgentOptions:
     # Execution limits
     max_steps: int = 50
     run_timeout: int = 600  # seconds
-    max_context_window_tokens: int = 200000
-    max_tokens_per_run: int = 200000
-    max_run_token_cost: float | None = None
+    max_input_tokens_per_call: int | None = None
+    max_run_cost: float | None = None
 
     # Termination summary
     enable_termination_summary: bool = True
@@ -107,6 +108,81 @@ class AgentOptions:
         if default_dir.exists():
             return [default_dir]
         return []
+
+
+def sanitize_agent_options_data(
+    data: Any,
+    *,
+    preserve_non_dict: bool = False,
+) -> Any:
+    if not isinstance(data, dict):
+        return data if preserve_non_dict else {}
+    sanitized = dict(data)
+    skills_dirs = normalize_skills_dirs(sanitized.get("skills_dirs"))
+    if skills_dirs is None:
+        sanitized.pop("skills_dirs", None)
+    else:
+        sanitized["skills_dirs"] = skills_dirs
+    return sanitized
+
+
+_DEFAULT_AGENT_OPTIONS = AgentOptions()
+
+
+class _AgentOptionsPayloadBase(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize(cls, data: Any) -> Any:
+        return sanitize_agent_options_data(data, preserve_non_dict=True)
+
+
+class AgentOptionsInput(_AgentOptionsPayloadBase):
+    config_root: str = _DEFAULT_AGENT_OPTIONS.config_root
+    max_steps: int = Field(default=_DEFAULT_AGENT_OPTIONS.max_steps, ge=1)
+    run_timeout: int = Field(default=_DEFAULT_AGENT_OPTIONS.run_timeout, ge=1)
+    max_input_tokens_per_call: int | None = Field(default=None, ge=1)
+    max_run_cost: float | None = Field(default=None, ge=0)
+    enable_termination_summary: bool = _DEFAULT_AGENT_OPTIONS.enable_termination_summary
+    termination_summary_prompt: str = _DEFAULT_AGENT_OPTIONS.termination_summary_prompt
+    enable_skill: bool = Field(default_factory=lambda: settings.is_skills_enabled)
+    skills_dirs: list[str] | None = None
+    relevant_memory_max_token: int = Field(
+        default=_DEFAULT_AGENT_OPTIONS.relevant_memory_max_token,
+        ge=1,
+    )
+    stream_cleanup_timeout: float = Field(
+        default=_DEFAULT_AGENT_OPTIONS.stream_cleanup_timeout,
+        gt=0,
+    )
+    compact_prompt: str = _DEFAULT_AGENT_OPTIONS.compact_prompt
+
+    def to_agent_options(
+        self,
+        *,
+        run_step_storage: RunStepStorageConfig,
+        trace_storage: TraceStorageConfig,
+    ) -> AgentOptions:
+        data = self.model_dump(exclude_none=True)
+        data["run_step_storage"] = run_step_storage
+        data["trace_storage"] = trace_storage
+        return AgentOptions(**data)
+
+
+class AgentOptionsPatch(_AgentOptionsPayloadBase):
+    config_root: str | None = None
+    max_steps: int | None = Field(default=None, ge=1)
+    run_timeout: int | None = Field(default=None, ge=1)
+    max_input_tokens_per_call: int | None = Field(default=None, ge=1)
+    max_run_cost: float | None = Field(default=None, ge=0)
+    enable_termination_summary: bool | None = None
+    termination_summary_prompt: str | None = None
+    enable_skill: bool | None = None
+    skills_dirs: list[str] | None = None
+    relevant_memory_max_token: int | None = Field(default=None, ge=1)
+    stream_cleanup_timeout: float | None = Field(default=None, gt=0)
+    compact_prompt: str | None = None
 
 
 def normalize_skills_dirs(value: str | list[str] | None) -> list[str] | None:

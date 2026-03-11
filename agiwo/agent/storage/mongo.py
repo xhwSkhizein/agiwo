@@ -2,36 +2,23 @@
 MongoDB implementation of RunStepStorage.
 """
 
-from dataclasses import asdict
+from pymongo import UpdateOne
 
-from agiwo.agent.schema import Run, StepRecord, MessageRole, RunMetrics, StepMetrics
+from agiwo.agent.runtime import Run, StepRecord
 from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.storage.serialization import (
+    deserialize_run_from_storage,
+    deserialize_step_from_storage,
+    serialize_run_for_storage,
+    serialize_step_for_storage,
+)
+from agiwo.utils.storage_support.mongo_runtime import (
+    MongoCollectionRuntime,
+    MongoIndexSpec,
+)
 from agiwo.utils.logging import get_logger
-from agiwo.utils.mongo_pool import get_shared_mongo_client, release_shared_mongo_client
 
 logger = get_logger(__name__)
-
-
-def filter_none_values(data: dict) -> dict:
-    """
-    Recursively filter out None values from a dictionary.
-    """
-    filtered = {}
-    for key, value in data.items():
-        if value is None:
-            continue
-        elif isinstance(value, dict):
-            filtered[key] = filter_none_values(value)
-        elif isinstance(value, list):
-            filtered[key] = [
-                filter_none_values(item) if isinstance(item, dict) else item
-                for item in value
-                if item is not None
-            ]
-        else:
-            filtered[key] = value
-
-    return filtered
 
 
 class MongoRunStepStorage(RunStepStorage):
@@ -47,7 +34,7 @@ class MongoRunStepStorage(RunStepStorage):
         self,
         uri: str = "mongodb://localhost:27017",
         db_name: str = "agiwo",
-    ):
+    ) -> None:
         self.uri = uri
         self.db_name = db_name
         self.client = None
@@ -55,76 +42,58 @@ class MongoRunStepStorage(RunStepStorage):
         self.runs_collection = None
         self.steps_collection = None
         self.counters_collection = None
+        self._runtime = MongoCollectionRuntime(
+            uri=uri,
+            db_name=db_name,
+            logger=logger,
+            connect_event="mongodb_connected",
+            disconnect_event="mongodb_disconnected",
+        )
 
-    async def _ensure_connection(self):
+    async def _ensure_connection(self) -> None:
         """Ensure database connection is established."""
-        if self.client is None:
-            self.client = await get_shared_mongo_client(self.uri)
-            self.db = self.client[self.db_name]
-            self.runs_collection = self.db["runs"]
-            self.steps_collection = self.db["steps"]
-            self.counters_collection = self.db["counters"]
+        if self.client is not None:
+            return
 
-            # Create indexes for runs
-            await self.runs_collection.create_index("id", unique=True)
-            await self.runs_collection.create_index("agent_id")
-            await self.runs_collection.create_index("user_id")
-            await self.runs_collection.create_index("session_id")
-            await self.runs_collection.create_index("created_at")
+        self.runs_collection = await self._runtime.ensure_collection(
+            "runs",
+            indexes=[
+                MongoIndexSpec("id", unique=True),
+                MongoIndexSpec("agent_id"),
+                MongoIndexSpec("user_id"),
+                MongoIndexSpec("session_id"),
+                MongoIndexSpec("created_at"),
+            ],
+        )
+        self.steps_collection = await self._runtime.ensure_collection(
+            "steps",
+            indexes=[
+                MongoIndexSpec("id", unique=True),
+                MongoIndexSpec([("session_id", 1), ("sequence", 1)], unique=True),
+                MongoIndexSpec([("session_id", 1), ("run_id", 1), ("sequence", 1)]),
+                MongoIndexSpec([("session_id", 1), ("tool_call_id", 1)]),
+                MongoIndexSpec("created_at"),
+            ],
+        )
+        self.counters_collection = await self._runtime.ensure_collection(
+            "counters",
+            indexes=[MongoIndexSpec("session_id", unique=True)],
+        )
+        self.client = self._runtime.client
+        self.db = self._runtime.db
 
-            # Create indexes for steps
-            await self.steps_collection.create_index("id", unique=True)
-            await self.steps_collection.create_index(
-                [("session_id", 1), ("sequence", 1)], unique=True
-            )
-            # Compound indexes matching common query patterns
-            await self.steps_collection.create_index(
-                [("session_id", 1), ("run_id", 1), ("sequence", 1)]
-            )
-            await self.steps_collection.create_index(
-                [("session_id", 1), ("run_id", 1), ("node_id", 1), ("sequence", 1)]
-            )
-            await self.steps_collection.create_index(
-                [("session_id", 1), ("tool_call_id", 1)]
-            )
-            await self.steps_collection.create_index("created_at")
-
-            # Create index for counters collection
-            await self.counters_collection.create_index("session_id", unique=True)
-
-            logger.info("mongodb_connected", uri=self.uri, db_name=self.db_name)
-
-    def _serialize_dataclass(self, obj) -> dict:
-        data = asdict(obj)
-        if "role" in data and hasattr(data["role"], "value"):
-            data["role"] = data["role"].value
-        # Handle UserInput serialization for Run model
-        if hasattr(obj, "user_input") and obj.user_input is not None:
-            from agiwo.agent.schema import serialize_user_input
-            if not isinstance(obj.user_input, str):
-                data["user_input"] = serialize_user_input(obj.user_input)
-        return filter_none_values(data)
+    def _serialize_dataclass(self, obj: Run | StepRecord) -> dict:
+        if isinstance(obj, Run):
+            return serialize_run_for_storage(obj)
+        return serialize_step_for_storage(obj)
 
     def _deserialize_run(self, doc: dict) -> Run:
         doc.pop("_id", None)
-        metrics = doc.get("metrics")
-        if isinstance(metrics, dict):
-            doc["metrics"] = RunMetrics(**metrics)
-        # Handle UserInput deserialization
-        user_input = doc.get("user_input")
-        if isinstance(user_input, str) and user_input.startswith("{"):
-            from agiwo.agent.schema import deserialize_user_input
-            doc["user_input"] = deserialize_user_input(user_input)
-        return Run(**doc)
+        return deserialize_run_from_storage(doc)
 
     def _deserialize_step(self, doc: dict) -> StepRecord:
         doc.pop("_id", None)
-        if "role" in doc and isinstance(doc["role"], str):
-            doc["role"] = MessageRole(doc["role"])
-        metrics = doc.get("metrics")
-        if isinstance(metrics, dict):
-            doc["metrics"] = StepMetrics(**metrics)
-        return StepRecord(**doc)
+        return deserialize_step_from_storage(doc)
 
     async def initialize(self) -> None:
         """Initialize MongoDB connection."""
@@ -137,13 +106,12 @@ class MongoRunStepStorage(RunStepStorage):
     async def disconnect(self) -> None:
         """Close MongoDB connection."""
         if self.client:
-            await release_shared_mongo_client(self.uri)
+            await self._runtime.disconnect()
             self.client = None
             self.db = None
             self.runs_collection = None
             self.steps_collection = None
             self.counters_collection = None
-            logger.info("mongodb_disconnected")
 
     async def save_run(self, run: Run) -> None:
         """Save or update a run."""
@@ -253,8 +221,6 @@ class MongoRunStepStorage(RunStepStorage):
             operations = []
             for step in steps:
                 step_data = self._serialize_dataclass(step)
-
-                from pymongo import UpdateOne
 
                 operations.append(
                     UpdateOne({"id": step.id}, {"$set": step_data}, upsert=True)
@@ -406,7 +372,7 @@ class MongoRunStepStorage(RunStepStorage):
                     }
                 )
                 return max_seq + 1
-            except Exception:
+            except Exception:  # noqa: BLE001 - concurrent counter init boundary
                 # Another thread already initialized, retry increment
                 result = await self.counters_collection.find_one_and_update(
                     {"session_id": session_id},
@@ -418,7 +384,7 @@ class MongoRunStepStorage(RunStepStorage):
                 # Should never reach here
                 raise RuntimeError(
                     f"Failed to allocate sequence for session {session_id}"
-                )
+                ) from None
 
         except Exception as e:
             logger.error(

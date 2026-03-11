@@ -5,8 +5,6 @@ Provides reusable browser sessions with lifecycle control, idle eviction, and
 broken-session handling.
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 from dataclasses import dataclass

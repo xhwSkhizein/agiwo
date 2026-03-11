@@ -6,11 +6,15 @@ import asyncio
 import json
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
 
-from agiwo.agent.schema import CompactMetadata
+import aiosqlite
+
+from agiwo.agent.compact_types import CompactMetadata
+from agiwo.utils.storage_support.sqlite_runtime import (
+    SQLiteConnectionRuntime,
+    execute_statements,
+)
 from agiwo.utils.logging import get_logger
-from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 
 logger = get_logger(__name__)
 
@@ -87,13 +91,28 @@ class SQLiteSessionStorage(SessionStorage):
 
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self._conn: Any = None
+        self._conn: aiosqlite.Connection | None = None
         self._lock = asyncio.Lock()
+        self._runtime = SQLiteConnectionRuntime(
+            db_path=db_path,
+            logger=logger,
+            connect_event="sqlite_session_storage_connected",
+        )
 
-    async def _ensure_connection(self) -> Any:
-        if self._conn is None:
-            self._conn = await get_shared_connection(self.db_path)
-            await self._conn.execute("""
+    async def _ensure_connection(self) -> aiosqlite.Connection:
+        self._conn = await self._runtime.ensure_connection(self._initialize_schema)
+        return self._conn
+
+    async def close(self) -> None:
+        if self._conn is not None:
+            await self._runtime.disconnect()
+            self._conn = None
+
+    async def _initialize_schema(self, connection: aiosqlite.Connection) -> None:
+        await execute_statements(
+            connection,
+            [
+                """
                 CREATE TABLE IF NOT EXISTS compact_metadata (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     session_id TEXT NOT NULL,
@@ -109,18 +128,14 @@ class SQLiteSessionStorage(SessionStorage):
                     compact_model TEXT NOT NULL,
                     compact_tokens INTEGER NOT NULL
                 )
-            """)
-            await self._conn.execute("""
+                """,
+                """
                 CREATE INDEX IF NOT EXISTS idx_compact_session_agent
                 ON compact_metadata (session_id, agent_id, created_at)
-            """)
-            await self._conn.commit()
-        return self._conn
-
-    async def close(self) -> None:
-        if self._conn is not None:
-            await release_shared_connection(self.db_path)
-            self._conn = None
+                """,
+            ],
+        )
+        await connection.commit()
 
     async def save_compact_metadata(
         self, session_id: str, agent_id: str, metadata: CompactMetadata

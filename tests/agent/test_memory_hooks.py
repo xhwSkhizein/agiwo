@@ -11,7 +11,6 @@ from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.memory_hooks import DefaultMemoryHook, create_default_memory_hooks
 from agiwo.agent.schema import MemoryRecord, UserInput
 from agiwo.llm.base import Model
-from agiwo.tool.builtin.config import MemoryConfig
 
 
 class TestDefaultMemoryHook:
@@ -25,14 +24,13 @@ class TestDefaultMemoryHook:
             memory_dir.mkdir()
             yield workspace
 
-    def test_init_default_config(self):
+    def test_init_default(self):
         hook = DefaultMemoryHook()
-        assert hook._config is not None
+        assert hook._top_k is not None
 
-    def test_init_custom_config(self):
-        config = MemoryConfig(top_k=10)
-        hook = DefaultMemoryHook(config)
-        assert hook._config.top_k == 10
+    def test_init_custom_top_k(self):
+        hook = DefaultMemoryHook(top_k=10)
+        assert hook._top_k == 10
 
     def test_resolve_workspace(self, temp_workspace):
         hook = DefaultMemoryHook()
@@ -85,9 +83,8 @@ class TestCreateDefaultMemoryHooks:
         hooks = create_default_memory_hooks()
         assert hooks.on_memory_retrieve is not None
 
-    def test_create_with_custom_config(self):
-        config = MemoryConfig(top_k=10)
-        hooks = create_default_memory_hooks(config)
+    def test_create_with_custom_top_k(self):
+        hooks = create_default_memory_hooks(top_k=10)
         assert hooks.on_memory_retrieve is not None
 
 
@@ -174,11 +171,10 @@ class TestMemoryHookIntegration:
             "This is important information about Python programming."
         )
 
-        config = MemoryConfig(
+        hook = DefaultMemoryHook(
             embedding_provider="disabled",
             top_k=3,
         )
-        hook = DefaultMemoryHook(config)
 
         # Mock context with agent_name that maps to our temp workspace
         context = MagicMock(spec=ExecutionContext)
@@ -202,8 +198,7 @@ class TestMemoryHookIntegration:
         memory_dir = temp_workspace / "MEMORY"
         (memory_dir / "test.md").write_text("Important note about machine learning.")
 
-        config = MemoryConfig(embedding_provider="disabled", top_k=3)
-        hook = DefaultMemoryHook(config)
+        hook = DefaultMemoryHook(embedding_provider="disabled", top_k=3)
 
         context = MagicMock(spec=ExecutionContext)
         context.agent_name = str(temp_workspace.name)

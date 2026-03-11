@@ -12,19 +12,23 @@ import asyncio
 import time
 
 from agiwo.agent.compact.compactor import Compactor
+from agiwo.llm.limits import (
+    resolve_max_context_window,
+    resolve_max_input_tokens_per_call,
+)
 from agiwo.agent.schema import CompactMetadata
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.llm_handler import LLMStreamHandler
 from agiwo.agent.inner.message_assembler import MessageAssembler
 from agiwo.agent.inner.summarizer import (
-    build_termination_messages,
     DEFAULT_TERMINATION_USER_PROMPT,
     _format_termination_reason,
 )
 from agiwo.agent.inner.run_state import RunState
 from agiwo.agent.schema import (
     ChannelContext,
+    LLMCallContext,
     MemoryRecord,
     RunOutput,
     StepRecord,
@@ -67,6 +71,7 @@ class AgentExecutor:
         {
             TerminationReason.MAX_STEPS,
             TerminationReason.TIMEOUT,
+            TerminationReason.MAX_RUN_COST,
             TerminationReason.ERROR_WITH_CONTEXT,
         }
     )
@@ -89,21 +94,19 @@ class AgentExecutor:
         self.run_step_storage = run_step_storage
         self.session_storage = session_storage
         self.root_path = root_path or settings.root_path
-        self.cache_hit_price = float(getattr(model, "cache_hit_price", 0.0) or 0.0)
-        self.input_price = float(getattr(model, "input_price", 0.0) or 0.0)
-        self.output_price = float(getattr(model, "output_price", 0.0) or 0.0)
+        self.max_context_window = resolve_max_context_window(model)
+        self.max_input_tokens_per_call = resolve_max_input_tokens_per_call(
+            self.options.max_input_tokens_per_call, model
+        )
 
         self.llm_handler = LLMStreamHandler(model)
         self.tool_executor = ToolExecutor(tools=tools)
 
         self._tool_schemas = [t.to_openai_schema() for t in tools] if tools else None
 
-        # Compactor (created only when both session_storage and max_context_window_tokens are set)
+        # Compactor (created only when session storage is enabled)
         self._compactor: Compactor | None = None
-        if (
-            session_storage is not None
-            and self.options.max_context_window_tokens is not None
-        ):
+        if session_storage is not None:
             self._compactor = Compactor(
                 llm_handler=self.llm_handler,
                 emitter=emitter,
@@ -224,6 +227,8 @@ class AgentExecutor:
         # Resume pending tools from previous run
         if pending_tool_calls:
             await self._execute_tools(state, pending_tool_calls, abort_signal)
+            if state.termination_reason is not None:
+                return
 
         # Main agent loop
         while True:
@@ -232,20 +237,21 @@ class AgentExecutor:
                 state.termination_reason = reason
                 break
 
-            # Try compact before checking token limits (compact reduces tokens)
+            # Try compact first (compact reduces tokens and should count into run cost)
             if await self._maybe_compact(state, abort_signal):
                 logger.info(
                     "compact_triggered",
                     run_id=state.context.run_id,
                     before_messages=len(state.messages),
                 )
+                if (
+                    self.options.max_run_cost is not None
+                    and state.token_cost >= self.options.max_run_cost
+                ):
+                    state.termination_reason = TerminationReason.MAX_RUN_COST
+                    break
                 # After compact, continue loop to re-check limits
                 continue
-
-            # Check token limits after compact attempt
-            if reason := self._check_run_token_limits(state):
-                state.termination_reason = reason
-                break
 
             # Drain steering queue before LLM call
             self._drain_steering_queue(state)
@@ -262,22 +268,22 @@ class AgentExecutor:
             )
             await self.emitter.emit_step_completed(step, llm=llm_context)
             state.track_step(step)
-            state.add_token_cost(self._estimate_token_cost(step))
+            state.add_token_cost(step.metrics.token_cost if step.metrics else 0.0)
 
             if self.hooks.on_after_llm_call:
                 await self.hooks.on_after_llm_call(step)
             if self.hooks.on_step:
                 await self.hooks.on_step(step)
 
+            if reason := self._check_post_llm_limits(state, step, llm_context):
+                state.termination_reason = reason
+                return
+
             had_tool_calls = bool(step.tool_calls)
             if had_tool_calls:
                 await self._execute_tools(state, step.tool_calls or [], abort_signal)
                 if state.termination_reason is not None:
                     return
-
-            if reason := self._check_post_limits(state, llm_context.finish_reason, step):
-                state.termination_reason = reason
-                return
 
             if not had_tool_calls:
                 state.termination_reason = TerminationReason.COMPLETED
@@ -407,91 +413,42 @@ class AgentExecutor:
 
         return None
 
-    def _check_run_token_limits(self, state: RunState) -> TerminationReason | None:
-        """Check max_tokens_per_run and max_run_token_cost limits."""
-        if (
-            self.options.max_tokens_per_run is not None
-            and state.total_tokens >= self.options.max_tokens_per_run
-        ):
-            logger.warning(
-                "limit_hit_max_tokens_per_run",
-                total_tokens=state.total_tokens,
-                max_tokens=self.options.max_tokens_per_run,
-                run_id=state.context.run_id,
-            )
-            return TerminationReason.MAX_TOKENS_PER_RUN
-
-        if (
-            self.options.max_run_token_cost is not None
-            and state.token_cost >= self.options.max_run_token_cost
-        ):
-            logger.warning(
-                "limit_hit_max_run_token_cost",
-                token_cost=state.token_cost,
-                max_cost=self.options.max_run_token_cost,
-                run_id=state.context.run_id,
-            )
-            return TerminationReason.MAX_RUN_TOKEN_COST
-
-        return None
-
-    def _check_post_limits(
+    def _check_post_llm_limits(
         self,
         state: RunState,
-        finish_reason: str | None,
         step: StepRecord,
+        llm_context: LLMCallContext,
     ) -> TerminationReason | None:
-        """Check limits after one LLM step and any tool execution for that step."""
-        if self._is_model_output_limit_hit(finish_reason):
+        """Unified post-LLM-call limit checks (input tokens, run cost, output limit)."""
+        input_tokens = step.metrics.input_tokens if step.metrics else 0
+        if input_tokens and input_tokens > self.max_input_tokens_per_call:
             logger.warning(
-                "limit_hit_max_output_tokens_per_call",
+                "limit_hit_max_input_tokens_per_call",
+                input_tokens=input_tokens,
+                max_input_tokens_per_call=self.max_input_tokens_per_call,
+                run_id=state.context.run_id,
+            )
+            return TerminationReason.MAX_INPUT_TOKENS_PER_CALL
+
+        if self.options.max_run_cost is not None and state.token_cost >= self.options.max_run_cost:
+            logger.warning(
+                "limit_hit_max_run_cost",
+                token_cost=state.token_cost,
+                max_run_cost=self.options.max_run_cost,
+                run_id=state.context.run_id,
+            )
+            return TerminationReason.MAX_RUN_COST
+
+        finish_reason = llm_context.finish_reason
+        if finish_reason and finish_reason.strip().lower() in {"length", "max_tokens"}:
+            logger.warning(
+                "limit_hit_max_output_tokens",
                 finish_reason=finish_reason,
                 run_id=state.context.run_id,
             )
-            return TerminationReason.MAX_OUTPUT_TOKENS_PER_CALL
+            return TerminationReason.MAX_OUTPUT_TOKENS
 
-        if (
-            self.options.max_context_window_tokens is not None
-            and step.metrics
-            and step.metrics.total_tokens is not None
-            and step.metrics.total_tokens >= self.options.max_context_window_tokens
-        ):
-            logger.warning(
-                "limit_hit_max_context_window_tokens",
-                total_tokens=step.metrics.total_tokens,
-                max_tokens=self.options.max_context_window_tokens,
-                run_id=state.context.run_id,
-            )
-            return TerminationReason.MAX_CONTEXT_WINDOW_TOKENS
-
-        return self._check_run_token_limits(state)
-
-    @staticmethod
-    def _is_model_output_limit_hit(finish_reason: str | None) -> bool:
-        if finish_reason is None:
-            return False
-
-        normalized = finish_reason.strip().lower()
-        return normalized in {"length", "max_tokens"}
-
-    def _estimate_token_cost(self, step: StepRecord) -> float:
-        """Estimate step cost in USD from token usage and model prices (per 1M tokens)."""
-        if not step.metrics:
-            return 0.0
-
-        input_tokens = step.metrics.input_tokens or 0
-        output_tokens = step.metrics.output_tokens or 0
-        cache_hit_tokens = step.metrics.cache_read_tokens or 0
-        cache_miss_tokens = max(input_tokens - cache_hit_tokens, 0)
-
-        if input_tokens == 0 and output_tokens == 0:
-            return 0.0
-
-        return (
-            (cache_hit_tokens * self.cache_hit_price)
-            + (cache_miss_tokens * self.input_price)
-            + (output_tokens * self.output_price)
-        ) / 1_000_000.0
+        return None
 
     async def _maybe_generate_summary(
         self,
@@ -537,6 +494,7 @@ class AgentExecutor:
         step.name = "summary"
         await self.emitter.emit_step_completed(step, llm=llm_context)
         state.track_step(step, append_message=False)
+        state.add_token_cost(step.metrics.token_cost if step.metrics else 0.0)
 
         logger.info(
             "summary_generated",
@@ -562,7 +520,7 @@ class AgentExecutor:
             return False
 
         if not self._compactor.should_compact(
-            state.messages, self.options.max_context_window_tokens
+            state.messages, self.max_context_window
         ):
             return False
 
@@ -573,6 +531,9 @@ class AgentExecutor:
         for attempt in range(retry_count + 1):
             try:
                 result = await self._compactor.compact(state, abort_signal)
+                if result.step is not None:
+                    step_cost = result.step.metrics.token_cost if result.step.metrics else 0.0
+                    state.add_token_cost(step_cost)
 
                 # Update state with compacted messages
                 state.messages = result.compacted_messages

@@ -2,18 +2,47 @@
 API-layer Pydantic models for request/response serialization.
 """
 
-from datetime import datetime
-from typing import Any, Literal
-from urllib.parse import urlparse
+from typing import Any
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
-from agiwo.agent.options import normalize_skills_dirs
 from agiwo.agent.schema import UserInput
-from agiwo.config.settings import settings
+from agiwo.agent.options import AgentOptionsInput
+from agiwo.config.settings import ModelProvider
+from agiwo.llm.factory import ModelParamsInput
+from agiwo.llm.config_policy import validate_provider_model_params
+from server.domain.run_metrics import RunMetricsSummary
+from server.domain.scheduler_events import (
+    SchedulerCompletedEventPayloadData,
+    SchedulerFailedEventPayloadData,
+)
+from server.domain.sessions import SessionSummaryData
+
+
+AgentOptionsPayload = AgentOptionsInput
+ModelParamsPayload = ModelParamsInput
 
 
 # ── Session / Run / Step Responses ──────────────────────────────────────
+
+
+class RunMetricsResponse(BaseModel):
+    duration_ms: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_creation_tokens: int | None = None
+    token_cost: float | None = None
+    steps_count: int | None = None
+    tool_calls_count: int | None = None
+
+
+class StepMetricsResponse(RunMetricsResponse):
+    usage_source: str | None = None
+    model_name: str | None = None
+    provider: str | None = None
+    first_token_latency_ms: float | None = None
 
 
 class StepResponse(BaseModel):
@@ -23,14 +52,14 @@ class StepResponse(BaseModel):
     sequence: int
     role: str
     agent_id: str | None = None
-    content: Any | None = None
+    content: object | None = None
     content_for_user: str | None = None
     reasoning_content: str | None = None
     user_input: UserInput | None = None
-    tool_calls: list[dict] | None = None
+    tool_calls: list[dict[str, object]] | None = None
     tool_call_id: str | None = None
     name: str | None = None
-    metrics: dict | None = None
+    metrics: StepMetricsResponse | None = None
     created_at: str | None = None
     parent_run_id: str | None = None
     depth: int = 0
@@ -44,21 +73,13 @@ class RunResponse(BaseModel):
     user_input: UserInput
     status: str
     response_content: str | None = None
-    metrics: dict | None = None
+    metrics: RunMetricsResponse | None = None
     created_at: str | None = None
     updated_at: str | None = None
     parent_run_id: str | None = None
 
 
-class SessionSummary(BaseModel):
-    session_id: str
-    agent_id: str | None = None
-    last_user_input: UserInput | None = None  # 结构化 UserInput
-    last_response: str | None = None
-    run_count: int = 0
-    step_count: int = 0
-    created_at: str | None = None
-    updated_at: str | None = None
+SessionSummary = SessionSummaryData
 
 
 # ── Trace Responses ─────────────────────────────────────────────────────
@@ -97,10 +118,13 @@ class TraceResponse(BaseModel):
     status: str
     root_span_id: str | None = None
     total_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
     total_llm_calls: int = 0
     total_tool_calls: int = 0
     total_cache_read_tokens: int = 0
     total_cache_creation_tokens: int = 0
+    total_token_cost: float = 0.0
     max_depth: int = 0
     input_query: str | None = None
     final_output: str | None = None
@@ -116,6 +140,11 @@ class TraceListItem(BaseModel):
     duration_ms: float | None = None
     status: str
     total_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_cache_creation_tokens: int = 0
+    total_token_cost: float = 0.0
     total_llm_calls: int = 0
     total_tool_calls: int = 0
     input_query: str | None = None
@@ -124,142 +153,28 @@ class TraceListItem(BaseModel):
 
 # ── Agent Config ────────────────────────────────────────────────────────
 
-
-class AgentOptionsPayload(BaseModel):
-    config_root: str = ""
-    max_steps: int = Field(default=10, ge=1)
-    run_timeout: int = Field(default=600, ge=1)
-    max_context_window_tokens: int = Field(default=32768, ge=1)
-    max_tokens_per_run: int = Field(default=131072, ge=1)
-    max_run_token_cost: float | None = Field(default=None, ge=0)
-    enable_termination_summary: bool = True
-    termination_summary_prompt: str = ""
-    enable_skill: bool = Field(default_factory=lambda: settings.is_skills_enabled)
-    skills_dirs: list[str] | None = None
-    relevant_memory_max_token: int = Field(default=2048, ge=1)
-    stream_cleanup_timeout: float = Field(default=300.0, gt=0)
-    compact_prompt: str = ""
-
-    model_config = {"extra": "ignore"}
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_legacy_fields(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        normalized = dict(data)
-        if "skills_dirs" not in normalized and "skills_dir" in normalized:
-            normalized["skills_dirs"] = normalized["skills_dir"]
-        return normalized
-
-    @field_validator("skills_dirs", mode="before")
-    @classmethod
-    def _normalize_skills_dirs(cls, value: Any) -> list[str] | None:
-        return normalize_skills_dirs(value)
-
-
-class ModelParamsPayload(BaseModel):
-    base_url: str | None = None
-    api_key_env_name: str | None = None
-    max_output_tokens_per_call: int = Field(default=4096, ge=1)
-    temperature: float = Field(default=0.7, ge=0, le=2)
-    top_p: float = Field(default=1.0, ge=0, le=1)
-    frequency_penalty: float = Field(default=0.0, ge=-2, le=2)
-    presence_penalty: float = Field(default=0.0, ge=-2, le=2)
-    cache_hit_price: float = Field(default=0.0, ge=0)
-    input_price: float = Field(default=0.0, ge=0)
-    output_price: float = Field(default=0.0, ge=0)
-
-    model_config = {"extra": "ignore"}
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_plain_api_key(cls, data: Any) -> Any:
-        if isinstance(data, dict) and "api_key" in data:
-            raise ValueError(
-                "api_key is not supported in model_params; use api_key_env_name"
-            )
-        return data
-
-    @field_validator("base_url", "api_key_env_name", mode="before")
-    @classmethod
-    def _normalize_optional_strings(cls, value: Any) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            stripped = value.strip()
-            return stripped or None
-        return value
-
-    @field_validator("base_url")
-    @classmethod
-    def _validate_base_url(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        parsed = urlparse(value)
-        if parsed.scheme not in {"http", "https"}:
-            raise ValueError("base_url must start with http:// or https://")
-        return value
-
-
-def _validate_compatible_provider_params(
-    provider: str | None,
-    model_params: ModelParamsPayload | None,
-) -> None:
-    if provider not in {"openai-compatible", "anthropic-compatible"}:
-        return
-    if model_params is None or model_params.base_url is None:
-        raise ValueError(f"{provider} models require base_url")
-    if model_params.api_key_env_name is None:
-        raise ValueError(f"{provider} models require api_key_env_name")
-
-
-class AgentConfigCreate(BaseModel):
+class AgentConfigPayload(BaseModel):
     name: str
     description: str = ""
-    model_provider: Literal[
-        "openai",
-        "openai-compatible",
-        "deepseek",
-        "anthropic",
-        "anthropic-compatible",
-        "nvidia",
-        "bedrock-anthropic",
-    ]
-    model_name: str  # "gpt-4o" | "deepseek-chat" | ...
+    model_provider: ModelProvider
+    model_name: str
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
     options: AgentOptionsPayload = Field(default_factory=AgentOptionsPayload)
     model_params: ModelParamsPayload = Field(default_factory=ModelParamsPayload)
 
     @model_validator(mode="after")
-    def _validate_model_connection(self) -> "AgentConfigCreate":
-        _validate_compatible_provider_params(self.model_provider, self.model_params)
+    def _validate_model_connection(self) -> "AgentConfigPayload":
+        validate_provider_model_params(self.model_provider, self.model_params)
         return self
 
 
-class AgentConfigUpdate(BaseModel):
-    name: str | None = None
-    description: str | None = None
-    model_provider: Literal[
-        "openai",
-        "openai-compatible",
-        "deepseek",
-        "anthropic",
-        "anthropic-compatible",
-        "nvidia",
-        "bedrock-anthropic",
-    ] | None = None
-    model_name: str | None = None
-    system_prompt: str | None = None
-    tools: list[str] | None = None
-    options: AgentOptionsPayload | None = None
-    model_params: ModelParamsPayload | None = None
+class AgentConfigCreate(AgentConfigPayload):
+    pass
 
-    @model_validator(mode="after")
-    def _validate_model_connection(self) -> "AgentConfigUpdate":
-        _validate_compatible_provider_params(self.model_provider, self.model_params)
-        return self
+
+class AgentConfigReplace(AgentConfigPayload):
+    pass
 
 
 class AgentConfigResponse(BaseModel):
@@ -301,9 +216,11 @@ class AgentStateResponse(BaseModel):
     wake_condition: WakeConditionResponse | None = None
     result_summary: str | None = None
     signal_propagated: bool = False
+    agent_config_id: str | None = None
     is_persistent: bool = False
     depth: int = 0
     wake_count: int = 0
+    metrics: RunMetricsSummary = Field(default_factory=RunMetricsSummary)
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -315,9 +232,11 @@ class AgentStateListItem(BaseModel):
     parent_id: str | None = None
     wake_condition: WakeConditionResponse | None = None
     result_summary: str | None = None
+    agent_config_id: str | None = None
     is_persistent: bool = False
     depth: int = 0
     wake_count: int = 0
+    metrics: RunMetricsSummary = Field(default_factory=RunMetricsSummary)
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -329,6 +248,64 @@ class SchedulerStatsResponse(BaseModel):
     sleeping: int
     completed: int
     failed: int
+
+
+# ── Scheduler Control ──────────────────────────────────────────────────
+
+
+class SteerRequest(BaseModel):
+    message: str
+    urgent: bool = False
+
+
+class CancelRequest(BaseModel):
+    reason: str = "Cancelled by operator"
+
+
+class ResumeRequest(BaseModel):
+    message: str
+
+
+class CreateAgentRequest(BaseModel):
+    agent_config_id: str | None = None
+    initial_task: str | None = None
+    session_id: str | None = None
+
+
+class PendingEventResponse(BaseModel):
+    id: str
+    target_agent_id: str
+    source_agent_id: str | None = None
+    event_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+
+
+class StepDeltaResponse(BaseModel):
+    content: str | None = None
+    reasoning_content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    usage: dict[str, int] | None = None
+
+
+class StreamEventPayload(BaseModel):
+    type: str
+    run_id: str
+    delta: StepDeltaResponse | None = None
+    step: StepResponse | None = None
+    data: dict[str, Any] | None = None
+    agent_id: str | None = None
+    span_id: str | None = None
+    parent_run_id: str | None = None
+    parent_span_id: str | None = None
+    trace_id: str | None = None
+    step_id: str | None = None
+    depth: int = 0
+    timestamp: str | None = None
+
+
+SchedulerCompletedEventPayload = SchedulerCompletedEventPayloadData
+SchedulerFailedEventPayload = SchedulerFailedEventPayloadData
 
 
 # ── Chat ────────────────────────────────────────────────────────────────

@@ -8,8 +8,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from agiwo.config.settings import settings
 from agiwo.embedding import EmbeddingError, EmbeddingFactory, EmbeddingModel
-from agiwo.tool.builtin.config import MemoryConfig
 from agiwo.tool.builtin.retrieval_tool.chunker import MemoryChunk, MemoryChunker
 from agiwo.tool.builtin.retrieval_tool.searcher import HybridSearcher, SearchResult
 from agiwo.utils.logging import get_logger
@@ -20,11 +20,29 @@ logger = get_logger(__name__)
 class MemoryIndexStore:
     """SQLite-based memory index store with hybrid search support."""
 
-    def __init__(self, workspace_dir: Path, config: MemoryConfig):
+    def __init__(
+        self,
+        workspace_dir: Path,
+        *,
+        embedding_provider: str | None = None,
+        embedding_model: str | None = None,
+        embedding_dims: int | None = None,
+        embedding_api_key: str | None = None,
+        embedding_api_base: str | None = None,
+        chunk_tokens: int | None = None,
+        chunk_overlap_tokens: int | None = None,
+        top_k: int | None = None,
+    ):
         self._workspace_dir = Path(workspace_dir)
         self._memory_dir = self._workspace_dir / "MEMORY"
         self._db_path = self._workspace_dir / "memory.db"
-        self._config = config
+
+        self._embedding_provider = embedding_provider or settings.embedding_provider
+        self._embedding_model = embedding_model or settings.embedding_model
+        self._embedding_dims = embedding_dims if embedding_dims is not None else settings.embedding_dimensions
+        self._embedding_api_key = embedding_api_key or settings.get_embedding_api_key() or ""
+        self._embedding_api_base = embedding_api_base or settings.embedding_base_url or ""
+        self._top_k = top_k
 
         self._conn: sqlite3.Connection | None = None
         self._embedder: EmbeddingModel | None = None
@@ -32,8 +50,8 @@ class MemoryIndexStore:
         self._initialized: bool = False
 
         self._chunker = MemoryChunker(
-            chunk_tokens=config.chunk_tokens,
-            overlap_tokens=config.chunk_overlap_tokens,
+            chunk_tokens=chunk_tokens if chunk_tokens is not None else settings.memory_chunk_tokens,
+            overlap_tokens=chunk_overlap_tokens if chunk_overlap_tokens is not None else settings.memory_chunk_overlap,
         )
 
     async def ensure_initialized(self) -> None:
@@ -50,11 +68,11 @@ class MemoryIndexStore:
 
         try:
             self._embedder = EmbeddingFactory.create(
-                provider=self._config.embedding_provider,
-                model=self._config.embedding_model,
-                dimensions=self._config.embedding_dims,
-                api_key=self._config.embedding_api_key or None,
-                base_url=self._config.embedding_api_base or None,
+                provider=self._embedding_provider,
+                model=self._embedding_model,
+                dimensions=self._embedding_dims,
+                api_key=self._embedding_api_key or None,
+                base_url=self._embedding_api_base or None,
             )
         except EmbeddingError as e:
             logger.warning("embedder_init_failed", error=str(e))
@@ -128,7 +146,7 @@ class MemoryIndexStore:
             self._conn.enable_load_extension(True)
             self._conn.load_extension("vec0")
 
-            dims = self._config.embedding_dims
+            dims = self._embedding_dims
             cursor = self._conn.cursor()
             cursor.execute(f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
@@ -347,7 +365,6 @@ class MemoryIndexStore:
 
         searcher = HybridSearcher(
             conn=self._conn,
-            config=self._config,
             embedder=self._embedder,
             vec_available=self._vec_available,
         )

@@ -10,6 +10,7 @@ from agiwo.agent.inner.step_builder import StepBuilder
 from agiwo.agent.inner.run_state import RunState
 from agiwo.agent.schema import StepDelta, StepMetrics, LLMCallContext, StepRecord
 from agiwo.llm.base import Model
+from agiwo.llm.usage_resolver import StepMetricsResolver
 from agiwo.utils.abort_signal import AbortSignal
 
 EmitDeltaFn = Callable[[str, StepDelta], Awaitable[None]]
@@ -20,6 +21,7 @@ class LLMStreamHandler:
 
     def __init__(self, model: Model) -> None:
         self.model = model
+        self.metrics_resolver = StepMetricsResolver(model)
 
     async def stream_assistant_step(
         self,
@@ -29,10 +31,16 @@ class LLMStreamHandler:
         *,
         messages: list[dict] | None = None,
         tools: list[dict] | None = ...,  # sentinel: use default
-    ):
-        """Stream call LLM and build Step."""
+    ) -> tuple[StepRecord, LLMCallContext]:
+        """Stream call LLM and build Step.
+
+        Automatically estimates request tokens before the call and resolves
+        usage metrics + cost after the call. Callers receive a fully resolved step.
+        """
         messages = messages if messages is not None else state.messages
         tools = state.tool_schemas if tools is ... else tools
+
+        request_estimate = self.metrics_resolver.estimate_request(messages, tools)
 
         llm_context = LLMCallContext(
             messages=list(messages),
@@ -47,6 +55,7 @@ class LLMStreamHandler:
             await builder.process_chunk(chunk)
 
         step = builder.finalize()
+        self.metrics_resolver.resolve(step, request_estimate)
         llm_context.finish_reason = builder.finish_reason
         return step, llm_context
 
@@ -78,7 +87,7 @@ class LLMStreamHandler:
         }
         if hasattr(self.model, "temperature"):
             params["temperature"] = self.model.temperature
-            params["max_output_tokens_per_call"] = self.model.max_tokens
+            params["max_output_tokens"] = self.model.max_output_tokens
             params["top_p"] = self.model.top_p
         return params
 

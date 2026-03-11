@@ -39,7 +39,8 @@ class OpenAIModel(Model):
         allow_env_fallback: bool = True,
         temperature: float = 0.7,
         top_p: float = 1.0,
-        max_tokens: int = 4096,
+        max_output_tokens: int = 4096,
+        max_context_window: int = 200000,
         frequency_penalty: float = 0.0,
         presence_penalty: float = 0.0,
         cache_hit_price: float = 0.0,
@@ -53,7 +54,8 @@ class OpenAIModel(Model):
             base_url=base_url,
             temperature=temperature,
             top_p=top_p,
-            max_tokens=max_tokens,
+            max_output_tokens=max_output_tokens,
+            max_context_window=max_context_window,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
             provider="openai",
@@ -112,19 +114,19 @@ class OpenAIModel(Model):
             "stream_options": {"include_usage": True},
         }
 
-        if self.max_tokens:
-            params["max_tokens"] = self.max_tokens
+        if self.max_output_tokens:
+            params["max_tokens"] = self.max_output_tokens
 
         if tools:
             params["tools"] = tools
 
-        logger.info(
+        logger.debug(
             "llm_request",
             model=actual_model,
             messages_count=len(messages),
             tools_count=len(tools) if tools else 0,
             temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            max_output_tokens=self.max_output_tokens,
             detail=params,
         )
 

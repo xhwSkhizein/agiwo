@@ -1,0 +1,113 @@
+"""Integration tests for the Chat API streaming endpoint."""
+
+from datetime import datetime
+from unittest.mock import AsyncMock
+
+import pytest
+
+from httpx import ASGITransport, AsyncClient
+
+from agiwo.agent.schema import EventType, StepDelta, StreamEvent
+
+from server.app import create_app
+from server.config import ConsoleConfig
+from server.dependencies import (
+    ConsoleRuntime,
+    bind_console_runtime,
+    clear_console_runtime,
+    get_console_runtime_from_app,
+)
+from server.services.agent_registry import AgentConfigRecord, AgentRegistry
+from server.services.storage_manager import StorageManager
+
+
+def _runtime(client: AsyncClient) -> ConsoleRuntime:
+    return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
+
+
+@pytest.fixture
+async def client():
+    app = create_app()
+
+    config = ConsoleConfig(
+        run_step_storage_type="memory",
+        trace_storage_type="memory",
+        metadata_storage_type="memory",
+    )
+    storage_manager = StorageManager(config)
+    registry = AgentRegistry(config)
+    await registry.initialize()
+    bind_console_runtime(
+        app,
+        ConsoleRuntime(
+            config=config,
+            storage_manager=storage_manager,
+            agent_registry=registry,
+        ),
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+    clear_console_runtime(app)
+    await registry.close()
+    await storage_manager.close()
+
+
+class FakeStreamingAgent:
+    def __init__(self, events: list[StreamEvent]) -> None:
+        self._events = events
+        self.closed = False
+
+    async def run_stream(self, message: str, *, session_id: str):
+        assert message == "hello"
+        assert session_id == "session-1"
+        for event in self._events:
+            yield event
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_chat_streams_agent_events_and_closes_agent(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = _runtime(client).agent_registry
+    await registry.create_agent(
+        AgentConfigRecord(
+            id="agent-1",
+            name="chat-agent",
+            model_provider="openai",
+            model_name="gpt-test",
+        )
+    )
+
+    fake_agent = FakeStreamingAgent(
+        [
+            StreamEvent(
+                type=EventType.STEP_DELTA,
+                run_id="run-1",
+                delta=StepDelta(content="hello"),
+                timestamp=datetime(2026, 3, 10),
+            )
+        ]
+    )
+    monkeypatch.setattr(
+        "server.services.conversation_sse.build_agent",
+        AsyncMock(return_value=fake_agent),
+    )
+
+    async with client.stream(
+        "POST",
+        "/api/chat/agent-1",
+        json={"message": "hello", "session_id": "session-1"},
+    ) as response:
+        assert response.status_code == 200
+        lines = [line async for line in response.aiter_lines()]
+
+    assert any(line == "event: step_delta" for line in lines)
+    assert any('"run_id": "run-1"' in line for line in lines)
+    assert fake_agent.closed is True

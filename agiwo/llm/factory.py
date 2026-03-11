@@ -2,32 +2,26 @@
 
 from dataclasses import dataclass, fields
 import os
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 from urllib.parse import urlparse
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agiwo.llm.anthropic import AnthropicModel
 from agiwo.llm.base import Model
 from agiwo.llm.bedrock_anthropic import BedrockAnthropicModel
+from agiwo.llm.config_policy import (
+    sanitize_model_params_data,
+    validate_provider_model_params,
+)
 from agiwo.llm.deepseek import DeepseekModel
 from agiwo.llm.nvidia import NvidiaModel
 from agiwo.llm.openai import OpenAIModel
-
-ModelProvider = Literal[
-    "openai",
-    "openai-compatible",
-    "deepseek",
-    "anthropic",
-    "anthropic-compatible",
-    "nvidia",
-    "bedrock-anthropic",
-]
-
-
-PARAM_API_KEY = "api_key"
-PARAM_API_KEY_ENV_NAME = "api_key_env_name"
-PARAM_BASE_URL = "base_url"
-PARAM_MAX_OUTPUT_TOKENS_PER_CALL = "max_output_tokens_per_call"
-PARAM_MAX_TOKENS = "max_tokens"
+from agiwo.config.settings import (
+    ALL_MODEL_PROVIDERS,
+    COMPATIBLE_MODEL_PROVIDERS,
+    ModelProvider,
+)
 
 
 @dataclass
@@ -40,7 +34,8 @@ class ModelConfig:
     base_url: str | None = None
     temperature: float = 0.7
     top_p: float = 1.0
-    max_tokens: int = 4096
+    max_output_tokens: int = 4096
+    max_context_window: int = 200000
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0
     cache_hit_price: float = 0.0
@@ -50,11 +45,68 @@ class ModelConfig:
     aws_profile: str | None = None
 
 
+_DEFAULT_MODEL_CONFIG = ModelConfig(provider="openai", model_name="")
+
+
+class _ModelParamsPayloadBase(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_plain_api_key(cls, data: Any) -> Any:
+        return sanitize_model_params_data(
+            data,
+            preserve_non_dict=True,
+            drop_null_keys=False,
+        )
+
+
+class ModelParamsInput(_ModelParamsPayloadBase):
+    base_url: str | None = None
+    api_key_env_name: str | None = None
+    max_output_tokens: int = Field(default=_DEFAULT_MODEL_CONFIG.max_output_tokens, ge=1)
+    max_context_window: int = Field(
+        default=_DEFAULT_MODEL_CONFIG.max_context_window,
+        ge=1,
+    )
+    temperature: float = Field(default=_DEFAULT_MODEL_CONFIG.temperature, ge=0, le=2)
+    top_p: float = Field(default=_DEFAULT_MODEL_CONFIG.top_p, ge=0, le=1)
+    frequency_penalty: float = Field(
+        default=_DEFAULT_MODEL_CONFIG.frequency_penalty,
+        ge=-2,
+        le=2,
+    )
+    presence_penalty: float = Field(
+        default=_DEFAULT_MODEL_CONFIG.presence_penalty,
+        ge=-2,
+        le=2,
+    )
+    cache_hit_price: float = Field(default=_DEFAULT_MODEL_CONFIG.cache_hit_price, ge=0)
+    input_price: float = Field(default=_DEFAULT_MODEL_CONFIG.input_price, ge=0)
+    output_price: float = Field(default=_DEFAULT_MODEL_CONFIG.output_price, ge=0)
+    aws_region: str | None = None
+    aws_profile: str | None = None
+
+
+class ModelParamsPatch(_ModelParamsPayloadBase):
+    base_url: str | None = None
+    api_key_env_name: str | None = None
+    max_output_tokens: int | None = Field(default=None, ge=1)
+    max_context_window: int | None = Field(default=None, ge=1)
+    temperature: float | None = Field(default=None, ge=0, le=2)
+    top_p: float | None = Field(default=None, ge=0, le=1)
+    frequency_penalty: float | None = Field(default=None, ge=-2, le=2)
+    presence_penalty: float | None = Field(default=None, ge=-2, le=2)
+    cache_hit_price: float | None = Field(default=None, ge=0)
+    input_price: float | None = Field(default=None, ge=0)
+    output_price: float | None = Field(default=None, ge=0)
+    aws_region: str | None = None
+    aws_profile: str | None = None
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     model_class: Callable[..., Model]
-    requires_explicit_base_url: bool = False
-    requires_api_key_env_name: bool = False
     disable_env_fallback: bool = False
     override_provider: ModelProvider | None = None
     include_aws_config: bool = False
@@ -72,7 +124,8 @@ def _build_shared_params(config: ModelConfig) -> dict[str, Any]:
         "name": config.model_name,
         "temperature": config.temperature,
         "top_p": config.top_p,
-        "max_tokens": config.max_tokens,
+        "max_output_tokens": config.max_output_tokens,
+        "max_context_window": config.max_context_window,
         "frequency_penalty": config.frequency_penalty,
         "presence_penalty": config.presence_penalty,
         "cache_hit_price": config.cache_hit_price,
@@ -100,14 +153,13 @@ def _build_model_for_provider(
     resolved_api_key: str | None,
     shared_params: dict[str, Any],
 ) -> Model:
-    if spec.requires_api_key_env_name and not config.api_key_env_name:
-        raise ValueError(f"{provider} models require api_key_env_name")
-    if spec.requires_api_key_env_name and not resolved_api_key:
+    validate_provider_model_params(provider, config)
+    if provider in COMPATIBLE_MODEL_PROVIDERS and not resolved_api_key:
         raise ValueError(
             f"{provider} api_key_env_name '{config.api_key_env_name}' is not set"
         )
 
-    if spec.requires_explicit_base_url:
+    if provider in COMPATIBLE_MODEL_PROVIDERS:
         base_url = _require_absolute_base_url(provider, config.base_url)
     else:
         base_url = config.base_url
@@ -133,8 +185,6 @@ PROVIDER_SPECS: dict[ModelProvider, ProviderSpec] = {
     "openai": ProviderSpec(model_class=OpenAIModel),
     "openai-compatible": ProviderSpec(
         model_class=OpenAIModel,
-        requires_explicit_base_url=True,
-        requires_api_key_env_name=True,
         disable_env_fallback=True,
         override_provider="openai-compatible",
     ),
@@ -142,8 +192,6 @@ PROVIDER_SPECS: dict[ModelProvider, ProviderSpec] = {
     "anthropic": ProviderSpec(model_class=AnthropicModel),
     "anthropic-compatible": ProviderSpec(
         model_class=AnthropicModel,
-        requires_explicit_base_url=True,
-        requires_api_key_env_name=True,
         disable_env_fallback=True,
         override_provider="anthropic-compatible",
     ),
@@ -153,6 +201,12 @@ PROVIDER_SPECS: dict[ModelProvider, ProviderSpec] = {
         include_aws_config=True,
     ),
 }
+
+_missing_provider_specs = set(ALL_MODEL_PROVIDERS) - set(PROVIDER_SPECS)
+if _missing_provider_specs:
+    raise RuntimeError(
+        f"Missing provider specs for: {sorted(_missing_provider_specs)}"
+    )
 
 
 def create_model(config: ModelConfig) -> Model:
@@ -172,23 +226,6 @@ def create_model(config: ModelConfig) -> Model:
     )
 
 
-def _normalize_model_params(params: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(params)
-    if PARAM_API_KEY in normalized:
-        raise ValueError(
-            "api_key is not supported in model params; use api_key_env_name"
-        )
-    for key in (PARAM_BASE_URL, PARAM_API_KEY_ENV_NAME):
-        value = normalized.get(key)
-        if isinstance(value, str):
-            normalized[key] = value.strip() or None
-
-    max_output_tokens = normalized.pop(PARAM_MAX_OUTPUT_TOKENS_PER_CALL, None)
-    if PARAM_MAX_TOKENS not in normalized and max_output_tokens is not None:
-        normalized[PARAM_MAX_TOKENS] = max_output_tokens
-    return normalized
-
-
 MODEL_CONFIG_FIELD_NAMES = {field.name for field in fields(ModelConfig)}
 
 
@@ -205,7 +242,7 @@ def create_model_from_dict(
     params: dict[str, Any] | None = None,
 ) -> Model:
     """Create a concrete Model from provider/name plus loose params."""
-    normalized = _normalize_model_params(dict(params or {}))
+    normalized = sanitize_model_params_data(dict(params or {}))
     valid_params = _filter_model_config_fields(normalized)
     model_config = ModelConfig(
         provider=provider,  # type: ignore[arg-type]

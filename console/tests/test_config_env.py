@@ -1,14 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
+from agiwo.agent import options as agent_options_module
 from agiwo.llm.openai import OpenAIModel
-from agiwo.tool.storage.citation import CitationStoreConfig
+from server.app import _build_default_agent_config
 from server.config import ConsoleConfig
-from server.schemas import AgentConfigCreate, AgentOptionsPayload
-from server.services.agent_builder import build_agent_options, build_model
-from server.services.agent_registry import AgentConfigRecord
-from server.services import agent_builder
-from server.tools import create_tools
+from server.schemas import AgentConfigCreate, AgentConfigReplace, AgentOptionsPayload
+from server.services.agent_lifecycle import build_agent_options, build_default_agent_options, build_model
+from server.services.agent_registry import AgentConfigRecord, AgentRegistry
+from server.tools import AgentToolRef, BuiltinToolRef, console_tool_catalog
 
 
 def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -41,7 +41,7 @@ def test_console_config_rejects_plain_api_key_in_default_model_params(
 
 
 def test_build_agent_options_uses_global_skills_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(agent_builder.settings, "is_skills_enabled", False)
+    monkeypatch.setattr(agent_options_module.settings, "is_skills_enabled", False)
 
     config = AgentConfigRecord(
         name="tester",
@@ -61,20 +61,25 @@ def test_build_agent_options_uses_global_skills_default(monkeypatch: pytest.Monk
     assert options.skills_dirs is None
 
 
-def test_agent_options_payload_normalizes_single_and_legacy_skills_dir() -> None:
+def test_default_agent_config_uses_shared_option_defaults() -> None:
+    config = ConsoleConfig()
+
+    record = _build_default_agent_config(config)
+
+    assert record.options == build_default_agent_options()
+    assert record.options["max_steps"] == agent_options_module.AgentOptions().max_steps
+
+
+def test_agent_options_payload_normalizes_single_skills_dirs() -> None:
     payload = AgentOptionsPayload.model_validate({"skills_dirs": "skills"})
-    legacy_payload = AgentOptionsPayload.model_validate(
-        {"skills_dir": ["skills", "~/.agent/skills"]}
-    )
 
     assert payload.skills_dirs == ["skills"]
-    assert legacy_payload.skills_dirs == ["skills", "~/.agent/skills"]
 
 
 def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(agent_builder.settings, "is_skills_enabled", True)
+    monkeypatch.setattr(agent_options_module.settings, "is_skills_enabled", True)
 
     config = AgentConfigRecord(
         name="tester",
@@ -84,9 +89,8 @@ def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
             "config_root": "/tmp/agent-root",
             "max_steps": 42,
             "run_timeout": 120,
-            "max_context_window_tokens": 64000,
-            "max_tokens_per_run": 256000,
-            "max_run_token_cost": 1.25,
+            "max_input_tokens_per_call": 64000,
+            "max_run_cost": 1.25,
             "enable_termination_summary": False,
             "termination_summary_prompt": "Summarize before exit",
             "enable_skill": True,
@@ -107,9 +111,8 @@ def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
     assert options.config_root == "/tmp/agent-root"
     assert options.max_steps == 42
     assert options.run_timeout == 120
-    assert options.max_context_window_tokens == 64000
-    assert options.max_tokens_per_run == 256000
-    assert options.max_run_token_cost == 1.25
+    assert options.max_input_tokens_per_call == 64000
+    assert options.max_run_cost == 1.25
     assert options.enable_termination_summary is False
     assert options.termination_summary_prompt == "Summarize before exit"
     assert options.enable_skill is True
@@ -119,18 +122,29 @@ def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
     assert options.compact_prompt == "Compact the context"
 
 
-def test_create_tools_uses_config_overrides_for_web_tools() -> None:
-    citation_config = CitationStoreConfig(
-        storage_type="memory",
-        collection_name="console-test-citations",
+def test_console_tool_catalog_parses_builtin_and_agent_refs() -> None:
+    refs = console_tool_catalog.parse_references(
+        ["web_search", "agent:child-1", "missing", "agent:"]
     )
 
-    tools = create_tools(
+    assert refs == [
+        BuiltinToolRef(name="web_search"),
+        AgentToolRef(agent_id="child-1"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_console_tool_catalog_builds_shared_web_tool_overrides() -> None:
+    console_config = ConsoleConfig(
+        run_step_storage_type="memory",
+        trace_storage_type="memory",
+        metadata_storage_type="memory",
+    )
+
+    tools = await console_tool_catalog.build_tools(
         ["web_search", "web_reader"],
-        tool_config_overrides={
-            "web_search": {"citation_store_config": citation_config},
-            "web_reader": {"citation_store_config": citation_config},
-        },
+        console_config=console_config,
+        build_agent_tool=pytest.fail,
     )
 
     assert [tool.get_name() for tool in tools] == ["web_search", "web_reader"]
@@ -149,7 +163,7 @@ def test_build_model_uses_shared_model_factory_for_compatible_provider(
         model_params={
             "base_url": "https://api.minimax.chat/v1",
             "api_key_env_name": "MINIMAX_API_KEY",
-            "max_output_tokens_per_call": 123,
+            "max_output_tokens": 123,
             "temperature": 0.25,
         },
     )
@@ -160,7 +174,7 @@ def test_build_model_uses_shared_model_factory_for_compatible_provider(
     assert model.provider == "openai-compatible"
     assert model.base_url == "https://api.minimax.chat/v1"
     assert model.api_key == "test-minimax-key"
-    assert model.max_tokens == 123
+    assert model.max_output_tokens == 123
     assert model.temperature == 0.25
 
 
@@ -226,3 +240,114 @@ def test_agent_config_record_sanitizes_model_params_and_strips_plain_api_key() -
     assert record.model_params.get("base_url") == "https://api.minimax.chat/v1"
     assert record.model_params.get("api_key_env_name") == "MINIMAX_API_KEY"
     assert "api_key" not in record.model_params
+
+
+def test_agent_config_replace_requires_full_nested_payloads() -> None:
+    with pytest.raises(ValidationError, match="options"):
+        AgentConfigReplace.model_validate(
+            {
+                "name": "tester",
+                "description": "",
+                "model_provider": "openai-compatible",
+                "model_name": "MiniMax-M2.5",
+                "system_prompt": "",
+                "tools": [],
+                "model_params": {
+                    "base_url": "https://api.minimax.chat/v1",
+                    "api_key_env_name": "MINIMAX_API_KEY",
+                },
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_registry_replace_overwrites_nested_config_without_merge() -> None:
+    registry = AgentRegistry(
+        ConsoleConfig(
+            run_step_storage_type="memory",
+            trace_storage_type="memory",
+            metadata_storage_type="memory",
+        )
+    )
+    await registry.initialize()
+
+    try:
+        created = await registry.create_agent(
+            AgentConfigRecord(
+                name="tester",
+                model_provider="openai-compatible",
+                model_name="MiniMax-M2.5",
+                options={"max_steps": 10, "max_run_cost": 1.5},
+                model_params={
+                    "base_url": "https://api.minimax.chat/v1",
+                    "api_key_env_name": "MINIMAX_API_KEY",
+                    "temperature": 0.7,
+                },
+            )
+        )
+
+        updated = await registry.replace_agent(
+            created.id,
+            AgentConfigRecord(
+                name="tester",
+                description="replacement",
+                model_provider="openai-compatible",
+                model_name="MiniMax-M2.5",
+                tools=["web_search"],
+                options={"max_steps": 5},
+                model_params={
+                    "base_url": "https://api.other.example/v1",
+                    "api_key_env_name": "OTHER_API_KEY",
+                    "temperature": 0.2,
+                },
+            ),
+        )
+
+        assert updated is not None
+        assert updated.description == "replacement"
+        assert updated.tools == ["web_search"]
+        assert updated.options["max_steps"] == 5
+        assert "max_run_cost" not in updated.options
+        assert updated.model_params["base_url"] == "https://api.other.example/v1"
+        assert updated.model_params["api_key_env_name"] == "OTHER_API_KEY"
+        assert updated.model_params["temperature"] == 0.2
+    finally:
+        await registry.close()
+
+
+@pytest.mark.asyncio
+async def test_agent_registry_replace_rejects_invalid_full_compatible_config() -> None:
+    registry = AgentRegistry(
+        ConsoleConfig(
+            run_step_storage_type="memory",
+            trace_storage_type="memory",
+            metadata_storage_type="memory",
+        )
+    )
+    await registry.initialize()
+
+    try:
+        created = await registry.create_agent(
+            AgentConfigRecord(
+                name="tester",
+                model_provider="openai-compatible",
+                model_name="MiniMax-M2.5",
+                model_params={
+                    "base_url": "https://api.minimax.chat/v1",
+                    "api_key_env_name": "MINIMAX_API_KEY",
+                },
+            )
+        )
+
+        with pytest.raises(ValidationError, match="api_key_env_name"):
+            await registry.replace_agent(
+                created.id,
+                AgentConfigRecord(
+                    name="tester",
+                    model_provider="openai-compatible",
+                    model_name="MiniMax-M2.5",
+                    model_params={"base_url": "https://api.minimax.chat/v1"},
+                ),
+            )
+    finally:
+        await registry.close()

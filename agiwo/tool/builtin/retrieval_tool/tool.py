@@ -9,7 +9,6 @@ from typing import Any
 from agiwo.config.settings import settings
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.tool.base import BaseTool, ToolResult
-from agiwo.tool.builtin.config import MemoryConfig
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.tool.builtin.retrieval_tool.store import MemoryIndexStore
 from agiwo.utils.abort_signal import AbortSignal
@@ -23,20 +22,23 @@ logger = get_logger(__name__)
 class MemoryRetrievalTool(BaseTool):
     """Tool for searching memories in MEMORY directory using hybrid search."""
 
-    def __init__(self, *, config: MemoryConfig | None = None, **kwargs: Any):
+    def __init__(
+        self,
+        *,
+        top_k: int | None = None,
+        embedding_provider: str | None = None,
+        **kwargs: Any,
+    ):
         super().__init__()
-        self._config = config or MemoryConfig()
+        self._top_k = top_k if top_k is not None else settings.memory_top_k
+        self._embedding_provider = embedding_provider
         self._stores: dict[str, MemoryIndexStore] = {}
 
     def get_name(self) -> str:
         return "memory_retrieval"
 
     def get_description(self) -> str:
-        return (
-            "Search your MEMORY directory for relevant past notes, decisions, "
-            "and knowledge. Use this before answering questions about prior work, "
-            "preferences, or historical context."
-        )
+        return "Search your MEMORY directory for relevant past notes, decisions, and knowledge. Use this before answering questions about prior work, preferences, or historical context."
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -58,9 +60,6 @@ class MemoryRetrievalTool(BaseTool):
     def is_concurrency_safe(self) -> bool:
         return True
 
-    def needs_permissions(self, parameters: dict[str, Any]) -> bool:
-        return False
-
     async def execute(
         self,
         parameters: dict[str, Any],
@@ -71,23 +70,41 @@ class MemoryRetrievalTool(BaseTool):
         start_time = time.time()
 
         if abort_signal and abort_signal.is_aborted():
-            return self._create_abort_result(parameters, start_time)
+            return ToolResult.aborted(
+                tool_name=self.name,
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args=parameters,
+                start_time=start_time,
+            )
 
         query = parameters.get("query", "").strip()
-        top_k = parameters.get("top_k", self._config.top_k)
+        top_k = parameters.get("top_k", self._top_k)
 
-        logger.info("memory_retrieval_start", query=query, top_k=top_k, agent_name=getattr(context, "agent_name", None))
+        logger.info(
+            "memory_retrieval_start",
+            query=query,
+            top_k=top_k,
+            agent_name=getattr(context, "agent_name", None),
+        )
 
         if not query:
-            return self._create_error_result(
-                parameters, "No query provided", start_time
+            return ToolResult.failed(
+                tool_name=self.name,
+                error="No query provided",
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args=parameters,
+                start_time=start_time,
             )
 
         workspace_dir = self._resolve_workspace(context)
         if not workspace_dir:
             logger.warning("memory_retrieval_no_workspace", context=context)
-            return self._create_error_result(
-                parameters, "Could not resolve workspace directory", start_time
+            return ToolResult.failed(
+                tool_name=self.name,
+                error="Could not resolve workspace directory",
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args=parameters,
+                start_time=start_time,
             )
 
         logger.debug("memory_retrieval_workspace", workspace=str(workspace_dir))
@@ -97,10 +114,18 @@ class MemoryRetrievalTool(BaseTool):
         # Sync files and log stats
         sync_start = time.time()
         await store.sync_files()
-        logger.debug("memory_retrieval_sync_complete", duration_ms=(time.time() - sync_start) * 1000)
+        logger.debug(
+            "memory_retrieval_sync_complete",
+            duration_ms=(time.time() - sync_start) * 1000,
+        )
 
         if abort_signal and abort_signal.is_aborted():
-            return self._create_abort_result(parameters, start_time)
+            return ToolResult.aborted(
+                tool_name=self.name,
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args=parameters,
+                start_time=start_time,
+            )
 
         # Search with detailed logging
         search_start = time.time()
@@ -117,17 +142,16 @@ class MemoryRetrievalTool(BaseTool):
 
         if not results:
             content = f"No memories found for query: {query}"
-            logger.info("memory_retrieval_no_results", query=query, workspace=str(workspace_dir))
-            return ToolResult(
+            logger.info(
+                "memory_retrieval_no_results", query=query, workspace=str(workspace_dir)
+            )
+            return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=parameters.get("tool_call_id", ""),
+                tool_call_id=str(parameters.get("tool_call_id", "")),
                 input_args=parameters,
                 content=content,
                 output={"results": [], "debug": {"workspace": str(workspace_dir)}},
                 start_time=start_time,
-                end_time=time.time(),
-                duration=time.time() - start_time,
-                is_success=True,
             )
 
         content = self._format_results(query, results)
@@ -144,16 +168,13 @@ class MemoryRetrievalTool(BaseTool):
             ]
         }
 
-        return ToolResult(
+        return ToolResult.success(
             tool_name=self.name,
-            tool_call_id=parameters.get("tool_call_id", ""),
+            tool_call_id=str(parameters.get("tool_call_id", "")),
             input_args=parameters,
             content=content,
             output=output,
             start_time=start_time,
-            end_time=time.time(),
-            duration=time.time() - start_time,
-            is_success=True,
         )
 
     def _resolve_workspace(self, context: ExecutionContext) -> Path | None:
@@ -177,12 +198,15 @@ class MemoryRetrievalTool(BaseTool):
         """Get or create a MemoryIndexStore for the workspace."""
         key = str(workspace_dir)
         if key not in self._stores:
-            self._stores[key] = MemoryIndexStore(workspace_dir, self._config)
+            store_kwargs = {}
+            if self._embedding_provider:
+                store_kwargs["embedding_provider"] = self._embedding_provider
+            self._stores[key] = MemoryIndexStore(workspace_dir, **store_kwargs)
         return self._stores[key]
 
     def _format_results(self, query: str, results: list) -> str:
         """Format search results for LLM consumption."""
-        lines = [f"## Memory Search Results for: \"{query}\"\n"]
+        lines = [f'## Memory Search Results for: "{query}"\n']
 
         for i, r in enumerate(results, 1):
             lines.append(f"### [{i}] {r.path} (lines {r.start_line}-{r.end_line})")
