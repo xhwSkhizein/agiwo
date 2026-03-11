@@ -94,7 +94,7 @@ class SessionContextService:
             return SessionContextResolution(
                 binding=created.binding,
                 chat_context=created.chat_context,
-                session=created.session,
+                session=created.current_session,
             )
 
         if chat_context.base_agent_id != context.base_agent_id:
