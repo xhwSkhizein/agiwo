@@ -104,7 +104,7 @@ class AgentTool(BaseTool):
         if current_depth > self.max_depth:
             error_msg = (
                 f"Maximum nesting depth ({self.max_depth}) exceeded. "
-                f"Current call chain: {' -> '.join(call_stack)} -> {self._agent.name}"
+                f"Current call chain: {' -> '.join(call_stack)} -> {self._agent.id}"
             )
             return ToolResult.failed(
                 tool_name=self.get_name(),
@@ -115,9 +115,9 @@ class AgentTool(BaseTool):
             )
 
         # Safety check 2: Circular reference
-        if self._agent.name in call_stack:
+        if self._agent.id in call_stack:
             error_msg = (
-                f"Circular reference detected: {self._agent.name} is in call stack. "
+                f"Circular reference detected: {self._agent.id} is in call stack. "
                 f"Current call chain: {' -> '.join(call_stack)}"
             )
             return ToolResult.failed(
@@ -129,7 +129,7 @@ class AgentTool(BaseTool):
             )
 
         # Add current agent to call stack
-        call_stack.append(self._agent.name)
+        call_stack.append(self._agent.id)
 
         # Build input and child context
         input_query = task

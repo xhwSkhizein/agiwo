@@ -14,6 +14,7 @@ def _make_chat_context(
     scope_id: str,
     user_open_id: str = "user-1",
     updated_at: datetime | None = None,
+    created_at: datetime | None = None,
 ) -> ChannelChatContext:
     now = updated_at or datetime.now(timezone.utc)
     return ChannelChatContext(
@@ -25,7 +26,7 @@ def _make_chat_context(
         user_open_id=user_open_id,
         base_agent_id="base-agent",
         current_session_id="session-current",
-        created_at=now,
+        created_at=created_at or now,
         updated_at=now,
     )
 
@@ -35,6 +36,7 @@ def _make_session(
     session_id: str,
     chat_context_id: str,
     updated_at: datetime,
+    created_at: datetime | None = None,
 ) -> Session:
     return Session(
         id=session_id,
@@ -43,7 +45,7 @@ def _make_session(
         runtime_agent_id=f"runtime-{session_id}",
         scheduler_state_id=f"state-{session_id}",
         created_by="AUTO",
-        created_at=updated_at - timedelta(minutes=1),
+        created_at=created_at or (updated_at - timedelta(minutes=1)),
         updated_at=updated_at,
     )
 
@@ -159,6 +161,7 @@ async def test_feishu_channel_store_keeps_indexes_in_sync_on_upsert(
             context_id="ctx-2",
             scope_id="scope-1",
             updated_at=now + timedelta(minutes=1),
+            created_at=context_v1.created_at,
         )
         other_context = _make_chat_context(
             context_id="ctx-3",
@@ -181,6 +184,7 @@ async def test_feishu_channel_store_keeps_indexes_in_sync_on_upsert(
             session_id="sess-1",
             chat_context_id=other_context.id,
             updated_at=now + timedelta(minutes=3),
+            created_at=session_v1.created_at,
         )
         await store.upsert_session(session_v1)
         await store.upsert_session(session_v2)
@@ -230,3 +234,60 @@ async def test_sqlite_feishu_channel_store_persists_across_reconnects(
         assert await second_store.get_session_with_context(session.id) is not None
     finally:
         await second_store.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_feishu_channel_store_preserves_created_at_on_upsert(
+    tmp_path,
+) -> None:
+    db_path = str(tmp_path / "feishu-store.sqlite3")
+    store = SqliteFeishuChannelStore(db_path=db_path)
+    await store.connect()
+    try:
+        original_created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        original_updated_at = original_created_at + timedelta(minutes=1)
+        chat_context_v1 = _make_chat_context(
+            context_id="ctx-1",
+            scope_id="scope-1",
+            created_at=original_created_at,
+            updated_at=original_updated_at,
+        )
+        session_v1 = _make_session(
+            session_id="sess-1",
+            chat_context_id=chat_context_v1.id,
+            created_at=original_created_at,
+            updated_at=original_updated_at,
+        )
+
+        await store.upsert_chat_context(chat_context_v1)
+        await store.upsert_session(session_v1)
+
+        replacement_created_at = original_created_at + timedelta(days=1)
+        replacement_updated_at = original_updated_at + timedelta(days=1)
+        chat_context_v2 = _make_chat_context(
+            context_id="ctx-1",
+            scope_id="scope-1",
+            created_at=replacement_created_at,
+            updated_at=replacement_updated_at,
+        )
+        session_v2 = _make_session(
+            session_id="sess-1",
+            chat_context_id=chat_context_v2.id,
+            created_at=replacement_created_at,
+            updated_at=replacement_updated_at,
+        )
+
+        await store.upsert_chat_context(chat_context_v2)
+        await store.upsert_session(session_v2)
+
+        loaded_context = await store.get_chat_context(chat_context_v2.scope_id)
+        loaded_session = await store.get_session(session_v2.id)
+
+        assert loaded_context is not None
+        assert loaded_context.created_at == original_created_at
+        assert loaded_context.updated_at == replacement_updated_at
+        assert loaded_session is not None
+        assert loaded_session.created_at == original_created_at
+        assert loaded_session.updated_at == replacement_updated_at
+    finally:
+        await store.close()

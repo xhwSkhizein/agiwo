@@ -256,6 +256,11 @@ class Agent:
 
         Returns:
             RunOutput with response, metrics, and termination reason.
+
+        Concurrency contract:
+            SDK does not enforce any session-level exclusivity for root runs.
+            If an application requires "at most one active root run per session_id",
+            that constraint must be implemented and managed at the application layer.
         """
         is_root = context is None
         if is_root:
@@ -298,6 +303,11 @@ class Agent:
 
         Yields:
             StreamEvent objects for each execution step and delta.
+
+        Concurrency contract:
+            SDK does not enforce any session-level exclusivity for root streams.
+            If an application requires "at most one active root run per session_id",
+            that constraint must be implemented and managed at the application layer.
         """
         context = await self._create_context(session_id, user_id, metadata)
 

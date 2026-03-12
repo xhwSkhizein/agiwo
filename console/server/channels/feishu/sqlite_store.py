@@ -323,7 +323,6 @@ class SqliteFeishuChannelStore:
                 user_open_id = excluded.user_open_id,
                 base_agent_id = excluded.base_agent_id,
                 current_session_id = excluded.current_session_id,
-                created_at = excluded.created_at,
                 updated_at = excluded.updated_at
             """,
             (
@@ -363,7 +362,6 @@ class SqliteFeishuChannelStore:
                 runtime_agent_id = excluded.runtime_agent_id,
                 scheduler_state_id = excluded.scheduler_state_id,
                 created_by = excluded.created_by,
-                created_at = excluded.created_at,
                 updated_at = excluded.updated_at
             """,
             (
