@@ -94,7 +94,30 @@ class ToolExecutor:
                     start_time=time.time(),
                 )
 
-        return await asyncio.gather(*(_run_single(tc) for tc in tool_calls))
+        safe_indices: list[int] = []
+        unsafe_indices: list[int] = []
+        for i, tc in enumerate(tool_calls):
+            fn = _get_function_payload(tc)
+            name = _get_string(fn, "name")
+            tool = self.tools_map.get(name)
+            if tool is not None and not tool.is_concurrency_safe():
+                unsafe_indices.append(i)
+            else:
+                safe_indices.append(i)
+
+        results: list[ToolResult | None] = [None] * len(tool_calls)
+
+        if safe_indices:
+            safe_results = await asyncio.gather(
+                *(_run_single(tool_calls[i]) for i in safe_indices)
+            )
+            for idx, result in zip(safe_indices, safe_results):
+                results[idx] = result
+
+        for i in unsafe_indices:
+            results[i] = await _run_single(tool_calls[i])
+
+        return results  # type: ignore[return-value]
 
     async def aexecute(
         self,

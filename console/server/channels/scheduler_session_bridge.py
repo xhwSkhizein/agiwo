@@ -5,8 +5,7 @@ Scheduler submission and state-transition bridge for channel sessions.
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
-from agiwo.agent.agent import Agent
-from agiwo.agent.schema import UserInput
+from agiwo.agent import Agent, UserInput
 from agiwo.scheduler.models import AgentStateStatus, SchedulerOutput
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger

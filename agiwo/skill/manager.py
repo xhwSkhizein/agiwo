@@ -82,7 +82,6 @@ class SkillManager:
             Markdown string with skills list, empty string if no skills
         """
         if not self._metadata_cache:
-            logger.warn("skill_manager_not_found, skills section will be empty")
             return ""
 
         lines = ["## Available Skills"]

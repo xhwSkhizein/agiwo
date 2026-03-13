@@ -6,21 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from agiwo.agent.schema import UserInput
+from agiwo.agent import UserInput
 from agiwo.agent.options import AgentOptionsInput
 from agiwo.config.settings import ModelProvider
 from agiwo.llm.factory import ModelParamsInput
 from agiwo.llm.config_policy import validate_provider_model_params
 from server.domain.run_metrics import RunMetricsSummary
-from server.domain.scheduler_events import (
-    SchedulerCompletedEventPayloadData,
-    SchedulerFailedEventPayloadData,
-)
-from server.domain.sessions import SessionSummaryData
-
-
-AgentOptionsPayload = AgentOptionsInput
-ModelParamsPayload = ModelParamsInput
 
 
 # ── Session / Run / Step Responses ──────────────────────────────────────
@@ -77,9 +68,6 @@ class RunResponse(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     parent_run_id: str | None = None
-
-
-SessionSummary = SessionSummaryData
 
 
 # ── Trace Responses ─────────────────────────────────────────────────────
@@ -160,21 +148,13 @@ class AgentConfigPayload(BaseModel):
     model_name: str
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
-    options: AgentOptionsPayload = Field(default_factory=AgentOptionsPayload)
-    model_params: ModelParamsPayload = Field(default_factory=ModelParamsPayload)
+    options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
+    model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
 
     @model_validator(mode="after")
     def _validate_model_connection(self) -> "AgentConfigPayload":
         validate_provider_model_params(self.model_provider, self.model_params)
         return self
-
-
-class AgentConfigCreate(AgentConfigPayload):
-    pass
-
-
-class AgentConfigReplace(AgentConfigPayload):
-    pass
 
 
 class AgentConfigResponse(BaseModel):
@@ -185,8 +165,8 @@ class AgentConfigResponse(BaseModel):
     model_name: str
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
-    options: AgentOptionsPayload = Field(default_factory=AgentOptionsPayload)
-    model_params: ModelParamsPayload = Field(default_factory=ModelParamsPayload)
+    options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
+    model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
     created_at: str
     updated_at: str
 
@@ -302,10 +282,6 @@ class StreamEventPayload(BaseModel):
     step_id: str | None = None
     depth: int = 0
     timestamp: str | None = None
-
-
-SchedulerCompletedEventPayload = SchedulerCompletedEventPayloadData
-SchedulerFailedEventPayload = SchedulerFailedEventPayloadData
 
 
 # ── Chat ────────────────────────────────────────────────────────────────

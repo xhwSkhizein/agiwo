@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from agiwo.agent.schema import RunMetrics, RunOutput
+from agiwo.agent.runtime import RunMetrics, RunOutput
 
 _RUN_COMPLETED_METRIC_DEFAULTS: dict[str, int | float] = {
     "duration_ms": 0.0,

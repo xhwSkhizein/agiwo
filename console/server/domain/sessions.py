@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
-from agiwo.agent.schema import UserInput
+from agiwo.agent import UserInput
 from agiwo.agent.serialization import (
     serialize_run_user_input_payload,
     serialize_user_input_payload,

@@ -1,6 +1,6 @@
 """Shared SQLite runtime helpers for storage implementations."""
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 import aiosqlite
 
@@ -81,58 +81,8 @@ async def get_table_columns(
     return {row[1] for row in rows}
 
 
-async def ensure_column(
-    connection: aiosqlite.Connection,
-    table_name: str,
-    column_name: str,
-    column_def: str,
-    *,
-    existing: set[str] | None = None,
-) -> set[str]:
-    """Add a column when it is missing and return the updated column set."""
-    existing_columns = (
-        await get_table_columns(connection, table_name)
-        if existing is None
-        else existing
-    )
-    if column_name in existing_columns:
-        return existing_columns
-
-    await connection.execute(
-        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}"
-    )
-    existing_columns.add(column_name)
-    return existing_columns
-
-
-async def ensure_columns(
-    connection: aiosqlite.Connection,
-    table_name: str,
-    columns: Mapping[str, str],
-    *,
-    existing: set[str] | None = None,
-) -> set[str]:
-    """Ensure a set of columns exists on a SQLite table."""
-    existing_columns = (
-        await get_table_columns(connection, table_name)
-        if existing is None
-        else existing
-    )
-    for column_name, column_def in columns.items():
-        existing_columns = await ensure_column(
-            connection,
-            table_name,
-            column_name,
-            column_def,
-            existing=existing_columns,
-        )
-    return existing_columns
-
-
 __all__ = [
     "SQLiteConnectionRuntime",
-    "ensure_column",
-    "ensure_columns",
     "execute_statements",
     "get_table_columns",
 ]

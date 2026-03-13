@@ -6,10 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agiwo.agent import Agent, AgentHooks
+from agiwo.agent import AgentHooks, MemoryRecord, create_agent
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.memory_hooks import DefaultMemoryHook, create_default_memory_hooks
-from agiwo.agent.schema import MemoryRecord, UserInput
 from agiwo.llm.base import Model
 
 
@@ -96,7 +95,7 @@ class TestAgentAutoInjectMemoryHook:
         mock_model = MagicMock(spec=Model)
         mock_model.id = "test-model"
 
-        agent = Agent(
+        agent = create_agent(
             name="test-agent",
             description="Test agent",
             model=mock_model,
@@ -111,7 +110,7 @@ class TestAgentAutoInjectMemoryHook:
         custom_hook = AsyncMock(return_value=[])
 
         hooks = AgentHooks(on_memory_retrieve=custom_hook)
-        agent = Agent(
+        agent = create_agent(
             name="test-agent",
             description="Test agent",
             model=mock_model,
@@ -126,7 +125,7 @@ class TestAgentAutoInjectMemoryHook:
         custom_step_hook = AsyncMock()
 
         hooks = AgentHooks(on_step=custom_step_hook)
-        agent = Agent(
+        agent = create_agent(
             name="test-agent",
             description="Test agent",
             model=mock_model,
@@ -141,7 +140,7 @@ class TestAgentAutoInjectMemoryHook:
         mock_model = MagicMock(spec=Model)
 
         hooks = AgentHooks()
-        agent = Agent(
+        agent = create_agent(
             name="test-agent",
             description="Test agent",
             model=mock_model,

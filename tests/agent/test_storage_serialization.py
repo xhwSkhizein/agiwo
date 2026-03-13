@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from agiwo.agent.schema import (
+from agiwo.agent import (
     ChannelContext,
     ContentPart,
     ContentType,

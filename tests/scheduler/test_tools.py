@@ -1,23 +1,26 @@
 """Tests for scheduling tools."""
 
+import asyncio
 import pytest
 from datetime import datetime, timezone
 
+from agiwo.agent import TerminationReason
 from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
-from agiwo.agent.schema import TerminationReason
 from agiwo.agent.stream_channel import StreamChannel
+from agiwo.scheduler.coordinator import SchedulerCoordinator
+from agiwo.scheduler.engine import SchedulerEngine
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
+    SchedulerConfig,
     TaskLimits,
     TimeUnit,
     WaitMode,
     WakeType,
 )
-from agiwo.scheduler.runtime import SchedulerRuntime
+from agiwo.scheduler.runner import SchedulerRunner
 from agiwo.scheduler.store import InMemoryAgentStateStorage
-from agiwo.scheduler.tool_port import SchedulerToolPort
 from agiwo.scheduler.tools import (
     CancelAgentTool,
     ListAgentsTool,
@@ -44,13 +47,24 @@ def guard(store):
 
 
 @pytest.fixture
-def runtime(store):
-    return SchedulerRuntime(store)
+def coordinator():
+    return SchedulerCoordinator()
 
 
 @pytest.fixture
-def tool_port(store, guard, runtime):
-    return SchedulerToolPort(store, guard, runtime)
+def runner(store, coordinator):
+    return SchedulerRunner(store, coordinator, asyncio.Semaphore(10))
+
+
+@pytest.fixture
+def control(store, guard, coordinator, runner):
+    return SchedulerEngine(
+        config=SchedulerConfig(),
+        store=store,
+        guard=guard,
+        coordinator=coordinator,
+        runner=runner,
+    )
 
 
 @pytest.fixture
@@ -81,9 +95,9 @@ async def _register_parent(store, agent_id="orch", depth=0):
 
 class TestSpawnAgentTool:
     @pytest.mark.asyncio
-    async def test_spawn_creates_pending_state(self, store, tool_port, context):
+    async def test_spawn_creates_pending_state(self, store, control, context):
         await _register_parent(store)
-        tool = SpawnAgentTool(tool_port)
+        tool = SpawnAgentTool(control)
         result = await tool.execute(
             {"task": "Research topic A", "tool_call_id": "tc-1"},
             context,
@@ -101,9 +115,9 @@ class TestSpawnAgentTool:
         assert state.depth == 1
 
     @pytest.mark.asyncio
-    async def test_spawn_with_custom_child_id(self, store, tool_port, context):
+    async def test_spawn_with_custom_child_id(self, store, control, context):
         await _register_parent(store)
-        tool = SpawnAgentTool(tool_port)
+        tool = SpawnAgentTool(control)
         result = await tool.execute(
             {"task": "Task", "child_id": "my-child", "tool_call_id": "tc-1"},
             context,
@@ -113,9 +127,9 @@ class TestSpawnAgentTool:
         assert state is not None
 
     @pytest.mark.asyncio
-    async def test_spawn_with_system_prompt_override(self, store, tool_port, context):
+    async def test_spawn_with_system_prompt_override(self, store, control, context):
         await _register_parent(store)
-        tool = SpawnAgentTool(tool_port)
+        tool = SpawnAgentTool(control)
         result = await tool.execute(
             {
                 "task": "Task",
@@ -130,7 +144,7 @@ class TestSpawnAgentTool:
         assert state.config_overrides["system_prompt"] == "You are a specialist."
 
     @pytest.mark.asyncio
-    async def test_spawn_fails_without_agent_id(self, store, tool_port):
+    async def test_spawn_fails_without_agent_id(self, store, control):
         ctx = ExecutionContext(
             session_id="sess-1",
             run_id="run-1",
@@ -139,25 +153,31 @@ class TestSpawnAgentTool:
             agent_name="",
             sequence_counter=SessionSequenceCounter(0),
         )
-        tool = SpawnAgentTool(tool_port)
+        tool = SpawnAgentTool(control)
         result = await tool.execute({"task": "Task", "tool_call_id": "tc-1"}, ctx)
         assert not result.is_success
 
     @pytest.mark.asyncio
-    async def test_spawn_generates_unique_ids(self, store, tool_port, context):
+    async def test_spawn_generates_unique_ids(self, store, control, context):
         await _register_parent(store)
-        tool = SpawnAgentTool(tool_port)
+        tool = SpawnAgentTool(control)
         r1 = await tool.execute({"task": "A", "tool_call_id": "tc-1"}, context)
         r2 = await tool.execute({"task": "B", "tool_call_id": "tc-2"}, context)
         assert r1.output["child_id"] != r2.output["child_id"]
 
     @pytest.mark.asyncio
-    async def test_spawn_rejected_max_depth(self, store, runtime, context):
+    async def test_spawn_rejected_max_depth(self, store, coordinator, runner, context):
         limits = TaskLimits(max_depth=2)
         guard = TaskGuard(limits, store)
-        tool_port = SchedulerToolPort(store, guard, runtime)
+        control = SchedulerEngine(
+            config=SchedulerConfig(),
+            store=store,
+            guard=guard,
+            coordinator=coordinator,
+            runner=runner,
+        )
         await _register_parent(store, depth=2)
-        tool = SpawnAgentTool(tool_port)
+        tool = SpawnAgentTool(control)
         result = await tool.execute(
             {"task": "Deep task", "tool_call_id": "tc-1"},
             context,
@@ -166,12 +186,18 @@ class TestSpawnAgentTool:
         assert "Spawn rejected" in result.content
 
     @pytest.mark.asyncio
-    async def test_spawn_rejected_max_children(self, store, runtime, context):
+    async def test_spawn_rejected_max_children(self, store, coordinator, runner, context):
         limits = TaskLimits(max_children_per_agent=2)
         guard = TaskGuard(limits, store)
-        tool_port = SchedulerToolPort(store, guard, runtime)
+        control = SchedulerEngine(
+            config=SchedulerConfig(),
+            store=store,
+            guard=guard,
+            coordinator=coordinator,
+            runner=runner,
+        )
         await _register_parent(store)
-        tool = SpawnAgentTool(tool_port)
+        tool = SpawnAgentTool(control)
         await tool.execute({"task": "A", "child_id": "c1", "tool_call_id": "tc-1"}, context)
         await tool.execute({"task": "B", "child_id": "c2", "tool_call_id": "tc-2"}, context)
         result = await tool.execute({"task": "C", "child_id": "c3", "tool_call_id": "tc-3"}, context)
@@ -179,9 +205,9 @@ class TestSpawnAgentTool:
         assert "Spawn rejected" in result.content
 
     @pytest.mark.asyncio
-    async def test_spawn_inherits_depth(self, store, tool_port, context):
+    async def test_spawn_inherits_depth(self, store, control, context):
         await _register_parent(store, depth=3)
-        tool = SpawnAgentTool(tool_port)
+        tool = SpawnAgentTool(control)
         await tool.execute(
             {"task": "Task", "child_id": "deep-child", "tool_call_id": "tc-1"},
             context,
@@ -193,9 +219,9 @@ class TestSpawnAgentTool:
 
 class TestSleepAndWaitTool:
     @pytest.mark.asyncio
-    async def test_sleep_waitset(self, store, tool_port, context):
+    async def test_sleep_waitset(self, store, control, context):
         await _register_parent(store)
-        spawn_tool = SpawnAgentTool(tool_port)
+        spawn_tool = SpawnAgentTool(control)
         await spawn_tool.execute(
             {"task": "A", "child_id": "child-1", "tool_call_id": "tc-1"}, context
         )
@@ -203,7 +229,7 @@ class TestSleepAndWaitTool:
             {"task": "B", "child_id": "child-2", "tool_call_id": "tc-2"}, context
         )
 
-        sleep_tool = SleepAndWaitTool(tool_port)
+        sleep_tool = SleepAndWaitTool(control)
         result = await sleep_tool.execute(
             {"wake_type": "waitset", "tool_call_id": "tc-3"},
             context,
@@ -221,9 +247,9 @@ class TestSleepAndWaitTool:
         assert state.wake_condition.timeout_at is not None
 
     @pytest.mark.asyncio
-    async def test_sleep_waitset_any_mode(self, store, tool_port, context):
+    async def test_sleep_waitset_any_mode(self, store, control, context):
         await _register_parent(store)
-        spawn_tool = SpawnAgentTool(tool_port)
+        spawn_tool = SpawnAgentTool(control)
         await spawn_tool.execute(
             {"task": "A", "child_id": "child-1", "tool_call_id": "tc-1"}, context
         )
@@ -231,7 +257,7 @@ class TestSleepAndWaitTool:
             {"task": "B", "child_id": "child-2", "tool_call_id": "tc-2"}, context
         )
 
-        sleep_tool = SleepAndWaitTool(tool_port)
+        sleep_tool = SleepAndWaitTool(control)
         await sleep_tool.execute(
             {"wake_type": "waitset", "wait_mode": "any", "tool_call_id": "tc-3"},
             context,
@@ -241,9 +267,9 @@ class TestSleepAndWaitTool:
         assert state.wake_condition.wait_mode == WaitMode.ANY
 
     @pytest.mark.asyncio
-    async def test_sleep_waitset_explicit_wait_for(self, store, tool_port, context):
+    async def test_sleep_waitset_explicit_wait_for(self, store, control, context):
         await _register_parent(store)
-        spawn_tool = SpawnAgentTool(tool_port)
+        spawn_tool = SpawnAgentTool(control)
         await spawn_tool.execute(
             {"task": "A", "child_id": "child-1", "tool_call_id": "tc-1"}, context
         )
@@ -251,7 +277,7 @@ class TestSleepAndWaitTool:
             {"task": "B", "child_id": "child-2", "tool_call_id": "tc-2"}, context
         )
 
-        sleep_tool = SleepAndWaitTool(tool_port)
+        sleep_tool = SleepAndWaitTool(control)
         await sleep_tool.execute(
             {"wake_type": "waitset", "wait_for": ["child-1"], "tool_call_id": "tc-3"},
             context,
@@ -261,10 +287,10 @@ class TestSleepAndWaitTool:
         assert state.wake_condition.wait_for == ["child-1"]
 
     @pytest.mark.asyncio
-    async def test_sleep_timer(self, store, tool_port, context):
+    async def test_sleep_timer(self, store, control, context):
         await _register_parent(store)
 
-        sleep_tool = SleepAndWaitTool(tool_port)
+        sleep_tool = SleepAndWaitTool(control)
         result = await sleep_tool.execute(
             {
                 "wake_type": "timer",
@@ -285,10 +311,10 @@ class TestSleepAndWaitTool:
         assert state.wake_condition.wakeup_at is not None
 
     @pytest.mark.asyncio
-    async def test_sleep_timer_requires_seconds(self, store, tool_port, context):
+    async def test_sleep_timer_requires_seconds(self, store, control, context):
         await _register_parent(store)
 
-        sleep_tool = SleepAndWaitTool(tool_port)
+        sleep_tool = SleepAndWaitTool(control)
         result = await sleep_tool.execute(
             {"wake_type": "timer", "tool_call_id": "tc-1"},
             context,
@@ -297,8 +323,8 @@ class TestSleepAndWaitTool:
         assert "delay_seconds is required" in result.content
 
     @pytest.mark.asyncio
-    async def test_sleep_invalid_wake_type(self, store, tool_port, context):
-        sleep_tool = SleepAndWaitTool(tool_port)
+    async def test_sleep_invalid_wake_type(self, store, control, context):
+        sleep_tool = SleepAndWaitTool(control)
         result = await sleep_tool.execute(
             {"wake_type": "invalid", "tool_call_id": "tc-1"},
             context,
@@ -306,14 +332,14 @@ class TestSleepAndWaitTool:
         assert not result.is_success
 
     @pytest.mark.asyncio
-    async def test_sleep_waitset_with_custom_timeout(self, store, tool_port, context):
+    async def test_sleep_waitset_with_custom_timeout(self, store, control, context):
         await _register_parent(store)
-        spawn_tool = SpawnAgentTool(tool_port)
+        spawn_tool = SpawnAgentTool(control)
         await spawn_tool.execute(
             {"task": "A", "child_id": "child-1", "tool_call_id": "tc-1"}, context
         )
 
-        sleep_tool = SleepAndWaitTool(tool_port)
+        sleep_tool = SleepAndWaitTool(control)
         await sleep_tool.execute(
             {"wake_type": "waitset", "timeout": 120, "tool_call_id": "tc-2"},
             context,
@@ -328,7 +354,7 @@ class TestSleepAndWaitTool:
 
 class TestQuerySpawnedAgentTool:
     @pytest.mark.asyncio
-    async def test_query_existing_agent(self, store, tool_port, context):
+    async def test_query_existing_agent(self, store, control, context):
         state = AgentState(
             id="child-1",
             session_id="sess-1",
@@ -339,7 +365,7 @@ class TestQuerySpawnedAgentTool:
         )
         await store.save_state(state)
 
-        tool = QuerySpawnedAgentTool(tool_port)
+        tool = QuerySpawnedAgentTool(control)
         result = await tool.execute(
             {"agent_id": "child-1", "tool_call_id": "tc-1"},
             context,
@@ -350,8 +376,8 @@ class TestQuerySpawnedAgentTool:
         assert "Research results" in result.content
 
     @pytest.mark.asyncio
-    async def test_query_nonexistent_agent(self, store, tool_port, context):
-        tool = QuerySpawnedAgentTool(tool_port)
+    async def test_query_nonexistent_agent(self, store, control, context):
+        tool = QuerySpawnedAgentTool(control)
         result = await tool.execute(
             {"agent_id": "nope", "tool_call_id": "tc-1"},
             context,
@@ -360,7 +386,7 @@ class TestQuerySpawnedAgentTool:
         assert "not found" in result.content
 
     @pytest.mark.asyncio
-    async def test_query_includes_explain_and_recent_steps(self, store, tool_port, context):
+    async def test_query_includes_explain_and_recent_steps(self, store, control, context):
         state = AgentState(
             id="child-2",
             session_id="sess-1",
@@ -372,7 +398,7 @@ class TestQuerySpawnedAgentTool:
         )
         await store.save_state(state)
 
-        tool = QuerySpawnedAgentTool(tool_port)
+        tool = QuerySpawnedAgentTool(control)
         result = await tool.execute({"agent_id": "child-2", "tool_call_id": "tc-1"}, context)
         assert result.is_success
         assert "Waiting 8h" in result.content
@@ -381,9 +407,9 @@ class TestQuerySpawnedAgentTool:
 
 class TestSleepAndWaitExplain:
     @pytest.mark.asyncio
-    async def test_sleep_with_explain_stored(self, store, tool_port, context):
+    async def test_sleep_with_explain_stored(self, store, control, context):
         await _register_parent(store)
-        sleep_tool = SleepAndWaitTool(tool_port)
+        sleep_tool = SleepAndWaitTool(control)
         result = await sleep_tool.execute(
             {
                 "wake_type": "timer",
@@ -401,14 +427,14 @@ class TestSleepAndWaitExplain:
 
 class TestCancelAgentTool:
     @pytest.mark.asyncio
-    async def test_cancel_nonexistent_agent(self, tool_port, context):
-        tool = CancelAgentTool(tool_port)
+    async def test_cancel_nonexistent_agent(self, control, context):
+        tool = CancelAgentTool(control)
         result = await tool.execute({"agent_id": "ghost", "tool_call_id": "tc-1"}, context)
         assert not result.is_success
         assert "not found" in result.content
 
     @pytest.mark.asyncio
-    async def test_cancel_non_child_agent(self, store, tool_port, context):
+    async def test_cancel_non_child_agent(self, store, control, context):
         other_state = AgentState(
             id="other",
             session_id="sess-1",
@@ -417,13 +443,13 @@ class TestCancelAgentTool:
             parent_id="someone-else",
         )
         await store.save_state(other_state)
-        tool = CancelAgentTool(tool_port)
+        tool = CancelAgentTool(control)
         result = await tool.execute({"agent_id": "other", "tool_call_id": "tc-1"}, context)
         assert not result.is_success
         assert "Permission denied" in result.content
 
     @pytest.mark.asyncio
-    async def test_cancel_running_without_force_warns(self, store, tool_port, context):
+    async def test_cancel_running_without_force_warns(self, store, control, context):
         child = AgentState(
             id="child-run",
             session_id="sess-1",
@@ -432,13 +458,13 @@ class TestCancelAgentTool:
             parent_id="orch",
         )
         await store.save_state(child)
-        tool = CancelAgentTool(tool_port)
+        tool = CancelAgentTool(control)
         result = await tool.execute({"agent_id": "child-run", "force": False, "tool_call_id": "tc-1"}, context)
         # Should warn and not cancel
         assert result.output.get("requires_force") is True
 
     @pytest.mark.asyncio
-    async def test_cancel_running_without_force_includes_running_bash_processes(self, store, runtime, tool_port, context):
+    async def test_cancel_running_without_force_includes_running_bash_processes(self, store, coordinator, control, context):
         class MockBashSandbox:
             async def list_processes_by_agent(self, agent_id: str, state: str = "running"):
                 if agent_id != "child-run" or state != "running":
@@ -470,9 +496,9 @@ class TestCancelAgentTool:
         mock_agent = MagicMock()
         mock_agent.tools = [bash_process_tool]
         mock_agent.id = "child-run"
-        runtime.register_agent(mock_agent)
+        coordinator.register_agent(mock_agent)
 
-        tool = CancelAgentTool(tool_port)
+        tool = CancelAgentTool(control)
         result = await tool.execute(
             {"agent_id": "child-run", "force": False, "tool_call_id": "tc-1"},
             context,
@@ -483,7 +509,7 @@ class TestCancelAgentTool:
         assert "sleep 1" in result.content
 
     @pytest.mark.asyncio
-    async def test_cancel_with_force(self, store, runtime, tool_port, context):
+    async def test_cancel_with_force(self, store, control, context):
         child = AgentState(
             id="child-force",
             session_id="sess-1",
@@ -492,14 +518,14 @@ class TestCancelAgentTool:
             parent_id="orch",
         )
         await store.save_state(child)
-        runtime.recursive_cancel = AsyncMock()  # type: ignore[method-assign]
-        tool = CancelAgentTool(tool_port)
+        control._recursive_cancel = AsyncMock()  # type: ignore[method-assign]
+        tool = CancelAgentTool(control)
         result = await tool.execute({"agent_id": "child-force", "force": True, "tool_call_id": "tc-1"}, context)
         assert result.is_success
-        runtime.recursive_cancel.assert_awaited_once_with("child-force", "Cancelled by parent agent")
+        control._recursive_cancel.assert_awaited_once_with("child-force", "Cancelled by parent agent")
 
     @pytest.mark.asyncio
-    async def test_cancel_already_completed(self, store, tool_port, context):
+    async def test_cancel_already_completed(self, store, control, context):
         child = AgentState(
             id="child-done",
             session_id="sess-1",
@@ -508,21 +534,21 @@ class TestCancelAgentTool:
             parent_id="orch",
         )
         await store.save_state(child)
-        tool = CancelAgentTool(tool_port)
+        tool = CancelAgentTool(control)
         result = await tool.execute({"agent_id": "child-done", "tool_call_id": "tc-1"}, context)
         assert "terminal state" in result.content
 
 
 class TestListAgentsTool:
     @pytest.mark.asyncio
-    async def test_list_no_children(self, tool_port, context):
-        tool = ListAgentsTool(tool_port)
+    async def test_list_no_children(self, control, context):
+        tool = ListAgentsTool(control)
         result = await tool.execute({"tool_call_id": "tc-1"}, context)
         assert result.is_success
         assert "No child agents" in result.content
 
     @pytest.mark.asyncio
-    async def test_list_children(self, store, tool_port, context):
+    async def test_list_children(self, store, control, context):
         c1 = AgentState(
             id="c1", session_id="sess-1", status=AgentStateStatus.RUNNING, task="task A", parent_id="orch"
         )
@@ -533,7 +559,7 @@ class TestListAgentsTool:
         await store.save_state(c1)
         await store.save_state(c2)
 
-        tool = ListAgentsTool(tool_port)
+        tool = ListAgentsTool(control)
         result = await tool.execute({"tool_call_id": "tc-1"}, context)
         assert result.is_success
         assert "c1" in result.content

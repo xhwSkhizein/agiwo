@@ -6,21 +6,25 @@ serialized and deserialized in SQLite and MongoDB storage.
 """
 
 import os
+import sqlite3
 import pytest
 import tempfile
 
-from agiwo.agent.schema import (
+from agiwo.agent import (
     ContentPart,
     ContentType,
     Run,
     RunStatus,
     RunMetrics,
+    StepRecord,
     UserMessage,
     ChannelContext,
     serialize_user_input,
     deserialize_user_input,
 )
+from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
 from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
+from agiwo.agent.stream_channel import StreamChannel
 
 
 class TestUserInputSerialization:
@@ -83,6 +87,17 @@ class TestUserInputSerialization:
 
 class TestSQLiteUserInputStorage:
     """Test UserInput serialization in SQLite storage."""
+
+    @staticmethod
+    def _make_context() -> ExecutionContext:
+        return ExecutionContext(
+            session_id="test-session",
+            run_id="test-run",
+            channel=StreamChannel(),
+            agent_id="test-agent",
+            agent_name="test-agent",
+            sequence_counter=SessionSequenceCounter(0),
+        )
 
     @pytest.mark.asyncio
     async def test_save_run_with_string_user_input(self):
@@ -166,6 +181,36 @@ class TestSQLiteUserInputStorage:
             assert retrieved.user_input.context.source == "api"
             assert retrieved.user_input.context.metadata == {"channel": "test"}
 
+    @pytest.mark.asyncio
+    async def test_save_step_with_user_input_creates_required_columns(self):
+        """Fresh SQLite databases should persist step.user_input successfully."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = SQLiteRunStepStorage(db_path=db_path)
+
+            step = StepRecord.user(
+                self._make_context(),
+                sequence=1,
+                user_input=UserMessage(
+                    content=[ContentPart(type=ContentType.TEXT, text="hello")],
+                    context=ChannelContext(source="api", metadata={"channel": "test"}),
+                ),
+            )
+
+            await storage.save_step(step)
+
+            retrieved = await storage.get_last_step("test-session")
+            assert retrieved is not None
+            assert isinstance(retrieved.user_input, UserMessage)
+            assert retrieved.user_input.context is not None
+            assert retrieved.user_input.context.source == "api"
+
+            with sqlite3.connect(db_path) as conn:
+                columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(steps)").fetchall()
+                }
+            assert "user_input" in columns
+            assert "content_for_user" in columns
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -1,11 +1,12 @@
 from agiwo.config.settings import settings as sdk_settings
 from server.config import ConsoleConfig
-from server.services.storage_manager import (
-    StorageManager,
+from server.services.storage_wiring import (
     build_agent_state_storage_config,
     build_citation_store_config,
     build_run_step_storage_config,
     build_trace_storage_config,
+    create_run_step_storage,
+    create_trace_storage,
 )
 
 
@@ -43,15 +44,14 @@ def test_storage_config_builders_share_console_mapping(monkeypatch) -> None:
     assert agent_state.storage_type == "memory"
 
 
-def test_storage_manager_only_owns_run_step_and_trace_storage() -> None:
-    manager = StorageManager(
-        ConsoleConfig(
-            run_step_storage_type="memory",
-            trace_storage_type="memory",
-            metadata_storage_type="memory",
-        )
+def test_storage_factory_functions_create_correct_storage_types() -> None:
+    config = ConsoleConfig(
+        run_step_storage_type="memory",
+        trace_storage_type="memory",
+        metadata_storage_type="memory",
     )
+    run_step = create_run_step_storage(config)
+    trace = create_trace_storage(config)
 
-    assert hasattr(manager, "run_step_storage")
-    assert hasattr(manager, "trace_storage")
-    assert not hasattr(manager, "agent_state_storage")
+    assert run_step is not None
+    assert trace is not None

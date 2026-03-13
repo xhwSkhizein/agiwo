@@ -8,7 +8,7 @@ from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCount
 from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.executor import AgentExecutor
 from agiwo.agent.options import AgentOptions
-from agiwo.agent.schema import StepRecord, TerminationReason
+from agiwo.agent import StepRecord, TerminationReason
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.tool.base import BaseTool, ToolResult

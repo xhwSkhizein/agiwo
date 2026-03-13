@@ -1,9 +1,4 @@
-"""
-Storage manager — creates and manages storage instances from console config.
-
-Provides storage config builders and a single access point to
-RunStepStorage and BaseTraceStorage.
-"""
+"""Console storage config builders — pure functions, no class wrapper."""
 
 from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.base import RunStepStorage
@@ -13,9 +8,6 @@ from agiwo.scheduler.models import AgentStateStorageConfig
 from agiwo.tool.storage.citation import CitationStoreConfig
 
 from server.config import ConsoleConfig
-
-
-# ── Storage config builders ───────────────────────────────────────────
 
 
 def build_run_step_storage_config(console_config: ConsoleConfig) -> RunStepStorageConfig:
@@ -84,21 +76,9 @@ def build_citation_store_config(console_config: ConsoleConfig) -> CitationStoreC
     )
 
 
-# ── StorageManager ────────────────────────────────────────────────────
+def create_run_step_storage(config: ConsoleConfig) -> RunStepStorage:
+    return StorageFactory.create_run_step_storage(build_run_step_storage_config(config))
 
 
-class StorageManager:
-    """Manages lifecycle of console run-step and trace storage instances."""
-
-    def __init__(self, config: ConsoleConfig) -> None:
-        run_step_cfg = build_run_step_storage_config(config)
-        trace_cfg = build_trace_storage_config(config)
-
-        self.run_step_storage: RunStepStorage = StorageFactory.create_run_step_storage(run_step_cfg)
-        self.trace_storage: BaseTraceStorage = StorageFactory.create_trace_storage(trace_cfg)
-
-    async def close(self) -> None:
-        """Close all storage connections."""
-        await self.run_step_storage.close()
-        if self.trace_storage is not None:
-            await self.trace_storage.close()
+def create_trace_storage(config: ConsoleConfig) -> BaseTraceStorage:
+    return StorageFactory.create_trace_storage(build_trace_storage_config(config))

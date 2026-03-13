@@ -2,7 +2,7 @@ import time
 from typing import AsyncIterator
 
 from agiwo.agent.inner.run_payloads import apply_run_metrics_payload
-from agiwo.agent.schema import EventType, Run, RunStatus, StreamEvent
+from agiwo.agent.runtime import EventType, Run, RunStatus, StreamEvent
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.utils.logging import get_logger
 

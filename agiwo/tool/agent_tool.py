@@ -2,10 +2,10 @@ import time
 from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
-from agiwo.agent.schema import RunOutput
-from agiwo.utils.abort_signal import AbortSignal
 from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.runtime import RunOutput
 from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.utils.abort_signal import AbortSignal
 
 if TYPE_CHECKING:
     from agiwo.agent.agent import Agent

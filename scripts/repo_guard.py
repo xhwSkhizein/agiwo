@@ -22,7 +22,6 @@ ALLOWED_OS_GETENV = {
     Path("agiwo/llm/factory.py"),
 }
 ALLOWED_MANUAL_USER_INPUT_DECODING = {
-    Path("agiwo/agent/schema.py"),
     Path("agiwo/agent/input.py"),
     Path("agiwo/agent/input_codec.py"),
     Path("tests"),
@@ -114,12 +113,14 @@ FILE_GROWTH_BUDGETS = (
     (re.compile(r"^console/server/schemas\.py$"), 420),
     (re.compile(r"^console/server/response_serialization\.py$"), 280),
     (re.compile(r"^agiwo/tool/builtin/bash_tool/tool\.py$"), 840),
-    (re.compile(r"^agiwo/agent/schema\.py$"), 620),
     (re.compile(r"^agiwo/config/settings\.py$"), 390),
     (re.compile(r"^agiwo/observability/collector\.py$"), 600),
     (re.compile(r"^agiwo/agent/agent\.py$"), 560),
+    (re.compile(r"^agiwo/scheduler/coordinator\.py$"), 180),
+    (re.compile(r"^agiwo/scheduler/runner\.py$"), 720),
+    (re.compile(r"^agiwo/scheduler/engine\.py$"), 900),
     (re.compile(r"^agiwo/scheduler/tools\.py$"), 690),
-    (re.compile(r"^agiwo/scheduler/scheduler\.py$"), 680),
+    (re.compile(r"^agiwo/scheduler/scheduler\.py$"), 320),
     (re.compile(r"^agiwo/tool/permission/manager\.py$"), 530),
     (re.compile(r"^agiwo/tool/permission/store\.py$"), 500),
 )
@@ -141,6 +142,7 @@ MODEL_CONSTRUCTOR_NAMES = {
 }
 SCHEDULER_FACADE_DELEGATE_ATTRS = {
     "_dispatch_service",
+    "_engine",
     "_executor",
     "_output_service",
     "_tick_engine",
@@ -225,6 +227,14 @@ def _imports_feishu_sdk_impl(module_name: str | None) -> bool:
     if module_name is None:
         return False
     return module_name == "lark_oapi" or module_name.startswith("lark_oapi.")
+
+
+def _imports_agent_schema_impl(module_name: str | None) -> bool:
+    if module_name is None:
+        return False
+    return module_name == "agiwo.agent.schema" or module_name.startswith(
+        "agiwo.agent.schema."
+    )
 
 
 def _is_console_api_boundary_import(module_name: str | None) -> bool:
@@ -819,6 +829,18 @@ def _detect_import_name_errors(path: Path, module_name: str, line: int) -> list[
                     "Feishu SDK imports must stay inside connection.py or "
                     "sdk_adapter.py; downstream code should depend on "
                     "FeishuConnection/FeishuInboundEnvelope instead of lark_oapi."
+                ),
+            )
+        )
+    if _imports_agent_schema_impl(module_name):
+        errors.append(
+            _make_error(
+                path,
+                line,
+                "AGW039",
+                (
+                    "Do not import agiwo.agent.schema; use agiwo.agent for the "
+                    "public surface or import canonical agent modules directly."
                 ),
             )
         )

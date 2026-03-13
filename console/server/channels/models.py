@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
-from agiwo.agent.schema import UserMessage
+from agiwo.agent import UserMessage
 
 if TYPE_CHECKING:
     from server.channels.session_binding import SessionMutationPlan

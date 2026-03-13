@@ -11,9 +11,7 @@ from agiwo.observability.base import BaseTraceStorage, TraceQuery
 from agiwo.observability.trace import Trace, Span
 from agiwo.utils.storage_support.sqlite_runtime import (
     SQLiteConnectionRuntime,
-    ensure_columns,
     execute_statements,
-    get_table_columns,
 )
 from agiwo.utils.logging import get_logger
 
@@ -103,32 +101,6 @@ class SQLiteTraceStorage(BaseTraceStorage):
             ],
         )
         await connection.commit()
-        await self._migrate_tables()
-
-    async def _migrate_tables(self) -> None:
-        """Migrate existing tables to add missing columns if needed."""
-        connection = self._connection
-        if not connection:
-            return
-
-        try:
-            columns = await get_table_columns(connection, self.collection_name)
-            await ensure_columns(
-                connection,
-                self.collection_name,
-                {
-                    "total_cache_read_tokens": "INTEGER DEFAULT 0",
-                    "total_cache_creation_tokens": "INTEGER DEFAULT 0",
-                    "total_input_tokens": "INTEGER DEFAULT 0",
-                    "total_output_tokens": "INTEGER DEFAULT 0",
-                    "total_token_cost": "REAL DEFAULT 0.0",
-                },
-                existing=columns,
-            )
-            await connection.commit()
-        except Exception as e:  # noqa: BLE001 - sqlite migration boundary
-            # Ignore errors if columns already exist or table doesn't exist
-            logger.debug("migration_skipped", error=str(e))
 
     def _serialize_trace(self, trace: Trace) -> dict:
         """Serialize Trace to dict for database storage."""

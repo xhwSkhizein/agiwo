@@ -3,7 +3,7 @@
 import re
 from typing import Any
 
-from agiwo.agent.schema import ChannelContext, ContentPart, ContentType, UserMessage
+from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
 
 from server.channels.feishu.attachment_resolver import FeishuAttachmentResolver
 from server.channels.feishu.content_extractor import FeishuContentExtractor

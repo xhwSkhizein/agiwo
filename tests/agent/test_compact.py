@@ -4,11 +4,10 @@ Tests for Context Compact functionality.
 
 import pytest
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from agiwo.agent.schema import CompactMetadata, CompactResult
+from agiwo.agent import CompactMetadata, CompactResult
 from agiwo.agent.compact.prompt import DEFAULT_COMPACT_PROMPT, DEFAULT_ASSISTANT_RESPONSE
-from agiwo.agent.storage.session import InMemorySessionStorage, SessionStorage
+from agiwo.agent.storage.session import InMemorySessionStorage
 
 
 class TestCompactMetadata:

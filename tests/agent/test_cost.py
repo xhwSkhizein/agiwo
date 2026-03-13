@@ -1,5 +1,5 @@
+from agiwo.agent import StepMetrics, StepRecord
 from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
-from agiwo.agent.schema import StepMetrics, StepRecord
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import StepMetricsResolver

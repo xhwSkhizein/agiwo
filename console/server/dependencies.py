@@ -5,12 +5,13 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 
+from agiwo.agent.storage.base import RunStepStorage
+from agiwo.observability.base import BaseTraceStorage
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.channels.feishu import FeishuChannelService
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
-from server.services.storage_manager import StorageManager
 
 _RUNTIME_STATE_KEY = "console_runtime"
 
@@ -18,7 +19,8 @@ _RUNTIME_STATE_KEY = "console_runtime"
 @dataclass
 class ConsoleRuntime:
     config: ConsoleConfig
-    storage_manager: StorageManager
+    run_step_storage: RunStepStorage
+    trace_storage: BaseTraceStorage
     agent_registry: AgentRegistry
     scheduler: Scheduler | None = None
     feishu_channel_service: FeishuChannelService | None = None
@@ -48,8 +50,12 @@ def get_console_config(runtime: "ConsoleRuntimeDep") -> ConsoleConfig:
     return runtime.config
 
 
-def get_storage_manager(runtime: "ConsoleRuntimeDep") -> StorageManager:
-    return runtime.storage_manager
+def get_run_step_storage(runtime: "ConsoleRuntimeDep") -> RunStepStorage:
+    return runtime.run_step_storage
+
+
+def get_trace_storage(runtime: "ConsoleRuntimeDep") -> BaseTraceStorage:
+    return runtime.trace_storage
 
 
 def get_agent_registry(runtime: "ConsoleRuntimeDep") -> AgentRegistry:
@@ -69,11 +75,13 @@ def get_feishu_channel_service(
 
 
 ConsoleRuntimeDep = Annotated[ConsoleRuntime, Depends(get_console_runtime)]
+SchedulerDep = Annotated[Scheduler, Depends(get_scheduler)]
 
 
 __all__ = [
     "ConsoleRuntime",
     "ConsoleRuntimeDep",
+    "SchedulerDep",
     "bind_console_runtime",
     "clear_console_runtime",
     "get_agent_registry",
@@ -82,5 +90,6 @@ __all__ = [
     "get_console_runtime_from_app",
     "get_feishu_channel_service",
     "get_scheduler",
-    "get_storage_manager",
+    "get_run_step_storage",
+    "get_trace_storage",
 ]

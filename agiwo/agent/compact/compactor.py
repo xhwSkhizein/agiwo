@@ -18,11 +18,11 @@ from agiwo.agent.compact.prompt import (
     DEFAULT_COMPACT_PROMPT,
     DEFAULT_ASSISTANT_RESPONSE,
 )
-from agiwo.agent.schema import CompactMetadata, CompactResult
-from agiwo.agent.schema import StepRecord
 from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.llm_handler import LLMStreamHandler
 from agiwo.agent.inner.run_state import RunState
+from agiwo.agent.compact_types import CompactMetadata, CompactResult
+from agiwo.agent.runtime import StepRecord
 from agiwo.agent.storage.session import SessionStorage
 from agiwo.config.settings import settings
 from agiwo.utils.abort_signal import AbortSignal

@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agiwo.agent.schema import RunStatus
+from agiwo.agent import RunStatus
 from server.domain.run_metrics import RunMetricsSummary
-from server.services.run_metrics import summarize_runs_paginated
+from server.services.metrics import summarize_runs_paginated
 
 
 class FakeRunStorage:

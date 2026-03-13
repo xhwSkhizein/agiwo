@@ -17,18 +17,19 @@ from server.dependencies import (
     clear_console_runtime,
 )
 from server.channels.feishu import FeishuChannelService
-from server.services.storage_manager import StorageManager
 from server.services.agent_registry import AgentRegistry, AgentConfigRecord
 from server.services.agent_lifecycle import build_default_agent_options
-from server.services.storage_manager import build_agent_state_storage_config
+from server.services.storage_wiring import (
+    build_agent_state_storage_config,
+    create_run_step_storage,
+    create_trace_storage,
+)
 from server.routers import (
     sessions,
     traces,
     agents,
     chat,
     scheduler,
-    scheduler_control,
-    scheduler_chat,
     feishu,
 )
 from agiwo.utils.logging import get_logger
@@ -53,7 +54,8 @@ def _build_default_agent_config(config: ConsoleConfig) -> AgentConfigRecord:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config = ConsoleConfig()
-    storage_manager = StorageManager(config)
+    run_step_storage = create_run_step_storage(config)
+    trace_storage = create_trace_storage(config)
     agent_registry = AgentRegistry(config)
     await agent_registry.initialize()
 
@@ -101,7 +103,8 @@ async def lifespan(app: FastAPI):
         app,
         ConsoleRuntime(
             config=config,
-            storage_manager=storage_manager,
+            run_step_storage=run_step_storage,
+            trace_storage=trace_storage,
             agent_registry=agent_registry,
             scheduler=sched,
             feishu_channel_service=feishu_channel_service,
@@ -115,7 +118,9 @@ async def lifespan(app: FastAPI):
         await feishu_channel_service.close()
     await sched.stop()
     await agent_registry.close()
-    await storage_manager.close()
+    await run_step_storage.close()
+    if trace_storage is not None:
+        await trace_storage.close()
 
 
 def create_app() -> FastAPI:
@@ -139,8 +144,6 @@ def create_app() -> FastAPI:
     app.include_router(agents.router)
     app.include_router(chat.router)
     app.include_router(scheduler.router)
-    app.include_router(scheduler_control.router)
-    app.include_router(scheduler_chat.router)
     app.include_router(feishu.router)
 
     @app.get("/api/health")

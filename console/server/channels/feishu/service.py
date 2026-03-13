@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from agiwo.agent.schema import UserMessage
+from agiwo.agent import UserMessage
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.channels.agent_runtime import AgentRuntimeManager

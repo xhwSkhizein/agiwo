@@ -15,7 +15,7 @@ from server.dependencies import (
     get_console_runtime_from_app,
 )
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.storage_manager import StorageManager
+from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
@@ -31,14 +31,16 @@ async def client():
         trace_storage_type="memory",
         metadata_storage_type="memory",
     )
-    storage_manager = StorageManager(config)
+    run_step_storage = create_run_step_storage(config)
+    trace_storage = create_trace_storage(config)
     registry = AgentRegistry(config)
     await registry.initialize()
     bind_console_runtime(
         app,
         ConsoleRuntime(
             config=config,
-            storage_manager=storage_manager,
+            run_step_storage=run_step_storage,
+            trace_storage=trace_storage,
             agent_registry=registry,
         ),
     )
@@ -49,7 +51,7 @@ async def client():
 
     clear_console_runtime(app)
     await registry.close()
-    await storage_manager.close()
+    await run_step_storage.close()
 
 
 @pytest.mark.asyncio

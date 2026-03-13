@@ -8,7 +8,7 @@ import asyncio
 from typing import AsyncIterator
 from uuid import uuid4
 
-from agiwo.agent.schema import EventType, StepRecord, StreamEvent
+from agiwo.agent.runtime import EventType, StepRecord, StreamEvent
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.span_builder import (
     build_assistant_step_span,

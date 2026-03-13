@@ -24,34 +24,35 @@ from uuid import uuid4
 
 import secrets
 
-from agiwo.agent.schema import (
-    UserInput,
-    extract_text,
-    normalize_to_message,
-)
 from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
+from agiwo.agent.input import UserInput
+from agiwo.agent.input_codec import extract_text, normalize_to_message
 from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.run_payloads import build_run_completed_event_data
 from agiwo.agent.inner.storage_sink import StorageSink
-from agiwo.agent.stream_channel import StreamChannel
 from agiwo.agent.inner.system_prompt_builder import DefaultSystemPromptBuilder
 from agiwo.agent.memory_hooks import DefaultMemoryHook
-from agiwo.agent.storage.session import SessionStorage, InMemorySessionStorage, SQLiteSessionStorage
-from agiwo.config.settings import settings
-from agiwo.llm.base import Model
-from agiwo.skill.manager import SkillManager
-from agiwo.tool.base import BaseTool
-from agiwo.tool.builtin.registry import DEFAULT_TOOLS
 from agiwo.agent.hooks import AgentHooks
-from agiwo.agent.schema import Run, RunOutput, RunStatus, StreamEvent, StepRecord
+from agiwo.agent.runtime import Run, RunOutput, RunStatus, StepRecord, StreamEvent
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.factory import StorageFactory
+from agiwo.agent.storage.session import (
+    InMemorySessionStorage,
+    SessionStorage,
+    SQLiteSessionStorage,
+)
+from agiwo.agent.stream_channel import StreamChannel
+from agiwo.config.settings import settings
+from agiwo.llm.base import Model
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.collector import TraceCollector
-from agiwo.utils.abort_signal import AbortSignal
 from agiwo.agent.inner.executor import AgentExecutor
 from agiwo.agent.options import AgentOptions
+from agiwo.skill.manager import SkillManager
+from agiwo.tool.base import BaseTool
 from agiwo.tool.builtin.bash_tool import ensure_bash_tool_pair
+from agiwo.tool.builtin.registry import DEFAULT_TOOLS
+from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -70,6 +71,111 @@ def _create_skill_manager(options: AgentOptions, agent_name: str) -> SkillManage
     return manager
 
 
+def create_agent(
+    name: str,
+    description: str,
+    model: Model,
+    *,
+    id: str | None = None,
+    tools: list[BaseTool] | None = None,
+    system_prompt: str = "",
+    options: AgentOptions | None = None,
+    hooks: AgentHooks | None = None,
+) -> "Agent":
+    """Create an Agent with full assembly: tool merging, hook injection, storage, prompt builder.
+
+    This is the standard way to create an Agent. Use Agent() directly only when
+    you have pre-assembled components (e.g. derive_child).
+
+    Example:
+        agent = create_agent(
+            name="assistant",
+            description="A helpful assistant",
+            model=my_model,
+            tools=[calculator],
+            system_prompt="You are helpful.",
+            hooks=AgentHooks(on_after_tool_call=my_callback),
+        )
+        result = await agent.run("What is 2+2?")
+    """
+    resolved_id = id or _generate_default_id(name)
+    resolved_options = options or AgentOptions()
+    resolved_hooks = hooks or AgentHooks()
+
+    # Merge user tools with DEFAULT_TOOLS (user takes priority on name collision)
+    resolved_tools = ensure_bash_tool_pair(tools or [])
+    user_tool_names = {t.get_name() for t in resolved_tools}
+    default_tools = [cls() for tool_name, cls in DEFAULT_TOOLS.items() if tool_name not in user_tool_names]
+    resolved_tools = resolved_tools + default_tools
+
+    # Inject default memory retrieve hook if not provided
+    if resolved_hooks.on_memory_retrieve is None:
+        memory_hook = DefaultMemoryHook(
+            embedding_provider="auto",
+            top_k=5,
+        )
+        resolved_hooks.on_memory_retrieve = memory_hook.retrieve_memories
+        logger.debug("default_memory_hook_injected", agent_id=resolved_id)
+
+    # Create skill manager and add skill tool if enabled
+    skill_manager: SkillManager | None = None
+    if resolved_options.enable_skill:
+        skill_manager = _create_skill_manager(resolved_options, name)
+        skill_tool = skill_manager.get_skill_tool()
+        resolved_tools.append(skill_tool)
+        logger.debug("skill_tool_added", agent_id=resolved_id, tool_name=skill_tool.get_name())
+
+    # Storage instances (created synchronously, connect lazily on first use)
+    run_step_storage = StorageFactory.create_run_step_storage(
+        resolved_options.run_step_storage
+    )
+    trace_storage = StorageFactory.create_trace_storage(
+        resolved_options.trace_storage
+    )
+    session_storage = _create_session_storage(resolved_options)
+
+    # Prompt builder (lazy build on first execution)
+    prompt_builder = DefaultSystemPromptBuilder(
+        base_prompt=system_prompt,
+        agent_name=name,
+        agent_id=resolved_id,
+        options=resolved_options,
+        tools=resolved_tools,
+        skill_manager=skill_manager,
+    )
+
+    return Agent(
+        name=name,
+        description=description,
+        model=model,
+        id=resolved_id,
+        tools=resolved_tools,
+        options=resolved_options,
+        hooks=resolved_hooks,
+        run_step_storage=run_step_storage,
+        trace_storage=trace_storage,
+        session_storage=session_storage,
+        prompt_builder=prompt_builder,
+        skill_manager=skill_manager,
+    )
+
+
+def _generate_default_id(name: str) -> str:
+    """Generate semantic default ID: name + short random hex suffix."""
+    suffix = secrets.token_hex(3)
+    return f"{name}-{suffix}"
+
+
+def _create_session_storage(options: AgentOptions) -> SessionStorage:
+    """Create SessionStorage based on RunStepStorage configuration."""
+    storage_config = options.run_step_storage
+    if storage_config.storage_type == "sqlite":
+        db_path = storage_config.config.get("db_path", "agiwo.db")
+        resolved_path = settings.resolve_path(db_path)
+        return SQLiteSessionStorage(str(resolved_path) if resolved_path else db_path)
+    return InMemorySessionStorage()
+
+
 class Agent:
     """
     Agent is the primary entry point for the Agiwo Agent SDK.
@@ -80,16 +186,8 @@ class Agent:
     3. Event streaming and observability
     4. Lifecycle hooks for extensibility
 
-    Example:
-        agent = Agent(
-            name="assistant",
-            description="A helpful assistant",
-            model=my_model,
-            tools=[calculator],
-            system_prompt="You are helpful.",
-            hooks=AgentHooks(on_after_tool_call=my_callback),
-        )
-        result = await agent.run("What is 2+2?")
+    Use create_agent() to construct an Agent with full assembly.
+    Use Agent() directly only when you have pre-assembled components.
     """
 
     def __init__(
@@ -98,64 +196,29 @@ class Agent:
         description: str,
         model: Model,
         *,
-        id: str | None = None,
-        tools: list[BaseTool] | None = None,
-        system_prompt: str = "",
-        options: AgentOptions | None = None,
-        hooks: AgentHooks | None = None,
+        id: str,
+        tools: list[BaseTool],
+        options: AgentOptions,
+        hooks: AgentHooks,
+        run_step_storage: RunStepStorage,
+        trace_storage: BaseTraceStorage | None,
+        session_storage: SessionStorage,
+        prompt_builder: DefaultSystemPromptBuilder,
+        skill_manager: SkillManager | None = None,
     ):
         self.name = name
-        self.id = id or self._generate_default_id()
+        self.id = id
         self.description = description
         self.model = model
-        # 合并传入的 tools 和 DEFAULT_TOOLS，用户传入的优先，同名工具不重复
-        tools = ensure_bash_tool_pair(tools or [])
-        user_tool_names = {t.get_name() for t in tools}
-        default_tools = [cls() for name, cls in DEFAULT_TOOLS.items() if name not in user_tool_names]
-        self.tools = tools + default_tools
-        self.options = options or AgentOptions()
-        self.hooks = hooks or AgentHooks()
-
-        # 自动注入默认 memory retrieve hook（如果用户未提供）
-        if self.hooks.on_memory_retrieve is None:
-            memory_hook = DefaultMemoryHook(
-                embedding_provider="auto",
-                top_k=5,
-            )
-            self.hooks.on_memory_retrieve = memory_hook.retrieve_memories
-            logger.debug("default_memory_hook_injected", agent_id=self.id)
-
-        # 如果启用 skill，创建 skill_manager 并添加 skill_tool
-        self._skill_manager: SkillManager | None = None
-        if self.options.enable_skill:
-            self._skill_manager = _create_skill_manager(
-                self.options, self.name
-            )
-            skill_tool = self._skill_manager.get_skill_tool()
-            self.tools.append(skill_tool)
-            logger.debug("skill_tool_added", agent_id=self.id, tool_name=skill_tool.get_name())
-
-        # Storage instances (created synchronously, connect lazily on first use)
-        self.run_step_storage: RunStepStorage = StorageFactory.create_run_step_storage(
-            self.options.run_step_storage
-        )
-        self.trace_storage: BaseTraceStorage | None = StorageFactory.create_trace_storage(
-            self.options.trace_storage
-        )
-
-        # Initialize prompt builder (lazy build on first execution)
-        self._prompt_builder = DefaultSystemPromptBuilder(
-            base_prompt=system_prompt,
-            agent_name=self.name,
-            agent_id=self.id,
-            options=self.options,
-            tools=self.tools,
-            skill_manager=self._skill_manager,
-        )
+        self.tools = tools
+        self.options = options
+        self.hooks = hooks
+        self.run_step_storage = run_step_storage
+        self.trace_storage = trace_storage
+        self.session_storage = session_storage
+        self._prompt_builder = prompt_builder
+        self._skill_manager = skill_manager
         self._system_prompt: str | None = None
-
-        # Session storage for compact metadata
-        self.session_storage: SessionStorage = self._create_session_storage()
 
     async def get_effective_system_prompt(self) -> str:
         """Get the fully built system prompt (triggers build if needed).
@@ -175,9 +238,8 @@ class Agent:
         exclude_tool_names: set[str] | None = None,
     ) -> "Agent":
         """Create a child agent inheriting the current agent's effective configuration."""
-        child_options = copy.deepcopy(self.options) if self.options else None
-        if child_options is not None:
-            child_options.enable_termination_summary = True
+        child_options = copy.deepcopy(self.options) if self.options else AgentOptions()
+        child_options.enable_termination_summary = True
 
         system_prompt = system_prompt_override or await self.get_effective_system_prompt()
         if instruction:
@@ -185,9 +247,18 @@ class Agent:
                 f"\n\n<task-instruction>\n{instruction}\n</task-instruction>"
             )
 
-        tools = self.tools
+        tools = list(self.tools)
         if exclude_tool_names:
-            tools = [tool for tool in self.tools if tool.get_name() not in exclude_tool_names]
+            tools = [tool for tool in tools if tool.get_name() not in exclude_tool_names]
+
+        child_prompt_builder = DefaultSystemPromptBuilder(
+            base_prompt=system_prompt,
+            agent_name=self.name,
+            agent_id=child_id,
+            options=child_options,
+            tools=tools,
+            skill_manager=self._skill_manager,
+        )
 
         return Agent(
             name=self.name,
@@ -195,9 +266,13 @@ class Agent:
             model=self.model,
             id=child_id,
             tools=tools,
-            system_prompt=system_prompt,
             options=child_options,
-            hooks=self.hooks,
+            hooks=copy.deepcopy(self.hooks),
+            run_step_storage=self.run_step_storage,
+            trace_storage=self.trace_storage,
+            session_storage=self.session_storage,
+            prompt_builder=child_prompt_builder,
+            skill_manager=self._skill_manager,
         )
 
     @property
@@ -205,20 +280,6 @@ class Agent:
         """Get the built system prompt (available after first execution)."""
         return self._system_prompt
 
-    def _generate_default_id(self) -> str:
-        """Generate semantic default ID: name + short random hex suffix."""
-        suffix = secrets.token_hex(3)
-        return f"{self.name}-{suffix}"
-
-    def _create_session_storage(self) -> SessionStorage:
-        """Create SessionStorage based on RunStepStorage configuration."""
-        storage_config = self.options.run_step_storage
-        if storage_config.storage_type == "sqlite":
-            db_path = storage_config.config.get("db_path", "agiwo.db")
-            resolved_path = settings.resolve_path(db_path)
-            return SQLiteSessionStorage(str(resolved_path) if resolved_path else db_path)
-        # Default to in-memory
-        return InMemorySessionStorage()
 
     async def close(self) -> None:
         """Close agent and release all resources."""

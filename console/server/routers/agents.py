@@ -6,15 +6,11 @@ from pydantic import ValidationError
 
 from agiwo.utils.serialization import serialize_optional_datetime
 from server.dependencies import ConsoleRuntimeDep
-from server.schemas import (
-    AgentConfigCreate,
-    AgentConfigReplace,
-    AgentConfigResponse,
-    AgentOptionsPayload,
-    ModelParamsPayload,
-)
+from agiwo.agent.options import AgentOptionsInput
+from agiwo.llm.factory import ModelParamsInput
+from server.schemas import AgentConfigPayload, AgentConfigResponse
 from server.services.agent_registry import AgentConfigRecord
-from server.tools import console_tool_catalog
+from server.tools import list_available_tools as _list_available_tools
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -25,13 +21,13 @@ async def list_available_tools(
     exclude: str | None = QueryParam(default=None, description="Agent ID to exclude from agent tools"),
 ) -> list[dict[str, str]]:
     """Return all available tools (builtin + agent-as-tool) that can be assigned to agents."""
-    return await console_tool_catalog.list_available_tools(
+    return await _list_available_tools(
         runtime.agent_registry,
         exclude_agent_id=exclude,
     )
 
 
-def _body_to_record(body: AgentConfigCreate | AgentConfigReplace) -> AgentConfigRecord:
+def _body_to_record(body: AgentConfigPayload) -> AgentConfigRecord:
     return AgentConfigRecord(
         name=body.name,
         description=body.description,
@@ -53,8 +49,8 @@ def _record_to_response(record: AgentConfigRecord) -> AgentConfigResponse:
         model_name=record.model_name,
         system_prompt=record.system_prompt,
         tools=record.tools,
-        options=AgentOptionsPayload.model_validate(record.options or {}),
-        model_params=ModelParamsPayload.model_validate(record.model_params or {}),
+        options=AgentOptionsInput.model_validate(record.options or {}),
+        model_params=ModelParamsInput.model_validate(record.model_params or {}),
         created_at=serialize_optional_datetime(record.created_at) or "",
         updated_at=serialize_optional_datetime(record.updated_at) or "",
     )
@@ -69,7 +65,7 @@ async def list_agents(runtime: ConsoleRuntimeDep) -> list[AgentConfigResponse]:
 
 @router.post("", response_model=AgentConfigResponse, status_code=201)
 async def create_agent(
-    body: AgentConfigCreate,
+    body: AgentConfigPayload,
     runtime: ConsoleRuntimeDep,
 ) -> AgentConfigResponse:
     """Create a new agent configuration."""
@@ -93,7 +89,7 @@ async def get_agent(agent_id: str, runtime: ConsoleRuntimeDep) -> AgentConfigRes
 @router.put("/{agent_id}", response_model=AgentConfigResponse)
 async def update_agent(
     agent_id: str,
-    body: AgentConfigReplace,
+    body: AgentConfigPayload,
     runtime: ConsoleRuntimeDep,
 ) -> AgentConfigResponse:
     """Replace an existing agent configuration."""

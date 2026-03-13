@@ -5,10 +5,12 @@ from agiwo.agent import options as agent_options_module
 from agiwo.llm.openai import OpenAIModel
 from server.app import _build_default_agent_config
 from server.config import ConsoleConfig
-from server.schemas import AgentConfigCreate, AgentConfigReplace, AgentOptionsPayload
+from agiwo.agent.options import AgentOptionsInput
+from server.schemas import AgentConfigPayload
 from server.services.agent_lifecycle import build_agent_options, build_default_agent_options, build_model
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.tools import AgentToolRef, BuiltinToolRef, console_tool_catalog
+from server.domain.tool_references import parse_tool_references
+from server.tools import AgentToolRef, BuiltinToolRef, build_tools
 
 
 def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,7 +73,7 @@ def test_default_agent_config_uses_shared_option_defaults() -> None:
 
 
 def test_agent_options_payload_normalizes_single_skills_dirs() -> None:
-    payload = AgentOptionsPayload.model_validate({"skills_dirs": "skills"})
+    payload = AgentOptionsInput.model_validate({"skills_dirs": "skills"})
 
     assert payload.skills_dirs == ["skills"]
 
@@ -123,7 +125,7 @@ def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
 
 
 def test_console_tool_catalog_parses_builtin_and_agent_refs() -> None:
-    refs = console_tool_catalog.parse_references(
+    refs = parse_tool_references(
         ["web_search", "agent:child-1", "missing", "agent:"]
     )
 
@@ -141,7 +143,7 @@ async def test_console_tool_catalog_builds_shared_web_tool_overrides() -> None:
         metadata_storage_type="memory",
     )
 
-    tools = await console_tool_catalog.build_tools(
+    tools = await build_tools(
         ["web_search", "web_reader"],
         console_config=console_config,
         build_agent_tool=pytest.fail,
@@ -196,7 +198,7 @@ def test_build_model_does_not_fallback_to_openai_credentials_for_compatible_prov
 
 def test_agent_config_create_requires_explicit_connection_for_compatible_provider() -> None:
     with pytest.raises(ValidationError, match="base_url"):
-        AgentConfigCreate.model_validate(
+        AgentConfigPayload.model_validate(
             {
                 "name": "tester",
                 "model_provider": "openai-compatible",
@@ -208,7 +210,7 @@ def test_agent_config_create_requires_explicit_connection_for_compatible_provide
 
 def test_agent_config_create_rejects_plain_api_key_in_model_params() -> None:
     with pytest.raises(ValidationError, match="api_key is not supported"):
-        AgentConfigCreate.model_validate(
+        AgentConfigPayload.model_validate(
             {
                 "name": "tester",
                 "model_provider": "openai-compatible",
@@ -244,7 +246,7 @@ def test_agent_config_record_sanitizes_model_params_and_strips_plain_api_key() -
 
 def test_agent_config_replace_requires_full_nested_payloads() -> None:
     with pytest.raises(ValidationError, match="options"):
-        AgentConfigReplace.model_validate(
+        AgentConfigPayload.model_validate(
             {
                 "name": "tester",
                 "description": "",

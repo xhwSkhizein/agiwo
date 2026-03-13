@@ -8,7 +8,7 @@ behaviour (message delivery, prompt rendering, error mapping).
 
 from abc import ABC, abstractmethod
 
-from agiwo.agent.schema import UserMessage, extract_text
+from agiwo.agent import UserMessage, extract_text
 from agiwo.utils.logging import get_logger
 
 from server.channels.agent_runtime import AgentRuntimeManager

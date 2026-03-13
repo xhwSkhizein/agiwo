@@ -18,7 +18,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from agiwo.agent.execution_context import ExecutionContext
-from agiwo.agent.schema import EventType, StreamEvent
+from agiwo.agent.runtime import EventType, StreamEvent
 from agiwo.tool.permission.store import ConsentDecision, ConsentStore, ConsentWaiter, InMemoryConsentStore
 from agiwo.utils.logging import get_logger
 

@@ -9,8 +9,8 @@ import os
 import pytest
 import tempfile
 
-from agiwo import Agent, AgentOptions
-from agiwo.agent.schema import Run, RunMetrics, RunStatus
+from agiwo import AgentOptions, create_agent
+from agiwo.agent import Run, RunMetrics, RunStatus
 from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.factory import StorageFactory
 from agiwo.agent.storage.base import InMemoryRunStepStorage
@@ -240,7 +240,7 @@ class TestAgentIntegration:
 
     def test_agent_storage_created_in_init(self):
         """Storage is created synchronously in Agent.__init__."""
-        agent = Agent(
+        agent = create_agent(
             name="test-agent",
             description="Test",
             model=None,  # type: ignore
@@ -253,7 +253,7 @@ class TestAgentIntegration:
 
     def test_agent_with_trace_storage(self):
         """Agent creates trace storage when configured."""
-        agent = Agent(
+        agent = create_agent(
             name="test-agent",
             description="Test",
             model=None,  # type: ignore
@@ -267,7 +267,7 @@ class TestAgentIntegration:
 
     @pytest.mark.asyncio
     async def test_agent_close(self):
-        agent = Agent(
+        agent = create_agent(
             name="test-agent",
             description="Test",
             model=None,  # type: ignore

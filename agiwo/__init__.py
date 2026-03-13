@@ -17,10 +17,10 @@ Usage:
     result = await agent.run("Hello!")
 """
 
-from agiwo.agent.agent import Agent
+from agiwo.agent.agent import Agent, create_agent
+from agiwo.agent import RunOutput, StreamEvent, TerminationReason
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig
-from agiwo.agent.schema import RunOutput, StreamEvent, TerminationReason
 from agiwo.agent.storage.base import RunStepStorage, InMemoryRunStepStorage
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.tool.base import BaseTool, ToolResult
@@ -28,6 +28,7 @@ from agiwo.tool.agent_tool import AgentTool, as_tool
 
 __all__ = [
     "Agent",
+    "create_agent",
     "AgentHooks",
     "AgentOptions",
     "AgentTool",

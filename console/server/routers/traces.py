@@ -26,7 +26,7 @@ async def list_traces(
     offset: int = Query(default=0, ge=0),
 ) -> list[TraceListItem]:
     """Query traces with optional filters."""
-    store = runtime.storage_manager.trace_storage
+    store = runtime.trace_storage
 
     query: dict[str, Any] = {"limit": limit, "offset": offset}
     if agent_id:
@@ -45,7 +45,7 @@ async def list_traces(
 @router.get("/stream")
 async def stream_traces(runtime: ConsoleRuntimeDep) -> EventSourceResponse:
     """SSE endpoint for real-time trace updates."""
-    store = runtime.storage_manager.trace_storage
+    store = runtime.trace_storage
 
     queue = store.subscribe()
 
@@ -69,7 +69,7 @@ async def stream_traces(runtime: ConsoleRuntimeDep) -> EventSourceResponse:
 @router.get("/{trace_id}", response_model=TraceResponse)
 async def get_trace(trace_id: str, runtime: ConsoleRuntimeDep) -> TraceResponse:
     """Get a single trace with full span tree."""
-    store = runtime.storage_manager.trace_storage
+    store = runtime.trace_storage
     trace = await store.get_trace(trace_id)
     if trace is None:
         raise HTTPException(status_code=404, detail="Trace not found")

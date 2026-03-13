@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from agiwo.agent.schema import ContentPart, ContentType
+from agiwo.agent import ContentPart, ContentType
 from agiwo.utils.logging import get_logger
 
 from server.channels.feishu.api_client import FeishuApiClient

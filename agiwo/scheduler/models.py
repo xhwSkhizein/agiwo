@@ -11,7 +11,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
-from agiwo.agent.schema import UserInput, serialize_user_input, deserialize_user_input
+from agiwo.agent.input import UserInput
+from agiwo.agent.input_codec import deserialize_user_input, serialize_user_input
 
 
 class AgentStateStatus(str, Enum):
@@ -222,6 +223,19 @@ class AgentState:
     recent_steps: list[dict] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def resolve_runtime_session_id(self) -> str:
+        """Return the session_id that the agent runtime should use.
+
+        - root agents (parent_id is None): use state.session_id (the external
+          session provided at submit time) so all runs share the same session.
+        - child agents (parent_id is set): use state.id to give the child its
+          own independent session, keeping history/compact/trace continuous
+          across first run and subsequent wakes.
+        """
+        if self.parent_id is not None:
+            return self.id
+        return self.session_id
 
 
 @dataclass

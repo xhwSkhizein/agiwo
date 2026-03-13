@@ -16,10 +16,10 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `agiwo/agent/` | Agent 对外入口与运行时领域模型。包含 `inner/` 执行内部实现、`storage/` Run/Session 持久化、`compact/` 上下文压缩能力。`schema.py` 现在是兼容门面，canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
+| `agiwo/agent/` | Agent 对外入口与运行时领域模型。包含 `inner/` 执行内部实现、`storage/` Run/Session 持久化、`compact/` 上下文压缩能力。包根 `agiwo.agent` 是公开 API，canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、执行器与缓存、builtin tools、权限管理，以及工具侧存储（如 citation）。 |
-| `agiwo/scheduler/` | Agent 之上的编排层。`store/` 管持久化状态，`services/` 管 tick orchestration，包根目录保留公开模型、runtime、executor 与 scheduler tools。 |
+| `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade，`engine.py` 负责状态机与 tick orchestration，`runner.py` 负责单次 agent cycle 执行，`coordinator.py` 只管进程内协作状态，`control.py` 定义 tools 依赖的窄接口，`store/` 只负责持久化。 |
 | `agiwo/observability/` | Trace/Span 模型、事件到 Trace 的收集、序列化，以及 trace storage 实现。 |
 | `agiwo/embedding/` | Embedding 抽象与 factory，包含本地/OpenAI 风格实现。 |
 | `agiwo/skill/` | Skill 的发现、加载、注册、异常定义，以及 `SkillTool` 桥接。 |
@@ -82,7 +82,11 @@
 
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
 - 当前公开编排接口包括：`run`、`submit`、`submit_task`、`wait_for`、`submit_and_subscribe`、`submit_task_and_subscribe`、`steer`、`cancel`、`shutdown`。
-- `SchedulerRuntime` 管运行时协作状态，`SchedulerExecutor` 管 agent 执行/唤醒，`scheduler/services/tick_engine.py` 管 tick 阶段，`scheduler/store/` 管 scheduler state 持久化。
+- `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 `SchedulerEngine`。
+- `SchedulerEngine` 是唯一的编排 owner：提交、等待、steer、cancel、shutdown、tick 各阶段、以及 scheduler tools 的 control 能力都在这里。
+- `SchedulerRunner` 只负责单次执行：运行 root/child/wake cycle、构造 wake message、把 `RunOutput` 翻译成 scheduler outcome。
+- `SchedulerCoordinator` 只保存进程内状态：已注册 agent、abort signal、active task、dispatch dedupe、wait event、output channel；不得依赖 store。
+- `SchedulerControl` 是 scheduler tools 唯一允许依赖的接口；tools 不得直接碰 store / guard / coordinator / runner。
 - `TaskGuard` 是 spawn/wake/timeout/health check 的唯一护栏入口。
 - 当前唤醒路径包括 `WAITSET`、`TIMER`、`PERIODIC`、`TASK_SUBMITTED`、`PENDING_EVENTS`。
 - scheduler state storage 当前支持 memory/sqlite，由 `Scheduler` 自己创建和持有。
@@ -126,6 +130,8 @@
 - builtin tools 应自行按配置构建 model/HTTP/storage 依赖，除非它本质上是在包装宿主运行时对象。
 - LLM 创建统一走共享 factory / config policy。
 - 不要在 agent 包外越权依赖 `agiwo.agent.inner`。
+- 不要在 scheduler tools 里依赖 `SchedulerEngine` / `SchedulerCoordinator` / `AgentStateStorage` / `TaskGuard`；一律只依赖 `SchedulerControl`。
+- 不要把 store mutation、递归 cancel/shutdown、tick dispatch 重新塞回 `Scheduler` facade。
 - 当同一语义逻辑出现第 2 次时就要评估抽象；不要继续把热点文件堆成 God Object。
 
 ## Lint & Guardrails
@@ -136,6 +142,7 @@
 - 当前阻塞层是：`ruff + repo_guard.py + import-linter`
 - 代码格式/import 排序/全量类型检查目前不是默认阻塞门槛
 - 新增 `# noqa` / `# type: ignore` 前先修代码；必须压制时精确到规则
+- 不要写 schema migration / 自动补列逻辑；数据模型变更时直接让旧数据失败并通知用户清理历史数据
 - 不要继续扩展死掉的 `needs_permissions()` API 面
 - 生产代码里不要直接构造 `ToolResult(...)`、`StepRecord(...)`，也不要绕过共享工厂去直接实例化具体存储后端或具体 LLM Provider
 
@@ -167,8 +174,8 @@ uv run pytest tests/ -v
 
 ### Recent Changes
 
-- **2026-03-11**：`agiwo/agent/schema.py` 已降为兼容门面；输入/运行时/compact/memory 模型按职责拆到独立模块。
-- **2026-03-11**：Scheduler 的结构以 `store/ + services/ + runtime/executor` 为准，`PendingEvent`、`steer()`、输出流订阅是当前心智模型的一部分。
+- **2026-03-12**：`agiwo/agent/schema.py` 已删除；公开导出统一收口到 `agiwo.agent`，输入/运行时/compact/memory 模型继续按职责落在独立模块。
+- **2026-03-12**：Scheduler 已按 `facade + engine + runner + coordinator + control + store` 收口；`tool_port.py`、`tool_support.py`、`services/tick_engine.py` 已移除，scheduler tools 统一依赖 `SchedulerControl`。
 - **2026-03-11**：Console 边界继续收敛到 `session_binding`、`ChannelChatSessionStore.apply_session_mutation()`、`FeishuInboundEnvelope`、`ToolReference`、`ConsoleToolCatalog`。
 - **2026-03-10**：低噪音 lint（`ruff + repo_guard + import-linter`）已经成为 AI 改码后的默认工作流。
 - **2026-03-06**：Model/Tool 配置统一为 `provider + model_name + base_url + api_key_env_name`；builtin web tools 自构建依赖；共享存储 runtime/pool helper 已被多处复用。

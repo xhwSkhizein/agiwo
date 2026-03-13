@@ -16,9 +16,7 @@ from agiwo.agent.storage.serialization import (
 )
 from agiwo.utils.storage_support.sqlite_runtime import (
     SQLiteConnectionRuntime,
-    ensure_columns,
     execute_statements,
-    get_table_columns,
 )
 from agiwo.utils.logging import get_logger
 
@@ -93,7 +91,9 @@ class SQLiteRunStepStorage(RunStepStorage):
                     runnable_type TEXT,
                     role TEXT NOT NULL,
                     content TEXT,
+                    content_for_user TEXT,
                     reasoning_content TEXT,
+                    user_input TEXT,
                     tool_calls TEXT,
                     tool_call_id TEXT,
                     name TEXT,
@@ -127,84 +127,6 @@ class SQLiteRunStepStorage(RunStepStorage):
             ],
         )
         await connection.commit()
-        await self._migrate_tables()
-
-    async def _migrate_tables(self) -> None:
-        """Migrate existing tables to add missing columns if needed."""
-        connection = self._connection
-        if not connection:
-            return
-
-        try:
-            runs_columns = await get_table_columns(connection, "runs")
-            steps_columns = await get_table_columns(connection, "steps")
-
-            # --- runs table ---
-            await ensure_columns(
-                connection,
-                "runs",
-                {
-                    "agent_id": "TEXT",
-                    "runnable_type": "TEXT NOT NULL DEFAULT 'agent'",
-                    "response_content": "TEXT",
-                    "metrics": "TEXT",
-                    "updated_at": "TEXT",
-                    "parent_run_id": "TEXT",
-                    "trace_id": "TEXT",
-                },
-                existing=runs_columns,
-            )
-
-            # Backfill agent_id from runnable_id if present in old schema
-            if "runnable_id" in runs_columns and "agent_id" in runs_columns:
-                await connection.execute(
-                    "UPDATE runs SET agent_id = runnable_id WHERE agent_id IS NULL"
-                )
-
-            # --- steps table ---
-            await ensure_columns(
-                connection,
-                "steps",
-                {
-                    "agent_id": "TEXT",
-                    "runnable_type": "TEXT NOT NULL DEFAULT 'agent'",
-                    "content_for_user": "TEXT",
-                    "reasoning_content": "TEXT",
-                    "tool_calls": "TEXT",
-                    "tool_call_id": "TEXT",
-                    "name": "TEXT",
-                    "metrics": "TEXT",
-                    "parent_run_id": "TEXT",
-                    "trace_id": "TEXT",
-                    "span_id": "TEXT",
-                    "parent_span_id": "TEXT",
-                    "depth": "INTEGER DEFAULT 0",
-                    "llm_messages": "TEXT",
-                    "llm_tools": "TEXT",
-                    "llm_request_params": "TEXT",
-                    "user_input": "TEXT",
-                },
-                existing=steps_columns,
-            )
-
-            if "runnable_id" in steps_columns and "agent_id" in steps_columns:
-                await connection.execute(
-                    "UPDATE steps SET agent_id = runnable_id WHERE agent_id IS NULL"
-                )
-
-            # Ensure indexes exist for new columns
-            await execute_statements(
-                connection,
-                [
-                    "CREATE INDEX IF NOT EXISTS idx_runs_agent_id ON runs(agent_id)",
-                    "CREATE INDEX IF NOT EXISTS idx_steps_session_run_seq "
-                    "ON steps(session_id, run_id, sequence)",
-                ],
-            )
-
-            await connection.commit()
-        except Exception as e:  # noqa: BLE001 - sqlite migration boundary
-            logger.debug("migration_skipped", error=str(e))
 
     async def _ensure_connection(self) -> None:
         """Ensure database connection is established."""

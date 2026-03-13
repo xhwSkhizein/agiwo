@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from agiwo.agent.schema import ContentPart, ContentType
+from agiwo.agent import ContentPart, ContentType
 
 from server.channels.feishu.attachment_resolver import FeishuAttachmentResolver
 from server.channels.feishu.commands.base import CommandResult

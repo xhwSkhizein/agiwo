@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from agiwo.agent.schema import Run, StepRecord, StreamEvent
+from agiwo.agent import Run, StepRecord, StreamEvent
 from agiwo.agent.serialization import (
     serialize_run_payload,
     serialize_step_record_payload,

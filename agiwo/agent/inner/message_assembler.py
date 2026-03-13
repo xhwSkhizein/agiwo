@@ -4,12 +4,9 @@ MessageAssembler - Assembles complete LLM message lists.
 
 from typing import Any
 
-from agiwo.agent.schema import (
-    ChannelContext,
-    MemoryRecord,
-    StepRecord,
-    steps_to_messages,
-)
+from agiwo.agent.input import ChannelContext
+from agiwo.agent.memory_types import MemoryRecord
+from agiwo.agent.runtime import StepRecord, steps_to_messages
 
 
 def _render_channel_context(ctx: ChannelContext) -> str:

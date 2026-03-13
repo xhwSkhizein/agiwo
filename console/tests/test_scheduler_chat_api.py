@@ -12,7 +12,7 @@ import pytest
 
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.agent.schema import EventType, StepDelta, StreamEvent
+from agiwo.agent import EventType, StepDelta, StreamEvent
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -30,7 +30,7 @@ from server.dependencies import (
 )
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.storage_manager import StorageManager
+from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
@@ -47,7 +47,8 @@ async def client():
         trace_storage_type="memory",
         metadata_storage_type="memory",
     )
-    sm = StorageManager(config)
+    run_step_storage = create_run_step_storage(config)
+    trace_storage = create_trace_storage(config)
 
     registry = AgentRegistry(config)
     await registry.initialize()
@@ -61,7 +62,8 @@ async def client():
         app,
         ConsoleRuntime(
             config=config,
-            storage_manager=sm,
+            run_step_storage=run_step_storage,
+            trace_storage=trace_storage,
             agent_registry=registry,
             scheduler=scheduler,
         ),
@@ -74,7 +76,7 @@ async def client():
     clear_console_runtime(app)
     await scheduler.stop()
     await registry.close()
-    await sm.close()
+    await run_step_storage.close()
 
 
 class TestSchedulerChatCancel:
@@ -238,7 +240,7 @@ class TestSchedulerChatEndpoint:
 
         fake_agent = FakeStreamingAgent()
         monkeypatch.setattr(
-            "server.services.conversation_sse.build_agent",
+            "server.services.chat_sse.build_agent",
             AsyncMock(return_value=fake_agent),
         )
 

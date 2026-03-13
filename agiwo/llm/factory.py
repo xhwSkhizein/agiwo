@@ -1,6 +1,6 @@
 """Factory helpers for creating Model instances from configuration."""
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 import os
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -24,9 +24,9 @@ from agiwo.config.settings import (
 )
 
 
-@dataclass
-class ModelConfig:
+class ModelConfig(BaseModel):
     """Serializable model construction config."""
+    model_config = ConfigDict(extra="ignore")
 
     provider: ModelProvider
     model_name: str
@@ -45,11 +45,22 @@ class ModelConfig:
     aws_profile: str | None = None
 
 
-_DEFAULT_MODEL_CONFIG = ModelConfig(provider="openai", model_name="")
-
-
-class _ModelParamsPayloadBase(BaseModel):
+class ModelParamsInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
+
+    base_url: str | None = None
+    api_key_env_name: str | None = None
+    max_output_tokens: int = Field(default=4096, ge=1)
+    max_context_window: int = Field(default=200000, ge=1)
+    temperature: float = Field(default=0.7, ge=0, le=2)
+    top_p: float = Field(default=1.0, ge=0, le=1)
+    frequency_penalty: float = Field(default=0.0, ge=-2, le=2)
+    presence_penalty: float = Field(default=0.0, ge=-2, le=2)
+    cache_hit_price: float = Field(default=0.0, ge=0)
+    input_price: float = Field(default=0.0, ge=0)
+    output_price: float = Field(default=0.0, ge=0)
+    aws_region: str | None = None
+    aws_profile: str | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -61,34 +72,9 @@ class _ModelParamsPayloadBase(BaseModel):
         )
 
 
-class ModelParamsInput(_ModelParamsPayloadBase):
-    base_url: str | None = None
-    api_key_env_name: str | None = None
-    max_output_tokens: int = Field(default=_DEFAULT_MODEL_CONFIG.max_output_tokens, ge=1)
-    max_context_window: int = Field(
-        default=_DEFAULT_MODEL_CONFIG.max_context_window,
-        ge=1,
-    )
-    temperature: float = Field(default=_DEFAULT_MODEL_CONFIG.temperature, ge=0, le=2)
-    top_p: float = Field(default=_DEFAULT_MODEL_CONFIG.top_p, ge=0, le=1)
-    frequency_penalty: float = Field(
-        default=_DEFAULT_MODEL_CONFIG.frequency_penalty,
-        ge=-2,
-        le=2,
-    )
-    presence_penalty: float = Field(
-        default=_DEFAULT_MODEL_CONFIG.presence_penalty,
-        ge=-2,
-        le=2,
-    )
-    cache_hit_price: float = Field(default=_DEFAULT_MODEL_CONFIG.cache_hit_price, ge=0)
-    input_price: float = Field(default=_DEFAULT_MODEL_CONFIG.input_price, ge=0)
-    output_price: float = Field(default=_DEFAULT_MODEL_CONFIG.output_price, ge=0)
-    aws_region: str | None = None
-    aws_profile: str | None = None
+class ModelParamsPatch(BaseModel):
+    model_config = ConfigDict(extra="ignore")
 
-
-class ModelParamsPatch(_ModelParamsPayloadBase):
     base_url: str | None = None
     api_key_env_name: str | None = None
     max_output_tokens: int | None = Field(default=None, ge=1)
@@ -102,6 +88,15 @@ class ModelParamsPatch(_ModelParamsPayloadBase):
     output_price: float | None = Field(default=None, ge=0)
     aws_region: str | None = None
     aws_profile: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_plain_api_key(cls, data: Any) -> Any:
+        return sanitize_model_params_data(
+            data,
+            preserve_non_dict=True,
+            drop_null_keys=False,
+        )
 
 
 @dataclass(frozen=True)
@@ -226,7 +221,7 @@ def create_model(config: ModelConfig) -> Model:
     )
 
 
-MODEL_CONFIG_FIELD_NAMES = {field.name for field in fields(ModelConfig)}
+MODEL_CONFIG_FIELD_NAMES = set(ModelConfig.model_fields.keys())
 
 
 def _filter_model_config_fields(params: dict[str, Any]) -> dict[str, Any]:

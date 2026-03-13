@@ -16,7 +16,7 @@ from server.channels.agent_runtime import AgentRuntimeManager
 from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
 from server.channels.feishu.commands.status_text import format_scheduler_status
 from server.channels.models import Session
-from server.services.run_metrics import summarize_runs_paginated
+from server.services.metrics import summarize_runs_paginated
 
 
 _PROMPT_PREVIEW_MAX_LEN = 5000

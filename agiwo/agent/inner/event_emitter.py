@@ -1,4 +1,4 @@
-from agiwo.agent.schema import (
+from agiwo.agent.runtime import (
     EventType,
     LLMCallContext,
     StepDelta,

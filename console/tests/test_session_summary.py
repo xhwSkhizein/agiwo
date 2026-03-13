@@ -2,13 +2,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from agiwo.agent.schema import ContentPart, ContentType, serialize_user_input
+from agiwo.agent import ContentPart, ContentType, serialize_user_input
 from server.domain.run_metrics import RunMetricsSummary
 from server.domain.sessions import (
     session_aggregate_to_chat_summary,
     session_aggregate_to_summary_data,
 )
-from server.services.session_summary import collect_session_aggregates
+from server.services.metrics import collect_session_aggregates
 
 
 class FakeRunStorage:

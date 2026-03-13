@@ -1,15 +1,14 @@
 """Tests for ToolResult.termination_reason propagation in AgentExecutor."""
 
+import time
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
 
 from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
-from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.executor import AgentExecutor
 from agiwo.agent.options import AgentOptions
-from agiwo.agent.schema import StepRecord, TerminationReason
+from agiwo.agent import StepRecord, TerminationReason
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.tool.base import BaseTool, ToolResult
@@ -50,8 +49,6 @@ class MockTerminatingTool(BaseTool):
         return True
 
     async def execute(self, parameters, context, abort_signal=None) -> ToolResult:
-        import time
-
         now = time.time()
         return ToolResult(
             tool_name=self.get_name(),
@@ -82,8 +79,6 @@ class MockNormalTool(BaseTool):
         return True
 
     async def execute(self, parameters, context, abort_signal=None) -> ToolResult:
-        import time
-
         now = time.time()
         return ToolResult(
             tool_name=self.get_name(),

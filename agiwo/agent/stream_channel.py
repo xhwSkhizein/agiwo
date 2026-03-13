@@ -2,7 +2,7 @@ import asyncio
 from typing import AsyncIterator, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agiwo.agent.schema import StreamEvent
+    from agiwo.agent.runtime import StreamEvent
 
 
 class StreamChannel:

@@ -10,7 +10,7 @@ Design Philosophy:
 
 import json
 
-from agiwo.agent.schema import TerminationReason
+from agiwo.agent.runtime import TerminationReason
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)

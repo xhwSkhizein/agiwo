@@ -10,11 +10,11 @@ from agiwo.agent.agent import Agent
 from server.dependencies import ConsoleRuntime, ConsoleRuntimeDep
 from server.domain.sessions import session_aggregate_to_chat_summary
 from server.schemas import ChatRequest
-from server.services.conversation_sse import (
+from server.services.chat_sse import (
     create_conversation_response,
     stream_event_message,
 )
-from server.services.session_summary import collect_session_aggregates
+from server.services.metrics import collect_session_aggregates
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -52,6 +52,6 @@ async def list_agent_sessions(
     runtime: ConsoleRuntimeDep,
 ):
     """Get conversation sessions for a specific agent."""
-    storage = runtime.storage_manager.run_step_storage
+    storage = runtime.run_step_storage
     sessions = await collect_session_aggregates(storage, agent_id=agent_id)
     return [session_aggregate_to_chat_summary(session) for session in sessions]

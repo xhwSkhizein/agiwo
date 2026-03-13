@@ -4,9 +4,10 @@ from fastapi import APIRouter, HTTPException, Query
 
 from server.dependencies import ConsoleRuntimeDep
 from server.domain.sessions import session_aggregate_to_summary_data
+from server.domain.sessions import SessionSummaryData
 from server.response_serialization import run_to_response, step_to_response
-from server.schemas import RunResponse, SessionSummary, StepResponse
-from server.services.session_summary import collect_session_aggregates
+from server.schemas import RunResponse, StepResponse
+from server.services.metrics import collect_session_aggregates
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
@@ -20,7 +21,7 @@ async def list_runs(
     offset: int = Query(default=0, ge=0),
 ) -> list[RunResponse]:
     """List all runs with optional filtering."""
-    storage = runtime.storage_manager.run_step_storage
+    storage = runtime.run_step_storage
     runs = await storage.list_runs(
         user_id=user_id,
         session_id=session_id,
@@ -33,33 +34,33 @@ async def list_runs(
 @router.get("/runs/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str, runtime: ConsoleRuntimeDep) -> RunResponse:
     """Get a single run by ID."""
-    storage = runtime.storage_manager.run_step_storage
+    storage = runtime.run_step_storage
     run = await storage.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run_to_response(run)
 
 
-@router.get("/sessions", response_model=list[SessionSummary])
+@router.get("/sessions", response_model=list[SessionSummaryData])
 async def list_sessions(
     runtime: ConsoleRuntimeDep,
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-) -> list[SessionSummary]:
+) -> list[SessionSummaryData]:
     """List sessions by aggregating runs."""
-    storage = runtime.storage_manager.run_step_storage
+    storage = runtime.run_step_storage
     sessions = await collect_session_aggregates(storage)
     page = sessions[offset : offset + limit]
     return [session_aggregate_to_summary_data(session) for session in page]
 
 
-@router.get("/sessions/{session_id}/summary", response_model=SessionSummary)
+@router.get("/sessions/{session_id}/summary", response_model=SessionSummaryData)
 async def get_session_summary(
     session_id: str,
     runtime: ConsoleRuntimeDep,
-) -> SessionSummary:
+) -> SessionSummaryData:
     """Get full aggregated metrics for one session."""
-    storage = runtime.storage_manager.run_step_storage
+    storage = runtime.run_step_storage
     sessions = await collect_session_aggregates(storage, session_id=session_id)
     if not sessions:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -74,7 +75,7 @@ async def get_session_steps(
     limit: int = Query(default=1000, ge=1, le=5000),
 ) -> list[StepResponse]:
     """Get all steps for a session."""
-    storage = runtime.storage_manager.run_step_storage
+    storage = runtime.run_step_storage
     steps = await storage.get_steps(
         session_id=session_id,
         agent_id=agent_id,

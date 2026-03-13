@@ -29,7 +29,7 @@ from server.dependencies import (
 )
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.storage_manager import StorageManager
+from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
@@ -47,7 +47,8 @@ async def client():
         trace_storage_type="memory",
         metadata_storage_type="memory",
     )
-    sm = StorageManager(config)
+    run_step_storage = create_run_step_storage(config)
+    trace_storage = create_trace_storage(config)
     scheduler = Scheduler(
         SchedulerConfig(
             state_storage=AgentStateStorageConfig(storage_type="memory"),
@@ -61,7 +62,8 @@ async def client():
         app,
         ConsoleRuntime(
             config=config,
-            storage_manager=sm,
+            run_step_storage=run_step_storage,
+            trace_storage=trace_storage,
             agent_registry=registry,
             scheduler=scheduler,
         ),
@@ -74,7 +76,7 @@ async def client():
     clear_console_runtime(app)
     await registry.close()
     await scheduler.stop()
-    await sm.close()
+    await run_step_storage.close()
 
 
 async def _seed_states(client: AsyncClient) -> None:

@@ -1,27 +1,18 @@
-"""Scheduler runtime state and coordination helpers."""
+"""Pure in-memory runtime coordination for the scheduler."""
 
 import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 from agiwo.agent.agent import Agent
-from agiwo.scheduler.models import (
-    AgentState,
-    AgentStateStatus,
-    OutputChannelState,
-    SchedulerOutput,
-    WakeCondition,
-    WakeType,
-)
-from agiwo.scheduler.store import AgentStateStorage
+from agiwo.scheduler.models import AgentState, OutputChannelState, SchedulerOutput
 from agiwo.utils.abort_signal import AbortSignal
 
 
-class SchedulerRuntime:
-    """Own in-memory scheduler runtime state and the public coordination API."""
+class SchedulerCoordinator:
+    """Own only process-memory runtime state for scheduler execution."""
 
-    def __init__(self, store: AgentStateStorage) -> None:
-        self._store = store
+    def __init__(self) -> None:
         self._active_tasks: set[asyncio.Task] = set()
         self._agents: dict[str, Agent] = {}
         self._abort_signals: dict[str, AbortSignal] = {}
@@ -140,79 +131,5 @@ class SchedulerRuntime:
             if item.is_final:
                 return
 
-    async def update_status_and_notify(
-        self,
-        state_id: str,
-        status: AgentStateStatus,
-        *,
-        result_summary: str | None = ...,
-        wake_condition: WakeCondition | None = ...,
-    ) -> None:
-        await self._store.update_status(
-            state_id,
-            status,
-            result_summary=result_summary,
-            wake_condition=wake_condition,
-        )
-        if status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED):
-            self.notify_state_change(state_id)
-        elif status == AgentStateStatus.SLEEPING and wake_condition is not ...:
-            if wake_condition is not None and wake_condition.type == WakeType.TASK_SUBMITTED:
-                self.notify_state_change(state_id)
 
-    async def recursive_cancel(self, state_id: str, reason: str) -> None:
-        signal = self.get_abort_signal(state_id)
-        if signal is not None:
-            signal.abort(reason)
-
-        children = await self._store.get_states_by_parent(state_id)
-        for child in children:
-            if child.status in (
-                AgentStateStatus.RUNNING,
-                AgentStateStatus.SLEEPING,
-                AgentStateStatus.PENDING,
-            ):
-                await self.recursive_cancel(child.id, reason)
-
-        await self.update_status_and_notify(
-            state_id,
-            AgentStateStatus.FAILED,
-            result_summary=reason,
-        )
-
-    async def recursive_shutdown(self, state_id: str) -> None:
-        children = await self._store.get_states_by_parent(state_id)
-        for child in children:
-            if child.status in (
-                AgentStateStatus.RUNNING,
-                AgentStateStatus.SLEEPING,
-                AgentStateStatus.PENDING,
-            ):
-                await self.recursive_shutdown(child.id)
-
-        state = await self._store.get_state(state_id)
-        if state is None:
-            return
-
-        if state.status == AgentStateStatus.SLEEPING:
-            wake_condition = WakeCondition(
-                type=WakeType.TASK_SUBMITTED,
-                submitted_task=(
-                    "System shutdown requested. Please produce a final summary "
-                    "report of all work done so far."
-                ),
-            )
-            await self.update_status_and_notify(
-                state_id,
-                AgentStateStatus.SLEEPING,
-                wake_condition=wake_condition,
-            )
-        elif state.status == AgentStateStatus.PENDING:
-            await self.update_status_and_notify(
-                state_id,
-                AgentStateStatus.FAILED,
-                result_summary="Shutdown before execution",
-            )
-
-
-__all__ = ["SchedulerRuntime"]
+__all__ = ["SchedulerCoordinator"]

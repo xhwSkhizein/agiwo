@@ -20,7 +20,6 @@ from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.semantics import RECENT_STEPS_MAX, is_wakeable_state
 from agiwo.utils.storage_support.sqlite_runtime import (
     SQLiteConnectionRuntime,
-    ensure_columns,
     execute_statements,
 )
 from agiwo.utils.logging import get_logger
@@ -71,6 +70,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                     is_persistent INTEGER DEFAULT 0,
                     depth INTEGER DEFAULT 0,
                     wake_count INTEGER DEFAULT 0,
+                    agent_config_id TEXT,
                     explain TEXT,
                     last_activity_at TEXT,
                     recent_steps_json TEXT,
@@ -94,16 +94,6 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 "CREATE INDEX IF NOT EXISTS idx_pending_events_target ON pending_events(target_agent_id, session_id)",
                 "CREATE INDEX IF NOT EXISTS idx_pending_events_created ON pending_events(created_at)",
             ],
-        )
-        await ensure_columns(
-            conn,
-            "agent_states",
-            {
-                "explain": "TEXT",
-                "last_activity_at": "TEXT",
-                "recent_steps_json": "TEXT",
-                "agent_config_id": "TEXT",
-            },
         )
         await conn.commit()
 

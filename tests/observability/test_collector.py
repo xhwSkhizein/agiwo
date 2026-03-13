@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from agiwo.agent.schema import (
+from agiwo.agent import (
     EventType,
     LLMCallContext,
     MessageRole,

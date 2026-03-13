@@ -10,9 +10,8 @@ Consolidates all Agent construction paths:
 import json
 from typing import Any
 
-from agiwo.agent.agent import Agent
+from agiwo.agent import Agent, StreamEvent, create_agent
 from agiwo.agent.options import AgentOptions, AgentOptionsInput
-from agiwo.agent.schema import StreamEvent
 from agiwo.agent.serialization import serialize_stream_event_payload
 from agiwo.llm.base import Model
 from agiwo.llm import create_model_from_dict
@@ -22,11 +21,11 @@ from agiwo.scheduler.scheduler import Scheduler
 
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.storage_manager import (
+from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
 )
-from server.tools import AgentToolRef, console_tool_catalog
+from server.tools import AgentToolRef, build_agent_tool, build_tools
 
 
 # ── Exceptions ────────────────────────────────────────────────────────
@@ -109,15 +108,15 @@ async def build_agent(
             registry,
             _building.copy(),
         )
-        return console_tool_catalog.build_agent_tool(ref, child_agent)
+        return build_agent_tool(ref, child_agent)
 
-    tools = await console_tool_catalog.build_tools(
+    tools = await build_tools(
         config.tools or [],
         console_config=console_config,
         build_agent_tool=_build_agent_tool,
     )
 
-    return Agent(
+    return create_agent(
         name=config.name,
         description=config.description,
         model=model,

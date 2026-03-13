@@ -7,10 +7,10 @@ from LLM responses into complete Step objects.
 
 import time
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
 from datetime import datetime, timezone
+from typing import Awaitable, Callable
 
-from agiwo.agent.schema import StepRecord, StepDelta
+from agiwo.agent.runtime import StepDelta, StepRecord
 from agiwo.llm.base import StreamChunk
 from agiwo.llm.helper import normalize_usage_metrics
 

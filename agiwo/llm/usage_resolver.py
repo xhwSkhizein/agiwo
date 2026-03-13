@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 import tiktoken
 
-from agiwo.agent.schema import StepMetrics, StepRecord
+from agiwo.agent.runtime import StepMetrics, StepRecord
 from agiwo.llm.base import Model
 
 

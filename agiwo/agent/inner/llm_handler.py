@@ -8,7 +8,7 @@ from typing import Awaitable, Callable
 
 from agiwo.agent.inner.step_builder import StepBuilder
 from agiwo.agent.inner.run_state import RunState
-from agiwo.agent.schema import StepDelta, StepMetrics, LLMCallContext, StepRecord
+from agiwo.agent.runtime import StepDelta, StepMetrics, LLMCallContext, StepRecord
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import StepMetricsResolver
 from agiwo.utils.abort_signal import AbortSignal

@@ -6,8 +6,7 @@ Coordinates session persistence, runtime-agent cache, and scheduler bridging.
 
 from collections.abc import AsyncIterator
 
-from agiwo.agent.agent import Agent
-from agiwo.agent.schema import UserInput
+from agiwo.agent import Agent, UserInput
 from agiwo.scheduler.models import SchedulerOutput
 from agiwo.scheduler.scheduler import Scheduler
 
