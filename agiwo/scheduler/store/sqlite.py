@@ -5,18 +5,20 @@ from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 
-from agiwo.agent.input_codec import deserialize_user_input, serialize_user_input
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     PendingEvent,
     SchedulerEventType,
-    TimeUnit,
-    WaitMode,
     WakeCondition,
-    WakeType,
 )
 from agiwo.scheduler.store.base import AgentStateStorage
+from agiwo.scheduler.store.codec import (
+    deserialize_user_input_for_store,
+    deserialize_wake_condition_for_store,
+    serialize_user_input_for_store,
+    serialize_wake_condition_for_store,
+)
 from agiwo.scheduler.store.semantics import RECENT_STEPS_MAX, is_wakeable_state
 from agiwo.utils.storage_support.sqlite_runtime import (
     SQLiteConnectionRuntime,
@@ -100,25 +102,18 @@ class SQLiteAgentStateStorage(AgentStateStorage):
     def _row_to_state(self, row: dict) -> AgentState:
         wake_condition = None
         if row["wake_type"]:
-            time_unit = None
-            if row["wake_time_unit"]:
-                time_unit = TimeUnit(row["wake_time_unit"])
-            wake_condition = WakeCondition(
-                type=WakeType(row["wake_type"]),
-                wait_for=json.loads(row["wake_wait_for"]),
-                wait_mode=WaitMode(row["wake_wait_mode"]),
-                completed_ids=json.loads(row["wake_completed_ids"]),
-                time_value=row["wake_time_value"],
-                time_unit=time_unit,
-                wakeup_at=datetime.fromisoformat(row["wakeup_at"])
-                if row["wakeup_at"]
-                else None,
-                submitted_task=deserialize_user_input(row["wake_submitted_task"])
-                if row["wake_submitted_task"]
-                else None,
-                timeout_at=datetime.fromisoformat(row["wake_timeout_at"])
-                if row["wake_timeout_at"]
-                else None,
+            wake_condition = deserialize_wake_condition_for_store(
+                {
+                    "type": row["wake_type"],
+                    "wait_for": json.loads(row["wake_wait_for"]),
+                    "wait_mode": row["wake_wait_mode"],
+                    "completed_ids": json.loads(row["wake_completed_ids"]),
+                    "time_value": row["wake_time_value"],
+                    "time_unit": row["wake_time_unit"],
+                    "submitted_task": row["wake_submitted_task"],
+                    "wakeup_at": row["wakeup_at"],
+                    "timeout_at": row["wake_timeout_at"],
+                }
             )
 
         config_overrides = {}
@@ -140,7 +135,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             id=row["id"],
             session_id=row["session_id"],
             status=AgentStateStatus(row["status"]),
-            task=deserialize_user_input(row["task"]),
+            task=deserialize_user_input_for_store(row["task"]),
             parent_id=row.get("parent_id"),
             config_overrides=config_overrides,
             wake_condition=wake_condition,
@@ -171,20 +166,19 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         ]
 
     def _wake_condition_values(self, wc: WakeCondition | None) -> list:
-        if wc is None:
+        payload = serialize_wake_condition_for_store(wc)
+        if payload is None:
             return [None, None, None, "[]", "all", "[]", None, None, None]
         return [
-            wc.type.value,
-            wc.time_value,
-            wc.time_unit.value if wc.time_unit else None,
-            json.dumps(wc.wait_for),
-            wc.wait_mode.value,
-            json.dumps(wc.completed_ids),
-            serialize_user_input(wc.submitted_task)
-            if wc.submitted_task is not None
-            else None,
-            wc.wakeup_at.isoformat() if wc.wakeup_at else None,
-            wc.timeout_at.isoformat() if wc.timeout_at else None,
+            payload["type"],
+            payload.get("time_value"),
+            payload.get("time_unit"),
+            json.dumps(payload.get("wait_for", [])),
+            payload.get("wait_mode", "all"),
+            json.dumps(payload.get("completed_ids", [])),
+            payload.get("submitted_task"),
+            payload.get("wakeup_at"),
+            payload.get("timeout_at"),
         ]
 
     async def save_state(self, state: AgentState) -> None:
@@ -209,7 +203,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 state.session_id,
                 state.parent_id,
                 state.status.value,
-                serialize_user_input(state.task),
+                serialize_user_input_for_store(state.task),
                 json.dumps(state.config_overrides),
                 *wc_vals,
                 state.result_summary,

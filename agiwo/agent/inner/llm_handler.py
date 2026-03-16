@@ -10,7 +10,7 @@ from agiwo.agent.inner.step_builder import StepBuilder
 from agiwo.agent.inner.run_state import RunState
 from agiwo.agent.runtime import StepDelta, StepMetrics, LLMCallContext, StepRecord
 from agiwo.llm.base import Model
-from agiwo.llm.usage_resolver import StepMetricsResolver
+from agiwo.llm.usage_resolver import ModelUsageEstimator, UsageEstimate
 from agiwo.utils.abort_signal import AbortSignal
 
 EmitDeltaFn = Callable[[str, StepDelta], Awaitable[None]]
@@ -21,7 +21,7 @@ class LLMStreamHandler:
 
     def __init__(self, model: Model) -> None:
         self.model = model
-        self.metrics_resolver = StepMetricsResolver(model)
+        self.metrics_resolver = ModelUsageEstimator(model)
 
     async def stream_assistant_step(
         self,
@@ -55,7 +55,7 @@ class LLMStreamHandler:
             await builder.process_chunk(chunk)
 
         step = builder.finalize()
-        self.metrics_resolver.resolve(step, request_estimate)
+        self._resolve_step_metrics(step, request_estimate)
         llm_context.finish_reason = builder.finish_reason
         return step, llm_context
 
@@ -78,6 +78,67 @@ class LLMStreamHandler:
             ),
         )
         return StepBuilder(step=step, emit_delta=emit_delta)
+
+    def _resolve_step_metrics(
+        self,
+        step: StepRecord,
+        request_estimate: UsageEstimate | None,
+    ) -> None:
+        """Fill missing metrics on StepRecord and compute cost."""
+        if step.metrics is None:
+            return
+
+        had_provider_usage = any(
+            value is not None
+            for value in (
+                step.metrics.input_tokens,
+                step.metrics.output_tokens,
+                step.metrics.total_tokens,
+                step.metrics.cache_read_tokens,
+                step.metrics.cache_creation_tokens,
+            )
+        )
+
+        estimated_output = self.metrics_resolver.estimate_assistant_output(
+            content=step.content if isinstance(step.content, str) else None,
+            reasoning_content=step.reasoning_content,
+            tool_calls=step.tool_calls,
+        )
+
+        if step.metrics.input_tokens is None and request_estimate is not None:
+            step.metrics.input_tokens = request_estimate.input_tokens
+        if step.metrics.output_tokens is None:
+            step.metrics.output_tokens = estimated_output
+        if step.metrics.total_tokens is None:
+            step.metrics.total_tokens = (
+                (step.metrics.input_tokens or 0) + (step.metrics.output_tokens or 0)
+            )
+        if step.metrics.cache_read_tokens is None:
+            step.metrics.cache_read_tokens = (
+                request_estimate.cache_read_tokens if request_estimate else 0
+            )
+        if step.metrics.cache_creation_tokens is None:
+            step.metrics.cache_creation_tokens = (
+                request_estimate.cache_creation_tokens if request_estimate else 0
+            )
+
+        if had_provider_usage:
+            if request_estimate is not None and (
+                step.metrics.input_tokens == request_estimate.input_tokens
+                or step.metrics.output_tokens == estimated_output
+            ):
+                step.metrics.usage_source = "mixed"
+            else:
+                step.metrics.usage_source = "provider"
+        else:
+            step.metrics.usage_source = "estimated"
+
+        step.metrics.token_cost = self.metrics_resolver.compute_cost(
+            input_tokens=step.metrics.input_tokens,
+            output_tokens=step.metrics.output_tokens,
+            cache_read_tokens=step.metrics.cache_read_tokens,
+            cache_creation_tokens=step.metrics.cache_creation_tokens,
+        )
 
     def _get_request_params(self) -> dict:
         """Get LLM request parameters."""

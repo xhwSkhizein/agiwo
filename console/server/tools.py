@@ -4,9 +4,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 
-import agiwo.tool.builtin  # noqa: F401 - triggers builtin registration
 from agiwo.agent.agent import Agent
-from agiwo.tool.agent_tool import AgentTool
+from agiwo.agent import AgentTool
+from agiwo.agent.runtime_tools import RuntimeToolLike
 from agiwo.tool.base import BaseTool
 from agiwo.tool.builtin.registry import BUILTIN_TOOLS
 from agiwo.tool.storage.citation import CitationStoreConfig
@@ -106,12 +106,12 @@ async def build_tools(
     tool_refs: list[str] | list[ToolReference],
     *,
     console_config: ConsoleConfig,
-    build_agent_tool: Callable[[AgentToolRef], Awaitable[BaseTool | None]],
-) -> list[BaseTool]:
+    build_agent_tool: Callable[[AgentToolRef], Awaitable[RuntimeToolLike | None]],
+) -> list[RuntimeToolLike]:
     build_context = ConsoleToolBuildContext(
         citation_store_config=build_citation_store_config(console_config),
     )
-    tools: list[BaseTool] = []
+    tools: list[RuntimeToolLike] = []
     for ref in parse_tool_references(list(tool_refs)):
         if isinstance(ref, BuiltinToolRef):
             tools.append(_build_builtin_tool(ref, build_context))
@@ -123,6 +123,7 @@ async def build_tools(
 
 
 def build_agent_tool(ref: AgentToolRef, agent: Agent) -> AgentTool:
+    del ref
     return AgentTool(agent)
 
 

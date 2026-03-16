@@ -76,6 +76,7 @@ class RuntimeAgentPool:
             base_config,
             self._console_config,
             self._agent_registry,
+            id=session.runtime_agent_id or None,
         )
         self._assign_runtime_identity(session, agent)
         session.updated_at = datetime.now(timezone.utc)
@@ -101,8 +102,6 @@ class RuntimeAgentPool:
         self._runtime_agent_config_fingerprints.clear()
 
     def _assign_runtime_identity(self, session: Session, agent: Agent) -> None:
-        if session.runtime_agent_id:
-            agent.id = session.runtime_agent_id
         assign_runtime_identity(session, agent.id)
 
     def _build_runtime_config_fingerprint(self, base_config: AgentConfigRecord) -> str:

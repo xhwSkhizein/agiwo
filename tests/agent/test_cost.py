@@ -1,8 +1,8 @@
 from agiwo.agent import StepMetrics, StepRecord
 from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
+from agiwo.agent.inner.llm_handler import LLMStreamHandler
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model
-from agiwo.llm.usage_resolver import StepMetricsResolver
 
 
 class MockModel(Model):
@@ -28,7 +28,7 @@ def _make_context() -> ExecutionContext:
 
 def test_metrics_resolver_backfills_missing_fields() -> None:
     model = MockModel(id="mock", name="mock")
-    resolver = StepMetricsResolver(model)
+    handler = LLMStreamHandler(model)
     step = StepRecord.assistant(
         _make_context(),
         sequence=1,
@@ -44,8 +44,8 @@ def test_metrics_resolver_backfills_missing_fields() -> None:
         metrics=StepMetrics(),
     )
 
-    request_estimate = resolver.estimate_request([{"role": "user", "content": "x"}], None)
-    resolver.resolve(step, request_estimate)
+    request_estimate = handler.metrics_resolver.estimate_request([{"role": "user", "content": "x"}], None)
+    handler._resolve_step_metrics(step, request_estimate)
 
     assert step.metrics is not None
     assert step.metrics.input_tokens is not None
@@ -60,7 +60,7 @@ def test_metrics_resolver_backfills_missing_fields() -> None:
 
 def test_metrics_resolver_computes_cost() -> None:
     model = MockModel(id="mock", name="mock", input_price=3.0, output_price=15.0)
-    resolver = StepMetricsResolver(model)
+    handler = LLMStreamHandler(model)
     step = StepRecord.assistant(
         _make_context(),
         sequence=1,
@@ -74,7 +74,7 @@ def test_metrics_resolver_computes_cost() -> None:
         ),
     )
 
-    resolver.resolve(step, None)
+    handler._resolve_step_metrics(step, None)
 
     assert step.metrics is not None
     assert step.metrics.token_cost is not None

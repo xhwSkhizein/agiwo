@@ -6,9 +6,8 @@ from pydantic import ValidationError
 
 from agiwo.utils.serialization import serialize_optional_datetime
 from server.dependencies import ConsoleRuntimeDep
-from agiwo.agent.options import AgentOptionsInput
-from agiwo.llm.factory import ModelParamsInput
-from server.schemas import AgentConfigPayload, AgentConfigResponse
+from server.domain.agent_configs import AgentOptionsInput, ModelParamsInput
+from server.schemas import AgentConfigPayload, AgentConfigReplace, AgentConfigResponse
 from server.services.agent_registry import AgentConfigRecord
 from server.tools import list_available_tools as _list_available_tools
 
@@ -89,7 +88,7 @@ async def get_agent(agent_id: str, runtime: ConsoleRuntimeDep) -> AgentConfigRes
 @router.put("/{agent_id}", response_model=AgentConfigResponse)
 async def update_agent(
     agent_id: str,
-    body: AgentConfigPayload,
+    body: AgentConfigReplace,
     runtime: ConsoleRuntimeDep,
 ) -> AgentConfigResponse:
     """Replace an existing agent configuration."""

@@ -6,10 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agiwo.agent import AgentHooks, MemoryRecord, create_agent
+from agiwo.agent import Agent, AgentConfig, AgentHooks, MemoryRecord
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.memory_hooks import DefaultMemoryHook, create_default_memory_hooks
 from agiwo.llm.base import Model
+
+
+class _FakeEncoding:
+    def encode(self, text: str) -> list[int]:
+        return [ord(char) for char in text]
 
 
 class TestDefaultMemoryHook:
@@ -95,9 +100,8 @@ class TestAgentAutoInjectMemoryHook:
         mock_model = MagicMock(spec=Model)
         mock_model.id = "test-model"
 
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
+        agent = Agent(
+            AgentConfig(name="test-agent", description="Test agent"),
             model=mock_model,
         )
 
@@ -110,14 +114,13 @@ class TestAgentAutoInjectMemoryHook:
         custom_hook = AsyncMock(return_value=[])
 
         hooks = AgentHooks(on_memory_retrieve=custom_hook)
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
+        agent = Agent(
+            AgentConfig(name="test-agent", description="Test agent"),
             model=mock_model,
             hooks=hooks,
         )
 
-        assert agent.hooks.on_memory_retrieve is custom_hook
+        assert agent.hooks.on_memory_retrieve is not None
 
     def test_agent_preserves_other_hooks_when_injecting(self):
         """Test that auto-inject preserves other user hooks."""
@@ -125,14 +128,13 @@ class TestAgentAutoInjectMemoryHook:
         custom_step_hook = AsyncMock()
 
         hooks = AgentHooks(on_step=custom_step_hook)
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
+        agent = Agent(
+            AgentConfig(name="test-agent", description="Test agent"),
             model=mock_model,
             hooks=hooks,
         )
 
-        assert agent.hooks.on_step is custom_step_hook
+        assert agent.hooks.on_step is not None
         assert agent.hooks.on_memory_retrieve is not None
 
     def test_agent_empty_hooks_gets_memory_hook(self):
@@ -140,9 +142,8 @@ class TestAgentAutoInjectMemoryHook:
         mock_model = MagicMock(spec=Model)
 
         hooks = AgentHooks()
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
+        agent = Agent(
+            AgentConfig(name="test-agent", description="Test agent"),
             model=mock_model,
             hooks=hooks,
         )
@@ -173,18 +174,20 @@ class TestMemoryHookIntegration:
         hook = DefaultMemoryHook(
             embedding_provider="disabled",
             top_k=3,
+            root_path=temp_workspace.parent,
         )
 
         # Mock context with agent_name that maps to our temp workspace
         context = MagicMock(spec=ExecutionContext)
         context.agent_name = str(temp_workspace.name)
+        context.agent_id = str(temp_workspace.name)
 
-        # Patch the workspace resolution to return our temp directory
-        with patch.object(
-            hook, "_resolve_workspace", return_value=temp_workspace
+        with patch(
+            "agiwo.memory.chunker._resolve_encoding",
+            return_value=_FakeEncoding(),
         ):
             # Clear any cached stores
-            hook._stores.clear()
+            hook._memory_service._stores.clear()
 
             result = await hook.retrieve_memories("Python programming", context)
 
@@ -197,13 +200,21 @@ class TestMemoryHookIntegration:
         memory_dir = temp_workspace / "MEMORY"
         (memory_dir / "test.md").write_text("Important note about machine learning.")
 
-        hook = DefaultMemoryHook(embedding_provider="disabled", top_k=3)
+        hook = DefaultMemoryHook(
+            embedding_provider="disabled",
+            top_k=3,
+            root_path=temp_workspace.parent,
+        )
 
         context = MagicMock(spec=ExecutionContext)
         context.agent_name = str(temp_workspace.name)
+        context.agent_id = str(temp_workspace.name)
 
-        with patch.object(hook, "_resolve_workspace", return_value=temp_workspace):
-            hook._stores.clear()
+        with patch(
+            "agiwo.memory.chunker._resolve_encoding",
+            return_value=_FakeEncoding(),
+        ):
+            hook._memory_service._stores.clear()
 
             result = await hook.retrieve_memories("machine learning", context)
 

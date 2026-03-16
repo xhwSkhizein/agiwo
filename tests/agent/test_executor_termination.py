@@ -1,4 +1,4 @@
-"""Tests for ToolResult.termination_reason propagation in AgentExecutor."""
+"""Tests for runtime termination propagation in AgentExecutor."""
 
 import time
 
@@ -9,9 +9,10 @@ from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.executor import AgentExecutor
 from agiwo.agent.options import AgentOptions
 from agiwo.agent import StepRecord, TerminationReason
+from agiwo.agent.runtime_tools import RuntimeToolOutcome
 from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model, StreamChunk
-from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.base import ToolDefinition, ToolResult
 
 
 class MockModel(Model):
@@ -29,12 +30,14 @@ class MockModel(Model):
             yield chunk
 
 
-class MockTerminatingTool(BaseTool):
-    """Tool that returns a termination_reason."""
+class MockTerminatingTool:
+    """Runtime tool that returns a termination reason."""
+
+    cacheable = False
+    timeout_seconds = 30
 
     def __init__(self, reason: TerminationReason = TerminationReason.SLEEPING) -> None:
         self._reason = reason
-        super().__init__()
 
     def get_name(self) -> str:
         return "terminating_tool"
@@ -48,23 +51,39 @@ class MockTerminatingTool(BaseTool):
     def is_concurrency_safe(self) -> bool:
         return True
 
-    async def execute(self, parameters, context, abort_signal=None) -> ToolResult:
+    def get_short_description(self) -> str:
+        return self.get_description()
+
+    def get_definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name=self.get_name(),
+            description=self.get_description(),
+            parameters=self.get_parameters(),
+            is_concurrency_safe=self.is_concurrency_safe(),
+        )
+
+    async def execute_for_agent(
+        self, parameters, context, abort_signal=None
+    ) -> RuntimeToolOutcome:
         now = time.time()
-        return ToolResult(
-            tool_name=self.get_name(),
-            tool_call_id=parameters.get("tool_call_id", ""),
-            input_args={},
-            content="Going to sleep",
-            output=None,
-            start_time=now,
-            end_time=now,
-            duration=0,
+        return RuntimeToolOutcome(
+            result=ToolResult.success(
+                tool_name=self.get_name(),
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args={},
+                content="Going to sleep",
+                output=None,
+                start_time=now,
+            ),
             termination_reason=self._reason,
         )
 
 
-class MockNormalTool(BaseTool):
-    """Tool that returns normally."""
+class MockNormalTool:
+    """Runtime tool that returns normally."""
+
+    cacheable = False
+    timeout_seconds = 30
 
     def get_name(self) -> str:
         return "normal_tool"
@@ -78,17 +97,30 @@ class MockNormalTool(BaseTool):
     def is_concurrency_safe(self) -> bool:
         return True
 
-    async def execute(self, parameters, context, abort_signal=None) -> ToolResult:
+    def get_short_description(self) -> str:
+        return self.get_description()
+
+    def get_definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name=self.get_name(),
+            description=self.get_description(),
+            parameters=self.get_parameters(),
+            is_concurrency_safe=self.is_concurrency_safe(),
+        )
+
+    async def execute_for_agent(
+        self, parameters, context, abort_signal=None
+    ) -> RuntimeToolOutcome:
         now = time.time()
-        return ToolResult(
-            tool_name=self.get_name(),
-            tool_call_id=parameters.get("tool_call_id", ""),
-            input_args={},
-            content="Done",
-            output=None,
-            start_time=now,
-            end_time=now,
-            duration=0,
+        return RuntimeToolOutcome(
+            result=ToolResult.success(
+                tool_name=self.get_name(),
+                tool_call_id=parameters.get("tool_call_id", ""),
+                input_args={},
+                content="Done",
+                output=None,
+                start_time=now,
+            )
         )
 
 
@@ -106,7 +138,7 @@ def _make_context() -> ExecutionContext:
 class TestExecutorTermination:
     @pytest.mark.asyncio
     async def test_termination_reason_propagated(self):
-        """When a tool returns termination_reason, executor should stop and set it."""
+        """When a runtime tool returns termination_reason, executor should stop and set it."""
         tool = MockTerminatingTool(TerminationReason.SLEEPING)
 
         # Model returns a tool call, then (if called again) normal completion
@@ -146,7 +178,7 @@ class TestExecutorTermination:
 
     @pytest.mark.asyncio
     async def test_normal_tool_no_termination(self):
-        """When tool returns no termination_reason, executor continues normally."""
+        """When runtime tool returns no termination_reason, executor continues normally."""
         tool = MockNormalTool()
 
         chunks_with_tool_call = [

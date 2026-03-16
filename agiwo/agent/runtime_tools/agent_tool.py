@@ -1,0 +1,244 @@
+import time
+from typing import Any
+from uuid import uuid4
+
+from agiwo.agent.agent import Agent
+from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.runtime import RunOutput
+from agiwo.agent.runtime_tools.contracts import RuntimeToolOutcome
+from agiwo.tool.base import ToolDefinition, ToolResult
+from agiwo.utils.abort_signal import AbortSignal
+
+
+# Default maximum nesting depth for Agent as Tool
+DEFAULT_MAX_DEPTH = 5
+
+
+class CircularReferenceError(Exception):
+    """Raised when a circular reference is detected in Agent call chain."""
+
+    pass
+
+
+class MaxDepthExceededError(Exception):
+    """Raised when the maximum nesting depth is exceeded."""
+
+    pass
+
+
+class AgentTool:
+    """Wraps an Agent as a Tool for nested agent execution."""
+
+    cacheable = False
+    timeout_seconds = 30
+
+    def __init__(
+        self,
+        agent: Agent,
+        name: str | None = None,
+        description: str | None = None,
+        max_depth: int = DEFAULT_MAX_DEPTH,
+    ):
+        self._agent = agent
+        self._name = name or agent.name
+        self._description = description or agent.description
+        self.max_depth = max_depth
+
+    def get_name(self) -> str:
+        """Return the tool name."""
+        return self._name
+
+    def get_description(self) -> str:
+        """Return the tool description."""
+        return self._description
+
+    def get_parameters(self) -> dict[str, Any]:
+        """Return the JSON schema for tool parameters."""
+        return {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The task to delegate to this agent",
+                },
+                "context": {
+                    "type": "string",
+                    "description": "Optional additional context for the task",
+                },
+            },
+            "required": ["task"],
+        }
+
+    def is_concurrency_safe(self) -> bool:
+        """Return True if the tool can be executed concurrently."""
+        return True
+
+    def get_short_description(self) -> str:
+        return self.get_description()
+
+    def get_definition(self) -> ToolDefinition:
+        return ToolDefinition(
+            name=self.get_name(),
+            description=self.get_description(),
+            parameters=self.get_parameters(),
+            is_concurrency_safe=self.is_concurrency_safe(),
+            timeout_seconds=self.timeout_seconds,
+            cacheable=self.cacheable,
+        )
+
+    async def execute(
+        self,
+        parameters: dict[str, Any],
+        context: ExecutionContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> ToolResult:
+        """Convenience helper for direct invocation with an existing execution context."""
+        outcome = await self.execute_for_agent(parameters, context, abort_signal)
+        return outcome.result
+
+    async def execute_for_agent(
+        self,
+        parameters: dict[str, Any],
+        context: ExecutionContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> RuntimeToolOutcome:
+        """
+        Execute the wrapped Agent.
+
+        Execution flow:
+        1. Check depth limit and circular references
+        2. Build input and context
+        3. Execute Agent.run() directly
+        4. Return final output as ToolResult
+
+        Safety checks:
+        - Raises MaxDepthExceededError if depth > max_depth
+        - Raises CircularReferenceError if agent.id is in call stack
+        """
+        start_time = time.time()
+        toolcall_id = parameters.get("tool_call_id", "")
+        task = parameters.get("task", "")
+        extra_context = parameters.get("context", "")
+
+        # Get current depth and call stack from context metadata
+        current_depth = context.depth + 1
+        call_stack: list[str] = context.metadata.get("_call_stack", []).copy()
+
+        # Safety check 1: Depth limit
+        if current_depth > self.max_depth:
+            error_msg = (
+                f"Maximum nesting depth ({self.max_depth}) exceeded. "
+                f"Current call chain: {' -> '.join(call_stack)} -> {self._agent.id}"
+            )
+            return RuntimeToolOutcome(
+                result=ToolResult.failed(
+                    tool_name=self.get_name(),
+                    error=error_msg,
+                    tool_call_id=toolcall_id,
+                    input_args=parameters,
+                    start_time=start_time,
+                )
+            )
+
+        # Safety check 2: Circular reference
+        if self._agent.id in call_stack:
+            error_msg = (
+                f"Circular reference detected: {self._agent.id} is in call stack. "
+                f"Current call chain: {' -> '.join(call_stack)}"
+            )
+            return RuntimeToolOutcome(
+                result=ToolResult.failed(
+                    tool_name=self.get_name(),
+                    error=error_msg,
+                    tool_call_id=toolcall_id,
+                    input_args=parameters,
+                    start_time=start_time,
+                )
+            )
+
+        # Add current agent to call stack
+        call_stack.append(self._agent.id)
+
+        # Build input and child context
+        input_query = task
+        if extra_context:
+            input_query += f"\nAdditional context: {extra_context}"
+
+        run_id = str(uuid4())
+        child_ctx = context.new_child(run_id=run_id, agent_id=self._agent.id, agent_name=self._agent.name)
+        child_ctx.metadata["_call_stack"] = call_stack
+
+        response_text = ""
+        error = None
+        try:
+            run_output: RunOutput = await self._agent.run(
+                input_query,
+                context=child_ctx,
+                abort_signal=abort_signal,
+            )
+            response_text = run_output.response or ""
+        except CircularReferenceError as e:
+            error = str(e)
+            response_text = f"Circular reference error: {error}"
+        except MaxDepthExceededError as e:
+            error = str(e)
+            response_text = f"Max depth exceeded: {error}"
+        except Exception as e:  # noqa: BLE001
+            error = str(e)
+            response_text = f"Error executing {self._agent.name}: {error}"
+
+        if error is not None:
+            return RuntimeToolOutcome(
+                result=ToolResult.failed(
+                    tool_name=self.get_name(),
+                    error=error,
+                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    input_args={"task": task, "context": extra_context},
+                    start_time=start_time,
+                    content=response_text,
+                    output=response_text,
+                )
+            )
+
+        return RuntimeToolOutcome(
+            result=ToolResult.success(
+                tool_name=self.get_name(),
+                tool_call_id=str(parameters.get("tool_call_id", "")),
+                input_args={"task": task, "context": extra_context},
+                content=response_text,
+                output=response_text,
+                start_time=start_time,
+            )
+        )
+
+
+def as_tool(
+    agent: Agent,
+    name: str | None = None,
+    description: str | None = None,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+) -> AgentTool:
+    """
+    Convert an Agent to a Tool.
+
+    This is a convenience factory function.
+
+    Usage:
+        research_tool = as_tool(research_agent, description="Expert at research tasks")
+        orchestra = Agent(model=gpt4, tools=[research_tool])
+
+    Args:
+        agent: Agent instance
+        name: Tool name, defaults to agent.name
+        description: Tool description for LLM reference
+        max_depth: Maximum nesting depth allowed (default: 5)
+
+    Returns:
+        AgentTool instance
+    """
+    return AgentTool(
+        agent=agent,
+        name=name,
+        description=description,
+        max_depth=max_depth,
+    )

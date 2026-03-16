@@ -2,7 +2,7 @@
 Tool Result Cache - Cache expensive tool results within a session.
 
 Caching is controlled by tool's `cacheable` attribute.
-ToolExecutor checks this attribute before using cache.
+The agent tool runtime checks this attribute before using cache.
 """
 
 import hashlib
@@ -29,7 +29,7 @@ class ToolResultCache:
     In-memory cache for tool results.
 
     Cache is scoped to a session. Whether to use cache is determined
-    by tool's `cacheable` attribute, checked by ToolExecutor.
+    by tool's `cacheable` attribute, checked by the agent tool runtime.
     """
 
     def __init__(self, ttl_seconds: int = 3600) -> None:

@@ -8,16 +8,15 @@ without subclassing the Agent. All hooks are optional and async.
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.input import UserInput
 from agiwo.agent.memory_types import MemoryRecord
-from agiwo.agent.runtime import RunOutput, StepRecord, StreamEvent
+from agiwo.agent.runtime import AgentContext, RunOutput, StepRecord, StreamEvent
 from agiwo.tool.base import ToolResult
 
 
 # Lifecycle hooks
-BeforeRunHook = Callable[[UserInput, ExecutionContext], Awaitable[str | None]]
-AfterRunHook = Callable[[RunOutput, ExecutionContext], Awaitable[None]]
+BeforeRunHook = Callable[[UserInput, AgentContext], Awaitable[str | None]]
+AfterRunHook = Callable[[RunOutput, AgentContext], Awaitable[None]]
 BeforeToolCallHook = Callable[
     [str, str, dict[str, Any]], Awaitable[dict[str, Any] | None]
 ]
@@ -28,9 +27,9 @@ OnStepHook = Callable[[StepRecord], Awaitable[None]]
 OnEventHook = Callable[[StreamEvent], Awaitable[None]]
 
 # Memory hooks
-MemoryWriteHook = Callable[[UserInput, RunOutput, ExecutionContext], Awaitable[None]]
+MemoryWriteHook = Callable[[UserInput, RunOutput, AgentContext], Awaitable[None]]
 MemoryRetrieveHook = Callable[
-    [UserInput, ExecutionContext], Awaitable[list[MemoryRecord]]
+    [UserInput, AgentContext], Awaitable[list[MemoryRecord]]
 ]
 
 

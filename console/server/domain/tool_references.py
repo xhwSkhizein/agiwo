@@ -2,10 +2,11 @@
 
 from typing import Literal
 
-import agiwo.tool.builtin  # noqa: F401 - triggers builtin registration
 from pydantic import BaseModel, ConfigDict
 
-from agiwo.tool.builtin.registry import BUILTIN_TOOLS
+from agiwo.tool.builtin.registry import BUILTIN_TOOLS, ensure_builtin_tools_loaded
+
+ensure_builtin_tools_loaded()
 
 AGENT_TOOL_PREFIX = "agent:"
 

@@ -4,9 +4,9 @@ import time
 from datetime import datetime
 from typing import Any
 
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.config.settings import settings
 from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.http_client import AsyncHttpClient
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.tool.storage.citation import (
@@ -298,7 +298,7 @@ To fetch full content from a search result, use web_reader with the result index
     async def execute(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         start_time = time.time()

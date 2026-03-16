@@ -4,13 +4,15 @@ import shlex
 from dataclasses import dataclass
 from typing import Any
 
-from agiwo.agent.execution_context import ExecutionContext
-from agiwo.tool.base import AgentProcessProbe, BaseTool, ToolResult
+from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.context import ToolContext
+from agiwo.tool.process import AgentProcessRegistry
 from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
 from agiwo.tool.builtin.bash_tool.tool import truncate_output
 from agiwo.tool.builtin.bash_tool.types import CommandResult, ProcessInfo, Sandbox
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.utils.abort_signal import AbortSignal
+
 
 @dataclass
 class BashProcessToolConfig:
@@ -34,7 +36,7 @@ class BashLogsRequest:
 
 @default_enable
 @builtin_tool("bash_process")
-class BashProcessTool(BaseTool, AgentProcessProbe):
+class BashProcessTool(BaseTool, AgentProcessRegistry):
     """Manage background processes started by the bash tool."""
 
     cacheable: bool = False
@@ -116,7 +118,7 @@ class BashProcessTool(BaseTool, AgentProcessProbe):
     async def execute(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         del context, abort_signal
@@ -141,9 +143,7 @@ class BashProcessTool(BaseTool, AgentProcessProbe):
         if handler is None:
             return self._error(
                 parameters,
-                (
-                    "action must be one of: jobs, status, logs, stop, paths, input"
-                ),
+                ("action must be one of: jobs, status, logs, stop, paths, input"),
                 exit_code=2,
             )
 
@@ -162,13 +162,17 @@ class BashProcessTool(BaseTool, AgentProcessProbe):
     ) -> list[dict[str, object]]:
         if state not in {"running", "all"}:
             raise ValueError("state must be one of: running, all")
-        processes = await self.config.sandbox.list_processes_by_agent(agent_id, state=state)
+        processes = await self.config.sandbox.list_processes_by_agent(
+            agent_id, state=state
+        )
         return [self._serialize_process(process) for process in processes]
 
     async def _jobs(self, parameters: dict[str, Any]) -> ToolResult:
         running_only = self._parse_bool(parameters.get("running_only"))
         if parameters.get("running_only") is not None and running_only is None:
-            return self._error(parameters, "running_only must be a boolean", exit_code=2)
+            return self._error(
+                parameters, "running_only must be a boolean", exit_code=2
+            )
 
         state = "running" if running_only else "all"
         jobs = await self.config.sandbox.list_processes(state=state)
@@ -288,7 +292,9 @@ class BashProcessTool(BaseTool, AgentProcessProbe):
 
         append_newline = self._parse_bool(parameters.get("append_newline"))
         if parameters.get("append_newline") is not None and append_newline is None:
-            return self._error(parameters, "append_newline must be a boolean", exit_code=2)
+            return self._error(
+                parameters, "append_newline must be a boolean", exit_code=2
+            )
 
         data = payload
         if append_newline is not False:
@@ -316,7 +322,9 @@ class BashProcessTool(BaseTool, AgentProcessProbe):
         try:
             log_info = await self.config.sandbox.get_process_logs_info(request.job_id)
         except KeyError:
-            return self._error(parameters, f"job not found: {request.job_id}", exit_code=1)
+            return self._error(
+                parameters, f"job not found: {request.job_id}", exit_code=1
+            )
 
         source = self._log_source_command(
             log_info.stdout_path,
@@ -328,7 +336,9 @@ class BashProcessTool(BaseTool, AgentProcessProbe):
             grep_flags = "-n"
             if request.ignore_case:
                 grep_flags += " -i"
-            context_flags = f" -C {request.context_lines}" if request.context_lines > 0 else ""
+            context_flags = (
+                f" -C {request.context_lines}" if request.context_lines > 0 else ""
+            )
             query = shlex.quote(request.grep)
             log_command = (
                 f"{source} | grep {grep_flags}{context_flags} -- {query} || true"
@@ -508,7 +518,9 @@ class BashProcessTool(BaseTool, AgentProcessProbe):
 
         tail = self._coerce_int(parameters.get("tail"), positive=True, default=200)
         if tail is None:
-            return self._error(parameters, "tail must be a positive integer", exit_code=2)
+            return self._error(
+                parameters, "tail must be a positive integer", exit_code=2
+            )
 
         context_lines = self._coerce_int(
             parameters.get("context"),

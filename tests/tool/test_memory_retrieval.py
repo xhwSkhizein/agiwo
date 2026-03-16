@@ -5,8 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from agiwo.tool.builtin.retrieval_tool.chunker import MemoryChunk, MemoryChunker
-from agiwo.tool.builtin.retrieval_tool.store import MemoryIndexStore
+from agiwo.memory import MemoryChunker, MemoryIndexStore
 
 
 class TestMemoryChunker:

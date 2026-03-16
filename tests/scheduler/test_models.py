@@ -1,6 +1,4 @@
 """Tests for scheduler data models."""
-
-import pytest
 from datetime import datetime, timedelta, timezone
 
 from agiwo.scheduler.models import (
@@ -15,6 +13,10 @@ from agiwo.scheduler.models import (
     WakeCondition,
     WakeType,
     to_seconds,
+)
+from agiwo.scheduler.store.codec import (
+    deserialize_wake_condition_for_store,
+    serialize_wake_condition_for_store,
 )
 
 
@@ -135,7 +137,7 @@ class TestWakeCondition:
         )
         assert not wc.is_timed_out(datetime.now(timezone.utc))
 
-    def test_to_dict_and_from_dict_waitset(self):
+    def test_store_codec_waitset(self):
         timeout = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         wc = WakeCondition(
             type=WakeType.WAITSET,
@@ -144,15 +146,16 @@ class TestWakeCondition:
             completed_ids=["c1"],
             timeout_at=timeout,
         )
-        d = wc.to_dict()
-        restored = WakeCondition.from_dict(d)
+        payload = serialize_wake_condition_for_store(wc)
+        assert payload is not None
+        restored = deserialize_wake_condition_for_store(payload)
         assert restored.type == WakeType.WAITSET
         assert restored.wait_for == ["c1", "c2"]
         assert restored.wait_mode == WaitMode.ANY
         assert restored.completed_ids == ["c1"]
         assert restored.timeout_at == timeout
 
-    def test_to_dict_and_from_dict_timer(self):
+    def test_store_codec_timer(self):
         wakeup = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         wc = WakeCondition(
             type=WakeType.TIMER,
@@ -160,20 +163,22 @@ class TestWakeCondition:
             time_unit=TimeUnit.MINUTES,
             wakeup_at=wakeup,
         )
-        d = wc.to_dict()
-        restored = WakeCondition.from_dict(d)
+        payload = serialize_wake_condition_for_store(wc)
+        assert payload is not None
+        restored = deserialize_wake_condition_for_store(payload)
         assert restored.type == WakeType.TIMER
         assert restored.time_value == 1.0
         assert restored.time_unit == TimeUnit.MINUTES
         assert restored.wakeup_at == wakeup
 
-    def test_to_dict_and_from_dict_task_submitted(self):
+    def test_store_codec_task_submitted(self):
         wc = WakeCondition(
             type=WakeType.TASK_SUBMITTED,
             submitted_task="do stuff",
         )
-        d = wc.to_dict()
-        restored = WakeCondition.from_dict(d)
+        payload = serialize_wake_condition_for_store(wc)
+        assert payload is not None
+        restored = deserialize_wake_condition_for_store(payload)
         assert restored.type == WakeType.TASK_SUBMITTED
         assert restored.submitted_task == "do stuff"
 

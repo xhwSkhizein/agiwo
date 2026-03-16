@@ -10,13 +10,13 @@ from agiwo.agent import (
     StepRecord,
     StreamEvent,
 )
-from agiwo.observability.collector import TraceCollector
+from agiwo.agent.trace import AgentTraceCollector
 from agiwo.observability.trace import SpanKind
 
 
 @pytest.mark.asyncio
 async def test_collect_routes_assistant_and_tool_steps() -> None:
-    collector = TraceCollector()
+    collector = AgentTraceCollector()
     collector.start(
         trace_id="trace-1",
         agent_id="agent-1",

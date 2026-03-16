@@ -12,7 +12,6 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from agiwo.agent.input import UserInput
-from agiwo.agent.input_codec import deserialize_user_input, serialize_user_input
 
 
 class AgentStateStatus(str, Enum):
@@ -78,23 +77,6 @@ class ChildAgentConfigOverrides:
     instruction: str | None = None
     system_prompt: str | None = None
 
-    def to_dict(self) -> dict:
-        data: dict[str, str] = {}
-        if self.instruction:
-            data["instruction"] = self.instruction
-        if self.system_prompt:
-            data["system_prompt"] = self.system_prompt
-        return data
-
-    @classmethod
-    def from_dict(cls, data: dict | None) -> "ChildAgentConfigOverrides":
-        if not data:
-            return cls()
-        return cls(
-            instruction=data.get("instruction"),
-            system_prompt=data.get("system_prompt"),
-        )
-
 
 @dataclass
 class WakeCondition:
@@ -116,19 +98,19 @@ class WakeCondition:
 
     def is_satisfied(self, now: datetime) -> bool:
         """Check if this wake condition is currently satisfied."""
+        satisfied = False
         if self.type == WakeType.WAITSET:
             if not self.wait_for:
-                return False
+                return satisfied
             if self.wait_mode == WaitMode.ALL:
-                return set(self.wait_for) <= set(self.completed_ids)
-            return bool(set(self.wait_for) & set(self.completed_ids))
-        if self.type in (WakeType.TIMER, WakeType.PERIODIC):
-            return self.wakeup_at is not None and now >= self.wakeup_at
-        if self.type == WakeType.TASK_SUBMITTED:
-            return self.submitted_task is not None
-        if self.type == WakeType.PENDING_EVENTS:
-            return False
-        return False
+                satisfied = set(self.wait_for) <= set(self.completed_ids)
+            else:
+                satisfied = bool(set(self.wait_for) & set(self.completed_ids))
+        elif self.type in (WakeType.TIMER, WakeType.PERIODIC):
+            satisfied = self.wakeup_at is not None and now >= self.wakeup_at
+        elif self.type == WakeType.TASK_SUBMITTED:
+            satisfied = self.submitted_task is not None
+        return satisfied
 
     def is_timed_out(self, now: datetime) -> bool:
         """Check if this wake condition has timed out."""
@@ -139,55 +121,6 @@ class WakeCondition:
         if self.time_value is None or self.time_unit is None:
             return None
         return to_seconds(self.time_value, self.time_unit)
-
-    def to_dict(self) -> dict:
-        """Serialize to dict for storage."""
-        result: dict = {"type": self.type.value}
-        if self.wait_for:
-            result["wait_for"] = self.wait_for
-        result["wait_mode"] = self.wait_mode.value
-        if self.completed_ids:
-            result["completed_ids"] = self.completed_ids
-        if self.time_value is not None:
-            result["time_value"] = self.time_value
-        if self.time_unit is not None:
-            result["time_unit"] = self.time_unit.value
-        if self.wakeup_at is not None:
-            result["wakeup_at"] = self.wakeup_at.isoformat()
-        if self.submitted_task is not None:
-            result["submitted_task"] = serialize_user_input(self.submitted_task)
-        if self.timeout_at is not None:
-            result["timeout_at"] = self.timeout_at.isoformat()
-        return result
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "WakeCondition":
-        """Deserialize from dict."""
-        wakeup_at = None
-        if data.get("wakeup_at"):
-            wakeup_at = datetime.fromisoformat(data["wakeup_at"])
-        time_unit = None
-        if data.get("time_unit"):
-            time_unit = TimeUnit(data["time_unit"])
-        timeout_at = None
-        if data.get("timeout_at"):
-            timeout_at = datetime.fromisoformat(data["timeout_at"])
-        wait_mode = WaitMode.ALL
-        if data.get("wait_mode"):
-            wait_mode = WaitMode(data["wait_mode"])
-        return cls(
-            type=WakeType(data["type"]),
-            wait_for=data.get("wait_for", []),
-            wait_mode=wait_mode,
-            completed_ids=data.get("completed_ids", []),
-            time_value=data.get("time_value"),
-            time_unit=time_unit,
-            wakeup_at=wakeup_at,
-            submitted_task=deserialize_user_input(data["submitted_task"])
-            if data.get("submitted_task")
-            else None,
-            timeout_at=timeout_at,
-        )
 
 
 @dataclass
@@ -316,7 +249,9 @@ class SchedulerConfig:
     All fields are pure configuration — no side effects in construction.
     """
 
-    state_storage: AgentStateStorageConfig = field(default_factory=AgentStateStorageConfig)
+    state_storage: AgentStateStorageConfig = field(
+        default_factory=AgentStateStorageConfig
+    )
     check_interval: float = 5.0
     max_concurrent: int = 10
     graceful_shutdown_wait_seconds: int = 30

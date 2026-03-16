@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.tool.builtin.bash_tool.security import CommandSafetyValidator
@@ -140,7 +140,7 @@ class BashTool(BaseTool):
     async def execute(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         del abort_signal
@@ -172,7 +172,7 @@ class BashTool(BaseTool):
         cwd: str | None,
         timeout: float | None,
         background: bool,
-        context: ExecutionContext,
+        context: ToolContext,
         use_pty: bool,
         stdin: str | None,
     ) -> ToolResult:
@@ -201,7 +201,7 @@ class BashTool(BaseTool):
                 )
 
         if background:
-            agent_id = getattr(context, "agent_id", None)
+            agent_id = context.agent_id
             job_id = await self.config.sandbox.start_process(
                 foreground_command,
                 cwd=cwd,

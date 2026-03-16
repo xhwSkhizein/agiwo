@@ -45,10 +45,6 @@ class SQLiteRunStepStorage(RunStepStorage):
         """Initialize database connection and create tables using shared pool."""
         self._connection = await self._runtime.ensure_connection(self._initialize_schema)
 
-    async def initialize(self) -> None:
-        """Backward-compatible alias for connect()."""
-        await self.connect()
-
     async def close(self) -> None:
         """Close database connection."""
         await self.disconnect()

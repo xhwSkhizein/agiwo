@@ -5,12 +5,25 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.input import ChannelContext, MessageContent, UserInput, UserMessage
 from agiwo.agent.input_codec import extract_text, normalize_to_message, to_message_content
 from agiwo.utils.tojson import to_json
+
+
+@runtime_checkable
+class AgentContext(Protocol):
+    session_id: str
+    run_id: str
+    agent_id: str
+    agent_name: str
+    parent_run_id: str | None
+    depth: int
+    user_id: str | None
+    trace_id: str | None
+    timeout_at: float | None
+    metadata: dict[str, Any]
 
 
 class MessageRole(str, Enum):
@@ -175,7 +188,7 @@ class StepRecord:
     @classmethod
     def user(
         cls,
-        ctx: ExecutionContext,
+        ctx: AgentContext,
         *,
         sequence: int,
         user_input: UserInput | None = None,
@@ -204,7 +217,7 @@ class StepRecord:
     @classmethod
     def assistant(
         cls,
-        ctx: ExecutionContext,
+        ctx: AgentContext,
         *,
         sequence: int,
         content: str | None = None,
@@ -227,7 +240,7 @@ class StepRecord:
     @classmethod
     def tool(
         cls,
-        ctx: ExecutionContext,
+        ctx: AgentContext,
         *,
         sequence: int,
         tool_call_id: str,
@@ -251,7 +264,7 @@ class StepRecord:
 
 
 def _build_step_context_attrs(
-    ctx: ExecutionContext,
+    ctx: AgentContext,
     overrides: dict[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -338,6 +351,7 @@ def steps_to_messages(steps: list[StepRecord]) -> list[dict[str, Any]]:
 __all__ = [
     "EventType",
     "LLMCallContext",
+    "AgentContext",
     "MessageRole",
     "Run",
     "RunMetrics",

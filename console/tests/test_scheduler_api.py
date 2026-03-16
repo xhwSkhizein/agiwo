@@ -37,8 +37,9 @@ def _runtime(client: AsyncClient) -> ConsoleRuntime:
 
 
 @pytest.fixture
-async def client():
+async def client(monkeypatch: pytest.MonkeyPatch):
     """Create test client with mocked in-memory storage."""
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai-key")
     app = create_app()
 
     # Manually initialize dependencies with in-memory storage

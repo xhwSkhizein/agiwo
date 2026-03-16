@@ -18,8 +18,7 @@ class SchedulerControl(Protocol):
         instruction: str | None,
         system_prompt: str | None,
         custom_child_id: str | None,
-    ) -> AgentState:
-        ...
+    ) -> AgentState: ...
 
     async def sleep_current_agent(
         self,
@@ -34,25 +33,21 @@ class SchedulerControl(Protocol):
         delay_seconds: float | int | None,
         time_unit_str: str,
         explain: str | None,
-    ) -> tuple[WakeCondition, str]:
-        ...
+    ) -> tuple[WakeCondition, str]: ...
 
-    async def get_child_state(self, target_id: str) -> AgentState | None:
-        ...
+    async def get_child_state(self, target_id: str) -> AgentState | None: ...
 
     async def list_child_states(
         self,
         *,
         caller_id: str | None,
         session_id: str,
-    ) -> list[AgentState]:
-        ...
+    ) -> list[AgentState]: ...
 
     async def inspect_child_processes(
         self,
         target_id: str,
-    ) -> list[dict[str, object]]:
-        ...
+    ) -> list[dict[str, object]]: ...
 
     async def cancel_child(
         self,
@@ -61,11 +56,11 @@ class SchedulerControl(Protocol):
         target_id: str,
         force: bool,
         reason: str,
-    ) -> tuple[str, AgentState | None, list[dict[str, object]]]:
-        ...
+    ) -> tuple[str, AgentState | None, list[dict[str, object]]]: ...
 
-    def age_seconds(self, timestamp: datetime, *, now: datetime | None = None) -> int:
-        ...
+    def age_seconds(
+        self, timestamp: datetime, *, now: datetime | None = None
+    ) -> int: ...
 
 
 __all__ = ["SchedulerControl"]

@@ -26,9 +26,44 @@ logger = get_logger(__name__)
 
 BUILTIN_TOOLS: dict[str, Type[BaseTool]] = {}
 DEFAULT_TOOLS: dict[str, Type[BaseTool]] = {}
+_BUILTIN_TOOLS_LOADED = False
 
 _ENTRY_POINT_GROUP = "agiwo.tools"
 _BUILTIN_PACKAGE = "agiwo.tool.builtin"
+
+
+def _is_tool_module(name: str) -> bool:
+    return name == "tool" or name.endswith("_tool")
+
+
+def _safe_import_module(
+    module_path: str, *, warning_event: str, warning_key: str
+) -> None:
+    try:
+        importlib.import_module(module_path)
+        logger.debug("builtin_tool_loaded", module=module_path)
+    except Exception as error:  # noqa: BLE001 - optional builtin dependency boundary
+        logger.warning(warning_event, **{warning_key: module_path, "error": str(error)})
+
+
+def _load_subpackage_tools(name: str) -> None:
+    module_path = f"{_BUILTIN_PACKAGE}.{name}"
+    try:
+        subpkg = importlib.import_module(module_path)
+    except Exception as error:  # noqa: BLE001 - optional builtin dependency boundary
+        logger.warning("builtin_subpkg_load_failed", subpkg=name, error=str(error))
+        return
+
+    if not hasattr(subpkg, "__path__"):
+        return
+
+    for _, subname, _ in pkgutil.iter_modules(subpkg.__path__, prefix=""):
+        if _is_tool_module(subname):
+            _safe_import_module(
+                f"{module_path}.{subname}",
+                warning_event="builtin_tool_load_failed",
+                warning_key="module",
+            )
 
 
 def builtin_tool(name: str):
@@ -64,45 +99,36 @@ def load_builtin_tools() -> None:
     Each module is wrapped in try/except so optional-dependency tools
     don't block others from loading.
     """
-    import agiwo.tool.builtin as builtin_pkg
-
-    def _is_tool_module(name: str) -> bool:
-        return name == "tool" or name.endswith("_tool")
+    builtin_pkg = importlib.import_module(_BUILTIN_PACKAGE)
 
     for _, name, ispkg in pkgutil.iter_modules(builtin_pkg.__path__, prefix=""):
         if ispkg:
-            # Scan subpackage for tool modules (tool.py or *_tool.py)
-            try:
-                subpkg = importlib.import_module(f"{_BUILTIN_PACKAGE}.{name}")
-            except Exception as e:
-                logger.warning("builtin_subpkg_load_failed", subpkg=name, error=str(e))
-                continue
+            _load_subpackage_tools(name)
+        elif _is_tool_module(name):
+            _safe_import_module(
+                f"{_BUILTIN_PACKAGE}.{name}",
+                warning_event="builtin_tool_load_failed",
+                warning_key="module",
+            )
 
-            if not hasattr(subpkg, "__path__"):
-                continue
 
-            for _, subname, _ in pkgutil.iter_modules(subpkg.__path__, prefix=""):
-                if _is_tool_module(subname):
-                    sub_module = f"{_BUILTIN_PACKAGE}.{name}.{subname}"
-                    try:
-                        importlib.import_module(sub_module)
-                        logger.debug("builtin_tool_loaded", module=sub_module)
-                    except Exception as e:
-                        logger.warning("builtin_tool_load_failed", module=sub_module, error=str(e))
-        else:
-            if _is_tool_module(name):
-                module_path = f"{_BUILTIN_PACKAGE}.{name}"
-                try:
-                    importlib.import_module(module_path)
-                    logger.debug("builtin_tool_loaded", module=module_path)
-                except Exception as e:
-                    logger.warning("builtin_tool_load_failed", module=module_path, error=str(e))
+def ensure_builtin_tools_loaded() -> None:
+    """Load builtin tool modules at most once per process."""
+    global _BUILTIN_TOOLS_LOADED
+    if _BUILTIN_TOOLS_LOADED:
+        return
+    load_builtin_tools()
+    _BUILTIN_TOOLS_LOADED = True
 
 
 def discover_entry_point_tools() -> None:
     """Scan 'agiwo.tools' entry points and register external tools."""
     eps = importlib.metadata.entry_points()
-    group = eps.select(group=_ENTRY_POINT_GROUP) if hasattr(eps, "select") else eps.get(_ENTRY_POINT_GROUP, [])
+    group = (
+        eps.select(group=_ENTRY_POINT_GROUP)
+        if hasattr(eps, "select")
+        else eps.get(_ENTRY_POINT_GROUP, [])
+    )
     for ep in group:
         try:
             cls = ep.load()
@@ -115,5 +141,5 @@ def discover_entry_point_tools() -> None:
             BUILTIN_TOOLS[ep.name] = cls
             cls._builtin_name = ep.name
             logger.info("entry_point_tool_registered", name=ep.name)
-        except Exception as e:
-            logger.warning("entry_point_load_failed", name=ep.name, error=str(e))
+        except Exception as error:  # noqa: BLE001 - third-party entry point boundary
+            logger.warning("entry_point_load_failed", name=ep.name, error=str(error))

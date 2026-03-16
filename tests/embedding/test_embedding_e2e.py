@@ -5,24 +5,25 @@ These tests require actual API access or local models.
 Skip markers are used to conditionally run based on environment.
 """
 
-import os
+import math
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from agiwo.embedding import EmbeddingFactory, OpenAIEmbedding
-from agiwo.tool.builtin.retrieval_tool.store import MemoryIndexStore
+from agiwo.config.settings import settings
+from agiwo.embedding import EmbeddingFactory
+from agiwo.memory import MemoryIndexStore
 
 
 def has_openai_key() -> bool:
     """Check if OpenAI API key is available."""
-    return bool(os.getenv("OPENAI_API_KEY") or os.getenv("AGIWO_EMBEDDING_API_KEY"))
+    return bool(settings.openai_api_key or settings.embedding_api_key)
 
 
 def has_local_model() -> bool:
     """Check if local embedding model is available."""
-    path = os.getenv("AGIWO_LOCAL_EMBEDDING_MODEL_PATH", "")
+    path = settings.local_embedding_model_path or ""
     return bool(path) and Path(path).exists()
 
 
@@ -104,7 +105,6 @@ class TestOpenAIEmbeddingE2E:
         embeddings = await model.embed(texts)
 
         def cosine_sim(a: list[float], b: list[float]) -> float:
-            import math
             dot = sum(x * y for x, y in zip(a, b))
             norm_a = math.sqrt(sum(x * x for x in a))
             norm_b = math.sqrt(sum(x * x for x in b))

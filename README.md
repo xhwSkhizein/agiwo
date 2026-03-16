@@ -54,16 +54,18 @@ export OPENAI_API_KEY=...
 ```python
 import asyncio
 
-from agiwo import Agent
+from agiwo import Agent, AgentConfig
 from agiwo.llm import OpenAIModel
 
 
 async def main() -> None:
     agent = Agent(
-        name="assistant",
-        description="A helpful assistant",
+        AgentConfig(
+            name="assistant",
+            description="A helpful assistant",
+            system_prompt="You are a concise assistant.",
+        ),
         model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
-        system_prompt="You are a concise assistant.",
     )
 
     result = await agent.run("What is 2 + 2?")
@@ -83,7 +85,7 @@ asyncio.run(main())
 
 ```python
 from agiwo import BaseTool, ToolResult
-from agiwo.agent import ExecutionContext
+from agiwo.tool import ToolContext
 
 
 class WeatherTool(BaseTool):
@@ -108,10 +110,11 @@ class WeatherTool(BaseTool):
     async def execute(
         self,
         parameters: dict,
-        context: ExecutionContext,
+        context: ToolContext,
         abort_signal=None,
     ) -> ToolResult:
         city = parameters["city"]
+        del context, abort_signal
         return ToolResult.success(
             tool_name=self.get_name(),
             tool_call_id=parameters.get("tool_call_id", ""),
@@ -125,22 +128,26 @@ class WeatherTool(BaseTool):
 ### Agent As Tool
 
 ```python
-from agiwo import Agent, as_tool
+from agiwo import Agent, AgentConfig, as_tool
 from agiwo.llm import DeepseekModel
 
 researcher = Agent(
-    name="researcher",
-    description="Research specialist",
+    AgentConfig(
+        name="researcher",
+        description="Research specialist",
+        system_prompt="You are strong at collecting and summarizing evidence.",
+    ),
     model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
-    system_prompt="You are strong at collecting and summarizing evidence.",
 )
 
 orchestrator = Agent(
-    name="orchestrator",
-    description="Delegates focused research tasks",
+    AgentConfig(
+        name="orchestrator",
+        description="Delegates focused research tasks",
+        system_prompt="Delegate independent research tasks when useful.",
+    ),
     model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
     tools=[as_tool(researcher)],
-    system_prompt="Delegate independent research tasks when useful.",
 )
 ```
 
@@ -149,16 +156,18 @@ orchestrator = Agent(
 ```python
 import asyncio
 
-from agiwo import Agent, Scheduler
+from agiwo import Agent, AgentConfig, Scheduler
 from agiwo.llm import DeepseekModel
 
 
 async def main() -> None:
     agent = Agent(
-        name="orchestrator",
-        description="Can delegate and wait",
+        AgentConfig(
+            name="orchestrator",
+            description="Can delegate and wait",
+            system_prompt="Use spawned agents only for truly independent sub-tasks.",
+        ),
         model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
-        system_prompt="Use spawned agents only for truly independent sub-tasks.",
     )
 
     async with Scheduler() as scheduler:
@@ -233,11 +242,13 @@ Important current rules:
 
 ### SDK
 
-- `agiwo/agent/`: public `Agent` API, runtime types, hooks, compact support, run/session storage, internal executor pipeline in `inner/`
-- `agiwo/llm/`: model abstractions, providers, config policy, factory
-- `agiwo/tool/`: tool abstractions, executor, builtin tools, permission layer, citation storage
-- `agiwo/scheduler/`: orchestration layer, runtime/executor, store, services, tools
-- `agiwo/observability/`: trace models, collector, storage backends
+- `agiwo/agent/`: public `Agent` API, runtime types, agent runtime tools, agent trace adapter, prompt runtime, tool auth runtime, run/session storage, and internal executor pipeline in `inner/`
+- `agiwo/llm/`: model abstractions, providers, config policy, factory, token usage estimation
+- `agiwo/tool/`: tool abstractions, `ToolContext`, builtin tools, authz domain types, process registry, citation storage
+- `agiwo/scheduler/`: orchestration layer, runtime/executor, store, services, runtime tools
+- `agiwo/workspace/`: workspace layout, bootstrap, and workspace document loading
+- `agiwo/memory/`: shared MEMORY indexing/search plus `WorkspaceMemoryService`
+- `agiwo/observability/`: trace models and storage backends; agent trace collection lives under `agiwo/agent/trace/`
 - `agiwo/skill/`: skill discovery, loading, registry, `SkillTool`
 
 ### Console

@@ -42,8 +42,14 @@ class TaskGuard:
 
         children = await self._store.get_states_by_parent(parent_state.id)
         active_children = [
-            c for c in children
-            if c.status in (AgentStateStatus.PENDING, AgentStateStatus.RUNNING, AgentStateStatus.SLEEPING)
+            c
+            for c in children
+            if c.status
+            in (
+                AgentStateStatus.PENDING,
+                AgentStateStatus.RUNNING,
+                AgentStateStatus.SLEEPING,
+            )
             and c.session_id == parent_state.session_id
         ]
         if len(active_children) >= self._limits.max_children_per_agent:
@@ -94,7 +100,11 @@ class TaskGuard:
         - last_activity_at is older than threshold_seconds, OR
         - last_activity_at is None and updated_at is older than threshold_seconds
         """
-        threshold = threshold_seconds if threshold_seconds is not None else self._limits.health_check_threshold_seconds
+        threshold = (
+            threshold_seconds
+            if threshold_seconds is not None
+            else self._limits.health_check_threshold_seconds
+        )
         cutoff = now - timedelta(seconds=threshold)
         running_states = await self._store.find_running()
 

@@ -10,20 +10,21 @@ from typing import Any, AsyncIterator
 
 from agiwo.agent.agent import Agent
 from agiwo.agent.input import UserInput
+from agiwo.agent.scheduler_port import adapt_scheduler_agent
 from agiwo.agent.runtime import RunOutput
 from agiwo.scheduler.coordinator import SchedulerCoordinator
 from agiwo.scheduler.engine import SchedulerEngine
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import AgentState, SchedulerConfig, SchedulerOutput
-from agiwo.scheduler.runner import SchedulerRunner
-from agiwo.scheduler.store import AgentStateStorage, create_agent_state_storage
-from agiwo.scheduler.tools import (
+from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
     SleepAndWaitTool,
     SpawnAgentTool,
 )
+from agiwo.scheduler.runner import SchedulerRunner
+from agiwo.scheduler.store import AgentStateStorage, create_agent_state_storage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -128,8 +129,9 @@ class Scheduler:
         abort_signal: AbortSignal | None = None,
         persistent: bool = False,
     ) -> RunOutput:
+        agent_port = adapt_scheduler_agent(agent)
         return await self._engine.run(
-            agent,
+            agent_port,
             user_input,
             session_id=session_id,
             timeout=timeout,
@@ -147,8 +149,9 @@ class Scheduler:
         persistent: bool = False,
         agent_config_id: str | None = None,
     ) -> str:
+        agent_port = adapt_scheduler_agent(agent)
         return await self._engine.submit(
-            agent,
+            agent_port,
             user_input,
             session_id=session_id,
             abort_signal=abort_signal,
@@ -163,7 +166,8 @@ class Scheduler:
         *,
         agent: Agent | None = None,
     ) -> None:
-        await self._engine.submit_task(state_id, task, agent=agent)
+        agent_port = adapt_scheduler_agent(agent) if agent is not None else None
+        await self._engine.submit_task(state_id, task, agent=agent_port)
 
     async def submit_and_subscribe(
         self,
@@ -177,8 +181,9 @@ class Scheduler:
         timeout: float | None = None,
         include_child_outputs: bool = True,
     ) -> AsyncIterator[SchedulerOutput]:
+        agent_port = adapt_scheduler_agent(agent)
         async for output in self._engine.submit_and_subscribe(
-            agent,
+            agent_port,
             user_input,
             session_id=session_id,
             abort_signal=abort_signal,
@@ -198,10 +203,11 @@ class Scheduler:
         timeout: float | None = None,
         include_child_outputs: bool = True,
     ) -> AsyncIterator[SchedulerOutput]:
+        agent_port = adapt_scheduler_agent(agent) if agent is not None else None
         async for output in self._engine.submit_task_and_subscribe(
             state_id,
             task,
-            agent=agent,
+            agent=agent_port,
             timeout=timeout,
             include_child_outputs=include_child_outputs,
         ):

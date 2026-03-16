@@ -1,7 +1,7 @@
 """Tests for Agent tools union logic with DEFAULT_TOOLS."""
 
 import pytest
-from agiwo.agent.agent import create_agent
+from agiwo.agent import Agent, AgentConfig
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.agent.execution_context import ExecutionContext
 from agiwo.utils.abort_signal import AbortSignal
@@ -61,14 +61,17 @@ def mock_model():
 class TestAgentToolsUnion:
     """Test Agent tools union logic with DEFAULT_TOOLS."""
 
+    @staticmethod
+    def _make_agent(mock_model, tools=None) -> Agent:
+        return Agent(
+            AgentConfig(name="test-agent", description="Test agent"),
+            model=mock_model,
+            tools=tools,
+        )
+
     def test_agent_loads_default_tools_when_no_tools_passed(self, mock_model):
         """Test that Agent loads DEFAULT_TOOLS when tools=None."""
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
-            model=mock_model,
-            tools=None,
-        )
+        agent = self._make_agent(mock_model, tools=None)
 
         # Should have all DEFAULT_TOOLS
         assert len(agent.tools) == len(DEFAULT_TOOLS)
@@ -77,12 +80,7 @@ class TestAgentToolsUnion:
 
     def test_agent_loads_default_tools_when_empty_list_passed(self, mock_model):
         """Test that Agent loads DEFAULT_TOOLS when tools=[]."""
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
-            model=mock_model,
-            tools=[],
-        )
+        agent = self._make_agent(mock_model, tools=[])
 
         # Should have all DEFAULT_TOOLS
         assert len(agent.tools) == len(DEFAULT_TOOLS)
@@ -92,13 +90,7 @@ class TestAgentToolsUnion:
     def test_agent_merges_user_tools_with_default_tools(self, mock_model):
         """Test that Agent merges user tools with DEFAULT_TOOLS (union)."""
         user_tool = MockTool(name="user_custom_tool")
-
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
-            model=mock_model,
-            tools=[user_tool],
-        )
+        agent = self._make_agent(mock_model, tools=[user_tool])
 
         # Should have user tool + all DEFAULT_TOOLS
         tool_names = {t.get_name() for t in agent.tools}
@@ -110,13 +102,7 @@ class TestAgentToolsUnion:
         # Create a custom tool with same name as a default tool
         default_tool_name = list(DEFAULT_TOOLS.keys())[0]
         custom_tool = MockTool(name=default_tool_name)
-
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
-            model=mock_model,
-            tools=[custom_tool],
-        )
+        agent = self._make_agent(mock_model, tools=[custom_tool])
 
         # Should only have one tool with that name (user's version)
         tool_names = [t.get_name() for t in agent.tools]
@@ -130,13 +116,7 @@ class TestAgentToolsUnion:
     def test_agent_tools_count_with_merge(self, mock_model):
         """Test correct tool count when merging user tools with defaults."""
         user_tools = [MockTool(name="tool1"), MockTool(name="tool2")]
-
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
-            model=mock_model,
-            tools=user_tools,
-        )
+        agent = self._make_agent(mock_model, tools=user_tools)
 
         # Count should be: user tools + default tools (no duplicates)
         expected_count = len(user_tools) + len(DEFAULT_TOOLS)
@@ -144,12 +124,7 @@ class TestAgentToolsUnion:
 
     def test_bash_tool_auto_loaded_when_no_tools(self, mock_model):
         """Test that BashTool is auto-loaded via @default_enable when no tools passed."""
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
-            model=mock_model,
-            tools=None,
-        )
+        agent = self._make_agent(mock_model, tools=None)
 
         # Should have bash tool loaded
         tool_names = {t.get_name() for t in agent.tools}
@@ -159,13 +134,7 @@ class TestAgentToolsUnion:
     def test_bash_tool_auto_loaded_with_other_tools(self, mock_model):
         """Test that BashTool is auto-loaded even when other tools are passed."""
         user_tool = MockTool(name="my_tool")
-
-        agent = create_agent(
-            name="test-agent",
-            description="Test agent",
-            model=mock_model,
-            tools=[user_tool],
-        )
+        agent = self._make_agent(mock_model, tools=[user_tool])
 
         # Should have both user tool and bash tool
         tool_names = {t.get_name() for t in agent.tools}

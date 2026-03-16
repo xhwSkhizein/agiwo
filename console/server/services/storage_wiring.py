@@ -4,6 +4,7 @@ from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.factory import StorageFactory
 from agiwo.observability.base import BaseTraceStorage
+from agiwo.observability.factory import create_trace_storage as _create_trace_storage
 from agiwo.scheduler.models import AgentStateStorageConfig
 from agiwo.tool.storage.citation import CitationStoreConfig
 
@@ -81,4 +82,7 @@ def create_run_step_storage(config: ConsoleConfig) -> RunStepStorage:
 
 
 def create_trace_storage(config: ConsoleConfig) -> BaseTraceStorage:
-    return StorageFactory.create_trace_storage(build_trace_storage_config(config))
+    storage = _create_trace_storage(build_trace_storage_config(config))
+    if storage is None:
+        raise ValueError("Console requires trace_storage to be configured")
+    return storage

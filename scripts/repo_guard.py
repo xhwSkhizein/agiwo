@@ -96,6 +96,7 @@ ALLOWED_STORAGE_BACKEND_CONSTRUCTOR_PREFIXES = (
 )
 ALLOWED_STORAGE_BACKEND_CONSTRUCTOR_PATHS = {
     Path("agiwo/agent/storage/factory.py"),
+    Path("agiwo/observability/factory.py"),
 }
 ALLOWED_MODEL_CONSTRUCTOR_PREFIXES = (
     Path("agiwo/llm"),

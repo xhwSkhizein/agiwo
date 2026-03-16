@@ -7,10 +7,9 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 from agiwo.agent import UserInput
-from agiwo.agent.options import AgentOptionsInput
 from agiwo.config.settings import ModelProvider
-from agiwo.llm.factory import ModelParamsInput
 from agiwo.llm.config_policy import validate_provider_model_params
+from server.domain.agent_configs import AgentOptionsInput, ModelParamsInput
 from server.domain.run_metrics import RunMetricsSummary
 
 
@@ -155,6 +154,13 @@ class AgentConfigPayload(BaseModel):
     def _validate_model_connection(self) -> "AgentConfigPayload":
         validate_provider_model_params(self.model_provider, self.model_params)
         return self
+
+
+class AgentConfigReplace(AgentConfigPayload):
+    """Full-replacement payload for persisted agent config updates."""
+
+    options: AgentOptionsInput
+    model_params: ModelParamsInput
 
 
 class AgentConfigResponse(BaseModel):

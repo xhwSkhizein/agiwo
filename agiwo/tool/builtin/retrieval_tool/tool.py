@@ -3,14 +3,13 @@ MemoryRetrievalTool - Find relevant notes and memory from MEMORY directory.
 """
 
 import time
-from pathlib import Path
 from typing import Any
 
 from agiwo.config.settings import settings
-from agiwo.agent.execution_context import ExecutionContext
+from agiwo.memory import WorkspaceMemoryService
 from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
-from agiwo.tool.builtin.retrieval_tool.store import MemoryIndexStore
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -31,8 +30,9 @@ class MemoryRetrievalTool(BaseTool):
     ):
         super().__init__()
         self._top_k = top_k if top_k is not None else settings.memory_top_k
-        self._embedding_provider = embedding_provider
-        self._stores: dict[str, MemoryIndexStore] = {}
+        self._memory_service = WorkspaceMemoryService(
+            embedding_provider=embedding_provider,
+        )
 
     def get_name(self) -> str:
         return "memory_retrieval"
@@ -63,7 +63,7 @@ class MemoryRetrievalTool(BaseTool):
     async def execute(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         """Execute memory search with detailed debug logging."""
@@ -84,7 +84,7 @@ class MemoryRetrievalTool(BaseTool):
             "memory_retrieval_start",
             query=query,
             top_k=top_k,
-            agent_name=getattr(context, "agent_name", None),
+            agent_name=context.agent_name,
         )
 
         if not query:
@@ -96,8 +96,14 @@ class MemoryRetrievalTool(BaseTool):
                 start_time=start_time,
             )
 
-        workspace_dir = self._resolve_workspace(context)
-        if not workspace_dir:
+        search_start = time.time()
+        workspace, results = await self._memory_service.search(
+            agent_name=context.agent_name,
+            agent_id=context.agent_id,
+            query=query,
+            top_k=top_k,
+        )
+        if workspace is None:
             logger.warning("memory_retrieval_no_workspace", context=context)
             return ToolResult.failed(
                 tool_name=self.name,
@@ -107,17 +113,7 @@ class MemoryRetrievalTool(BaseTool):
                 start_time=start_time,
             )
 
-        logger.debug("memory_retrieval_workspace", workspace=str(workspace_dir))
-
-        store = await self._get_or_create_store(workspace_dir)
-
-        # Sync files and log stats
-        sync_start = time.time()
-        await store.sync_files()
-        logger.debug(
-            "memory_retrieval_sync_complete",
-            duration_ms=(time.time() - sync_start) * 1000,
-        )
+        workspace_dir = workspace.workspace
 
         if abort_signal and abort_signal.is_aborted():
             return ToolResult.aborted(
@@ -126,10 +122,6 @@ class MemoryRetrievalTool(BaseTool):
                 input_args=parameters,
                 start_time=start_time,
             )
-
-        # Search with detailed logging
-        search_start = time.time()
-        results = await store.search(query, top_k)
         search_duration_ms = (time.time() - search_start) * 1000
 
         logger.info(
@@ -176,33 +168,6 @@ class MemoryRetrievalTool(BaseTool):
             output=output,
             start_time=start_time,
         )
-
-    def _resolve_workspace(self, context: ExecutionContext) -> Path | None:
-        """Resolve workspace directory from context."""
-        config_root = settings.get_root_path()
-        agent_name = getattr(context, "agent_name", None)
-
-        if not agent_name:
-            agent_id = getattr(context, "agent_id", None)
-            if agent_id:
-                agent_name = agent_id
-
-        if not agent_name:
-            logger.warning("no_agent_name_in_context")
-            return None
-
-        workspace = config_root / agent_name
-        return workspace
-
-    async def _get_or_create_store(self, workspace_dir: Path) -> MemoryIndexStore:
-        """Get or create a MemoryIndexStore for the workspace."""
-        key = str(workspace_dir)
-        if key not in self._stores:
-            store_kwargs = {}
-            if self._embedding_provider:
-                store_kwargs["embedding_provider"] = self._embedding_provider
-            self._stores[key] = MemoryIndexStore(workspace_dir, **store_kwargs)
-        return self._stores[key]
 
     def _format_results(self, query: str, results: list) -> str:
         """Format search results for LLM consumption."""

@@ -8,9 +8,12 @@ with available skills for agents.
 
 from pathlib import Path
 
-from agiwo.config.settings import settings
-from agiwo.agent.options import resolve_skills_dirs
+from agiwo.skill.config import SkillDiscoveryConfig, resolve_skill_dirs
 from agiwo.skill.loader import SkillLoader
+from agiwo.skill.prompt_catalog import (
+    SkillPromptCatalog,
+    SkillPromptSnapshot,
+)
 from agiwo.skill.registry import SkillMetadata, SkillRegistry
 from agiwo.skill.skill_tool import SkillTool
 from agiwo.utils.logging import get_logger
@@ -31,19 +34,22 @@ class SkillManager:
 
     def __init__(
         self,
-        skills_dirs: list[Path],
+        config: SkillDiscoveryConfig,
     ) -> None:
         """
         Initialize skill manager.
 
         Args:
-            skills_dirs: List of directories to scan for skills
+            config: Skill discovery configuration
         """
-        self._skills_dirs = skills_dirs
+        self._config = config
         self.registry = SkillRegistry()
         self.loader = SkillLoader(self.registry)
+        self._prompt_catalog = SkillPromptCatalog()
         self._skill_tool: SkillTool | None = None
         self._metadata_cache: list[SkillMetadata] = []
+        self._change_token = ""
+        self._initialized = False
 
     async def initialize(self) -> None:
         """
@@ -52,8 +58,10 @@ class SkillManager:
         This should be called during agent startup to populate the
         metadata cache with all available skills.
         """
-        skills_dirs = self._resolve_skills_dirs()
+        skills_dirs = self.get_resolved_skills_dirs()
         self._metadata_cache = await self.registry.discover_skills(skills_dirs)
+        self._change_token = self._prompt_catalog.compute_change_token(skills_dirs)
+        self._initialized = True
         logger.info("skill_manager_initialized", skill_count=len(self._metadata_cache))
 
     def get_skill_tool(self) -> SkillTool:
@@ -81,47 +89,7 @@ class SkillManager:
         Returns:
             Markdown string with skills list, empty string if no skills
         """
-        if not self._metadata_cache:
-            return ""
-
-        lines = ["## Available Skills"]
-        lines.append("\n")
-        lines.append("Skills are tools. Use them quietly. The user doesn't need to see the machinery.")
-        lines.append(
-            "These skills are discovered at startup. Each entry includes a name and description. "
-            "Use the Skill tool to activate a skill when needed."
-        )
-        lines.append("")
-        
-        lines.append("<avaliable_skills>")
-        for metadata in self._metadata_cache:
-            lines.append("  <skill>")
-            lines.append(f"    <name>{metadata.name}</name>")
-            lines.append(f"    <description>{metadata.description}</description>")
-            lines.append(f"    <location>{metadata.path}</location>")
-            lines.append("  </skill>")
-        lines.append("</avaliable_skills>")
-        
-        lines.append("")
-        lines.append("### How to use skills:")
-        lines.append(
-            "1. When a user task matches a skill's description, use the Skill tool "
-            "to activate it."
-        )
-        lines.append(
-            "2. After activation, follow the instructions in the skill's SKILL.md file."
-        )
-        lines.append(
-            "3. Load reference files (references/) only when needed for specific steps."
-        )
-        lines.append(
-            "4. Execute scripts (scripts/) only when the skill instructions require it."
-        )
-        lines.append(
-            "5. Use assets (assets/) as templates or resources, don't load their content."
-        )
-
-        return "\n".join(lines)
+        return self._prompt_catalog.render_section(self._metadata_cache)
 
     async def reload(self) -> None:
         """
@@ -129,28 +97,36 @@ class SkillManager:
 
         Re-scans skill directories and updates the metadata cache.
         """
-        skills_dirs = self._resolve_skills_dirs()
+        skills_dirs = self.get_resolved_skills_dirs()
         self._metadata_cache = await self.registry.discover_skills(skills_dirs)
+        self._change_token = self._prompt_catalog.compute_change_token(skills_dirs)
+        self._initialized = True
         logger.info("skills_reloaded", skill_count=len(self._metadata_cache))
+
+    async def refresh_if_changed(self) -> None:
+        if not self._initialized:
+            await self.initialize()
+            return
+        skills_dirs = self.get_resolved_skills_dirs()
+        current_token = self._prompt_catalog.compute_change_token(skills_dirs)
+        if current_token != self._change_token:
+            await self.reload()
 
     def get_resolved_skills_dirs(self) -> list[Path]:
         """Return the current effective skill directories."""
-        return self._resolve_skills_dirs()
-
-    def _resolve_skills_dirs(self) -> list[Path]:
-        """
-        Resolve skill directories from configuration and environment.
-
-        Returns:
-            List of resolved Path objects (existing only)
-        """
-        raw_dirs = [str(d) for d in self._skills_dirs] + settings.get_env_skills_dirs()
-        all_resolved = resolve_skills_dirs(raw_dirs, str(settings.get_root_path()))
-
         dirs: list[Path] = []
-        for resolved in all_resolved:
+        for resolved in resolve_skill_dirs(self._config):
             if resolved.exists():
                 dirs.append(resolved)
             else:
                 logger.debug("skill_dir_not_found", path=str(resolved))
         return dirs
+
+    def get_change_token(self) -> str:
+        return self._change_token
+
+    def get_prompt_snapshot(self) -> SkillPromptSnapshot:
+        return SkillPromptSnapshot(
+            rendered_section=self.render_skills_section(),
+            change_token=self._change_token,
+        )

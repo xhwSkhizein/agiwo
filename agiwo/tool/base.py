@@ -1,11 +1,10 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import time
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
-from agiwo.agent.runtime import TerminationReason
+from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
-from agiwo.agent.execution_context import ExecutionContext
 
 
 @dataclass
@@ -38,7 +37,6 @@ class ToolResult:
     )
     error: str | None = None
     is_success: bool = True
-    termination_reason: TerminationReason | None = None
 
     @classmethod
     def success(
@@ -50,7 +48,6 @@ class ToolResult:
         start_time: float | None = None,
         output: Any = None,
         content_for_user: str | None = None,
-        termination_reason: TerminationReason | None = None,
     ) -> "ToolResult":
         """Create a ToolResult representing a successful operation."""
         now = time.time()
@@ -66,7 +63,6 @@ class ToolResult:
             duration=now - start,
             content_for_user=content_for_user,
             is_success=True,
-            termination_reason=termination_reason,
         )
 
     @classmethod
@@ -148,19 +144,6 @@ class ToolResult:
         )
 
 
-@runtime_checkable
-class AgentProcessProbe(Protocol):
-    """Public tool capability for inspecting agent-owned background processes."""
-
-    async def list_agent_processes(
-        self,
-        agent_id: str,
-        *,
-        state: str = "running",
-    ) -> list[dict[str, object]]:
-        """Return structured process summaries owned by one agent."""
-
-
 class BaseTool(ABC):
     """Common interface that every concrete tool must implement."""
 
@@ -196,7 +179,7 @@ class BaseTool(ABC):
     async def execute(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         """

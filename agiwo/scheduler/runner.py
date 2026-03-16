@@ -12,10 +12,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Literal
 from uuid import uuid4
 
-from agiwo.agent.agent import Agent
-from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.input import UserInput
 from agiwo.agent.input_codec import normalize_to_message
+from agiwo.agent.scheduler_port import ChildAgentOverrides, SchedulerAgentPort
 from agiwo.agent.runtime import RunOutput, StepRecord, TerminationReason
 from agiwo.scheduler.coordinator import SchedulerCoordinator
 from agiwo.scheduler.formatting import (
@@ -25,13 +24,13 @@ from agiwo.scheduler.formatting import (
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
-    ChildAgentConfigOverrides,
     PendingEvent,
     SchedulerEventType,
     SchedulerOutput,
     WakeCondition,
     WakeType,
 )
+from agiwo.scheduler.store.codec import deserialize_child_agent_config_overrides
 from agiwo.scheduler.store import AgentStateStorage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
@@ -98,8 +97,11 @@ class SchedulerRunner:
         self._store = store
         self._coordinator = coordinator
         self._semaphore = semaphore
+        self._step_sync_observers: dict[
+            str, Callable[[StepRecord], Awaitable[None]]
+        ] = {}
 
-    async def create_child_agent(self, state: AgentState) -> Agent:
+    async def create_child_agent(self, state: AgentState):
         """Create a child Agent by copying the parent's configuration."""
         parent = self._coordinator.get_registered_agent(state.parent_id or "")
         if parent is None:
@@ -107,30 +109,30 @@ class SchedulerRunner:
                 f"Parent agent '{state.parent_id}' not found in scheduler"
             )
 
-        overrides = ChildAgentConfigOverrides.from_dict(state.config_overrides)
-        child = await parent.derive_child(
+        overrides = deserialize_child_agent_config_overrides(state.config_overrides)
+        child = await parent.derive_child_for_scheduler(
             child_id=state.id,
-            instruction=overrides.instruction,
-            system_prompt_override=overrides.system_prompt,
-            exclude_tool_names={"spawn_agent"},
+            overrides=ChildAgentOverrides(
+                instruction=overrides.instruction,
+                system_prompt=overrides.system_prompt,
+                exclude_tool_names={"spawn_agent"},
+            ),
         )
         self._coordinator.register_agent(child)
-        self._wrap_on_step_hook(child, state.id)
-        return child
+        self._ensure_step_sync(child, state.id)
+        return child.unwrap_agent() or child
 
-    def _wrap_on_step_hook(self, agent: Agent, state_id: str) -> None:
-        """Wrap on_step to sync last_activity_at and recent_steps to AgentState."""
-        if agent.hooks is None:
-            agent.hooks = AgentHooks()
+    def _ensure_step_sync(self, agent: SchedulerAgentPort, state_id: str) -> None:
+        existing_observer = self._step_sync_observers.get(state_id)
+        if existing_observer is not None:
+            agent.add_step_observer(existing_observer)
+            return
 
-        original_hook = agent.hooks.on_step
-
-        async def scheduler_on_step(step: StepRecord) -> None:
-            if original_hook:
-                await original_hook(step)
+        async def scheduler_step_observer(step: StepRecord) -> None:
             await self._sync_step_to_state(state_id, step)
 
-        agent.hooks.on_step = scheduler_on_step
+        self._step_sync_observers[state_id] = scheduler_step_observer
+        agent.add_step_observer(scheduler_step_observer)
 
     async def _sync_step_to_state(self, state_id: str, step: StepRecord) -> None:
         """Update last_activity_at and rolling recent_steps in AgentState."""
@@ -152,17 +154,19 @@ class SchedulerRunner:
 
             await self._store.append_recent_step(state_id, step_summary)
         except Exception:  # noqa: BLE001 - scheduler hook boundary
-            logger.warning("sync_step_to_state_failed", state_id=state_id, exc_info=True)
+            logger.warning(
+                "sync_step_to_state_failed", state_id=state_id, exc_info=True
+            )
 
     async def run_root_agent(
         self,
-        agent: Agent,
+        agent: SchedulerAgentPort,
         user_input: UserInput,
         session_id: str,
         state: AgentState,
     ) -> None:
         """Run the root agent submitted by the caller."""
-        self._wrap_on_step_hook(agent, state.id)
+        self._ensure_step_sync(agent, state.id)
         await self._execute_agent_run(
             state,
             mode="root",
@@ -255,7 +259,7 @@ class SchedulerRunner:
         state: AgentState,
         mode: AgentRunMode,
         *,
-        agent_loader: Callable[[], Awaitable[Agent | None]],
+        agent_loader: Callable[[], Awaitable[SchedulerAgentPort | None]],
         user_input_loader: Callable[[], Awaitable[UserInput] | UserInput],
         session_id: str,
         error_log: str,
@@ -363,16 +367,14 @@ class SchedulerRunner:
         return user_input
 
     def _constant_agent_loader(
-        self, agent: Agent
-    ) -> Callable[[], Awaitable[Agent]]:
-        async def _loader() -> Agent:
+        self, agent: SchedulerAgentPort
+    ) -> Callable[[], Awaitable[SchedulerAgentPort]]:
+        async def _loader() -> SchedulerAgentPort:
             return agent
 
         return _loader
 
-    def _constant_input_loader(
-        self, user_input: UserInput
-    ) -> Callable[[], UserInput]:
+    def _constant_input_loader(self, user_input: UserInput) -> Callable[[], UserInput]:
         def _loader() -> UserInput:
             return user_input
 
@@ -384,7 +386,7 @@ class SchedulerRunner:
         *,
         missing_log: str,
         missing_message: str | None = None,
-    ) -> Agent | None:
+    ) -> SchedulerAgentPort | None:
         agent = self._coordinator.get_registered_agent(state.id)
         if agent is not None:
             return agent
@@ -501,7 +503,10 @@ class SchedulerRunner:
         if status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED):
             self._coordinator.notify_state_change(state_id)
         elif status == AgentStateStatus.SLEEPING and wake_condition is not ...:
-            if wake_condition is not None and wake_condition.type == WakeType.TASK_SUBMITTED:
+            if (
+                wake_condition is not None
+                and wake_condition.type == WakeType.TASK_SUBMITTED
+            ):
                 self._coordinator.notify_state_change(state_id)
 
     async def _emit_event_to_parent(
@@ -579,7 +584,13 @@ class SchedulerRunner:
             AgentStateStatus.COMPLETED,
             AgentStateStatus.FAILED,
         ):
+            agent = self._coordinator.get_registered_agent(state.id)
             self._coordinator.unregister_agent(state.id)
+            if agent is not None:
+                observer = self._step_sync_observers.pop(state.id, None)
+                if observer is not None:
+                    agent.remove_step_observer(observer)
+                await agent.close()
 
     async def build_wake_message(self, state: AgentState) -> UserInput:
         """Build a wake message with auto-injected child results."""

@@ -16,13 +16,15 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `agiwo/agent/` | Agent 对外入口与运行时领域模型。包含 `inner/` 执行内部实现、`storage/` Run/Session 持久化、`compact/` 上下文压缩能力。包根 `agiwo.agent` 是公开 API，canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
+| `agiwo/agent/` | Agent 对外入口与运行时领域模型。包含 `runtime_tools/` 宿主工具适配层、`trace/` agent trace adapter、`inner/` 执行内部实现、`prompt/` prompt runtime、`tool_auth/` 工具授权运行时、`storage/` Run/Session 持久化。包根 `agiwo.agent` 是公开 API，纯配置模型落在 `config.py`，其余 canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
-| `agiwo/tool/` | Tool 抽象、执行器与缓存、builtin tools、权限管理，以及工具侧存储（如 citation）。 |
+| `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、工具侧授权领域模型（`authz/`）、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
 | `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade，`engine.py` 负责状态机与 tick orchestration，`runner.py` 负责单次 agent cycle 执行，`coordinator.py` 只管进程内协作状态，`control.py` 定义 tools 依赖的窄接口，`store/` 只负责持久化。 |
-| `agiwo/observability/` | Trace/Span 模型、事件到 Trace 的收集、序列化，以及 trace storage 实现。 |
+| `agiwo/observability/` | Trace/Span 模型、查询接口与 trace storage 实现；agent 事件到 Trace 的适配层已收口到 `agiwo/agent/trace/`。 |
 | `agiwo/embedding/` | Embedding 抽象与 factory，包含本地/OpenAI 风格实现。 |
-| `agiwo/skill/` | Skill 的发现、加载、注册、异常定义，以及 `SkillTool` 桥接。 |
+| `agiwo/skill/` | Skill 的发现、路径规则（`config.py`）、加载、注册、异常定义，以及 `SkillTool` 桥接。 |
+| `agiwo/workspace/` | Agent workspace 路径语义、模板/bootstrap、工作区文档读取与变更 token。 |
+| `agiwo/memory/` | 共享 MEMORY 索引/切块/搜索能力，以及 `WorkspaceMemoryService`。 |
 | `agiwo/config/` | SDK 全局配置入口、Provider 枚举与共享设置。 |
 | `agiwo/utils/` | 跨模块运行时工具。`storage_support/` 负责共享 SQLite/Mongo runtime、schema/index 初始化等基础设施。 |
 
@@ -55,8 +57,9 @@
 ### Agent
 
 - `Agent` 是具体类，不是 ABC。
+- 公开构造入口是 `Agent(AgentConfig(...), *, model=..., tools=..., hooks=..., id=...)`；`AgentConfig` 只承载纯配置，不放 live object。
 - 对外执行入口是 `run(...)` 和 `run_stream(...)`；`derive_child(...)` 是当前继承父 Agent 配置生成子 Agent 的标准方式。
-- `Agent` 负责配置持有、默认工具/skill 注入、storage wiring、hook dispatch；核心执行循环在 `agiwo/agent/inner/`。
+- `Agent` 内部分离纯配置、可复用运行时依赖（model / provided tools / hooks）、以及 agent-local runtime state（storage / prompt builder / skill manager）；核心执行循环在 `agiwo/agent/inner/`。
 - `AgentHooks` 是可选 async 回调的 dataclass；当前 hook 覆盖 run、tool、LLM、step/event、memory write/retrieve。
 - `StepRecord` 使用工厂方法创建，不要直接构造。
 
@@ -72,10 +75,13 @@
 
 ### Tool
 
-- `BaseTool` 定义稳定契约：名称、描述、参数 schema、并发安全性、`execute(...) -> ToolResult`。
+- `BaseTool` 定义稳定契约：名称、描述、参数 schema、并发安全性、`execute(..., context: ToolContext) -> ToolResult`。
+- agent 运行时内部统一通过 `AgentRuntimeTool` 执行工具；scheduler 控制型 tools 走 runtime tool 契约，不再把终止控制塞进 `ToolResult`。
+- `AgentTool` / `as_tool()` 属于 `agiwo.agent.runtime_tools`，是 agent runtime adapter，不属于 `agiwo.tool/` core。
 - 生产代码统一通过 `ToolResult.success()/failed()/aborted()/denied()` 构造结果。
 - builtin tools 放在 `agiwo/tool/builtin/`，通过 `@builtin_tool(...)` 注册；`@default_enable` 控制默认自动启用。
 - `bash` 与 `bash_process` 是分离工具；后台任务的巡检/日志/停止/输入属于 `bash_process`。
+- 共享 MEMORY 检索统一通过 `agiwo.memory.WorkspaceMemoryService`，builtin retrieval tool 只是 adapter。
 - citation 等工具侧持久化在 `agiwo/tool/storage/citation/`。
 
 ### Scheduler
@@ -113,6 +119,7 @@
 
 - `console/server/schemas.py` 与 `console/server/response_serialization.py` 只属于 API/SSE 边界。
 - 共享的 Console 领域模型放 `console/server/domain/`。
+- Console 自己持有 API/表单 DTO；不要再把 `Input/Patch` 请求模型塞回 SDK。
 - session identity 相关字段（`current_session_id`、`base_agent_id`、`runtime_agent_id`、`scheduler_state_id`）应通过 `console/server/channels/session_binding.py` 协调，并经 `ChannelChatSessionStore.apply_session_mutation(...)` 原子写入。
 - Console 工具的展示、解析、组装都必须经过 `ConsoleToolCatalog`。
 - Agent 配置写入保持 full replace；不要回到 partial merge / patch DTO 语义。
@@ -174,6 +181,8 @@ uv run pytest tests/ -v
 
 ### Recent Changes
 
+- **2026-03-15**：`Agent` 运行时组装已收口到 `agent.assembly + runtime_state`；scheduler 通过 `agent.scheduler_port` 依赖稳定编排 seam，不再直接依赖 `Agent` 实现细节；trace storage 构造权已移到 `observability.factory`；scheduler store 编解码已收口到 `scheduler.store.codec`；builtin tools 改为显式 `ensure_builtin_tools_loaded()`；`skill.prompt_catalog` 与 `web_reader` 包内子模块用于收窄内部职责。
+- **2026-03-15**：Tool runtime 已分成纯 `BaseTool + ToolContext` 与 agent-side `AgentRuntimeTool`；`AgentTool` 已收口到 `agent.runtime_tools/`，agent trace adapter 已收口到 `agent.trace/`；workspace/memory/prompt/skill 路径规则已拆到独立 owner；compaction 执行逻辑已下沉到 `agent.inner.compaction/`，`tool.permission` 被替换为 `tool.authz/ + agent.tool_auth/`。
 - **2026-03-12**：`agiwo/agent/schema.py` 已删除；公开导出统一收口到 `agiwo.agent`，输入/运行时/compact/memory 模型继续按职责落在独立模块。
 - **2026-03-12**：Scheduler 已按 `facade + engine + runner + coordinator + control + store` 收口；`tool_port.py`、`tool_support.py`、`services/tick_engine.py` 已移除，scheduler tools 统一依赖 `SchedulerControl`。
 - **2026-03-11**：Console 边界继续收敛到 `session_binding`、`ChannelChatSessionStore.apply_session_mutation()`、`FeishuInboundEnvelope`、`ToolReference`、`ConsoleToolCatalog`。
@@ -205,7 +214,7 @@ uv run pytest tests/ -v
 
 - `agent/inner/` 是内部实现，不要从 `agiwo/__init__.py` 暴露，也不要在包外直接依赖。
 - `TYPE_CHECKING` 只用于确实无法通过重构解决的类型环依赖。
-- `ToolExecutor` 缓存是 session 级缓存，只有 `tool.cacheable = True` 才生效。
+- Tool runtime 缓存是 session 级缓存，只有 `tool.cacheable = True` 才生效。
 - Anthropic 有独立实现路径；只有显式 `anthropic-compatible` 场景才按兼容协议处理。
 
 ## Maintaining AGENTS.md

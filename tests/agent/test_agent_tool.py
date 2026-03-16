@@ -2,10 +2,10 @@ from dataclasses import dataclass
 
 import pytest
 
+from agiwo.agent import AgentTool
 from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
 from agiwo.agent.runtime import RunOutput
 from agiwo.agent.stream_channel import StreamChannel
-from agiwo.tool.agent_tool import AgentTool
 
 
 def _make_context() -> ExecutionContext:

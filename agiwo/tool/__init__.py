@@ -1,10 +1,9 @@
 from agiwo.tool.base import BaseTool, ToolDefinition, ToolResult
-from agiwo.tool.agent_tool import AgentTool, as_tool
+from agiwo.tool.context import ToolContext
 
 __all__ = [
     "BaseTool",
     "ToolDefinition",
     "ToolResult",
-    "AgentTool",
-    "as_tool",
+    "ToolContext",
 ]

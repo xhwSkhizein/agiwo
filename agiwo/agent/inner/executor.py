@@ -10,11 +10,13 @@ This module implements the core agent execution loop:
 
 import asyncio
 import time
+from collections.abc import Sequence
 
-from agiwo.agent.compact.compactor import Compactor
 from agiwo.agent.compact_types import CompactMetadata
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.input import ChannelContext
+from agiwo.agent.inner.compaction.runtime import CompactionRuntime
+from agiwo.agent.runtime_tools import RuntimeToolLike
 from agiwo.agent.memory_types import MemoryRecord
 from agiwo.llm.limits import (
     resolve_max_context_window,
@@ -23,6 +25,7 @@ from agiwo.llm.limits import (
 from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.llm_handler import LLMStreamHandler
 from agiwo.agent.inner.message_assembler import MessageAssembler
+from agiwo.agent.inner.tool_runtime import ToolRuntime
 from agiwo.agent.inner.summarizer import (
     DEFAULT_TERMINATION_USER_PROMPT,
     _format_termination_reason,
@@ -35,14 +38,13 @@ from agiwo.agent.runtime import (
     StepRecord,
     TerminationReason,
 )
+from agiwo.agent.scheduler_port import StepObserver
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.session import SessionStorage
 from agiwo.config.settings import settings
 from agiwo.llm.base import Model
 from agiwo.llm.helper import parse_json_tool_args
 from agiwo.agent.execution_context import ExecutionContext
-from agiwo.tool.base import BaseTool
-from agiwo.tool.executor import ToolExecutor
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -63,7 +65,7 @@ class AgentExecutor:
 
     Components:
     - LLMStreamHandler: LLM streaming
-    - ToolExecutor: Tool execution
+    - ToolRuntime: Tool execution
     - Built-in limit checks and summary generation
     """
 
@@ -79,13 +81,14 @@ class AgentExecutor:
     def __init__(
         self,
         model: Model,
-        tools: list[BaseTool],
+        tools: list[RuntimeToolLike],
         emitter: EventEmitter,
         options: AgentOptions | None = None,
         hooks: AgentHooks | None = None,
         run_step_storage: RunStepStorage | None = None,
         session_storage: SessionStorage | None = None,
         root_path: str | None = None,
+        step_observers: Sequence[StepObserver] | None = None,
     ):
         self.model = model
         self.emitter = emitter
@@ -94,20 +97,31 @@ class AgentExecutor:
         self.run_step_storage = run_step_storage
         self.session_storage = session_storage
         self.root_path = root_path or settings.root_path
+        self._step_observers = list(step_observers or [])
         self.max_context_window = resolve_max_context_window(model)
         self.max_input_tokens_per_call = resolve_max_input_tokens_per_call(
             self.options.max_input_tokens_per_call, model
         )
 
         self.llm_handler = LLMStreamHandler(model)
-        self.tool_executor = ToolExecutor(tools=tools)
+        self.tool_runtime = ToolRuntime(tools=tools)
 
-        self._tool_schemas = [t.to_openai_schema() for t in tools] if tools else None
+        self._tool_schemas = [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.get_definition().name,
+                    "description": tool.get_definition().description,
+                    "parameters": tool.get_definition().parameters,
+                },
+            }
+            for tool in tools
+        ] if tools else None
 
         # Compactor (created only when session storage is enabled)
-        self._compactor: Compactor | None = None
+        self._compactor: CompactionRuntime | None = None
         if session_storage is not None:
-            self._compactor = Compactor(
+            self._compactor = CompactionRuntime(
                 llm_handler=self.llm_handler,
                 emitter=emitter,
                 session_storage=session_storage,
@@ -224,70 +238,114 @@ class AgentExecutor:
         pending_tool_calls: list[dict] | None,
         abort_signal: AbortSignal | None,
     ) -> None:
-        # Resume pending tools from previous run
-        if pending_tool_calls:
-            await self._execute_tools(state, pending_tool_calls, abort_signal)
-            if state.termination_reason is not None:
+        if await self._resume_pending_tool_calls(state, pending_tool_calls, abort_signal):
+            return
+
+        while state.termination_reason is None:
+            if not await self._run_cycle(state, abort_signal):
                 return
 
-        # Main agent loop
-        while True:
-            # Check non-recoverable limits first (steps, timeout)
-            if reason := self._check_non_recoverable_limits(state):
-                state.termination_reason = reason
-                break
+    async def _resume_pending_tool_calls(
+        self,
+        state: RunState,
+        pending_tool_calls: list[dict] | None,
+        abort_signal: AbortSignal | None,
+    ) -> bool:
+        if not pending_tool_calls:
+            return False
 
-            # Try compact first (compact reduces tokens and should count into run cost)
-            if await self._maybe_compact(state, abort_signal):
-                logger.info(
-                    "compact_triggered",
-                    run_id=state.context.run_id,
-                    before_messages=len(state.messages),
-                )
-                if (
-                    self.options.max_run_cost is not None
-                    and state.token_cost >= self.options.max_run_cost
-                ):
-                    state.termination_reason = TerminationReason.MAX_RUN_COST
-                    break
-                # After compact, continue loop to re-check limits
-                continue
+        await self._execute_tools(state, pending_tool_calls, abort_signal)
+        return state.termination_reason is not None
 
-            # Drain steering queue before LLM call
-            self._drain_steering_queue(state)
+    async def _run_cycle(
+        self,
+        state: RunState,
+        abort_signal: AbortSignal | None,
+    ) -> bool:
+        reason = self._check_non_recoverable_limits(state)
+        if reason is not None:
+            state.termination_reason = reason
+            return False
 
-            # LLM call (with hooks)
-            state.current_step += 1
-            if self.hooks.on_before_llm_call:
-                modified = await self.hooks.on_before_llm_call(state.messages)
-                if modified is not None:
-                    state.messages = modified
+        if await self._handle_compaction(state, abort_signal):
+            return state.termination_reason is None
 
-            step, llm_context = await self.llm_handler.stream_assistant_step(
-                state, self.emitter.emit_step_delta, abort_signal
-            )
-            await self.emitter.emit_step_completed(step, llm=llm_context)
-            state.track_step(step)
-            state.add_token_cost(step.metrics.token_cost if step.metrics else 0.0)
+        step, llm_context = await self._stream_next_step(state, abort_signal)
+        if self._apply_post_llm_limits(state, step, llm_context):
+            return False
+        return await self._handle_step_tools(state, step, abort_signal)
 
-            if self.hooks.on_after_llm_call:
-                await self.hooks.on_after_llm_call(step)
-            if self.hooks.on_step:
-                await self.hooks.on_step(step)
+    async def _stream_next_step(
+        self,
+        state: RunState,
+        abort_signal: AbortSignal | None,
+    ) -> tuple[StepRecord, LLMCallContext]:
+        self._drain_steering_queue(state)
 
-            if reason := self._check_post_llm_limits(state, step, llm_context):
-                state.termination_reason = reason
-                return
+        state.current_step += 1
+        if self.hooks.on_before_llm_call:
+            modified = await self.hooks.on_before_llm_call(state.messages)
+            if modified is not None:
+                state.messages = modified
 
-            had_tool_calls = bool(step.tool_calls)
-            if had_tool_calls:
-                await self._execute_tools(state, step.tool_calls or [], abort_signal)
-                if state.termination_reason is not None:
-                    return
+        step, llm_context = await self.llm_handler.stream_assistant_step(
+            state, self.emitter.emit_step_delta, abort_signal
+        )
+        await self.emitter.emit_step_completed(step, llm=llm_context)
+        state.track_step(step)
+        state.add_token_cost(step.metrics.token_cost if step.metrics else 0.0)
 
-            if not had_tool_calls:
-                state.termination_reason = TerminationReason.COMPLETED
-                return  # Normal completion
+        if self.hooks.on_after_llm_call:
+            await self.hooks.on_after_llm_call(step)
+        if self.hooks.on_step:
+            await self.hooks.on_step(step)
+        await self._notify_step_observers(step)
+        return step, llm_context
+
+    def _apply_post_llm_limits(
+        self,
+        state: RunState,
+        step: StepRecord,
+        llm_context: LLMCallContext,
+    ) -> bool:
+        reason = self._check_post_llm_limits(state, step, llm_context)
+        if reason is None:
+            return False
+        state.termination_reason = reason
+        return True
+
+    async def _handle_step_tools(
+        self,
+        state: RunState,
+        step: StepRecord,
+        abort_signal: AbortSignal | None,
+    ) -> bool:
+        if step.tool_calls:
+            await self._execute_tools(state, step.tool_calls, abort_signal)
+            return state.termination_reason is None
+
+        state.termination_reason = TerminationReason.COMPLETED
+        return False
+
+    async def _handle_compaction(
+        self,
+        state: RunState,
+        abort_signal: AbortSignal | None,
+    ) -> bool:
+        if not await self._maybe_compact(state, abort_signal):
+            return False
+
+        logger.info(
+            "compact_triggered",
+            run_id=state.context.run_id,
+            before_messages=len(state.messages),
+        )
+        if (
+            self.options.max_run_cost is not None
+            and state.token_cost >= self.options.max_run_cost
+        ):
+            state.termination_reason = TerminationReason.MAX_RUN_COST
+        return True
 
     # ───────────────────────────────────────────────────────────────────
     # Helpers
@@ -308,7 +366,7 @@ class AgentExecutor:
         while not queue.empty():
             try:
                 parts.append(str(queue.get_nowait()))
-            except Exception:
+            except asyncio.QueueEmpty:
                 break
 
         if not parts:
@@ -348,11 +406,12 @@ class AgentExecutor:
                 if modified is not None:
                     tc["function"]["arguments"] = modified
 
-        results = await self.tool_executor.execute_batch(
+        outcomes = await self.tool_runtime.execute_batch(
             tool_calls, context=state.context, abort_signal=abort_signal
         )
 
-        for tc, result in zip(tool_calls, results):
+        for tc, outcome in zip(tool_calls, outcomes):
+            result = outcome.result
             # After-tool hook
             if self.hooks.on_after_tool_call:
                 fn = tc.get("function", {})
@@ -377,10 +436,11 @@ class AgentExecutor:
             state.track_step(step)
             if self.hooks.on_step:
                 await self.hooks.on_step(step)
+            await self._notify_step_observers(step)
 
-        for result in results:
-            if result.termination_reason is not None:
-                state.termination_reason = result.termination_reason
+        for outcome in outcomes:
+            if outcome.termination_reason is not None:
+                state.termination_reason = outcome.termination_reason
                 return
 
     def _check_non_recoverable_limits(self, state: RunState) -> TerminationReason | None:
@@ -501,6 +561,10 @@ class AgentExecutor:
             tokens=step.metrics.total_tokens if step.metrics else 0,
         )
 
+    async def _notify_step_observers(self, step: StepRecord) -> None:
+        for observer in self._step_observers:
+            await observer(step)
+
     # ───────────────────────────────────────────────────────────────────
     # Compact
     # ───────────────────────────────────────────────────────────────────
@@ -549,14 +613,14 @@ class AgentExecutor:
                 )
                 return True
 
-            except Exception as e:
-                last_error = e
+            except Exception as error:  # noqa: BLE001 - compaction retries guard the runtime boundary
+                last_error = error
                 logger.warning(
                     "compact_attempt_failed",
                     run_id=state.context.run_id,
                     attempt=attempt + 1,
                     max_attempts=retry_count + 1,
-                    error=str(e),
+                    error=str(error),
                 )
                 if attempt < retry_count:
                     continue

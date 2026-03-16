@@ -6,9 +6,9 @@ from datetime import datetime, timedelta, timezone
 from typing import AsyncIterator
 from uuid import uuid4
 
-from agiwo.agent.agent import Agent
 from agiwo.agent.input import UserInput
 from agiwo.agent.input_codec import extract_text
+from agiwo.agent.scheduler_port import SchedulerAgentPort
 from agiwo.agent.runtime import RunOutput, TerminationReason
 from agiwo.scheduler.control import SchedulerControl
 from agiwo.scheduler.coordinator import SchedulerCoordinator
@@ -28,8 +28,9 @@ from agiwo.scheduler.models import (
     to_seconds,
 )
 from agiwo.scheduler.runner import SchedulerRunner
+from agiwo.scheduler.store.codec import serialize_child_agent_config_overrides
 from agiwo.scheduler.store import AgentStateStorage
-from agiwo.tool.base import AgentProcessProbe
+from agiwo.tool.process import AgentProcessRegistry
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -59,8 +60,11 @@ class SchedulerEngine(SchedulerControl):
     def runner(self) -> SchedulerRunner:
         return self._runner
 
-    def get_registered_agent(self, state_id: str) -> Agent | None:
-        return self._coordinator.get_registered_agent(state_id)
+    def get_registered_agent(self, state_id: str):
+        agent = self._coordinator.get_registered_agent(state_id)
+        if agent is None:
+            return None
+        return agent.unwrap_agent()
 
     def set_scheduling_tools(self, tools: list) -> None:
         """Register the scheduler-managed tool set for agent preparation."""
@@ -68,7 +72,7 @@ class SchedulerEngine(SchedulerControl):
 
     async def run(
         self,
-        agent: Agent,
+        agent: SchedulerAgentPort,
         user_input: UserInput,
         *,
         session_id: str | None = None,
@@ -87,7 +91,7 @@ class SchedulerEngine(SchedulerControl):
 
     async def submit(
         self,
-        agent: Agent,
+        agent: SchedulerAgentPort,
         user_input: UserInput,
         *,
         session_id: str | None = None,
@@ -125,7 +129,12 @@ class SchedulerEngine(SchedulerControl):
             self._coordinator.set_abort_signal(state.id, abort_signal)
 
         task = asyncio.create_task(
-            self._runner.run_root_agent(agent, user_input, resolved_session_id, state)
+            self._runner.run_root_agent(
+                agent,
+                user_input,
+                resolved_session_id,
+                state,
+            )
         )
         self._coordinator.track_active_task(task)
         return state.id
@@ -135,13 +144,15 @@ class SchedulerEngine(SchedulerControl):
         state_id: str,
         task: UserInput,
         *,
-        agent: Agent | None = None,
+        agent: SchedulerAgentPort | None = None,
     ) -> None:
         state = await self._store.get_state(state_id)
         if state is None:
             raise RuntimeError(f"Agent state '{state_id}' not found")
         if not state.is_persistent:
-            raise RuntimeError(f"Agent '{state_id}' is not persistent. Use submit() instead.")
+            raise RuntimeError(
+                f"Agent '{state_id}' is not persistent. Use submit() instead."
+            )
 
         if state.status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED):
             await self._store.update_status(state_id, AgentStateStatus.SLEEPING)
@@ -172,7 +183,7 @@ class SchedulerEngine(SchedulerControl):
 
     async def submit_and_subscribe(
         self,
-        agent: Agent,
+        agent: SchedulerAgentPort,
         user_input: UserInput,
         *,
         session_id: str | None = None,
@@ -196,7 +207,10 @@ class SchedulerEngine(SchedulerControl):
                 persistent=persistent,
                 agent_config_id=agent_config_id,
             )
-            async for output in self._coordinator.consume_output_channel(agent.id, timeout):
+            async for output in self._coordinator.consume_output_channel(
+                agent.id,
+                timeout,
+            ):
                 yield output
         finally:
             self._coordinator.close_output_channel(agent.id)
@@ -206,7 +220,7 @@ class SchedulerEngine(SchedulerControl):
         state_id: str,
         task: UserInput,
         *,
-        agent: Agent | None = None,
+        agent: SchedulerAgentPort | None = None,
         timeout: float | None = None,
         include_child_outputs: bool = True,
     ) -> AsyncIterator[SchedulerOutput]:
@@ -217,7 +231,9 @@ class SchedulerEngine(SchedulerControl):
 
         try:
             await self.submit_task(state_id, task, agent=agent)
-            async for output in self._coordinator.consume_output_channel(state_id, timeout):
+            async for output in self._coordinator.consume_output_channel(
+                state_id, timeout
+            ):
                 yield output
         finally:
             self._coordinator.close_output_channel(state_id)
@@ -312,10 +328,8 @@ class SchedulerEngine(SchedulerControl):
             agent = self._coordinator.get_registered_agent(state_id)
             if agent is None:
                 return False
-            queue = agent.get_steering_queue()
-            if queue is None:
+            if not await agent.steer(message):
                 return False
-            await queue.put(message)
             logger.info("steer_queued", state_id=state_id)
             return True
 
@@ -351,15 +365,17 @@ class SchedulerEngine(SchedulerControl):
         logger.info("scheduler_shutdown", state_id=state_id)
         return True
 
-    def prepare_agent(self, agent: Agent, scheduling_tools: list | None = None) -> None:
+    def prepare_agent(
+        self,
+        agent: SchedulerAgentPort,
+        scheduling_tools: list | None = None,
+    ) -> None:
         """Inject scheduling tools into agent and register it in coordinator."""
-        tools_to_inject = scheduling_tools if scheduling_tools is not None else self._scheduling_tools
-        existing_names = {tool.get_name() for tool in agent.tools}
-        for tool in tools_to_inject:
-            if tool.get_name() not in existing_names:
-                agent.tools.append(tool)
-        if agent.options is not None:
-            agent.options.enable_termination_summary = True
+        tools_to_inject = (
+            scheduling_tools if scheduling_tools is not None else self._scheduling_tools
+        )
+        agent.install_runtime_tools(list(tools_to_inject))
+        agent.set_termination_summary_enabled(True)
         self._coordinator.register_agent(agent)
 
     async def tick(self) -> None:
@@ -387,7 +403,10 @@ class SchedulerEngine(SchedulerControl):
         if status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED):
             self._coordinator.notify_state_change(state_id)
         elif status == AgentStateStatus.SLEEPING and wake_condition is not ...:
-            if wake_condition is not None and wake_condition.type == WakeType.TASK_SUBMITTED:
+            if (
+                wake_condition is not None
+                and wake_condition.type == WakeType.TASK_SUBMITTED
+            ):
                 self._coordinator.notify_state_change(state_id)
 
     async def _recursive_cancel(self, state_id: str, reason: str) -> None:
@@ -626,10 +645,12 @@ class SchedulerEngine(SchedulerControl):
             raise ValueError(f"Spawn rejected: {rejection}")
 
         child_id = custom_child_id or f"{parent_agent_id}_{uuid4().hex[:5]}"
-        config_overrides = ChildAgentConfigOverrides(
-            instruction=instruction,
-            system_prompt=system_prompt,
-        ).to_dict()
+        config_overrides = serialize_child_agent_config_overrides(
+            ChildAgentConfigOverrides(
+                instruction=instruction,
+                system_prompt=system_prompt,
+            )
+        )
         state = AgentState(
             id=child_id,
             session_id=session_id,
@@ -704,7 +725,7 @@ class SchedulerEngine(SchedulerControl):
             return []
 
         for tool in agent.tools:
-            if not isinstance(tool, AgentProcessProbe):
+            if not isinstance(tool, AgentProcessRegistry):
                 continue
             try:
                 return await tool.list_agent_processes(target_id, state="running")
@@ -748,8 +769,8 @@ class SchedulerEngine(SchedulerControl):
 
     def age_seconds(self, timestamp: datetime, *, now: datetime | None = None) -> int:
         current = now or datetime.now(timezone.utc)
-        normalized = timestamp if timestamp.tzinfo else timestamp.replace(
-            tzinfo=timezone.utc
+        normalized = (
+            timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=timezone.utc)
         )
         return int((current - normalized).total_seconds())
 

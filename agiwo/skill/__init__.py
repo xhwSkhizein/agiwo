@@ -9,6 +9,11 @@ to optimize context usage.
 from agiwo.skill.exceptions import SkillError, SkillNotFoundError, SkillParseError
 from agiwo.skill.loader import SkillContent, SkillLoader
 from agiwo.skill.manager import SkillManager
+from agiwo.skill.prompt_catalog import (
+    SkillPromptCatalog,
+    SkillPromptProvider,
+    SkillPromptSnapshot,
+)
 from agiwo.skill.skill_tool import SkillTool
 from agiwo.skill.registry import SkillMetadata, SkillRegistry
 
@@ -23,4 +28,7 @@ __all__ = [
     "SkillLoader",
     "SkillTool",
     "SkillManager",
+    "SkillPromptCatalog",
+    "SkillPromptProvider",
+    "SkillPromptSnapshot",
 ]

@@ -6,7 +6,10 @@ import pytest
 from datetime import datetime
 
 from agiwo.agent import CompactMetadata, CompactResult
-from agiwo.agent.compact.prompt import DEFAULT_COMPACT_PROMPT, DEFAULT_ASSISTANT_RESPONSE
+from agiwo.agent.inner.compaction.prompt import (
+    DEFAULT_ASSISTANT_RESPONSE,
+    DEFAULT_COMPACT_PROMPT,
+)
 from agiwo.agent.storage.session import InMemorySessionStorage
 
 

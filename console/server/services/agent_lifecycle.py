@@ -10,16 +10,17 @@ Consolidates all Agent construction paths:
 import json
 from typing import Any
 
-from agiwo.agent import Agent, StreamEvent, create_agent
-from agiwo.agent.options import AgentOptions, AgentOptionsInput
+from agiwo.agent import Agent, AgentConfig, StreamEvent
+from agiwo.agent.runtime_tools import RuntimeToolLike
+from agiwo.agent.options import AgentOptions
 from agiwo.agent.serialization import serialize_stream_event_payload
 from agiwo.llm.base import Model
 from agiwo.llm import create_model_from_dict
-from agiwo.llm.factory import ModelParamsInput
 from agiwo.scheduler.models import AgentState
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.config import ConsoleConfig
+from server.domain.agent_configs import AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import (
     build_run_step_storage_config,
@@ -83,6 +84,8 @@ async def build_agent(
     config: AgentConfigRecord,
     console_config: ConsoleConfig,
     registry: AgentRegistry,
+    *,
+    id: str | None = None,
     _building: set[str] | None = None,
 ) -> Agent:
     """Build an Agent instance from persisted config.
@@ -98,7 +101,7 @@ async def build_agent(
     model = build_model(config)
     options = build_agent_options(config, console_config)
 
-    async def _build_agent_tool(ref: AgentToolRef):
+    async def _build_agent_tool(ref: AgentToolRef) -> RuntimeToolLike | None:
         child_config = await registry.get_agent(ref.agent_id)
         if child_config is None:
             return None
@@ -106,7 +109,7 @@ async def build_agent(
             child_config,
             console_config,
             registry,
-            _building.copy(),
+            _building=_building.copy(),
         )
         return build_agent_tool(ref, child_agent)
 
@@ -116,13 +119,17 @@ async def build_agent(
         build_agent_tool=_build_agent_tool,
     )
 
-    return create_agent(
+    agent_config = AgentConfig(
         name=config.name,
         description=config.description,
-        model=model,
-        tools=tools or None,
         system_prompt=config.system_prompt,
         options=options,
+    )
+    return Agent(
+        agent_config,
+        model=model,
+        tools=tools or None,
+        id=id,
     )
 
 
@@ -154,9 +161,7 @@ async def rehydrate_agent(
             f"config '{config_id}' not found in registry"
         )
 
-    agent = await build_agent(config, console_config, registry)
-    agent.id = state.id
-    return agent
+    return await build_agent(config, console_config, registry, id=state.id)
 
 
 # ── Resume ────────────────────────────────────────────────────────────

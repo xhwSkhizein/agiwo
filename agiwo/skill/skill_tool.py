@@ -8,12 +8,12 @@ skills by loading their complete SKILL.md content into the context.
 import time
 from typing import Any
 
-from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.skill.exceptions import SkillNotFoundError
 from agiwo.skill.loader import SkillLoader
 from agiwo.skill.registry import SkillRegistry
+from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.utils.logging import get_logger
 
 
@@ -77,7 +77,7 @@ class SkillTool(BaseTool):
     async def execute(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         """

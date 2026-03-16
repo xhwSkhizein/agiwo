@@ -4,7 +4,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 
-from agiwo.agent.agent import Agent
+from agiwo.agent.scheduler_port import SchedulerAgentPort
 from agiwo.scheduler.models import AgentState, OutputChannelState, SchedulerOutput
 from agiwo.utils.abort_signal import AbortSignal
 
@@ -14,7 +14,7 @@ class SchedulerCoordinator:
 
     def __init__(self) -> None:
         self._active_tasks: set[asyncio.Task] = set()
-        self._agents: dict[str, Agent] = {}
+        self._agents: dict[str, SchedulerAgentPort] = {}
         self._abort_signals: dict[str, AbortSignal] = {}
         self._state_events: dict[str, asyncio.Event] = {}
         self._dispatched_state_ids: set[str] = set()
@@ -28,13 +28,13 @@ class SchedulerCoordinator:
     def dispatched_state_ids(self) -> set[str]:
         return self._dispatched_state_ids
 
-    def register_agent(self, agent: Agent) -> None:
+    def register_agent(self, agent: SchedulerAgentPort) -> None:
         self._agents[agent.id] = agent
 
     def unregister_agent(self, state_id: str) -> None:
         self._agents.pop(state_id, None)
 
-    def get_registered_agent(self, state_id: str) -> Agent | None:
+    def get_registered_agent(self, state_id: str) -> SchedulerAgentPort | None:
         return self._agents.get(state_id)
 
     def set_abort_signal(self, state_id: str, signal: AbortSignal) -> None:

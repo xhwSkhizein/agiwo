@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from agiwo.agent import TerminationReason, extract_text, create_agent
+from agiwo.agent import Agent, AgentConfig, AgentHooks, TerminationReason, extract_text
 from agiwo.agent.options import AgentOptions
+from agiwo.agent.scheduler_port import adapt_scheduler_agent
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.scheduler.models import (
@@ -70,6 +71,46 @@ async def cleanup_agiwo_folders():
 def _fast_config(**kwargs) -> SchedulerConfig:
     """SchedulerConfig with short check_interval for tests."""
     return SchedulerConfig(check_interval=0.1, **kwargs)
+
+
+class _FakeEncoding:
+    def encode(self, text: str) -> list[int]:
+        return [ord(char) for char in text]
+
+
+async def _noop_memory_retrieve(*_args, **_kwargs) -> list:
+    return []
+
+
+@pytest.fixture(autouse=True)
+def _patch_tiktoken_encoding(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "agiwo.llm.usage_resolver._resolve_encoding",
+        lambda _model_name: _FakeEncoding(),
+    )
+
+
+def _make_agent(
+    *,
+    name: str,
+    model: Model,
+    id: str,
+    tools: list | None = None,
+    system_prompt: str = "",
+    options: AgentOptions | None = None,
+) -> Agent:
+    return Agent(
+        AgentConfig(
+            name=name,
+            description="test" if name != "parent" else "parent agent",
+            system_prompt=system_prompt,
+            options=options or AgentOptions(),
+        ),
+        model=model,
+        tools=tools,
+        hooks=AgentHooks(on_memory_retrieve=_noop_memory_retrieve),
+        id=id,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -149,7 +190,7 @@ class TestSchedulerPrepareAgent:
     async def test_prepare_injects_tools(self):
         scheduler = Scheduler()
         model = MockModel()
-        agent = create_agent(name="test", description="test", model=model, id="test", tools=[])
+        agent = _make_agent(name="test", model=model, id="test", tools=[])
 
         scheduler._engine.prepare_agent(agent)
 
@@ -163,11 +204,12 @@ class TestSchedulerPrepareAgent:
     async def test_prepare_is_idempotent(self):
         scheduler = Scheduler()
         model = MockModel()
-        agent = create_agent(name="test", description="test", model=model, id="test", tools=[])
+        agent = _make_agent(name="test", model=model, id="test", tools=[])
 
-        scheduler._engine.prepare_agent(agent)
+        agent_port = adapt_scheduler_agent(agent)
+        scheduler._engine.prepare_agent(agent_port)
         count_after_first = len(agent.tools)
-        scheduler._engine.prepare_agent(agent)
+        scheduler._engine.prepare_agent(agent_port)
         assert len(agent.tools) == count_after_first
         await scheduler.stop()
 
@@ -175,9 +217,10 @@ class TestSchedulerPrepareAgent:
     async def test_prepare_registers_agent(self):
         scheduler = Scheduler()
         model = MockModel()
-        agent = create_agent(name="test", description="test", model=model, id="test", tools=[])
+        agent = _make_agent(name="test", model=model, id="test", tools=[])
 
-        scheduler._engine.prepare_agent(agent)
+        agent_port = adapt_scheduler_agent(agent)
+        scheduler._engine.prepare_agent(agent_port)
         assert scheduler.get_registered_agent("test") is agent
         await scheduler.stop()
 
@@ -186,8 +229,9 @@ class TestSchedulerPrepareAgent:
         scheduler = Scheduler()
         model = MockModel()
         opts = AgentOptions(enable_termination_summary=False)
-        agent = create_agent(name="test", description="test", model=model, id="test", tools=[], options=opts)
-        scheduler._engine.prepare_agent(agent)
+        agent = _make_agent(name="test", model=model, id="test", tools=[], options=opts)
+        agent_port = adapt_scheduler_agent(agent)
+        scheduler._engine.prepare_agent(agent_port)
         assert agent.options.enable_termination_summary is True
         await scheduler.stop()
 
@@ -197,7 +241,7 @@ class TestSchedulerSubmit:
     async def test_submit_creates_state(self):
         async with Scheduler(_fast_config()) as scheduler:
             model = MockModel([_simple_completion("Hello")])
-            agent = create_agent(name="test", description="test", model=model, id="test", tools=[])
+            agent = _make_agent(name="test", model=model, id="test", tools=[])
 
             state_id = await scheduler.submit(agent, "Hello")
             assert state_id == "test"
@@ -213,7 +257,7 @@ class TestSchedulerSubmit:
     async def test_submit_persistent(self):
         async with Scheduler(_fast_config()) as scheduler:
             model = MockModel([_simple_completion("Hello")])
-            agent = create_agent(name="persist", description="test", model=model, id="persist", tools=[])
+            agent = _make_agent(name="persist", model=model, id="persist", tools=[])
 
             state_id = await scheduler.submit(agent, "Hello", persistent=True)
             state = await scheduler._store.get_state(state_id)
@@ -236,7 +280,7 @@ class TestSchedulerSubmit:
         await scheduler._store.save_state(state)
 
         model = MockModel()
-        agent = create_agent(name="test", description="test", model=model, id="test", tools=[])
+        agent = _make_agent(name="test", model=model, id="test", tools=[])
 
         with pytest.raises(RuntimeError, match="already active"):
             await scheduler.submit(agent, "Another task")
@@ -249,7 +293,7 @@ class TestSchedulerSimpleCompletion:
     async def test_run_simple_agent(self):
         """Agent completes without sleeping — simplest case."""
         model = MockModel([_simple_completion("The answer is 42")])
-        agent = create_agent(name="simple", description="test", model=model, id="simple", tools=[])
+        agent = _make_agent(name="simple", model=model, id="simple", tools=[])
 
         async with Scheduler(_fast_config()) as scheduler:
             result = await scheduler.run(
@@ -265,15 +309,15 @@ class TestSchedulerCreateChildAgent:
     async def test_create_child_copies_config(self):
         scheduler = Scheduler()
         model = MockModel()
-        parent = create_agent(
+        parent = _make_agent(
             name="parent",
-            description="parent agent",
             model=model,
             id="parent",
             tools=[],
             system_prompt="Be helpful",
         )
-        scheduler._engine.prepare_agent(parent)
+        parent_port = adapt_scheduler_agent(parent)
+        scheduler._engine.prepare_agent(parent_port)
 
         state = AgentState(
             id="child-1",
@@ -287,6 +331,10 @@ class TestSchedulerCreateChildAgent:
         assert child.id == "child-1"
         assert child.name == "parent"
         assert child.model is parent.model
+        assert child.hooks is not parent.hooks
+        assert child.run_step_storage is not parent.run_step_storage
+        assert child.session_storage is not parent.session_storage
+        assert child._runtime_state.prompt_runtime is not parent._runtime_state.prompt_runtime
         # Check child inherited parent's system prompt (get_effective_system_prompt triggers build)
         child_prompt = await child.get_effective_system_prompt()
         assert "Be helpful" in child_prompt
@@ -300,15 +348,15 @@ class TestSchedulerCreateChildAgent:
     async def test_create_child_with_overrides(self):
         scheduler = Scheduler()
         model = MockModel()
-        parent = create_agent(
+        parent = _make_agent(
             name="parent",
-            description="parent agent",
             model=model,
             id="parent",
             tools=[],
             system_prompt="Default prompt",
         )
-        scheduler._engine.prepare_agent(parent)
+        parent_port = adapt_scheduler_agent(parent)
+        scheduler._engine.prepare_agent(parent_port)
 
         state = AgentState(
             id="child-1",
@@ -331,15 +379,15 @@ class TestSchedulerCreateChildAgent:
     async def test_create_child_with_system_prompt_override(self):
         scheduler = Scheduler()
         model = MockModel()
-        parent = create_agent(
+        parent = _make_agent(
             name="parent",
-            description="parent agent",
             model=model,
             id="parent",
             tools=[],
             system_prompt="Default prompt",
         )
-        scheduler._engine.prepare_agent(parent)
+        parent_port = adapt_scheduler_agent(parent)
+        scheduler._engine.prepare_agent(parent_port)
 
         state = AgentState(
             id="child-1",
@@ -453,7 +501,7 @@ class TestSchedulerRunnerCleanup:
     async def test_timeout_wake_cleans_abort_signal(self):
         scheduler = Scheduler()
         model = MockModel([_simple_completion("Recovered after timeout")])
-        agent = create_agent(name="root", description="test", model=model, id="root", tools=[])
+        agent = _make_agent(name="root", model=model, id="root", tools=[])
         scheduler._engine.prepare_agent(agent)
         state = AgentState(
             id="root",

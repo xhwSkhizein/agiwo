@@ -11,9 +11,12 @@ from agiwo.agent import (
     UserMessage,
     serialize_user_input,
 )
-from agiwo.agent.options import AgentOptionsPatch, sanitize_agent_options_data
-from agiwo.llm.factory import ModelParamsPatch
 from agiwo.scheduler.models import AgentState, AgentStateStatus, WakeCondition, WakeType
+from server.domain.agent_configs import (
+    AgentOptionsInput,
+    ModelParamsInput,
+    sanitize_agent_options_data,
+)
 
 from server.response_serialization import (
     state_to_response,
@@ -101,14 +104,21 @@ def test_scheduler_state_response_normalizes_serialized_user_input() -> None:
 
 def test_agent_config_schema_and_registry_share_normalization_policy() -> None:
     option_input = {"skills_dirs": " ./skills "}
-    option_schema = AgentOptionsPatch.model_validate(option_input)
+    option_schema = AgentOptionsInput.model_validate(option_input)
     model_param_input = {
         "base_url": " https://api.example.com/v1 ",
         "api_key_env_name": " TEST_API_KEY ",
     }
-    model_param_schema = ModelParamsPatch.model_validate(model_param_input)
+    model_param_schema = ModelParamsInput.model_validate(model_param_input)
 
-    assert sanitize_agent_options_data(option_input) == option_schema.model_dump(exclude_none=True)
-    assert sanitize_model_params_data(model_param_input, reject_plain_api_key=False) == model_param_schema.model_dump(
-        exclude_none=True
+    assert sanitize_agent_options_data(option_input) == option_schema.model_dump(
+        exclude_none=True,
+        exclude_defaults=True,
+    )
+    assert sanitize_model_params_data(
+        model_param_input,
+        reject_plain_api_key=False,
+    ) == model_param_schema.model_dump(
+        exclude_none=True,
+        exclude_defaults=True,
     )

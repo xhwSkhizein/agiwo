@@ -9,12 +9,13 @@ import os
 import pytest
 import tempfile
 
-from agiwo import AgentOptions, create_agent
+from agiwo import Agent, AgentConfig, AgentOptions
 from agiwo.agent import Run, RunMetrics, RunStatus
 from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.factory import StorageFactory
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
+from agiwo.observability.factory import create_trace_storage
 from agiwo.observability.memory_store import InMemoryTraceStorage
 from agiwo.observability.sqlite_store import SQLiteTraceStorage
 from agiwo.observability.trace import SpanStatus, Trace
@@ -98,12 +99,12 @@ class TestTraceStorageFactory:
 
     def test_create_none_storage(self):
         config = TraceStorageConfig(storage_type=None)
-        storage = StorageFactory.create_trace_storage(config)
+        storage = create_trace_storage(config)
         assert storage is None
 
     def test_create_memory_storage(self):
         config = TraceStorageConfig(storage_type="memory")
-        storage = StorageFactory.create_trace_storage(config)
+        storage = create_trace_storage(config)
         assert isinstance(storage, InMemoryTraceStorage)
 
     def test_create_sqlite_storage(self):
@@ -113,19 +114,19 @@ class TestTraceStorageFactory:
                 storage_type="sqlite",
                 config={"db_path": db_path, "collection_name": "test_traces"},
             )
-            storage = StorageFactory.create_trace_storage(config)
+            storage = create_trace_storage(config)
             assert isinstance(storage, SQLiteTraceStorage)
             assert storage.db_path == db_path
 
     def test_create_unknown_storage_type(self):
         config = TraceStorageConfig(storage_type="unknown")  # type: ignore
         with pytest.raises(ValueError, match="Unknown trace_storage_type"):
-            StorageFactory.create_trace_storage(config)
+            create_trace_storage(config)
 
     @pytest.mark.asyncio
     async def test_memory_storage_works(self):
         config = TraceStorageConfig(storage_type="memory")
-        storage = StorageFactory.create_trace_storage(config)
+        storage = create_trace_storage(config)
 
         trace = Trace(trace_id="test-trace", agent_id="test-agent")
         await storage.save_trace(trace)
@@ -137,7 +138,7 @@ class TestTraceStorageFactory:
     @pytest.mark.asyncio
     async def test_memory_storage_query_and_recent_follow_shared_contract(self):
         config = TraceStorageConfig(storage_type="memory")
-        storage = StorageFactory.create_trace_storage(config)
+        storage = create_trace_storage(config)
 
         base_time = datetime(2026, 3, 9, 10, 0, 0)
         traces = [
@@ -198,7 +199,7 @@ class TestTraceStorageFactory:
                 storage_type="sqlite",
                 config={"db_path": db_path},
             )
-            storage = StorageFactory.create_trace_storage(config)
+            storage = create_trace_storage(config)
             assert not storage._initialized
 
             trace = Trace(trace_id="test-trace", agent_id="test-agent")
@@ -217,7 +218,7 @@ class TestTraceStorageFactory:
                 storage_type="sqlite",
                 config={"db_path": db_path, "collection_name": "test_traces"},
             )
-            storage = StorageFactory.create_trace_storage(config)
+            storage = create_trace_storage(config)
 
             base_time = datetime(2026, 3, 9, 10, 0, 0)
             for idx in range(3):
@@ -240,26 +241,31 @@ class TestAgentIntegration:
 
     def test_agent_storage_created_in_init(self):
         """Storage is created synchronously in Agent.__init__."""
-        agent = create_agent(
-            name="test-agent",
-            description="Test",
+        agent = Agent(
+            AgentConfig(
+                name="test-agent",
+                description="Test",
+                options=AgentOptions(),
+            ),
             model=None,  # type: ignore
-            options=AgentOptions(),
         )
 
         assert agent.run_step_storage is not None
         assert isinstance(agent.run_step_storage, InMemoryRunStepStorage)
         assert agent.trace_storage is None  # default: tracing disabled
+        assert not hasattr(agent, "system_prompt")
 
     def test_agent_with_trace_storage(self):
         """Agent creates trace storage when configured."""
-        agent = create_agent(
-            name="test-agent",
-            description="Test",
-            model=None,  # type: ignore
-            options=AgentOptions(
-                trace_storage=TraceStorageConfig(storage_type="memory"),
+        agent = Agent(
+            AgentConfig(
+                name="test-agent",
+                description="Test",
+                options=AgentOptions(
+                    trace_storage=TraceStorageConfig(storage_type="memory"),
+                ),
             ),
+            model=None,  # type: ignore
         )
 
         assert agent.trace_storage is not None
@@ -267,11 +273,13 @@ class TestAgentIntegration:
 
     @pytest.mark.asyncio
     async def test_agent_close(self):
-        agent = create_agent(
-            name="test-agent",
-            description="Test",
+        agent = Agent(
+            AgentConfig(
+                name="test-agent",
+                description="Test",
+                options=AgentOptions(),
+            ),
             model=None,  # type: ignore
-            options=AgentOptions(),
         )
 
         assert agent.run_step_storage is not None

@@ -5,10 +5,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Literal
 
-import tiktoken
-
-from agiwo.agent.runtime import StepMetrics, StepRecord
 from agiwo.llm.base import Model
+from agiwo.utils.token_encoding import resolve_text_encoding
 
 
 DEFAULT_TOKENIZER_ENCODING = "cl100k_base"
@@ -27,12 +25,7 @@ class UsageEstimate:
 
 @lru_cache(maxsize=128)
 def _resolve_encoding(model_name: str):
-    if model_name:
-        try:
-            return tiktoken.encoding_for_model(model_name)
-        except KeyError:
-            pass
-    return tiktoken.get_encoding(DEFAULT_TOKENIZER_ENCODING)
+    return resolve_text_encoding(model_name, DEFAULT_TOKENIZER_ENCODING)
 
 
 class TiktokenUsageEstimator:
@@ -75,69 +68,6 @@ class TiktokenUsageEstimator:
             total += self.count_object(tool_calls)
         return total
 
-    def fill_step_usage_metrics(
-        self,
-        step: StepRecord,
-        *,
-        request_estimate: UsageEstimate | None,
-    ) -> None:
-        if step.metrics is None:
-            return
-
-        had_provider_usage = any(
-            value is not None
-            for value in (
-                step.metrics.input_tokens,
-                step.metrics.output_tokens,
-                step.metrics.total_tokens,
-                step.metrics.cache_read_tokens,
-                step.metrics.cache_creation_tokens,
-            )
-        )
-
-        if step.metrics.input_tokens is None and request_estimate is not None:
-            step.metrics.input_tokens = request_estimate.input_tokens
-
-        if step.metrics.output_tokens is None:
-            step.metrics.output_tokens = self.estimate_assistant_output(
-                content=step.content if isinstance(step.content, str) else None,
-                reasoning_content=step.reasoning_content,
-                tool_calls=step.tool_calls,
-            )
-
-        if step.metrics.total_tokens is None:
-            step.metrics.total_tokens = (
-                (step.metrics.input_tokens or 0) + (step.metrics.output_tokens or 0)
-            )
-
-        if step.metrics.cache_read_tokens is None:
-            step.metrics.cache_read_tokens = (
-                request_estimate.cache_read_tokens if request_estimate else 0
-            )
-        if step.metrics.cache_creation_tokens is None:
-            step.metrics.cache_creation_tokens = (
-                request_estimate.cache_creation_tokens if request_estimate else 0
-            )
-
-        if had_provider_usage:
-            if (
-                request_estimate is not None
-                and (
-                    step.metrics.input_tokens == request_estimate.input_tokens
-                    or step.metrics.output_tokens
-                    == self.estimate_assistant_output(
-                        content=step.content if isinstance(step.content, str) else None,
-                        reasoning_content=step.reasoning_content,
-                        tool_calls=step.tool_calls,
-                    )
-                )
-            ):
-                step.metrics.usage_source = "mixed"
-            else:
-                step.metrics.usage_source = "provider"
-        else:
-            step.metrics.usage_source = "estimated"
-
     def count_text(self, text: str) -> int:
         if not text:
             return 0
@@ -167,14 +97,8 @@ class TiktokenUsageEstimator:
         return "low"
 
 
-class StepMetricsResolver:
-    """Resolves token usage and cost for completed LLM steps.
-
-    Consolidates:
-    - Pre-call request token estimation
-    - Post-call usage backfill (provider → estimated fallback)
-    - Cost calculation from model prices
-    """
+class ModelUsageEstimator:
+    """Provider-neutral token estimation and cost calculation."""
 
     def __init__(self, model: Model) -> None:
         self._estimator = TiktokenUsageEstimator(model)
@@ -194,21 +118,32 @@ class StepMetricsResolver:
         """Estimate token count for messages (used by compact threshold check)."""
         return self._estimator.estimate_request(messages, None).input_tokens or 0
 
-    def resolve(self, step: StepRecord, request_estimate: UsageEstimate | None) -> None:
-        """Fill missing usage metrics and compute cost on step.metrics in-place."""
-        self._estimator.fill_step_usage_metrics(step, request_estimate=request_estimate)
-        if step.metrics is not None:
-            step.metrics.token_cost = self._compute_cost(step.metrics)
+    def estimate_assistant_output(
+        self,
+        *,
+        content: str | None,
+        reasoning_content: str | None,
+        tool_calls: list[dict] | None,
+    ) -> int:
+        return self._estimator.estimate_assistant_output(
+            content=content,
+            reasoning_content=reasoning_content,
+            tool_calls=tool_calls,
+        )
 
-    def _compute_cost(self, metrics: StepMetrics | None) -> float:
+    def compute_cost(
+        self,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cache_read_tokens: int | None,
+        cache_creation_tokens: int | None,
+    ) -> float:
         """Compute step cost in USD from token usage and model prices (per 1M tokens)."""
-        if metrics is None:
-            return 0.0
-
-        input_tokens = metrics.input_tokens or 0
-        output_tokens = metrics.output_tokens or 0
-        cache_hit_tokens = metrics.cache_read_tokens or 0
-        cache_creation_tokens = metrics.cache_creation_tokens or 0
+        input_tokens = input_tokens or 0
+        output_tokens = output_tokens or 0
+        cache_hit_tokens = cache_read_tokens or 0
+        cache_creation_tokens = cache_creation_tokens or 0
         cache_miss_tokens = max(
             input_tokens - cache_hit_tokens - cache_creation_tokens,
             0,
@@ -225,4 +160,4 @@ class StepMetricsResolver:
         ) / 1_000_000.0
 
 
-__all__ = ["UsageEstimate", "TiktokenUsageEstimator", "StepMetricsResolver"]
+__all__ = ["ModelUsageEstimator", "UsageEstimate", "TiktokenUsageEstimator"]

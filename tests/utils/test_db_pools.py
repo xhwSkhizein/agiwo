@@ -15,6 +15,7 @@ from agiwo.utils.sqlite_pool import get_sqlite_pool
 @pytest.mark.asyncio
 async def test_sqlite_stores_share_same_connection(tmp_path: Path) -> None:
     db_path = str(tmp_path / "shared.db")
+    baseline = get_sqlite_pool().get_connection_count()
     citation_store = SQLiteCitationStore(db_path=db_path)
     session_store = SQLiteSessionStorage(db_path=db_path)
 
@@ -24,13 +25,13 @@ async def test_sqlite_stores_share_same_connection(tmp_path: Path) -> None:
     assert citation_store._connection is not None
     assert session_store._conn is not None
     assert citation_store._connection is session_store._conn
-    assert get_sqlite_pool().get_connection_count() == 1
+    assert get_sqlite_pool().get_connection_count() == baseline + 1
 
     await citation_store.disconnect()
-    assert get_sqlite_pool().get_connection_count() == 1
+    assert get_sqlite_pool().get_connection_count() == baseline + 1
 
     await session_store.close()
-    assert get_sqlite_pool().get_connection_count() == 0
+    assert get_sqlite_pool().get_connection_count() == baseline
 
 
 @pytest.mark.asyncio

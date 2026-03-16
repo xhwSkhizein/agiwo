@@ -5,11 +5,11 @@ from agiwo.agent import options as agent_options_module
 from agiwo.llm.openai import OpenAIModel
 from server.app import _build_default_agent_config
 from server.config import ConsoleConfig
-from agiwo.agent.options import AgentOptionsInput
-from server.schemas import AgentConfigPayload
+from server.domain.agent_configs import AgentOptionsInput
+from server.schemas import AgentConfigPayload, AgentConfigReplace
 from server.services.agent_lifecycle import build_agent_options, build_default_agent_options, build_model
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.domain.tool_references import parse_tool_references
+from server.domain.tool_references import InvalidToolReferenceError, parse_tool_references
 from server.tools import AgentToolRef, BuiltinToolRef, build_tools
 
 
@@ -125,14 +125,18 @@ def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
 
 
 def test_console_tool_catalog_parses_builtin_and_agent_refs() -> None:
-    refs = parse_tool_references(
-        ["web_search", "agent:child-1", "missing", "agent:"]
-    )
+    refs = parse_tool_references(["web_search", "agent:child-1"])
 
     assert refs == [
         BuiltinToolRef(name="web_search"),
         AgentToolRef(agent_id="child-1"),
     ]
+
+    with pytest.raises(InvalidToolReferenceError):
+        parse_tool_references(["missing"])
+
+    with pytest.raises(InvalidToolReferenceError):
+        parse_tool_references(["agent:"])
 
 
 @pytest.mark.asyncio
@@ -246,7 +250,7 @@ def test_agent_config_record_sanitizes_model_params_and_strips_plain_api_key() -
 
 def test_agent_config_replace_requires_full_nested_payloads() -> None:
     with pytest.raises(ValidationError, match="options"):
-        AgentConfigPayload.model_validate(
+        AgentConfigReplace.model_validate(
             {
                 "name": "tester",
                 "description": "",

@@ -2,33 +2,41 @@
 Agiwo - AI Agent SDK
 
 Usage:
-    from agiwo import Agent, AgentOptions, AgentHooks
+    from agiwo import Agent, AgentConfig, AgentOptions, AgentHooks
     from agiwo.llm import DeepseekModel
     from agiwo.tool import BaseTool, ToolResult
 
     agent = Agent(
-        name="my-agent",
-        description="A helpful assistant",
+        AgentConfig(
+            name="my-agent",
+            description="A helpful assistant",
+            system_prompt="You are helpful.",
+        ),
         model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
         tools=[MyTool()],
-        system_prompt="You are helpful.",
     )
 
     result = await agent.run("Hello!")
 """
 
-from agiwo.agent.agent import Agent, create_agent
-from agiwo.agent import RunOutput, StreamEvent, TerminationReason
+from agiwo.agent.agent import Agent
+from agiwo.agent import (
+    AgentConfig,
+    AgentTool,
+    RunOutput,
+    StreamEvent,
+    TerminationReason,
+    as_tool,
+)
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.options import AgentOptions, RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.base import RunStepStorage, InMemoryRunStepStorage
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.tool.base import BaseTool, ToolResult
-from agiwo.tool.agent_tool import AgentTool, as_tool
 
 __all__ = [
     "Agent",
-    "create_agent",
+    "AgentConfig",
     "AgentHooks",
     "AgentOptions",
     "AgentTool",

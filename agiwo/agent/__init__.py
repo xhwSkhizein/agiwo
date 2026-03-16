@@ -1,6 +1,8 @@
-from agiwo.agent.agent import Agent, create_agent
+from agiwo.agent.agent import Agent
+from agiwo.agent.config import AgentConfig
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.compact_types import CompactMetadata, CompactResult
+from agiwo.agent.runtime_tools.agent_tool import AgentTool, as_tool
 from agiwo.agent.input import (
     ChannelContext,
     ContentPart,
@@ -43,8 +45,9 @@ from agiwo.agent.storage.base import RunStepStorage, InMemoryRunStepStorage
 
 __all__ = [
     "Agent",
-    "create_agent",
+    "AgentConfig",
     "AgentHooks",
+    "AgentTool",
     "AgentOptions",
     "RunStepStorageConfig",
     "TraceStorageConfig",
@@ -80,5 +83,6 @@ __all__ = [
     "to_message_content",
     "UserInput",
     "UserMessage",
+    "as_tool",
     "create_default_memory_hooks",
 ]
