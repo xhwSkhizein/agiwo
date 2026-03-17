@@ -3,7 +3,7 @@ from dataclasses import dataclass, replace
 import time
 from typing import Any
 
-from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.runtime_tools import (
     AgentRuntimeTool,
     RuntimeToolLike,
@@ -11,7 +11,7 @@ from agiwo.agent.runtime_tools import (
     adapt_runtime_tool,
 )
 from agiwo.agent.tool_auth import ToolAuthorizationRuntime
-from agiwo.llm.helper import parse_json_tool_args
+from agiwo.llm.message_converter import parse_json_tool_args
 from agiwo.tool.base import ToolResult
 from agiwo.tool.cache import ToolResultCache
 from agiwo.utils.abort_signal import AbortSignal
@@ -26,6 +26,20 @@ class ToolRuntimeOptions:
     cache_max_items: int = 1000
     cache_ttl_seconds: int = 3600
     auth_timeout_seconds: float = 300.0
+
+
+@dataclass(frozen=True)
+class ResolvedToolCall:
+    raw_call: dict[str, Any]
+    call_id: str
+    tool_name: str
+    tool: AgentRuntimeTool
+    args: dict[str, Any]
+
+    def with_args(self, args: dict[str, Any]) -> "ResolvedToolCall":
+        updated = dict(args)
+        updated["tool_call_id"] = self.call_id
+        return replace(self, args=updated)
 
 
 class ToolRuntime:
@@ -45,46 +59,106 @@ class ToolRuntime:
         self.options = options or ToolRuntimeOptions()
         self.auth_runtime = auth_runtime or ToolAuthorizationRuntime()
 
+    def resolve_tool_call(
+        self,
+        tool_call: dict[str, Any],
+        *,
+        start_time: float | None = None,
+    ) -> ResolvedToolCall | ToolResult:
+        resolved_start = start_time if start_time is not None else time.time()
+        call_id = _get_string(tool_call, "id")
+        function_payload = _get_function_payload(tool_call)
+        tool_name = _get_string(function_payload, "name")
+        if not tool_name:
+            return ToolResult.failed(
+                tool_call_id=call_id,
+                tool_name="unknown",
+                error="Tool name missing in tool call",
+                start_time=resolved_start,
+            )
+
+        tool = self.tools_map.get(tool_name)
+        if tool is None:
+            return ToolResult.failed(
+                tool_call_id=call_id,
+                tool_name=tool_name,
+                error=f"Tool {tool_name} not found",
+                start_time=resolved_start,
+            )
+
+        try:
+            args = parse_json_tool_args(function_payload.get("arguments", {}))
+        except ValueError as error:
+            return ToolResult.failed(
+                tool_call_id=call_id,
+                tool_name=tool_name,
+                error=str(error),
+                start_time=resolved_start,
+            )
+
+        args["tool_call_id"] = call_id
+        return ResolvedToolCall(
+            raw_call=tool_call,
+            call_id=call_id,
+            tool_name=tool_name,
+            tool=tool,
+            args=args,
+        )
+
     async def execute_batch(
         self,
         tool_calls: list[dict[str, Any]],
-        context: ExecutionContext,
+        context: AgentRunContext,
         abort_signal: AbortSignal | None = None,
     ) -> list[RuntimeToolOutcome]:
-        async def _run_single(tc: dict[str, Any]) -> RuntimeToolOutcome:
+        prepared: list[ResolvedToolCall | ToolResult] = [
+            self.resolve_tool_call(tool_call) for tool_call in tool_calls
+        ]
+        return await self.execute_resolved_batch(
+            prepared,
+            context=context,
+            abort_signal=abort_signal,
+        )
+
+    async def execute_resolved_batch(
+        self,
+        prepared_calls: list[ResolvedToolCall | ToolResult],
+        *,
+        context: AgentRunContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> list[RuntimeToolOutcome]:
+        async def _run_single(
+            prepared: ResolvedToolCall | ToolResult,
+        ) -> RuntimeToolOutcome:
+            if isinstance(prepared, ToolResult):
+                return RuntimeToolOutcome(result=prepared)
             try:
-                return await self.execute(
-                    tc,
+                return await self.execute_resolved(
+                    prepared,
                     context=context,
                     abort_signal=abort_signal,
                 )
             except asyncio.CancelledError:
-                fn = _get_function_payload(tc)
-                tool_name = _get_string(fn, "name", "unknown")
-                call_id = _get_string(tc, "id")
                 return RuntimeToolOutcome(
                     result=ToolResult.failed(
-                        tool_call_id=call_id,
-                        tool_name=tool_name,
+                        tool_call_id=prepared.call_id,
+                        tool_name=prepared.tool_name,
                         error="Tool execution was cancelled",
                         start_time=time.time(),
                     )
                 )
             except Exception as error:  # noqa: BLE001 - defensive runtime boundary
-                fn = _get_function_payload(tc)
-                tool_name = _get_string(fn, "name", "unknown")
-                call_id = _get_string(tc, "id")
                 logger.error(
                     "tool_batch_execute_error",
-                    tool_name=tool_name,
-                    tool_call_id=call_id,
+                    tool_name=prepared.tool_name,
+                    tool_call_id=prepared.call_id,
                     error=str(error),
                     exc_info=True,
                 )
                 return RuntimeToolOutcome(
                     result=ToolResult.failed(
-                        tool_call_id=call_id,
-                        tool_name=tool_name,
+                        tool_call_id=prepared.call_id,
+                        tool_name=prepared.tool_name,
                         error=f"Tool execution failed: {error}",
                         start_time=time.time(),
                     )
@@ -92,60 +166,67 @@ class ToolRuntime:
 
         safe_indices: list[int] = []
         unsafe_indices: list[int] = []
-        for index, tool_call in enumerate(tool_calls):
-            fn = _get_function_payload(tool_call)
-            name = _get_string(fn, "name")
-            tool = self.tools_map.get(name)
-            if tool is not None and not tool.is_concurrency_safe():
+        for index, prepared in enumerate(prepared_calls):
+            if isinstance(prepared, ResolvedToolCall) and not prepared.tool.is_concurrency_safe():
                 unsafe_indices.append(index)
             else:
                 safe_indices.append(index)
 
-        results: list[RuntimeToolOutcome | None] = [None] * len(tool_calls)
-
+        results: list[RuntimeToolOutcome | None] = [None] * len(prepared_calls)
         if safe_indices:
             safe_results = await asyncio.gather(
-                *(_run_single(tool_calls[index]) for index in safe_indices)
+                *(_run_single(prepared_calls[index]) for index in safe_indices)
             )
             for index, result in zip(safe_indices, safe_results):
                 results[index] = result
 
         for index in unsafe_indices:
-            results[index] = await _run_single(tool_calls[index])
+            results[index] = await _run_single(prepared_calls[index])
 
         return results  # type: ignore[return-value]
 
     async def execute(
         self,
         tool_call: dict[str, Any],
-        context: ExecutionContext,
+        context: AgentRunContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> RuntimeToolOutcome:
+        resolved = self.resolve_tool_call(tool_call)
+        if isinstance(resolved, ToolResult):
+            return RuntimeToolOutcome(result=resolved)
+        return await self.execute_resolved(
+            resolved,
+            context=context,
+            abort_signal=abort_signal,
+        )
+
+    async def execute_resolved(
+        self,
+        resolved: ResolvedToolCall,
+        *,
+        context: AgentRunContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         start_time = time.time()
-        resolved = self._resolve_tool_call(tool_call, start_time)
-        if isinstance(resolved, ToolResult):
-            return RuntimeToolOutcome(result=resolved)
-        call_id, tool_name, tool, args = resolved
-
         auth = await self.auth_runtime.authorize(
-            tool_call_id=call_id,
-            tool_name=tool_name,
-            tool_args=args,
+            tool_call_id=resolved.call_id,
+            tool_name=resolved.tool_name,
+            tool_args=resolved.args,
             context=context,
             timeout=self.options.auth_timeout_seconds,
         )
         if not auth.allowed:
             return RuntimeToolOutcome(
                 result=ToolResult.denied(
-                    tool_name=tool_name,
+                    tool_name=resolved.tool_name,
                     reason=auth.reason,
-                    tool_call_id=call_id,
-                    input_args=args,
+                    tool_call_id=resolved.call_id,
+                    input_args=resolved.args,
                     start_time=start_time,
                 )
             )
 
-        timeout_seconds = tool.timeout_seconds or self.options.timeout_seconds
+        timeout_seconds = resolved.tool.timeout_seconds or self.options.timeout_seconds
         execution_context = context
         if timeout_seconds:
             execution_context = replace(
@@ -153,14 +234,18 @@ class ToolRuntime:
                 timeout_at=time.time() + timeout_seconds,
             )
 
-        if self.cache and tool.cacheable:
-            cached_result = self.cache.get(context.session_id, tool_name, args)
+        if self.cache and resolved.tool.cacheable:
+            cached_result = self.cache.get(
+                context.session_id,
+                resolved.tool_name,
+                resolved.args,
+            )
             if cached_result is not None:
                 now = time.time()
                 return RuntimeToolOutcome(
                     result=replace(
                         cached_result,
-                        tool_call_id=call_id,
+                        tool_call_id=resolved.call_id,
                         start_time=now,
                         end_time=now,
                         duration=0.0,
@@ -170,19 +255,19 @@ class ToolRuntime:
         try:
             logger.debug(
                 "executing_tool",
-                tool_name=tool_name,
-                tool_call_id=call_id,
+                tool_name=resolved.tool_name,
+                tool_call_id=resolved.call_id,
             )
-            outcome = await tool.execute_for_agent(
-                args,
+            outcome = await resolved.tool.execute_for_agent(
+                resolved.args,
                 context=execution_context,
                 abort_signal=abort_signal,
             )
             result = outcome.result
-            result.tool_call_id = call_id or ""
+            result.tool_call_id = resolved.call_id or ""
             logger.debug(
                 "tool_execution_completed",
-                tool_name=tool_name,
+                tool_name=resolved.tool_name,
                 success=result.is_success,
                 duration=result.duration,
                 termination_reason=(
@@ -193,18 +278,23 @@ class ToolRuntime:
             )
             if (
                 self.cache
-                and tool.cacheable
+                and resolved.tool.cacheable
                 and result.is_success
                 and outcome.termination_reason is None
             ):
-                self.cache.set(context.session_id, tool_name, args, result)
+                self.cache.set(
+                    context.session_id,
+                    resolved.tool_name,
+                    resolved.args,
+                    result,
+                )
             return outcome
         except asyncio.CancelledError:
-            logger.info("tool_execution_cancelled", tool_name=tool_name)
+            logger.info("tool_execution_cancelled", tool_name=resolved.tool_name)
             return RuntimeToolOutcome(
                 result=ToolResult.failed(
-                    tool_call_id=call_id,
-                    tool_name=tool_name,
+                    tool_call_id=resolved.call_id,
+                    tool_name=resolved.tool_name,
                     error="Tool execution was cancelled",
                     start_time=start_time,
                 )
@@ -212,56 +302,18 @@ class ToolRuntime:
         except Exception as error:  # noqa: BLE001 - runtime boundary
             logger.error(
                 "tool_execution_exception",
-                tool_name=tool_name,
+                tool_name=resolved.tool_name,
                 error=str(error),
                 exc_info=True,
             )
             return RuntimeToolOutcome(
                 result=ToolResult.failed(
-                    tool_call_id=call_id,
-                    tool_name=tool_name,
+                    tool_call_id=resolved.call_id,
+                    tool_name=resolved.tool_name,
                     error=f"Tool execution failed: {error}",
                     start_time=start_time,
                 )
             )
-
-    def _resolve_tool_call(
-        self,
-        tool_call: dict[str, Any],
-        start_time: float,
-    ) -> tuple[str, str, AgentRuntimeTool, dict[str, Any]] | ToolResult:
-        call_id = _get_string(tool_call, "id")
-        function_payload = _get_function_payload(tool_call)
-        tool_name = _get_string(function_payload, "name")
-        if not tool_name:
-            return ToolResult.failed(
-                tool_call_id=call_id,
-                tool_name="unknown",
-                error="Tool name missing in tool call",
-                start_time=start_time,
-            )
-
-        tool = self.tools_map.get(tool_name)
-        if tool is None:
-            return ToolResult.failed(
-                tool_call_id=call_id,
-                tool_name=tool_name,
-                error=f"Tool {tool_name} not found",
-                start_time=start_time,
-            )
-
-        try:
-            args = parse_json_tool_args(function_payload.get("arguments", {}))
-        except ValueError as error:
-            return ToolResult.failed(
-                tool_call_id=call_id,
-                tool_name=tool_name,
-                error=str(error),
-                start_time=start_time,
-            )
-
-        args["tool_call_id"] = call_id
-        return call_id, tool_name, tool, args
 
 
 def _get_function_payload(tool_call: dict[str, Any]) -> dict[str, Any]:
@@ -274,3 +326,6 @@ def _get_function_payload(tool_call: dict[str, Any]) -> dict[str, Any]:
 def _get_string(payload: dict[str, Any], key: str, default: str = "") -> str:
     value = payload.get(key)
     return value if isinstance(value, str) else default
+
+
+__all__ = ["ResolvedToolCall", "ToolRuntime", "ToolRuntimeOptions"]

@@ -7,7 +7,6 @@ Coordinates session persistence, runtime-agent cache, and scheduler bridging.
 from collections.abc import AsyncIterator
 
 from agiwo.agent import Agent, UserInput
-from agiwo.scheduler.models import SchedulerOutput
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.channels.runtime_agent_pool import RuntimeAgentPool
@@ -152,7 +151,7 @@ class AgentRuntimeManager:
         agent: Agent,
         session: Session,
         user_input: UserInput,
-    ) -> AsyncIterator[SchedulerOutput]:
+    ) -> AsyncIterator[str]:
         return await self._scheduler_bridge.submit_to_scheduler(
             agent,
             session,

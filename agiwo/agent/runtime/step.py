@@ -1,77 +1,15 @@
-"""Runtime-domain models for agent runs, steps, and streaming events."""
+"""Step domain: StepRecord, StepDelta, StepMetrics, and message helpers."""
 
 import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from agiwo.agent.input import ChannelContext, MessageContent, UserInput, UserMessage
 from agiwo.agent.input_codec import extract_text, normalize_to_message, to_message_content
-from agiwo.utils.tojson import to_json
-
-
-@runtime_checkable
-class AgentContext(Protocol):
-    session_id: str
-    run_id: str
-    agent_id: str
-    agent_name: str
-    parent_run_id: str | None
-    depth: int
-    user_id: str | None
-    trace_id: str | None
-    timeout_at: float | None
-    metadata: dict[str, Any]
-
-
-class MessageRole(str, Enum):
-    """Standard LLM message roles."""
-
-    SYSTEM = "system"
-    USER = "user"
-    ASSISTANT = "assistant"
-    TOOL = "tool"
-
-
-class RunStatus(str, Enum):
-    """Agent run status."""
-
-    STARTING = "starting"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class TerminationReason(str, Enum):
-    """Reason why the agent execution terminated."""
-
-    COMPLETED = "completed"
-    MAX_STEPS = "max_steps"
-    TIMEOUT = "timeout"
-    MAX_OUTPUT_TOKENS = "max_output_tokens"
-    MAX_INPUT_TOKENS_PER_CALL = "max_input_tokens_per_call"
-    MAX_RUN_COST = "max_run_cost"
-    ERROR = "error"
-    ERROR_WITH_CONTEXT = "error_with_context"
-    CANCELLED = "cancelled"
-    TOOL_LIMIT = "tool_limit"
-    SLEEPING = "sleeping"
-
-
-class EventType(str, Enum):
-    """Event types for streaming."""
-
-    STEP_DELTA = "step_delta"
-    STEP_COMPLETED = "step_completed"
-    RUN_STARTED = "run_started"
-    RUN_COMPLETED = "run_completed"
-    RUN_FAILED = "run_failed"
-    ERROR = "error"
-    TOOL_AUTH_REQUIRED = "tool_auth_required"
-    TOOL_AUTH_DENIED = "tool_auth_denied"
+from agiwo.agent.runtime.core import AgentContext, MessageRole
+from agiwo.utils.serialization import serialize_optional_datetime
 
 
 @dataclass
@@ -82,6 +20,14 @@ class StepDelta:
     reasoning_content: str | None = None
     tool_calls: list[dict] | None = None
     usage: dict[str, int] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "content": self.content,
+            "reasoning_content": self.reasoning_content,
+            "tool_calls": self.tool_calls,
+            "usage": self.usage,
+        }
 
 
 @dataclass
@@ -102,35 +48,22 @@ class StepMetrics:
     provider: str | None = None
     first_token_latency_ms: float | None = None
 
-
-@dataclass
-class RunMetrics:
-    """Metrics for a single Run."""
-
-    start_at: float = 0.0
-    end_at: float = 0.0
-    duration_ms: float = 0.0
-    total_tokens: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-    token_cost: float = 0.0
-    steps_count: int = 0
-    tool_calls_count: int = 0
-    tool_errors_count: int = 0
-    first_token_latency: float | None = None
-    response_latency: float | None = None
-
-
-@dataclass
-class LLMCallContext:
-    """LLM call context for observability (not persisted)."""
-
-    messages: list[dict[str, Any]]
-    tools: list[dict[str, Any]] | None = None
-    request_params: dict[str, Any] | None = None
-    finish_reason: str | None = None
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "start_at": serialize_optional_datetime(self.start_at),
+            "end_at": serialize_optional_datetime(self.end_at),
+            "duration_ms": self.duration_ms,
+            "total_tokens": self.total_tokens,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_creation_tokens": self.cache_creation_tokens,
+            "token_cost": self.token_cost,
+            "usage_source": self.usage_source,
+            "model_name": self.model_name,
+            "provider": self.provider,
+            "first_token_latency_ms": self.first_token_latency_ms,
+        }
 
 
 @dataclass
@@ -276,59 +209,6 @@ def _build_step_context_attrs(
     }
 
 
-@dataclass
-class StreamEvent:
-    """Event for streaming and observability."""
-
-    type: EventType
-    run_id: str
-    timestamp: datetime = field(default_factory=datetime.now)
-    step_id: str | None = None
-    delta: StepDelta | None = None
-    step: StepRecord | None = None
-    llm: LLMCallContext | None = None
-    data: dict | None = None
-    parent_run_id: str | None = None
-    span_id: str | None = None
-    parent_span_id: str | None = None
-    depth: int = 0
-    agent_id: str | None = None
-    trace_id: str | None = None
-
-    def to_sse(self) -> str:
-        return f"data: {to_json(self)}\n\n"
-
-
-@dataclass
-class Run:
-    """Unified Run metadata."""
-
-    agent_id: str
-    session_id: str
-    user_input: UserInput
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    user_id: str | None = None
-    status: RunStatus = RunStatus.STARTING
-    response_content: str | None = None
-    metrics: RunMetrics = field(default_factory=RunMetrics)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-    parent_run_id: str | None = None
-    trace_id: str | None = None
-
-
-@dataclass
-class RunOutput:
-    """Execution result from Agent.run()."""
-
-    session_id: str | None = None
-    run_id: str | None = None
-    response: str | None = None
-    metrics: RunMetrics | None = None
-    termination_reason: TerminationReason | None = None
-    error: str | None = None
-
-
 def step_to_message(step: StepRecord) -> dict[str, Any]:
     msg: dict[str, Any] = {"role": step.role.value}
     if step.content is not None:
@@ -349,19 +229,9 @@ def steps_to_messages(steps: list[StepRecord]) -> list[dict[str, Any]]:
 
 
 __all__ = [
-    "EventType",
-    "LLMCallContext",
-    "AgentContext",
-    "MessageRole",
-    "Run",
-    "RunMetrics",
-    "RunOutput",
-    "RunStatus",
     "StepDelta",
     "StepMetrics",
     "StepRecord",
-    "StreamEvent",
-    "TerminationReason",
     "step_to_message",
     "steps_to_messages",
 ]

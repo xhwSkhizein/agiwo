@@ -3,7 +3,6 @@
 from agiwo.scheduler.models import AgentStateStorageConfig
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
-from agiwo.scheduler.store.semantics import RECENT_STEPS_MAX
 from agiwo.scheduler.store.sqlite import SQLiteAgentStateStorage
 
 
@@ -24,6 +23,5 @@ __all__ = [
     "AgentStateStorage",
     "InMemoryAgentStateStorage",
     "SQLiteAgentStateStorage",
-    "RECENT_STEPS_MAX",
     "create_agent_state_storage",
 ]

@@ -1,12 +1,12 @@
 """Tests for scheduling tools."""
 
 import asyncio
-import pytest
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from agiwo.agent import TerminationReason
-from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
-from agiwo.agent.stream_channel import StreamChannel
 from agiwo.scheduler.coordinator import SchedulerCoordinator
 from agiwo.scheduler.engine import SchedulerEngine
 from agiwo.scheduler.guard import TaskGuard
@@ -33,7 +33,7 @@ from agiwo.tool.builtin.bash_tool.process_tool import (
     BashProcessToolConfig,
 )
 from agiwo.tool.builtin.bash_tool.types import ProcessInfo
-from unittest.mock import AsyncMock, MagicMock
+from tests.utils.agent_context import build_agent_context
 
 
 @pytest.fixture
@@ -69,13 +69,11 @@ def control(store, guard, coordinator, runner):
 
 @pytest.fixture
 def context():
-    return ExecutionContext(
+    return build_agent_context(
         session_id="sess-1",
         run_id="run-1",
-        channel=StreamChannel(),
         agent_id="orch",
         agent_name="orchestrator",
-        sequence_counter=SessionSequenceCounter(0),
     )
 
 
@@ -145,13 +143,11 @@ class TestSpawnAgentTool:
 
     @pytest.mark.asyncio
     async def test_spawn_fails_without_agent_id(self, store, control):
-        ctx = ExecutionContext(
+        ctx = build_agent_context(
             session_id="sess-1",
             run_id="run-1",
-            channel=StreamChannel(),
             agent_id="",
             agent_name="",
-            sequence_counter=SessionSequenceCounter(0),
         )
         tool = SpawnAgentTool(control)
         result = await tool.execute_for_agent({"task": "Task", "tool_call_id": "tc-1"}, ctx)
@@ -240,7 +236,7 @@ class TestSleepAndWaitTool:
 
         state = await store.get_state("orch")
         assert state is not None
-        assert state.status == AgentStateStatus.SLEEPING
+        assert state.status == AgentStateStatus.WAITING
         assert state.wake_condition is not None
         assert state.wake_condition.type == WakeType.WAITSET
         assert set(state.wake_condition.wait_for) == {"child-1", "child-2"}
@@ -386,15 +382,14 @@ class TestQuerySpawnedAgentTool:
         assert "not found" in result.result.content
 
     @pytest.mark.asyncio
-    async def test_query_includes_explain_and_recent_steps(self, store, control, context):
+    async def test_query_includes_explain(self, store, control, context):
         state = AgentState(
             id="child-2",
             session_id="sess-1",
-            status=AgentStateStatus.SLEEPING,
+            status=AgentStateStatus.WAITING,
             task="Periodic check",
             parent_id="orch",
             explain="Waiting 8h before next run",
-            recent_steps=[{"role": "assistant", "timestamp": "2026-01-01T00:00:00", "tool_calls": ["web_search"]}],
         )
         await store.save_state(state)
 
@@ -402,7 +397,6 @@ class TestQuerySpawnedAgentTool:
         result = await tool.execute_for_agent({"agent_id": "child-2", "tool_call_id": "tc-1"}, context)
         assert result.result.is_success
         assert "Waiting 8h" in result.result.content
-        assert "web_search" in result.result.content
 
 
 class TestSleepAndWaitExplain:
@@ -518,11 +512,11 @@ class TestCancelAgentTool:
             parent_id="orch",
         )
         await store.save_state(child)
-        control._recursive_cancel = AsyncMock()  # type: ignore[method-assign]
+        control._tree_ops.cancel_subtree = AsyncMock()  # type: ignore[method-assign]
         tool = CancelAgentTool(control)
         result = await tool.execute_for_agent({"agent_id": "child-force", "force": True, "tool_call_id": "tc-1"}, context)
         assert result.result.is_success
-        control._recursive_cancel.assert_awaited_once_with("child-force", "Cancelled by parent agent")
+        control._tree_ops.cancel_subtree.assert_awaited_once_with("child-force", "Cancelled by parent agent")
 
     @pytest.mark.asyncio
     async def test_cancel_already_completed(self, store, control, context):
@@ -553,7 +547,7 @@ class TestListAgentsTool:
             id="c1", session_id="sess-1", status=AgentStateStatus.RUNNING, task="task A", parent_id="orch"
         )
         c2 = AgentState(
-            id="c2", session_id="sess-1", status=AgentStateStatus.SLEEPING, task="task B", parent_id="orch",
+            id="c2", session_id="sess-1", status=AgentStateStatus.WAITING, task="task B", parent_id="orch",
             explain="Sleeping until morning", result_summary="partial result"
         )
         await store.save_state(c1)

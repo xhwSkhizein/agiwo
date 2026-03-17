@@ -65,8 +65,6 @@ def serialize_wake_condition_for_store(
         result["time_unit"] = wake_condition.time_unit.value
     if wake_condition.wakeup_at is not None:
         result["wakeup_at"] = wake_condition.wakeup_at.isoformat()
-    if wake_condition.submitted_task is not None:
-        result["submitted_task"] = serialize_user_input(wake_condition.submitted_task)
     if wake_condition.timeout_at is not None:
         result["timeout_at"] = wake_condition.timeout_at.isoformat()
     return result
@@ -93,9 +91,6 @@ def deserialize_wake_condition_for_store(data: dict[str, Any]) -> WakeCondition:
         time_value=data.get("time_value"),
         time_unit=time_unit,
         wakeup_at=wakeup_at,
-        submitted_task=deserialize_user_input(data["submitted_task"])
-        if data.get("submitted_task")
-        else None,
         timeout_at=timeout_at,
     )
 

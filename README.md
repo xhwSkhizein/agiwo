@@ -26,7 +26,7 @@ The project favors explicit runtime wiring over hidden global state. Agent execu
 - Streaming-first agent execution: `run()` and `run_stream()` share the same execution pipeline.
 - Tool calling with session-scoped caching and builtin tools such as `bash`, `bash_process`, `web_search`, `web_reader`, and memory retrieval.
 - Agent-as-tool composition through `AgentTool` / `as_tool()`.
-- Scheduler orchestration with `submit`, `submit_task`, `wait_for`, output streaming, sleep/wake, pending events, and steering.
+- Scheduler orchestration with `submit`, `enqueue_input`, `stream`, `wait_for`, sleep/wake, pending events, and steering.
 - Run/step persistence plus trace collection with memory, SQLite, and Mongo-backed implementations where supported.
 - Optional file-based skills discovered from skill directories.
 - Console APIs for agent config CRUD, chat SSE, trace inspection, scheduler state inspection, and channel runtime integration.
@@ -178,7 +178,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-For long-running roots, the current scheduler API also supports `submit`, `submit_task`, `wait_for`, `submit_and_subscribe`, `submit_task_and_subscribe`, `steer`, `cancel`, and `shutdown`.
+For long-running roots, the scheduler API also supports `submit`, `enqueue_input`, `stream`, `wait_for`, `steer`, `cancel`, and `shutdown`.
 
 ## Console
 

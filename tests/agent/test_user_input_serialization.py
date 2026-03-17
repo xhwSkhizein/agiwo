@@ -22,9 +22,8 @@ from agiwo.agent import (
     serialize_user_input,
     deserialize_user_input,
 )
-from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
 from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
-from agiwo.agent.stream_channel import StreamChannel
+from tests.utils.agent_context import build_agent_context
 
 
 class TestUserInputSerialization:
@@ -89,14 +88,12 @@ class TestSQLiteUserInputStorage:
     """Test UserInput serialization in SQLite storage."""
 
     @staticmethod
-    def _make_context() -> ExecutionContext:
-        return ExecutionContext(
+    def _make_context():
+        return build_agent_context(
             session_id="test-session",
             run_id="test-run",
-            channel=StreamChannel(),
             agent_id="test-agent",
             agent_name="test-agent",
-            sequence_counter=SessionSequenceCounter(0),
         )
 
     @pytest.mark.asyncio

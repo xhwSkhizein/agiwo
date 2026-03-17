@@ -177,11 +177,8 @@ class MongoRunStepStorage(RunStepStorage):
         await self._ensure_connection()
 
         try:
-            run = await self.get_run(run_id)
             await self.runs_collection.delete_one({"id": run_id})
-
-            if run and run.session_id:
-                await self.steps_collection.delete_many({"session_id": run.session_id})
+            await self.steps_collection.delete_many({"run_id": run_id})
 
         except Exception as e:
             logger.error("delete_run_failed", error=str(e), run_id=run_id)

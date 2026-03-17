@@ -91,14 +91,6 @@ function WakeConditionCard({ wc }: { wc: AgentStateDetail["wake_condition"] }) {
             )}
           </>
         )}
-        {wc.type === "task_submitted" && wc.submitted_task !== null && wc.submitted_task !== undefined && (
-          <div className="col-span-2 sm:col-span-3">
-            <span className="text-zinc-500">Submitted Task: </span>
-            <div className="mt-1 p-2 rounded bg-zinc-800/50">
-              <UserInputCompact input={wc.submitted_task} maxLength={100} />
-            </div>
-          </div>
-        )}
         {wc.timeout_at && (
           <div>
             <span className="text-zinc-500">Timeout: </span>
@@ -181,8 +173,8 @@ function ControlPanel({ state, onAction }: { state: AgentStateDetail; onAction: 
   const [busy, setBusy] = useState(false);
 
   const isRoot = state.parent_id === null;
-  const isActive = state.status === "running" || state.status === "sleeping";
-  const canResume = isRoot && state.is_persistent && ["sleeping", "completed", "failed"].includes(state.status);
+  const isActive = ["pending", "running", "waiting", "queued"].includes(state.status);
+  const canResume = isRoot && state.is_persistent && ["idle", "failed"].includes(state.status);
 
   const handle = async (fn: () => Promise<unknown>) => {
     setBusy(true);

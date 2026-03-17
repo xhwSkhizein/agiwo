@@ -2,11 +2,11 @@
 Scheduler data models.
 
 Defines the core data structures for agent scheduling:
-AgentState, AgentStateStatus, WakeCondition, WakeType, WaitMode, TimeUnit, TaskLimits,
-SchedulerOutput, PendingEvent, SchedulerEventType.
+AgentState, AgentStateStatus, WakeCondition, WakeType, WaitMode, TimeUnit,
+TaskLimits, PendingEvent, SchedulerEventType.
 """
 
-import asyncio
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -19,9 +19,28 @@ class AgentStateStatus(str, Enum):
 
     PENDING = "pending"
     RUNNING = "running"
-    SLEEPING = "sleeping"
+    WAITING = "waiting"
+    IDLE = "idle"
+    QUEUED = "queued"
     COMPLETED = "completed"
     FAILED = "failed"
+
+
+ACTIVE_AGENT_STATUSES = frozenset(
+    {
+        AgentStateStatus.PENDING,
+        AgentStateStatus.RUNNING,
+        AgentStateStatus.WAITING,
+        AgentStateStatus.IDLE,
+        AgentStateStatus.QUEUED,
+    }
+)
+TERMINAL_AGENT_STATUSES = frozenset(
+    {
+        AgentStateStatus.COMPLETED,
+        AgentStateStatus.FAILED,
+    }
+)
 
 
 class WakeType(str, Enum):
@@ -30,7 +49,6 @@ class WakeType(str, Enum):
     WAITSET = "waitset"
     TIMER = "timer"
     PERIODIC = "periodic"
-    TASK_SUBMITTED = "task_submitted"
     PENDING_EVENTS = "pending_events"
 
 
@@ -55,7 +73,6 @@ class SchedulerEventType(str, Enum):
     CHILD_SLEEP_RESULT = "child_sleep_result"
     CHILD_COMPLETED = "child_completed"
     CHILD_FAILED = "child_failed"
-    HEALTH_WARNING = "health_warning"
     USER_HINT = "user_hint"
 
 
@@ -80,37 +97,28 @@ class ChildAgentConfigOverrides:
 
 @dataclass
 class WakeCondition:
-    """Condition under which a sleeping agent should be woken."""
+    """Condition under which a waiting agent should be woken."""
 
     type: WakeType
-    # WAITSET fields
     wait_for: list[str] = field(default_factory=list)
     wait_mode: WaitMode = WaitMode.ALL
     completed_ids: list[str] = field(default_factory=list)
-    # TIMER / PERIODIC fields
     time_value: float | None = None
     time_unit: TimeUnit | None = None
     wakeup_at: datetime | None = None
-    # TASK_SUBMITTED fields
-    submitted_task: UserInput | None = None
-    # Timeout (WAITSET / PERIODIC — prevents permanent sleep)
     timeout_at: datetime | None = None
 
     def is_satisfied(self, now: datetime) -> bool:
         """Check if this wake condition is currently satisfied."""
-        satisfied = False
         if self.type == WakeType.WAITSET:
             if not self.wait_for:
-                return satisfied
+                return False
             if self.wait_mode == WaitMode.ALL:
-                satisfied = set(self.wait_for) <= set(self.completed_ids)
-            else:
-                satisfied = bool(set(self.wait_for) & set(self.completed_ids))
-        elif self.type in (WakeType.TIMER, WakeType.PERIODIC):
-            satisfied = self.wakeup_at is not None and now >= self.wakeup_at
-        elif self.type == WakeType.TASK_SUBMITTED:
-            satisfied = self.submitted_task is not None
-        return satisfied
+                return set(self.wait_for) <= set(self.completed_ids)
+            return bool(set(self.wait_for) & set(self.completed_ids))
+        if self.type in (WakeType.TIMER, WakeType.PERIODIC):
+            return self.wakeup_at is not None and now >= self.wakeup_at
+        return False
 
     def is_timed_out(self, now: datetime) -> bool:
         """Check if this wake condition has timed out."""
@@ -131,8 +139,6 @@ class AgentState:
     ID Design:
     - `id`: Primary key, equals Agent.id (1:1 relationship)
     - `parent_id`: Parent state's id (None for root agent)
-
-    The `_agents` registry uses `id` directly for lookup.
     """
 
     id: str
@@ -140,6 +146,7 @@ class AgentState:
     status: AgentStateStatus
     task: UserInput
     parent_id: str | None = None
+    pending_input: UserInput | None = None
     config_overrides: dict = field(default_factory=dict)
     wake_condition: WakeCondition | None = None
     result_summary: str | None = None
@@ -148,38 +155,57 @@ class AgentState:
     is_persistent: bool = False
     depth: int = 0
     wake_count: int = 0
-    # Sleep reason — set by sleep_and_wait explain parameter
     explain: str | None = None
-    # Tracks last agent activity for health check
-    last_activity_at: datetime | None = None
-    # Rolling window of recent step summaries (max 10), synced via on_step hook
-    recent_steps: list[dict] | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
-    def resolve_runtime_session_id(self) -> str:
-        """Return the session_id that the agent runtime should use.
+    @property
+    def is_root(self) -> bool:
+        return self.parent_id is None
 
-        - root agents (parent_id is None): use state.session_id (the external
-          session provided at submit time) so all runs share the same session.
-        - child agents (parent_id is set): use state.id to give the child its
-          own independent session, keeping history/compact/trace continuous
-          across first run and subsequent wakes.
-        """
-        if self.parent_id is not None:
+    @property
+    def is_child(self) -> bool:
+        return self.parent_id is not None
+
+    def is_active(self) -> bool:
+        return self.status in ACTIVE_AGENT_STATUSES
+
+    def is_terminal(self) -> bool:
+        return self.status in TERMINAL_AGENT_STATUSES
+
+    def is_waiting(self) -> bool:
+        return self.status == AgentStateStatus.WAITING
+
+    def is_idle_root(self) -> bool:
+        return (
+            self.is_root
+            and self.is_persistent
+            and self.status == AgentStateStatus.IDLE
+        )
+
+    def is_queued_root(self) -> bool:
+        return (
+            self.is_root
+            and self.is_persistent
+            and self.status == AgentStateStatus.QUEUED
+        )
+
+    def can_accept_enqueue_input(self) -> bool:
+        return self.is_root and self.is_persistent and self.status in (
+            AgentStateStatus.IDLE,
+            AgentStateStatus.FAILED,
+        )
+
+    def resolve_runtime_session_id(self) -> str:
+        """Return the session_id that the agent runtime should use."""
+        if self.is_child:
             return self.id
         return self.session_id
 
 
 @dataclass
 class PendingEvent:
-    """
-    An event in an agent's pending event queue.
-
-    Used to deliver asynchronous notifications from child agents,
-    health checks, and other system sources to a parent/root agent.
-    Events accumulate and are delivered via debounce wake.
-    """
+    """An event in an agent's pending event queue."""
 
     id: str
     target_agent_id: str
@@ -191,41 +217,8 @@ class PendingEvent:
 
 
 @dataclass
-class SchedulerOutput:
-    """An output from a scheduled agent intended for the end user.
-
-    Emitted whenever an agent (root or child) produces text content during
-    a scheduler-managed task cycle.
-
-    Attributes:
-        state_id: The agent state that produced this text.
-        text: Text content to deliver.
-        is_final: True when the current task cycle is done; consumers should stop listening.
-    """
-
-    state_id: str
-    text: str
-    is_final: bool
-
-
-@dataclass
-class OutputChannelState:
-    """Per-root-agent output channel for streaming results to consumers."""
-
-    queue: asyncio.Queue  # Queue[SchedulerOutput | None]
-    include_child_outputs: bool = True
-
-
-@dataclass
 class AgentStateStorageConfig:
-    """Configuration for AgentStateStorage.
-
-    storage_type: "memory" | "sqlite"
-        - memory: In-memory storage (default, no persistence)
-        - sqlite: SQLite database storage
-    config: storage-specific configuration
-        - sqlite: {"db_path": str}
-    """
+    """Configuration for AgentStateStorage."""
 
     storage_type: str = "memory"
     config: dict = field(default_factory=dict)
@@ -239,22 +232,46 @@ class TaskLimits:
     max_children_per_agent: int = 10
     default_wait_timeout: float = 600.0
     max_wake_count: int = 20
-    health_check_threshold_seconds: float = 300.0
 
 
 @dataclass
 class SchedulerConfig:
-    """Configuration for the Scheduler.
-
-    All fields are pure configuration — no side effects in construction.
-    """
+    """Configuration for the Scheduler."""
 
     state_storage: AgentStateStorageConfig = field(
         default_factory=AgentStateStorageConfig
     )
-    check_interval: float = 5.0
-    max_concurrent: int = 10
-    graceful_shutdown_wait_seconds: int = 30
+    check_interval: float = 1.0
+    max_concurrent: int = 20
+    graceful_shutdown_wait_seconds: float = 10.0
     task_limits: TaskLimits = field(default_factory=TaskLimits)
-    event_debounce_min_count: int = 1
-    event_debounce_max_wait_seconds: float = 30.0
+    event_debounce_min_count: int = 3
+    event_debounce_max_wait_seconds: float = 10.0
+
+
+def normalize_statuses(
+    statuses: Collection[AgentStateStatus] | None,
+) -> frozenset[AgentStateStatus] | None:
+    if statuses is None:
+        return None
+    return frozenset(statuses)
+
+
+__all__ = [
+    "ACTIVE_AGENT_STATUSES",
+    "AgentState",
+    "AgentStateStatus",
+    "AgentStateStorageConfig",
+    "ChildAgentConfigOverrides",
+    "PendingEvent",
+    "SchedulerConfig",
+    "SchedulerEventType",
+    "TERMINAL_AGENT_STATUSES",
+    "TaskLimits",
+    "TimeUnit",
+    "WaitMode",
+    "WakeCondition",
+    "WakeType",
+    "normalize_statuses",
+    "to_seconds",
+]

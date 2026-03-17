@@ -174,47 +174,55 @@ export interface StepDeltaPayload {
 
 export interface StreamEventBase {
   type: string;
-}
-
-export interface AgentStreamEventPayload extends StreamEventBase {
-  type:
-    | "step_delta"
-    | "step_completed"
-    | "run_started"
-    | "run_completed"
-    | "run_failed"
-    | "error"
-    | "tool_auth_required"
-    | "tool_auth_denied";
+  session_id: string;
   run_id: string;
-  delta?: StepDeltaPayload;
-  step?: StepResponse;
-  data?: Record<string, unknown>;
-  agent_id?: string | null;
-  span_id?: string | null;
-  parent_run_id?: string | null;
-  parent_span_id?: string | null;
-  trace_id?: string | null;
-  step_id?: string | null;
-  depth?: number;
+  agent_id: string;
+  parent_run_id: string | null;
+  depth: number;
   timestamp?: string | null;
 }
 
-export interface SchedulerCompletedEventPayload extends StreamEventBase {
-  type: "scheduler_completed";
-  state_id: string;
+export interface RunStartedEventPayload extends StreamEventBase {
+  type: "run_started";
+}
+
+export interface StepDeltaEventPayload extends StreamEventBase {
+  type: "step_delta";
+  step_id: string;
+  delta: StepDeltaPayload;
+}
+
+export interface StepCompletedEventPayload extends StreamEventBase {
+  type: "step_completed";
+  step: StepResponse;
+}
+
+export interface RunCompletedEventPayload extends StreamEventBase {
+  type: "run_completed";
   response?: string | null;
+  metrics?: RunMetricsPayload | null;
   termination_reason?: string | null;
 }
 
-export interface SchedulerFailedEventPayload extends StreamEventBase {
+export interface RunFailedEventPayload extends StreamEventBase {
+  type: "run_failed";
+  error: string;
+}
+
+export interface SchedulerFailedEventPayload {
   type: "scheduler_failed";
   error: string;
 }
 
+export type AgentStreamEventPayload =
+  | RunStartedEventPayload
+  | StepDeltaEventPayload
+  | StepCompletedEventPayload
+  | RunCompletedEventPayload
+  | RunFailedEventPayload;
+
 export type StreamEventPayload =
   | AgentStreamEventPayload
-  | SchedulerCompletedEventPayload
   | SchedulerFailedEventPayload;
 
 export function listSessions(limit = 20, offset = 0) {
@@ -427,7 +435,6 @@ export interface WakeConditionResponse {
   time_value: number | null;
   time_unit: string | null;
   wakeup_at: string | null;
-  submitted_task: UserInput | null;
   timeout_at: string | null;
 }
 
@@ -453,6 +460,7 @@ export interface AgentStateDetail {
   status: string;
   task: UserInput;
   parent_id: string | null;
+  pending_input: UserInput | null;
   config_overrides: Record<string, unknown>;
   wake_condition: WakeConditionResponse | null;
   result_summary: string | null;
@@ -470,7 +478,9 @@ export interface SchedulerStats {
   total: number;
   pending: number;
   running: number;
-  sleeping: number;
+  waiting: number;
+  idle: number;
+  queued: number;
   completed: number;
   failed: number;
 }

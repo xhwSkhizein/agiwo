@@ -1,4 +1,4 @@
-from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.runtime_tools.contracts import AgentRuntimeTool, RuntimeToolOutcome
 from agiwo.tool.base import BaseTool, ToolDefinition
 from agiwo.tool.context import ToolContext
@@ -28,7 +28,7 @@ class BaseToolAdapter:
     async def execute_for_agent(
         self,
         parameters: dict[str, object],
-        context: ExecutionContext,
+        context: AgentRunContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         tool_context = ToolContext(

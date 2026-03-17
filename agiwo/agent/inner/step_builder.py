@@ -12,7 +12,7 @@ from typing import Awaitable, Callable
 
 from agiwo.agent.runtime import StepDelta, StepRecord
 from agiwo.llm.base import StreamChunk
-from agiwo.llm.helper import normalize_usage_metrics
+from agiwo.llm.event_normalizer import normalize_usage_metrics
 
 
 @dataclass

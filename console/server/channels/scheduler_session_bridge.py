@@ -6,26 +6,67 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 from agiwo.agent import Agent, UserInput
-from agiwo.scheduler.models import AgentStateStatus, SchedulerOutput
+from agiwo.agent.runtime import AgentStreamItem, RunCompletedEvent, RunFailedEvent
+from agiwo.scheduler.models import AgentStateStatus
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
-from server.channels.session_binding import assign_scheduler_state
 from server.channels.models import ChannelChatSessionStore, Session
+from server.channels.session_binding import assign_scheduler_state
 
 logger = get_logger(__name__)
 
 
-class _EmptySchedulerOutputStream:
-    def __aiter__(self) -> "_EmptySchedulerOutputStream":
+class _EmptySchedulerTextStream:
+    def __aiter__(self) -> "_EmptySchedulerTextStream":
         return self
 
-    async def __anext__(self) -> SchedulerOutput:
+    async def __anext__(self) -> str:
         raise StopAsyncIteration
 
 
-def _empty_scheduler_output_stream() -> AsyncIterator[SchedulerOutput]:
-    return _EmptySchedulerOutputStream()
+def _empty_scheduler_output_stream() -> AsyncIterator[str]:
+    return _EmptySchedulerTextStream()
+
+
+def _can_accept_enqueue_input(state: object | None) -> bool:
+    if state is None:
+        return False
+    helper = getattr(state, "can_accept_enqueue_input", None)
+    if callable(helper):
+        return bool(helper())
+    status = getattr(state, "status", None)
+    is_persistent = bool(getattr(state, "is_persistent", False))
+    parent_id = getattr(state, "parent_id", None)
+    return (
+        parent_id is None
+        and is_persistent
+        and status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
+    )
+
+
+async def _text_stream_from_scheduler_events(
+    event_stream: AsyncIterator[AgentStreamItem],
+) -> AsyncIterator[str]:
+    async for item in event_stream:
+        if isinstance(item, RunCompletedEvent):
+            if not item.response:
+                continue
+            if item.depth == 0:
+                yield item.response
+                continue
+            yield (
+                f"<notice>agent_id={item.agent_id}, status=completed</notice>\n"
+                f"{item.response}"
+            )
+        elif isinstance(item, RunFailedEvent):
+            if item.depth == 0:
+                yield item.error
+                continue
+            yield (
+                f"<notice>agent_id={item.agent_id}, status=failed</notice>\n"
+                f"{item.error}"
+            )
 
 
 class SchedulerSessionBridge:
@@ -50,11 +91,7 @@ class SchedulerSessionBridge:
         state = await self._scheduler.get_state(session.scheduler_state_id)
         if state is None:
             return
-        if state.status not in (
-            AgentStateStatus.RUNNING,
-            AgentStateStatus.SLEEPING,
-            AgentStateStatus.PENDING,
-        ):
+        if not state.is_active():
             return
         await self._scheduler.cancel(session.scheduler_state_id, reason)
 
@@ -63,7 +100,7 @@ class SchedulerSessionBridge:
         agent: Agent,
         session: Session,
         user_input: UserInput,
-    ) -> AsyncIterator[SchedulerOutput]:
+    ) -> AsyncIterator[str]:
         current_state = None
         if session.scheduler_state_id:
             current_state = await self._scheduler.get_state(session.scheduler_state_id)
@@ -72,32 +109,46 @@ class SchedulerSessionBridge:
             AgentStateStatus.COMPLETED,
             AgentStateStatus.FAILED,
         ):
-            output_stream = self._scheduler.submit_and_subscribe(
-                agent,
-                user_input,
-                session_id=session.id,
-                persistent=True,
-                timeout=self._scheduler_wait_timeout,
+            output_stream = _text_stream_from_scheduler_events(
+                self._scheduler.stream(
+                    user_input,
+                    agent=agent,
+                    session_id=session.id,
+                    persistent=True,
+                    timeout=self._scheduler_wait_timeout,
+                )
             )
             assign_scheduler_state(session, agent.id)
-        elif current_state.status == AgentStateStatus.SLEEPING:
-            output_stream = self._scheduler.submit_task_and_subscribe(
-                session.scheduler_state_id,
-                user_input,
-                agent=agent,
-                timeout=self._scheduler_wait_timeout,
+        elif _can_accept_enqueue_input(current_state):
+            output_stream = _text_stream_from_scheduler_events(
+                self._scheduler.stream(
+                    user_input,
+                    agent=agent,
+                    state_id=session.scheduler_state_id,
+                    timeout=self._scheduler_wait_timeout,
+                )
             )
-        elif current_state.status == AgentStateStatus.RUNNING:
-            output_stream = await self._handle_running_state(session, user_input)
+        elif current_state.status in (
+            AgentStateStatus.RUNNING,
+            AgentStateStatus.WAITING,
+            AgentStateStatus.QUEUED,
+        ):
+            output_stream = await self._handle_running_state(
+                session,
+                user_input,
+                urgent=current_state.status == AgentStateStatus.WAITING,
+            )
         elif current_state.status == AgentStateStatus.PENDING:
             output_stream = await self._handle_pending_state(agent, session, user_input)
         else:
-            output_stream = self._scheduler.submit_and_subscribe(
-                agent,
-                user_input,
-                session_id=session.id,
-                persistent=True,
-                timeout=self._scheduler_wait_timeout,
+            output_stream = _text_stream_from_scheduler_events(
+                self._scheduler.stream(
+                    user_input,
+                    agent=agent,
+                    session_id=session.id,
+                    persistent=True,
+                    timeout=self._scheduler_wait_timeout,
+                )
             )
             assign_scheduler_state(session, agent.id)
 
@@ -108,8 +159,14 @@ class SchedulerSessionBridge:
         self,
         session: Session,
         user_input: UserInput,
-    ) -> AsyncIterator[SchedulerOutput]:
-        steered = await self._scheduler.steer(session.scheduler_state_id, user_input)
+        *,
+        urgent: bool = False,
+    ) -> AsyncIterator[str]:
+        steered = await self._scheduler.steer(
+            session.scheduler_state_id,
+            user_input,
+            urgent=urgent,
+        )
         if steered:
             logger.info(
                 "user_input_steered_to_running_agent",
@@ -127,7 +184,7 @@ class SchedulerSessionBridge:
         agent: Agent,
         session: Session,
         user_input: UserInput,
-    ) -> AsyncIterator[SchedulerOutput]:
+    ) -> AsyncIterator[str]:
         logger.info(
             "waiting_for_pending_agent_before_submit",
             state_id=session.scheduler_state_id,
@@ -138,21 +195,25 @@ class SchedulerSessionBridge:
         )
         refreshed = await self._scheduler.get_state(session.scheduler_state_id)
 
-        if refreshed is not None and refreshed.status == AgentStateStatus.SLEEPING:
-            return self._scheduler.submit_task_and_subscribe(
-                session.scheduler_state_id,
-                user_input,
-                agent=agent,
-                timeout=self._scheduler_wait_timeout,
+        if _can_accept_enqueue_input(refreshed):
+            return _text_stream_from_scheduler_events(
+                self._scheduler.stream(
+                    user_input,
+                    agent=agent,
+                    state_id=session.scheduler_state_id,
+                    timeout=self._scheduler_wait_timeout,
+                )
             )
 
         assign_scheduler_state(session, agent.id)
-        return self._scheduler.submit_and_subscribe(
-            agent,
-            user_input,
-            session_id=session.id,
-            persistent=True,
-            timeout=self._scheduler_wait_timeout,
+        return _text_stream_from_scheduler_events(
+            self._scheduler.stream(
+                user_input,
+                agent=agent,
+                session_id=session.id,
+                persistent=True,
+                timeout=self._scheduler_wait_timeout,
+            )
         )
 
     async def _touch_session(self, session: Session) -> None:

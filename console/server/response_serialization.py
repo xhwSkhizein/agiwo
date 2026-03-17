@@ -2,11 +2,11 @@
 
 from typing import Any
 
-from agiwo.agent import Run, StepRecord, StreamEvent
+from agiwo.agent import AgentStreamItem, Run, StepRecord
 from agiwo.agent.serialization import (
     serialize_run_payload,
     serialize_step_record_payload,
-    serialize_stream_event_payload,
+    serialize_stream_item_payload,
 )
 from agiwo.observability.trace import Span, Trace
 from agiwo.observability.serialization import (
@@ -29,7 +29,6 @@ from server.schemas import (
     RunResponse,
     SpanResponse,
     StepResponse,
-    StreamEventPayload,
     TraceListItem,
     TraceResponse,
     WakeConditionResponse,
@@ -126,5 +125,8 @@ def pending_event_to_response(event: PendingEvent) -> PendingEventResponse:
     return PendingEventResponse(**serialize_pending_event_payload(event))
 
 
-def stream_event_to_payload(event: StreamEvent) -> dict[str, Any]:
-    return StreamEventPayload(**serialize_stream_event_payload(event)).model_dump()
+def stream_event_to_payload(event: AgentStreamItem) -> dict[str, Any]:
+    payload = serialize_stream_item_payload(event)
+    if event.type == "step_completed":
+        payload["step"] = step_to_response(event.step).model_dump()
+    return payload

@@ -12,11 +12,13 @@ except ImportError:
     raise ImportError("Please install anthropic package: uv add anthropic") from None
 
 from agiwo.llm.base import Model, StreamChunk
-from agiwo.llm.helper import (
+from agiwo.llm.event_normalizer import (
     AnthropicStreamTranslator,
+    normalize_anthropic_sdk_event,
+)
+from agiwo.llm.message_converter import (
     convert_openai_messages_to_anthropic,
     convert_openai_tools_to_anthropic,
-    normalize_anthropic_sdk_event,
 )
 from agiwo.config.settings import settings
 from agiwo.utils.retry import retry_async

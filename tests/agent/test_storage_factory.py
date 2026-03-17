@@ -173,7 +173,7 @@ class TestTraceStorageFactory:
         for trace in traces:
             await storage.save_trace(trace)
 
-        recent = storage.get_recent(limit=2)
+        recent = await storage.query_traces({"limit": 2})
         assert [trace.trace_id for trace in recent] == ["trace-3", "trace-2"]
 
         filtered = await storage.query_traces(
@@ -211,7 +211,7 @@ class TestTraceStorageFactory:
             await storage.close()
 
     @pytest.mark.asyncio
-    async def test_sqlite_storage_recent_matches_memory_order(self):
+    async def test_sqlite_storage_query_order(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             config = TraceStorageConfig(
@@ -230,7 +230,7 @@ class TestTraceStorageFactory:
                     )
                 )
 
-            recent = storage.get_recent(limit=2)
+            recent = await storage.query_traces({"limit": 2})
             assert [trace.trace_id for trace in recent] == ["trace-2", "trace-1"]
 
             await storage.close()

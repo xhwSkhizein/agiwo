@@ -13,7 +13,7 @@ except ImportError:
     raise ImportError("Please install openai package: pip install openai")
 
 from agiwo.llm.base import Model, StreamChunk
-from agiwo.llm.helper import normalize_usage_metrics
+from agiwo.llm.event_normalizer import normalize_usage_metrics
 from agiwo.config.settings import settings
 from agiwo.utils.retry import retry_async
 from agiwo.utils.logging import get_logger

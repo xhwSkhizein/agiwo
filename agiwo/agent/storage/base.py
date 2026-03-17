@@ -182,8 +182,14 @@ class InMemoryRunStepStorage(RunStepStorage):
         return runs[offset : offset + limit]
 
     async def delete_run(self, run_id: str) -> None:
-        if run_id in self.runs:
-            del self.runs[run_id]
+        run = self.runs.pop(run_id, None)
+        if run is None:
+            return
+        session_steps = self.steps.get(run.session_id, [])
+        self.steps[run.session_id] = [
+            step for step in session_steps if step.run_id != run_id
+        ]
+        self._rebuild_indexes(run.session_id)
 
     # --- Step Operations ---
 
@@ -239,6 +245,9 @@ class InMemoryRunStepStorage(RunStepStorage):
         step_list.insert(pos, step)
         # Rebuild indexes after insert (shifted positions)
         self._rebuild_indexes(sid)
+        current = self._sequence_counters.get(sid)
+        if current is not None and step.sequence > current:
+            self._sequence_counters[sid] = step.sequence
 
     async def save_steps_batch(self, steps: list[StepRecord]) -> None:
         for step in steps:

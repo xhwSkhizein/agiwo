@@ -1,8 +1,7 @@
 from agiwo.agent import StepMetrics, StepRecord
-from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
 from agiwo.agent.inner.llm_handler import LLMStreamHandler
-from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model
+from tests.utils.agent_context import build_agent_context
 
 
 class MockModel(Model):
@@ -15,14 +14,12 @@ class MockModel(Model):
             yield None
 
 
-def _make_context() -> ExecutionContext:
-    return ExecutionContext(
+def _make_context():
+    return build_agent_context(
         session_id="sess-cost",
         run_id="run-cost",
-        channel=StreamChannel(),
         agent_id="agent-cost",
         agent_name="test-agent",
-        sequence_counter=SessionSequenceCounter(0),
     )
 
 

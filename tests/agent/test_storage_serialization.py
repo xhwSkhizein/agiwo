@@ -14,18 +14,17 @@ from agiwo.agent import (
     TerminationReason,
     UserMessage,
 )
-from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
 from agiwo.agent.inner.run_payloads import (
     apply_run_metrics_payload,
     build_run_completed_event_data,
 )
-from agiwo.agent.stream_channel import StreamChannel
 from agiwo.agent.storage.serialization import (
     deserialize_run_from_storage,
     deserialize_step_from_storage,
     serialize_run_for_storage,
     serialize_step_for_storage,
 )
+from tests.utils.agent_context import build_agent_context
 
 
 def test_run_storage_round_trip_restores_structured_user_input_and_status() -> None:
@@ -49,14 +48,12 @@ def test_run_storage_round_trip_restores_structured_user_input_and_status() -> N
     assert restored.user_input.context.source == "api"
 
 
-def _make_context() -> ExecutionContext:
-    return ExecutionContext(
+def _make_context():
+    return build_agent_context(
         session_id="session-1",
         run_id="run-1",
-        channel=StreamChannel(),
         agent_id="agent-1",
         agent_name="test-agent",
-        sequence_counter=SessionSequenceCounter(0),
     )
 
 
@@ -105,6 +102,49 @@ def test_step_storage_deserializer_ignores_backend_only_fields() -> None:
     assert restored.id == "step-2"
     assert restored.role == MessageRole.ASSISTANT
     assert restored.content == "done"
+
+
+def test_run_storage_deserializer_restores_datetime_fields_from_iso_strings() -> None:
+    restored = deserialize_run_from_storage(
+        {
+            "id": "run-iso",
+            "agent_id": "agent-1",
+            "session_id": "session-1",
+            "user_input": "hello",
+            "status": "completed",
+            "created_at": "2026-03-17T10:11:12+00:00",
+            "updated_at": "2026-03-17T10:11:13+00:00",
+        }
+    )
+
+    assert restored.status == RunStatus.COMPLETED
+    assert isinstance(restored.created_at, datetime)
+    assert isinstance(restored.updated_at, datetime)
+
+
+def test_step_storage_deserializer_restores_datetime_fields_from_iso_strings() -> None:
+    restored = deserialize_step_from_storage(
+        {
+            "id": "step-iso",
+            "session_id": "session-1",
+            "run_id": "run-1",
+            "sequence": 3,
+            "role": "assistant",
+            "content": "done",
+            "metrics": {
+                "start_at": "2026-03-17T10:11:12+00:00",
+                "end_at": "2026-03-17T10:11:13+00:00",
+                "usage_source": "estimated",
+            },
+            "created_at": "2026-03-17T10:11:12+00:00",
+        }
+    )
+
+    assert isinstance(restored.created_at, datetime)
+    assert restored.metrics is not None
+    assert isinstance(restored.metrics.start_at, datetime)
+    assert isinstance(restored.metrics.end_at, datetime)
+    assert restored.metrics.usage_source == "estimated"
 
 
 def test_run_completed_payload_round_trip_uses_shared_metrics_mapping() -> None:
@@ -158,3 +198,14 @@ def test_step_storage_round_trip_preserves_usage_source() -> None:
 
     assert restored.metrics is not None
     assert restored.metrics.usage_source == "estimated"
+
+
+def test_step_metrics_to_dict_tolerates_string_timestamps() -> None:
+    metrics = StepMetrics(usage_source="estimated")
+    metrics.start_at = "2026-03-17T10:11:12+00:00"
+    metrics.end_at = "2026-03-17T10:11:13+00:00"
+
+    payload = metrics.to_dict()
+
+    assert payload["start_at"] == "2026-03-17T10:11:12+00:00"
+    assert payload["end_at"] == "2026-03-17T10:11:13+00:00"

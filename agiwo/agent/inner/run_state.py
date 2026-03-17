@@ -1,9 +1,9 @@
 import time
 from dataclasses import dataclass, field
 
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.compact_types import CompactMetadata
+from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.runtime import (
     StepRecord,
     step_to_message,
@@ -17,7 +17,7 @@ from agiwo.agent.runtime import (
 class RunState:
     """Encapsulates all mutable state for a single execution run."""
 
-    context: ExecutionContext
+    context: AgentRunContext
     config: AgentOptions
     messages: list[dict]
     tool_schemas: list[dict] | None = None
@@ -41,7 +41,7 @@ class RunState:
     compact_start_seq: int = 0
 
     async def next_sequence(self) -> int:
-        return await self.context.sequence_counter.next()
+        return await self.context.next_sequence()
 
     @property
     def elapsed(self) -> float:
@@ -72,10 +72,6 @@ class RunState:
             termination_reason=self.termination_reason,
         )
 
-    def add_token_cost(self, cost: float) -> None:
-        if cost > 0:
-            self.token_cost += cost
-
     def _track_step(self, step: StepRecord) -> None:
         self.steps_count += 1
 
@@ -92,6 +88,8 @@ class RunState:
         if not step.metrics:
             return
 
+        if step.metrics.token_cost is not None:
+            self.token_cost += step.metrics.token_cost
         if step.metrics.total_tokens is not None:
             self.total_tokens += step.metrics.total_tokens
         if step.metrics.input_tokens is not None:

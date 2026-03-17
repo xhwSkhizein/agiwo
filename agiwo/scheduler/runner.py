@@ -9,29 +9,27 @@ should be dispatched; that remains the engine's job.
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Awaitable, Callable, Literal
+from typing import Literal
 from uuid import uuid4
 
+from agiwo.agent.execution import AgentExecutionHandlePort
 from agiwo.agent.input import UserInput
-from agiwo.agent.input_codec import normalize_to_message
 from agiwo.agent.scheduler_port import ChildAgentOverrides, SchedulerAgentPort
-from agiwo.agent.runtime import RunOutput, StepRecord, TerminationReason
+from agiwo.agent.runtime import AgentStreamItem, RunOutput, TerminationReason
+from agiwo.agent.streaming import consume_execution_stream
 from agiwo.scheduler.coordinator import SchedulerCoordinator
-from agiwo.scheduler.formatting import (
-    build_child_result_detail_lines,
-    format_child_results_summary,
-)
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     PendingEvent,
     SchedulerEventType,
-    SchedulerOutput,
     WakeCondition,
     WakeType,
 )
+from agiwo.scheduler.state_ops import SchedulerStateOps
 from agiwo.scheduler.store.codec import deserialize_child_agent_config_overrides
 from agiwo.scheduler.store import AgentStateStorage
+from agiwo.scheduler.wake_messages import WakeMessageBuilder
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -40,6 +38,7 @@ logger = get_logger(__name__)
 
 AgentRunMode = Literal[
     "root",
+    "queued_root",
     "child_pending",
     "wake",
     "wake_events",
@@ -53,13 +52,15 @@ class AgentRunSpec:
     clear_wake_condition: bool = False
     increment_wake_count: bool = False
     create_abort_signal: bool = False
-    emit_error_output: bool = False
     enforce_parent_abort: bool = False
     emit_child_failed_event: bool = False
 
 
 RUN_MODE_TO_SPEC: dict[AgentRunMode, AgentRunSpec] = {
-    "root": AgentRunSpec(emit_error_output=True),
+    "root": AgentRunSpec(),
+    "queued_root": AgentRunSpec(
+        transition_to_running=True,
+    ),
     "child_pending": AgentRunSpec(
         transition_to_running=True,
         create_abort_signal=True,
@@ -69,18 +70,15 @@ RUN_MODE_TO_SPEC: dict[AgentRunMode, AgentRunSpec] = {
     "wake": AgentRunSpec(
         transition_to_running=True,
         increment_wake_count=True,
-        emit_error_output=True,
     ),
     "wake_events": AgentRunSpec(
         transition_to_running=True,
         increment_wake_count=True,
-        emit_error_output=True,
     ),
     "wake_timeout": AgentRunSpec(
         transition_to_running=True,
         clear_wake_condition=True,
         increment_wake_count=True,
-        emit_error_output=True,
     ),
 }
 
@@ -93,16 +91,20 @@ class SchedulerRunner:
         store: AgentStateStorage,
         coordinator: SchedulerCoordinator,
         semaphore: asyncio.Semaphore,
+        state_ops: SchedulerStateOps | None = None,
+        wake_message_builder: WakeMessageBuilder | None = None,
     ) -> None:
         self._store = store
         self._coordinator = coordinator
         self._semaphore = semaphore
-        self._step_sync_observers: dict[
-            str, Callable[[StepRecord], Awaitable[None]]
-        ] = {}
+        self._state_ops = state_ops or SchedulerStateOps(
+            store=store,
+            coordinator=coordinator,
+        )
+        self._wake_message_builder = wake_message_builder or WakeMessageBuilder(store)
 
-    async def create_child_agent(self, state: AgentState):
-        """Create a child Agent by copying the parent's configuration."""
+    async def create_child_agent(self, state: AgentState) -> SchedulerAgentPort:
+        """Create a child scheduler agent by copying the parent's template."""
         parent = self._coordinator.get_registered_agent(state.parent_id or "")
         if parent is None:
             raise RuntimeError(
@@ -110,7 +112,7 @@ class SchedulerRunner:
             )
 
         overrides = deserialize_child_agent_config_overrides(state.config_overrides)
-        child = await parent.derive_child_for_scheduler(
+        child = await parent.create_scheduler_child(
             child_id=state.id,
             overrides=ChildAgentOverrides(
                 instruction=overrides.instruction,
@@ -119,44 +121,7 @@ class SchedulerRunner:
             ),
         )
         self._coordinator.register_agent(child)
-        self._ensure_step_sync(child, state.id)
-        return child.unwrap_agent() or child
-
-    def _ensure_step_sync(self, agent: SchedulerAgentPort, state_id: str) -> None:
-        existing_observer = self._step_sync_observers.get(state_id)
-        if existing_observer is not None:
-            agent.add_step_observer(existing_observer)
-            return
-
-        async def scheduler_step_observer(step: StepRecord) -> None:
-            await self._sync_step_to_state(state_id, step)
-
-        self._step_sync_observers[state_id] = scheduler_step_observer
-        agent.add_step_observer(scheduler_step_observer)
-
-    async def _sync_step_to_state(self, state_id: str, step: StepRecord) -> None:
-        """Update last_activity_at and rolling recent_steps in AgentState."""
-        try:
-            now = datetime.now(timezone.utc)
-            step_summary: dict = {
-                "role": step.role.value
-                if hasattr(step.role, "value")
-                else str(step.role),
-                "timestamp": now.isoformat(),
-            }
-            if step.tool_calls:
-                step_summary["tool_calls"] = [
-                    tc.get("function", {}).get("name", "unknown")
-                    for tc in step.tool_calls
-                ]
-            if step.name:
-                step_summary["tool_name"] = step.name
-
-            await self._store.append_recent_step(state_id, step_summary)
-        except Exception:  # noqa: BLE001 - scheduler hook boundary
-            logger.warning(
-                "sync_step_to_state_failed", state_id=state_id, exc_info=True
-            )
+        return child
 
     async def run_root_agent(
         self,
@@ -166,12 +131,11 @@ class SchedulerRunner:
         state: AgentState,
     ) -> None:
         """Run the root agent submitted by the caller."""
-        self._ensure_step_sync(agent, state.id)
         await self._execute_agent_run(
             state,
             mode="root",
-            agent_loader=self._constant_agent_loader(agent),
-            user_input_loader=self._constant_input_loader(user_input),
+            agent=agent,
+            user_input=user_input,
             session_id=session_id,
             error_log="root_agent_failed",
             error_extra={
@@ -181,13 +145,38 @@ class SchedulerRunner:
             },
         )
 
+    async def run_queued_root(self, state: AgentState) -> None:
+        """Run a queued persistent root with its pending input."""
+        agent = await self._load_registered_agent(
+            state,
+            missing_log="queued_root_agent_not_found",
+            missing_message=f"Agent '{state.id}' not found in scheduler for queued run",
+        )
+        if agent is None:
+            return
+        user_input = await self._load_pending_input(state)
+        await self._execute_agent_run(
+            state,
+            mode="queued_root",
+            agent=agent,
+            user_input=user_input,
+            session_id=state.resolve_runtime_session_id(),
+            error_log="queued_root_agent_failed",
+            error_extra={
+                "agent_id": state.id,
+                "state_id": state.id,
+                "state_status": state.status.value,
+            },
+        )
+
     async def run_pending_agent(self, state: AgentState) -> None:
         """Run a PENDING child agent."""
+        child = await self.create_child_agent(state)
         await self._execute_agent_run(
             state,
             mode="child_pending",
-            agent_loader=lambda: self.create_child_agent(state),
-            user_input_loader=self._constant_input_loader(state.task),
+            agent=child,
+            user_input=state.task,
             session_id=state.resolve_runtime_session_id(),
             error_log="child_agent_failed",
             error_extra={
@@ -198,16 +187,20 @@ class SchedulerRunner:
         )
 
     async def wake_agent(self, state: AgentState) -> None:
-        """Wake a SLEEPING agent by running it with a wake message."""
+        """Wake a WAITING agent by running it with a wake message."""
+        agent = await self._load_registered_agent(
+            state,
+            missing_log="wake_agent_not_found",
+            missing_message=f"Agent '{state.id}' not found in scheduler for wake",
+        )
+        if agent is None:
+            return
+        wake_message = await self.build_wake_message(state)
         await self._execute_agent_run(
             state,
             mode="wake",
-            agent_loader=lambda: self._load_registered_agent(
-                state,
-                missing_log="wake_agent_not_found",
-                missing_message=f"Agent '{state.id}' not found in scheduler for wake",
-            ),
-            user_input_loader=lambda: self.build_wake_message(state),
+            agent=agent,
+            user_input=wake_message,
             session_id=state.resolve_runtime_session_id(),
             error_log="wake_agent_failed",
             error_extra={
@@ -219,17 +212,18 @@ class SchedulerRunner:
     async def wake_agent_for_events(
         self, state: AgentState, events: list[PendingEvent]
     ) -> None:
-        """Wake a SLEEPING agent to process accumulated pending events."""
+        """Wake a WAITING agent to process accumulated pending events."""
+        agent = await self._load_registered_agent(
+            state,
+            missing_log="wake_agent_for_events_not_found",
+        )
+        if agent is None:
+            return
         await self._execute_agent_run(
             state,
             mode="wake_events",
-            agent_loader=lambda: self._load_registered_agent(
-                state,
-                missing_log="wake_agent_for_events_not_found",
-            ),
-            user_input_loader=self._constant_input_loader(
-                self._build_events_wake_message(events)
-            ),
+            agent=agent,
+            user_input=self._wake_message_builder.build_from_events(events),
             session_id=state.resolve_runtime_session_id(),
             error_log="wake_agent_for_events_failed",
             error_extra={
@@ -239,16 +233,20 @@ class SchedulerRunner:
         )
 
     async def wake_for_timeout(self, state: AgentState) -> None:
-        """Wake a timed-out SLEEPING agent so it can produce a summary report."""
+        """Wake a timed-out WAITING agent so it can produce a summary report."""
+        agent = await self._load_registered_agent(
+            state,
+            missing_log="timeout_wake_agent_not_found",
+            missing_message=f"Agent '{state.id}' not found for timeout wake",
+        )
+        if agent is None:
+            return
+        timeout_message = await self._wake_message_builder.build_timeout(state)
         await self._execute_agent_run(
             state,
             mode="wake_timeout",
-            agent_loader=lambda: self._load_registered_agent(
-                state,
-                missing_log="timeout_wake_agent_not_found",
-                missing_message=f"Agent '{state.id}' not found for timeout wake",
-            ),
-            user_input_loader=lambda: self._build_timeout_wake_message(state),
+            agent=agent,
+            user_input=timeout_message,
             session_id=state.resolve_runtime_session_id(),
             error_log="timeout_wake_failed",
             error_extra={"state_id": state.id},
@@ -259,8 +257,8 @@ class SchedulerRunner:
         state: AgentState,
         mode: AgentRunMode,
         *,
-        agent_loader: Callable[[], Awaitable[SchedulerAgentPort | None]],
-        user_input_loader: Callable[[], Awaitable[UserInput] | UserInput],
+        agent: SchedulerAgentPort,
+        user_input: UserInput,
         session_id: str,
         error_log: str,
         error_extra: dict,
@@ -277,15 +275,12 @@ class SchedulerRunner:
                 if await self._parent_aborted(state, spec):
                     return
 
-                agent = await agent_loader()
-                if agent is None:
-                    return
+                await self._prepare_state_for_run(state, spec, user_input=user_input)
 
-                await self._prepare_state_for_run(state, spec)
-                user_input = await self._resolve_user_input(user_input_loader)
-
-                output = await agent.run(
-                    user_input,
+                output = await self._run_agent_cycle(
+                    state=state,
+                    agent=agent,
+                    user_input=user_input,
                     session_id=session_id,
                     abort_signal=abort_signal,
                 )
@@ -297,88 +292,143 @@ class SchedulerRunner:
                 error=str(error),
                 error_type=type(error).__name__,
             )
-            await self._update_status_and_notify(
-                state.id,
-                AgentStateStatus.FAILED,
-                result_summary=str(error),
-            )
+            await self._state_ops.mark_failed(state, str(error))
             if spec.emit_child_failed_event:
                 await self._emit_event_to_parent(
                     state,
                     SchedulerEventType.CHILD_FAILED,
                     {"reason": str(error)},
                 )
-            elif spec.emit_error_output:
-                await self._emit_output(
-                    state,
-                    str(error),
-                    is_final=state.parent_id is None,
-                )
+            if state.is_root:
+                await self._coordinator.finish_stream_channel(state.id)
         finally:
             self._coordinator.pop_abort_signal(state.id)
             await self._maybe_cleanup_agent(state)
+
+    async def _run_agent_cycle(
+        self,
+        *,
+        state: AgentState,
+        agent: SchedulerAgentPort,
+        user_input: UserInput,
+        session_id: str,
+        abort_signal: AbortSignal | None,
+    ) -> RunOutput:
+        handle = agent.start(
+            user_input,
+            session_id=session_id,
+            abort_signal=abort_signal,
+        )
+        self._coordinator.set_execution_handle(state.id, handle)
+        try:
+            return await self._observe_execution(
+                state=state,
+                handle=handle,
+            )
+        finally:
+            self._coordinator.pop_execution_handle(state.id)
+
+    async def _observe_execution(
+        self,
+        *,
+        state: AgentState,
+        handle: AgentExecutionHandlePort,
+    ) -> RunOutput:
+        result: RunOutput | None = None
+        async for item in consume_execution_stream(
+            handle,
+            cancel_reason="scheduler event stream closed",
+        ):
+            await self._fanout_stream_item(state, item)
+            result = self._maybe_build_run_output(item, fallback=result)
+
+        final_result = await handle.wait()
+        if result is None:
+            return final_result
+        return result
+
+    def _maybe_build_run_output(
+        self,
+        item: AgentStreamItem,
+        *,
+        fallback: RunOutput | None,
+    ) -> RunOutput | None:
+        if item.type == "run_completed":
+            return RunOutput(
+                session_id=item.session_id,
+                run_id=item.run_id,
+                response=item.response,
+                metrics=item.metrics,
+                termination_reason=item.termination_reason,
+            )
+        if item.type == "run_failed":
+            return RunOutput(
+                session_id=item.session_id,
+                run_id=item.run_id,
+                error=item.error,
+                termination_reason=TerminationReason.ERROR,
+            )
+        return fallback
+
+    async def _fanout_stream_item(
+        self,
+        state: AgentState,
+        item: AgentStreamItem,
+    ) -> None:
+        root_id = state.id if state.is_root else state.parent_id
+        channel_state = self._coordinator.get_stream_channel(root_id)
+        if channel_state is None:
+            return
+        if state.is_root or channel_state.include_child_events:
+            await channel_state.queue.put(item)
 
     async def _parent_aborted(
         self,
         state: AgentState,
         spec: AgentRunSpec,
     ) -> bool:
-        if not spec.enforce_parent_abort or state.parent_id is None:
+        if not spec.enforce_parent_abort or state.is_root:
             return False
 
         parent_signal = self._coordinator.get_abort_signal(state.parent_id)
         if parent_signal is None or not parent_signal.is_aborted():
             return False
 
-        await self._update_status_and_notify(
-            state.id,
-            AgentStateStatus.FAILED,
-            result_summary="Parent cancelled",
-        )
+        await self._state_ops.mark_failed(state, "Parent cancelled")
         return True
 
     async def _prepare_state_for_run(
         self,
         state: AgentState,
         spec: AgentRunSpec,
+        *,
+        user_input: UserInput,
     ) -> None:
-        if spec.increment_wake_count:
-            await self._store.increment_wake_count(state.id)
-
         if not spec.transition_to_running:
             return
 
-        update_kwargs: dict[str, WakeCondition | None] = {}
-        if spec.clear_wake_condition:
-            update_kwargs["wake_condition"] = None
-        await self._store.update_status(
-            state.id,
-            AgentStateStatus.RUNNING,
-            **update_kwargs,
+        refreshed = await self._store.get_state(state.id)
+        wake_count = state.wake_count
+        if refreshed is not None:
+            wake_count = refreshed.wake_count
+        if spec.increment_wake_count:
+            wake_count += 1
+
+        target = refreshed if refreshed is not None else state
+        await self._state_ops.mark_running(
+            target,
+            task=user_input,
+            pending_input=None,
+            wake_condition=None if spec.clear_wake_condition or state.is_waiting() or state.is_queued_root() else ...,
+            wake_count=wake_count,
         )
 
-    async def _resolve_user_input(
-        self,
-        user_input_loader: Callable[[], Awaitable[UserInput] | UserInput],
-    ) -> UserInput:
-        user_input = user_input_loader()
-        if asyncio.iscoroutine(user_input):
-            return await user_input
-        return user_input
-
-    def _constant_agent_loader(
-        self, agent: SchedulerAgentPort
-    ) -> Callable[[], Awaitable[SchedulerAgentPort]]:
-        async def _loader() -> SchedulerAgentPort:
-            return agent
-
-        return _loader
-
-    def _constant_input_loader(self, user_input: UserInput) -> Callable[[], UserInput]:
-        def _loader() -> UserInput:
-            return user_input
-
-        return _loader
+    async def _load_pending_input(self, state: AgentState) -> UserInput:
+        refreshed = await self._store.get_state(state.id)
+        pending_input = refreshed.pending_input if refreshed is not None else state.pending_input
+        if pending_input is None:
+            raise RuntimeError(f"Queued input for state '{state.id}' is missing")
+        return pending_input
 
     async def _load_registered_agent(
         self,
@@ -393,39 +443,16 @@ class SchedulerRunner:
 
         logger.error(missing_log, state_id=state.id)
         if missing_message is not None:
-            await self._update_status_and_notify(
-                state.id,
-                AgentStateStatus.FAILED,
-                result_summary=missing_message,
-            )
-            await self._emit_output(
-                state,
-                missing_message,
-                is_final=state.parent_id is None,
-            )
+            await self._state_ops.mark_failed(state, missing_message)
+            if state.is_root:
+                await self._coordinator.finish_stream_channel(state.id)
         return None
-
-    async def _build_timeout_wake_message(self, state: AgentState) -> str:
-        succeeded, failed = await self._collect_child_results(state)
-        wc = state.wake_condition
-        total = len(wc.wait_for) if wc else 0
-        done = len(succeeded) + len(failed)
-        return format_child_results_summary(
-            header="Wait timeout reached.",
-            succeeded=succeeded,
-            failed=failed,
-            progress_line=f"Completed children: {done}/{total}",
-            closing_instruction=(
-                "Please produce a summary report with whatever results are available."
-            ),
-        )
 
     async def _handle_agent_output(self, state: AgentState, output: RunOutput) -> None:
         """Persist the state transition implied by a completed agent cycle."""
         text = output.response
 
         if output.termination_reason == TerminationReason.SLEEPING:
-            await self._emit_output(state, text, is_final=False)
             await self._emit_event_to_parent(
                 state,
                 SchedulerEventType.CHILD_SLEEP_RESULT,
@@ -448,13 +475,13 @@ class SchedulerRunner:
                     wakeup_at=now + timedelta(seconds=secs),
                     timeout_at=original_wc.timeout_at,
                 )
-                await self._store.update_status(
-                    state.id,
-                    AgentStateStatus.SLEEPING,
+                refreshed_for_wait = await self._store.get_state(state.id)
+                target_for_wait = refreshed_for_wait if refreshed_for_wait is not None else state
+                await self._state_ops.mark_waiting(
+                    target_for_wait,
                     wake_condition=new_wc,
                     result_summary=text,
                 )
-                await self._emit_output(state, text, is_final=False)
                 await self._emit_event_to_parent(
                     state,
                     SchedulerEventType.CHILD_SLEEP_RESULT,
@@ -462,52 +489,26 @@ class SchedulerRunner:
                 )
                 return
 
-        is_root = state.parent_id is None
-
         if is_persistent:
-            await self._update_status_and_notify(
-                state.id,
-                AgentStateStatus.SLEEPING,
-                wake_condition=WakeCondition(type=WakeType.TASK_SUBMITTED),
+            refreshed_for_idle = await self._store.get_state(state.id)
+            target_for_idle = refreshed_for_idle if refreshed_for_idle is not None else state
+            await self._state_ops.mark_idle(
+                target_for_idle,
                 result_summary=text,
             )
-            await self._emit_output(state, text, is_final=is_root)
             return
 
-        await self._update_status_and_notify(
-            state.id,
-            AgentStateStatus.COMPLETED,
+        refreshed_for_complete = await self._store.get_state(state.id)
+        target_for_complete = refreshed_for_complete if refreshed_for_complete is not None else state
+        await self._state_ops.mark_completed(
+            target_for_complete,
             result_summary=text,
         )
-        await self._emit_output(state, text, is_final=is_root)
         await self._emit_event_to_parent(
             state,
             SchedulerEventType.CHILD_COMPLETED,
             {"result": text or ""},
         )
-
-    async def _update_status_and_notify(
-        self,
-        state_id: str,
-        status: AgentStateStatus,
-        *,
-        result_summary: str | None = ...,
-        wake_condition: WakeCondition | None = ...,
-    ) -> None:
-        await self._store.update_status(
-            state_id,
-            status,
-            result_summary=result_summary,
-            wake_condition=wake_condition,
-        )
-        if status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED):
-            self._coordinator.notify_state_change(state_id)
-        elif status == AgentStateStatus.SLEEPING and wake_condition is not ...:
-            if (
-                wake_condition is not None
-                and wake_condition.type == WakeType.TASK_SUBMITTED
-            ):
-                self._coordinator.notify_state_change(state_id)
 
     async def _emit_event_to_parent(
         self,
@@ -516,7 +517,7 @@ class SchedulerRunner:
         payload: dict,
     ) -> None:
         """Create a PendingEvent for the parent agent if this is a child agent."""
-        if state.parent_id is None:
+        if state.is_root:
             return
         parent_state = await self._store.get_state(state.parent_id)
         if parent_state is None:
@@ -545,39 +546,10 @@ class SchedulerRunner:
             source_agent_id=state.id,
         )
 
-    async def _emit_output(
-        self,
-        state: AgentState,
-        text: str | None,
-        *,
-        is_final: bool,
-    ) -> None:
-        """Push agent text output to the root agent's output channel."""
-        root_id = state.id if state.parent_id is None else state.parent_id
-        channel_state = self._coordinator.get_output_channel(root_id)
-        if channel_state is None:
-            return
-
-        is_child = state.parent_id is not None
-        if is_child and not channel_state.include_child_outputs:
-            return
-
-        if is_child and text:
-            refreshed = await self._store.get_state(state.id)
-            status_val = refreshed.status.value if refreshed else "unknown"
-            text = f"<notice>agent_id={state.id}, status={status_val}</notice>\n{text}"
-
-        if text:
-            await channel_state.queue.put(
-                SchedulerOutput(state_id=state.id, text=text, is_final=is_final)
-            )
-        elif is_final:
-            await channel_state.queue.put(None)
-
     async def _maybe_cleanup_agent(self, state: AgentState) -> None:
         """Release dispatch reservation and clean finished child agents."""
         self._coordinator.release_state_dispatch(state.id)
-        if state.parent_id is None:
+        if state.is_root:
             return
         refreshed = await self._store.get_state(state.id)
         if refreshed is None or refreshed.status in (
@@ -587,116 +559,11 @@ class SchedulerRunner:
             agent = self._coordinator.get_registered_agent(state.id)
             self._coordinator.unregister_agent(state.id)
             if agent is not None:
-                observer = self._step_sync_observers.pop(state.id, None)
-                if observer is not None:
-                    agent.remove_step_observer(observer)
                 await agent.close()
 
     async def build_wake_message(self, state: AgentState) -> UserInput:
         """Build a wake message with auto-injected child results."""
-        wc = state.wake_condition
-        if wc is None:
-            return "You have been woken up. Please continue your task."
-
-        if wc.type == WakeType.WAITSET:
-            succeeded, failed = await self._collect_child_results(state)
-            total = len(wc.wait_for)
-            done = len(succeeded) + len(failed)
-            return format_child_results_summary(
-                header=f"Child agents completed ({done}/{total}).",
-                succeeded=succeeded,
-                failed=failed,
-                closing_instruction=(
-                    "Please synthesize a final response based on the successful "
-                    "results above."
-                ),
-            )
-
-        if wc.type == WakeType.TIMER:
-            return "The scheduled delay has elapsed. Please continue your task."
-
-        if wc.type == WakeType.PERIODIC:
-            return (
-                "A scheduled periodic check has triggered. "
-                "Please check progress and decide whether to continue waiting "
-                "or produce a final result."
-            )
-
-        if wc.type == WakeType.TASK_SUBMITTED:
-            return normalize_to_message(wc.submitted_task or "")
-
-        return "You have been woken up. Please continue your task."
-
-    def _build_events_wake_message(self, events: list[PendingEvent]) -> str:
-        """Build a wake message from a list of pending events."""
-        lines = [f"You have {len(events)} new notification(s):\n"]
-        for event in events:
-            event_label = event.event_type.value.replace("_", " ").title()
-            child_id = event.payload.get(
-                "child_agent_id", event.source_agent_id or "unknown"
-            )
-            lines.append(f"### {event_label} — Agent: {child_id}")
-            if event.event_type == SchedulerEventType.CHILD_SLEEP_RESULT:
-                result = event.payload.get("result", "")
-                explain = event.payload.get("explain")
-                periodic = event.payload.get("periodic", False)
-                lines.extend(
-                    build_child_result_detail_lines(
-                        result=result,
-                        explain=explain,
-                        periodic=periodic,
-                        result_as_block=True,
-                    )
-                )
-            elif event.event_type == SchedulerEventType.CHILD_COMPLETED:
-                result = event.payload.get("result", "")
-                lines.extend(
-                    build_child_result_detail_lines(
-                        result=result,
-                        result_as_block=True,
-                    )
-                )
-            elif event.event_type == SchedulerEventType.CHILD_FAILED:
-                reason = event.payload.get("reason", "Unknown failure")
-                lines.extend(build_child_result_detail_lines(failure_reason=reason))
-            elif event.event_type == SchedulerEventType.HEALTH_WARNING:
-                lines.append(
-                    event.payload.get("message", "Agent may be stuck or unhealthy")
-                )
-            elif event.event_type == SchedulerEventType.USER_HINT:
-                hint = event.payload.get("hint", "")
-                if hint:
-                    lines.append(f"User hint: {hint}")
-            lines.append("")
-        lines.append(
-            "Please review these notifications and take appropriate action "
-            "(e.g., summarize results for the user, cancel stuck agents, etc.)."
-        )
-        return "\n".join(lines)
-
-    async def _collect_child_results(
-        self, state: AgentState
-    ) -> tuple[dict[str, str], dict[str, str]]:
-        """Collect results from child agents, separated into succeeded and failed."""
-        wc = state.wake_condition
-        child_ids = wc.wait_for if wc else []
-        if not child_ids:
-            children = await self._store.get_states_by_parent(state.id)
-            child_ids = [child.id for child in children]
-
-        succeeded: dict[str, str] = {}
-        failed: dict[str, str] = {}
-        for child_id in child_ids:
-            child = await self._store.get_state(child_id)
-            if child is None:
-                failed[child_id] = "Agent state not found"
-            elif child.status == AgentStateStatus.FAILED:
-                failed[child_id] = child.result_summary or "Unknown failure"
-            else:
-                succeeded[child_id] = (
-                    child.result_summary or f"status={child.status.value}"
-                )
-        return succeeded, failed
+        return await self._wake_message_builder.build(state)
 
 
 __all__ = ["AgentRunSpec", "SchedulerRunner"]

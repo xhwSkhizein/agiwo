@@ -7,7 +7,7 @@ import pytest
 
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.agent import EventType, StepDelta, StreamEvent
+from agiwo.agent import StepDelta, StepDeltaEvent
 
 from server.app import create_app
 from server.config import ConsoleConfig
@@ -58,15 +58,40 @@ async def client():
 
 
 class FakeStreamingAgent:
-    def __init__(self, events: list[StreamEvent]) -> None:
+    def __init__(self, events: list[StepDeltaEvent]) -> None:
         self._events = events
         self.closed = False
 
-    async def run_stream(self, message: str, *, session_id: str):
+    class _Handle:
+        def __init__(self, events: list[StepDeltaEvent]) -> None:
+            self._events = events
+            self.done = False
+
+        async def wait(self):
+            self.done = True
+            return None
+
+        async def steer(self, message: str) -> bool:
+            del message
+            return False
+
+        def cancel(self, reason: str | None = None) -> None:
+            del reason
+            self.done = True
+
+        async def _iterate(self):
+            for event in self._events:
+                yield event
+            self.done = True
+
+        def stream(self):
+            return self._iterate()
+
+    def start(self, message: str, *, session_id: str, abort_signal=None):
         assert message == "hello"
         assert session_id == "session-1"
-        for event in self._events:
-            yield event
+        del abort_signal
+        return self._Handle(self._events)
 
     async def close(self) -> None:
         self.closed = True
@@ -89,9 +114,13 @@ async def test_chat_streams_agent_events_and_closes_agent(
 
     fake_agent = FakeStreamingAgent(
         [
-            StreamEvent(
-                type=EventType.STEP_DELTA,
+            StepDeltaEvent(
+                session_id="session-1",
                 run_id="run-1",
+                agent_id="agent-1",
+                parent_run_id=None,
+                depth=0,
+                step_id="step-1",
                 delta=StepDelta(content="hello"),
                 timestamp=datetime(2026, 3, 10),
             )

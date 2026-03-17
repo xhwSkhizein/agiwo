@@ -24,7 +24,6 @@ def serialize_wake_condition_payload(
             else None
         ),
         "wakeup_at": serialize_optional_datetime(wake_condition.wakeup_at),
-        "submitted_task": serialize_user_input_payload(wake_condition.submitted_task),
         "timeout_at": serialize_optional_datetime(wake_condition.timeout_at),
     }
 
@@ -36,6 +35,7 @@ def serialize_agent_state_payload(state: AgentState) -> dict[str, Any]:
         "status": serialize_enum_value(state.status),
         "task": serialize_user_input_payload(state.task),
         "parent_id": state.parent_id,
+        "pending_input": serialize_user_input_payload(state.pending_input),
         "config_overrides": state.config_overrides,
         "wake_condition": serialize_wake_condition_payload(state.wake_condition),
         "result_summary": state.result_summary,

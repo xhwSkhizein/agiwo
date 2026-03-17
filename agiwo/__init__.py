@@ -22,9 +22,9 @@ Usage:
 from agiwo.agent.agent import Agent
 from agiwo.agent import (
     AgentConfig,
+    AgentStreamItem,
     AgentTool,
     RunOutput,
-    StreamEvent,
     TerminationReason,
     as_tool,
 )
@@ -46,7 +46,7 @@ __all__ = [
     "RunStepStorage",
     "RunStepStorageConfig",
     "Scheduler",
-    "StreamEvent",
+    "AgentStreamItem",
     "TerminationReason",
     "ToolResult",
     "TraceStorageConfig",

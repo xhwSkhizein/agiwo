@@ -5,7 +5,9 @@ from agiwo.scheduler.models import AgentStateStatus
 _STATUS_LABELS = {
     AgentStateStatus.PENDING: "等待中",
     AgentStateStatus.RUNNING: "运行中",
-    AgentStateStatus.SLEEPING: "空闲",
+    AgentStateStatus.WAITING: "等待唤醒",
+    AgentStateStatus.IDLE: "空闲",
+    AgentStateStatus.QUEUED: "已排队",
     AgentStateStatus.COMPLETED: "已完成",
     AgentStateStatus.FAILED: "已失败",
 }

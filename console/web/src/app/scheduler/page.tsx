@@ -43,7 +43,9 @@ const STATUS_FILTERS = [
   { label: "All", value: "" },
   { label: "Pending", value: "pending" },
   { label: "Running", value: "running" },
-  { label: "Sleeping", value: "sleeping" },
+  { label: "Waiting", value: "waiting" },
+  { label: "Idle", value: "idle" },
+  { label: "Queued", value: "queued" },
   { label: "Completed", value: "completed" },
   { label: "Failed", value: "failed" },
 ];
@@ -87,11 +89,13 @@ export default function SchedulerPage() {
       </div>
 
       {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
           <StatMini label="Total" value={stats.total} />
           <StatMini label="Pending" value={stats.pending} active={filter === "pending"} />
           <StatMini label="Running" value={stats.running} active={filter === "running"} />
-          <StatMini label="Sleeping" value={stats.sleeping} active={filter === "sleeping"} />
+          <StatMini label="Waiting" value={stats.waiting} active={filter === "waiting"} />
+          <StatMini label="Idle" value={stats.idle} active={filter === "idle"} />
+          <StatMini label="Queued" value={stats.queued} active={filter === "queued"} />
           <StatMini label="Completed" value={stats.completed} active={filter === "completed"} />
           <StatMini label="Failed" value={stats.failed} active={filter === "failed"} />
         </div>

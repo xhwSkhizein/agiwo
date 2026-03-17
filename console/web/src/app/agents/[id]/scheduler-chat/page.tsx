@@ -30,8 +30,6 @@ import { UserInputCompact } from "@/components/user-input-detail";
 import type {
   AgentConfig,
   AgentStateListItem,
-  AgentStreamEventPayload,
-  SchedulerCompletedEventPayload,
   SchedulerFailedEventPayload,
   StepResponse,
   StreamEventPayload,
@@ -53,12 +51,12 @@ interface ChatMessage {
   agentId?: string;
 }
 
-type OrchestrationStatus = "idle" | "running" | "sleeping" | "completed" | "failed" | "cancelled";
+type OrchestrationStatus = "idle" | "running" | "waiting" | "completed" | "failed" | "cancelled";
 
 const statusConfig: Record<OrchestrationStatus, { icon: typeof Play; color: string; label: string }> = {
   idle: { icon: Clock, color: "text-zinc-500", label: "Idle" },
   running: { icon: Loader2, color: "text-blue-400", label: "Running" },
-  sleeping: { icon: Moon, color: "text-yellow-400", label: "Sleeping" },
+  waiting: { icon: Moon, color: "text-yellow-400", label: "Waiting" },
   completed: { icon: CheckCircle2, color: "text-green-400", label: "Completed" },
   failed: { icon: AlertCircle, color: "text-red-400", label: "Failed" },
   cancelled: { icon: XCircle, color: "text-zinc-400", label: "Cancelled" },
@@ -67,7 +65,9 @@ const statusConfig: Record<OrchestrationStatus, { icon: typeof Play; color: stri
 const childStatusBadge: Record<string, string> = {
   pending: "bg-zinc-700 text-zinc-300",
   running: "bg-blue-900/50 text-blue-400",
-  sleeping: "bg-yellow-900/50 text-yellow-400",
+  waiting: "bg-yellow-900/50 text-yellow-400",
+  idle: "bg-purple-900/50 text-purple-400",
+  queued: "bg-cyan-900/50 text-cyan-300",
   completed: "bg-green-900/50 text-green-400",
   failed: "bg-red-900/50 text-red-400",
 };
@@ -216,13 +216,23 @@ export default function SchedulerChatPage() {
             if (!data) {
               continue;
             }
+            if (data.type === "scheduler_failed") {
+              const event = data as SchedulerFailedEventPayload;
+              setOrchestrationStatus("failed");
+              stopPolling();
+              setMessages((prev) => [
+                ...prev.filter((m) => !(m.role === "assistant" && !m.content && !m.tool_calls)),
+                { id: genId(), role: "system", content: `Orchestration failed: ${event.error || "Unknown error"}` },
+              ]);
+              continue;
+            }
             const eventAgentId =
               "agent_id" in data && typeof data.agent_id === "string"
                 ? data.agent_id
                 : null;
 
-            if (data.type === "run_started" && "data" in data && data.data?.session_id) {
-              const capturedSessionId = String(data.data.session_id);
+            if (data.type === "run_started" && data.session_id) {
+              const capturedSessionId = data.session_id;
               if (!sessionId) setSessionId(capturedSessionId);
               if (!rootAgentId) {
                 rootAgentId = eventAgentId;
@@ -277,7 +287,7 @@ export default function SchedulerChatPage() {
                   for (const call of tc) {
                     const toolName = call.function?.name;
                     if (toolName === "sleep_and_wait") {
-                      setOrchestrationStatus("sleeping");
+                      setOrchestrationStatus("waiting");
                     }
                   }
                 }
@@ -312,11 +322,31 @@ export default function SchedulerChatPage() {
                   )
                   .filter((m) => !(m.role === "assistant" && !m.content && !m.tool_calls && !m.isStreaming))
               );
-              if (orchestrationStatus === "sleeping") {
-                // still sleeping, run_completed is just for one agent.run()
-              } else {
-                setOrchestrationStatus("running");
+              if (data.depth === 0) {
+                if (data.termination_reason === "sleeping") {
+                  setOrchestrationStatus("waiting");
+                } else {
+                  setOrchestrationStatus("completed");
+                  stopPolling();
+                  if (stateId) {
+                    try {
+                      const finalChildren = await getAgentStateChildren(stateId);
+                      setChildren(finalChildren);
+                    } catch {
+                      // ignore final poll failures
+                    }
+                  }
+                }
               }
+            }
+
+            if (data.type === "run_failed" && data.depth === 0) {
+              setOrchestrationStatus("failed");
+              stopPolling();
+              setMessages((prev) => [
+                ...prev.filter((m) => !(m.role === "assistant" && !m.content && !m.tool_calls)),
+                { id: genId(), role: "system", content: `Orchestration failed: ${data.error || "Unknown error"}` },
+              ]);
             }
 
             if (data.type === "run_started" && rootAgentId && eventAgentId === rootAgentId) {
@@ -345,27 +375,6 @@ export default function SchedulerChatPage() {
               }
             }
 
-            if (data.type === "scheduler_completed") {
-              const event = data as SchedulerCompletedEventPayload;
-              setOrchestrationStatus("completed");
-              stopPolling();
-              if (stateId) {
-                try {
-                  const finalChildren = await getAgentStateChildren(stateId);
-                  setChildren(finalChildren);
-                } catch { /* ignore */ }
-              }
-            }
-
-            if (data.type === "scheduler_failed") {
-              const event = data as SchedulerFailedEventPayload;
-              setOrchestrationStatus("failed");
-              stopPolling();
-              setMessages((prev) => [
-                ...prev.filter((m) => !(m.role === "assistant" && !m.content && !m.tool_calls)),
-                { id: genId(), role: "system", content: `Orchestration failed: ${event.error || "Unknown error"}` },
-              ]);
-            }
           } catch {
             // skip non-JSON lines
           }
@@ -387,9 +396,6 @@ export default function SchedulerChatPage() {
   };
 
   const handleChildEvent = (childAgentId: string, data: StreamEventPayload) => {
-    if (data.type === "scheduler_completed" || data.type === "scheduler_failed") {
-      return;
-    }
     const type = data.type;
     if (type === "step_delta" && data.delta) {
       const delta = data.delta;

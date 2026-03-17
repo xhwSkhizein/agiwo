@@ -65,7 +65,11 @@ async def list_agent_states(
             status_enum = AgentStateStatus(status)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}") from exc
-    states = await storage.list_all(status=status_enum, limit=limit, offset=offset)
+    states = await storage.list_states(
+        statuses=(status_enum,) if status_enum is not None else None,
+        limit=limit,
+        offset=offset,
+    )
     run_storage = runtime.run_step_storage
     metrics_by_state = await build_metrics_by_state(states, run_storage)
     return [
@@ -104,7 +108,7 @@ async def get_children(
 ) -> list[AgentStateListItem]:
     """Get child agent states for a given parent state."""
     storage = scheduler.store
-    children = await storage.get_states_by_parent(state_id)
+    children = await storage.list_states(parent_id=state_id, limit=1000)
     children.sort(key=lambda s: s.created_at, reverse=True)
     run_storage = runtime.run_step_storage
     metrics_by_state = await build_metrics_by_state(children, run_storage)
@@ -121,11 +125,13 @@ async def get_children(
 async def get_stats(scheduler: SchedulerDep) -> SchedulerStatsResponse:
     """Get scheduler statistics — count of states by status."""
     storage = scheduler.store
-    all_states = await storage.list_all(limit=10000)
+    all_states = await storage.list_states(limit=10000)
     counts: dict[str, int] = {
         "pending": 0,
         "running": 0,
-        "sleeping": 0,
+        "waiting": 0,
+        "idle": 0,
+        "queued": 0,
         "completed": 0,
         "failed": 0,
     }
@@ -203,7 +209,10 @@ async def list_pending_events(
     state = await storage.get_state(state_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Agent state not found")
-    events = await storage.get_pending_events(state_id, state.session_id)
+    events = await storage.list_events(
+        target_agent_id=state_id,
+        session_id=state.session_id,
+    )
     return [pending_event_to_response(event) for event in events]
 
 

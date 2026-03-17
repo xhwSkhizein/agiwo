@@ -1,11 +1,11 @@
 """Default memory hooks for automatic MEMORY injection."""
 
 from agiwo.config.settings import settings
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.input import UserInput
 from agiwo.agent.input_codec import extract_text
 from agiwo.agent.memory_types import MemoryRecord
+from agiwo.agent.runtime import AgentContext
 from agiwo.memory import WorkspaceMemoryService
 from agiwo.utils.logging import get_logger
 
@@ -28,7 +28,7 @@ class DefaultMemoryHook:
             embedding_provider=embedding_provider,
         )
 
-    def _resolve_workspace(self, context: ExecutionContext):
+    def _resolve_workspace(self, context: AgentContext):
         workspace = self._memory_service.resolve_workspace(
             agent_name=getattr(context, "agent_name", None),
             agent_id=getattr(context, "agent_id", None),
@@ -38,7 +38,7 @@ class DefaultMemoryHook:
         return workspace.workspace
 
     async def retrieve_memories(
-        self, user_input: UserInput, context: ExecutionContext
+        self, user_input: UserInput, context: AgentContext
     ) -> list[MemoryRecord]:
         """
         Retrieve relevant memories from MEMORY directory.

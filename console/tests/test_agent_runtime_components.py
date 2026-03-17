@@ -317,8 +317,7 @@ async def test_scheduler_session_bridge_steers_running_state_and_returns_empty_s
     scheduler = SimpleNamespace(
         get_state=AsyncMock(return_value=SimpleNamespace(status=AgentStateStatus.RUNNING)),
         steer=AsyncMock(return_value=True),
-        submit_and_subscribe=AsyncMock(),
-        submit_task_and_subscribe=AsyncMock(),
+        stream=AsyncMock(),
         wait_for=AsyncMock(),
     )
     bridge = SchedulerSessionBridge(
@@ -345,7 +344,6 @@ async def test_scheduler_session_bridge_steers_running_state_and_returns_empty_s
 
     outputs = [item async for item in output_stream]
     assert outputs == []
-    scheduler.steer.assert_awaited_once_with("runtime-1", "hello")
-    scheduler.submit_and_subscribe.assert_not_called()
-    scheduler.submit_task_and_subscribe.assert_not_called()
+    scheduler.steer.assert_awaited_once_with("runtime-1", "hello", urgent=False)
+    scheduler.stream.assert_not_called()
     assert store.sessions["sess-1"] is session

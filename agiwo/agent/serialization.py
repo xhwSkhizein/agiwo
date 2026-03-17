@@ -1,18 +1,23 @@
 """Transport serialization for agent-domain models."""
 
 import json
-from dataclasses import asdict
 from typing import Any, Literal
 
 from agiwo.agent.input import ContentPart, UserInput, UserMessage
 from agiwo.agent.input_codec import deserialize_user_input, serialize_user_input
 from agiwo.agent.runtime import (
+    AgentStreamItem,
+    AgentStreamItemBase,
     Run,
+    RunCompletedEvent,
+    RunFailedEvent,
     RunMetrics,
+    RunStartedEvent,
     StepDelta,
+    StepDeltaEvent,
+    StepCompletedEvent,
     StepMetrics,
     StepRecord,
-    StreamEvent,
 )
 from agiwo.utils.serialization import serialize_enum_value, serialize_optional_datetime
 
@@ -73,41 +78,19 @@ def serialize_run_user_input_payload(
 def serialize_step_metrics_payload(metrics: StepMetrics | None) -> dict[str, Any] | None:
     if metrics is None:
         return None
-    return {
-        "duration_ms": metrics.duration_ms,
-        "input_tokens": metrics.input_tokens,
-        "output_tokens": metrics.output_tokens,
-        "total_tokens": metrics.total_tokens,
-        "cache_read_tokens": metrics.cache_read_tokens,
-        "cache_creation_tokens": metrics.cache_creation_tokens,
-        "token_cost": metrics.token_cost,
-        "usage_source": metrics.usage_source,
-        "model_name": metrics.model_name,
-        "provider": metrics.provider,
-        "first_token_latency_ms": metrics.first_token_latency_ms,
-    }
+    return metrics.to_dict()
 
 
 def serialize_run_metrics_payload(metrics: RunMetrics | None) -> dict[str, Any] | None:
     if metrics is None:
         return None
-    return {
-        "duration_ms": metrics.duration_ms,
-        "input_tokens": metrics.input_tokens,
-        "output_tokens": metrics.output_tokens,
-        "total_tokens": metrics.total_tokens,
-        "cache_read_tokens": metrics.cache_read_tokens,
-        "cache_creation_tokens": metrics.cache_creation_tokens,
-        "token_cost": metrics.token_cost,
-        "steps_count": metrics.steps_count,
-        "tool_calls_count": metrics.tool_calls_count,
-    }
+    return metrics.to_dict()
 
 
 def serialize_step_delta_payload(delta: StepDelta | None) -> dict[str, Any] | None:
     if delta is None:
         return None
-    return asdict(delta)
+    return delta.to_dict()
 
 
 def serialize_step_record_payload(step: StepRecord) -> dict[str, Any]:
@@ -155,32 +138,42 @@ def serialize_run_payload(
     }
 
 
-def serialize_stream_event_payload(event: StreamEvent) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "type": serialize_enum_value(event.type),
-        "run_id": event.run_id,
-        "depth": event.depth,
-        "timestamp": serialize_optional_datetime(event.timestamp),
+def _serialize_stream_item_base(item: AgentStreamItemBase) -> dict[str, Any]:
+    return {
+        "type": item.type,
+        "session_id": item.session_id,
+        "run_id": item.run_id,
+        "agent_id": item.agent_id,
+        "parent_run_id": item.parent_run_id,
+        "depth": item.depth,
+        "timestamp": serialize_optional_datetime(item.timestamp),
     }
-    if event.delta is not None:
-        payload["delta"] = serialize_step_delta_payload(event.delta)
-    if event.step is not None:
-        payload["step"] = serialize_step_record_payload(event.step)
-    if event.data is not None:
-        payload["data"] = event.data
-    if event.agent_id is not None:
-        payload["agent_id"] = event.agent_id
-    if event.span_id is not None:
-        payload["span_id"] = event.span_id
-    if event.parent_run_id is not None:
-        payload["parent_run_id"] = event.parent_run_id
-    if event.parent_span_id is not None:
-        payload["parent_span_id"] = event.parent_span_id
-    if event.trace_id is not None:
-        payload["trace_id"] = event.trace_id
-    if event.step_id is not None:
-        payload["step_id"] = event.step_id
-    return payload
+
+
+def serialize_stream_item_payload(item: AgentStreamItem) -> dict[str, Any]:
+    payload = _serialize_stream_item_base(item)
+    if isinstance(item, RunStartedEvent):
+        return payload
+    if isinstance(item, StepDeltaEvent):
+        payload["step_id"] = item.step_id
+        payload["delta"] = serialize_step_delta_payload(item.delta)
+        return payload
+    if isinstance(item, StepCompletedEvent):
+        payload["step"] = serialize_step_record_payload(item.step)
+        return payload
+    if isinstance(item, RunCompletedEvent):
+        payload["response"] = item.response
+        payload["metrics"] = serialize_run_metrics_payload(item.metrics)
+        payload["termination_reason"] = (
+            serialize_enum_value(item.termination_reason)
+            if item.termination_reason is not None
+            else None
+        )
+        return payload
+    if isinstance(item, RunFailedEvent):
+        payload["error"] = item.error
+        return payload
+    raise TypeError(f"Unsupported stream item type: {type(item)!r}")
 
 
 __all__ = [
@@ -190,6 +183,6 @@ __all__ = [
     "serialize_step_delta_payload",
     "serialize_step_metrics_payload",
     "serialize_step_record_payload",
-    "serialize_stream_event_payload",
+    "serialize_stream_item_payload",
     "serialize_user_input_payload",
 ]

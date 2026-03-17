@@ -100,7 +100,7 @@ class BaseChannelService(ABC):
 
         is_first_output = True
         async for output in output_stream:
-            text = self._truncate_text(output.text)
+            text = self._truncate_text(output)
             if is_first_output:
                 await self._deliver_reply(batch.context, text)
                 is_first_output = False

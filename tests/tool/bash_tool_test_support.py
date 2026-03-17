@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.tool.builtin.bash_tool.process_tool import (
     BashProcessTool,
     BashProcessToolConfig,
@@ -18,6 +17,7 @@ from agiwo.tool.builtin.bash_tool.types import (
     ProcessLogInfo,
     ProcessStatus,
 )
+from tests.utils.agent_context import build_agent_context
 
 
 class MockSandbox:
@@ -186,9 +186,7 @@ class MockSandbox:
 
 @pytest.fixture
 def mock_context():
-    context = MagicMock(spec=ExecutionContext)
-    context.agent_id = "agent_1"
-    return context
+    return build_agent_context(agent_id="agent_1", agent_name="agent_1")
 
 
 @pytest.fixture

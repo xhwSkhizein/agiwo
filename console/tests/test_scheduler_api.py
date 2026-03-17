@@ -90,7 +90,7 @@ async def _seed_states(client: AsyncClient) -> None:
         AgentState(
             id="parent-1",
             session_id="sess-1",
-            status=AgentStateStatus.SLEEPING,
+            status=AgentStateStatus.WAITING,
             task="Orchestrate research",
             wake_condition=WakeCondition(
                 type=WakeType.WAITSET,
@@ -117,7 +117,7 @@ async def _seed_states(client: AsyncClient) -> None:
         AgentState(
             id="delayed-1",
             session_id="sess-2",
-            status=AgentStateStatus.SLEEPING,
+            status=AgentStateStatus.WAITING,
             task="Wait and retry",
             wake_condition=WakeCondition(
                 type=WakeType.TIMER,
@@ -145,7 +145,7 @@ class TestListAgentStates:
         assert resp.json() == []
 
     @pytest.mark.asyncio
-    async def test_list_all(self, client):
+    async def test_list_all_states(self, client):
         await _seed_states(client)
         resp = await client.get("/api/scheduler/states")
         assert resp.status_code == 200
@@ -156,11 +156,11 @@ class TestListAgentStates:
     @pytest.mark.asyncio
     async def test_filter_by_status(self, client):
         await _seed_states(client)
-        resp = await client.get("/api/scheduler/states?status=sleeping")
+        resp = await client.get("/api/scheduler/states?status=waiting")
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 2
-        assert all(item["status"] == "sleeping" for item in data)
+        assert all(item["status"] == "waiting" for item in data)
 
     @pytest.mark.asyncio
     async def test_filter_invalid_status(self, client):
@@ -187,7 +187,7 @@ class TestGetAgentState:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == "parent-1"
-        assert data["status"] == "sleeping"
+        assert data["status"] == "waiting"
         assert data["task"] == "Orchestrate research"
         assert data["wake_condition"] is not None
         assert data["wake_condition"]["type"] == "waitset"
@@ -283,7 +283,7 @@ class TestPersistentAgentEndpoints:
         state = AgentState(
             id="agent-config-2--resume",
             session_id="sess-resume",
-            status=AgentStateStatus.SLEEPING,
+            status=AgentStateStatus.IDLE,
             task="Initial task",
             agent_config_id=config.id,
             is_persistent=True,
@@ -300,8 +300,8 @@ class TestPersistentAgentEndpoints:
 
         updated = await scheduler.get_state(state.id)
         assert updated is not None
-        assert updated.wake_condition is not None
-        assert updated.wake_condition.submitted_task == "Resume work"
+        assert updated.pending_input == "Resume work"
+        assert updated.status == AgentStateStatus.QUEUED
 
     @pytest.mark.asyncio
     async def test_stats_with_data(self, client):
@@ -310,7 +310,9 @@ class TestPersistentAgentEndpoints:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 5
-        assert data["sleeping"] == 2
+        assert data["waiting"] == 2
+        assert data["idle"] == 0
+        assert data["queued"] == 0
         assert data["running"] == 1
         assert data["completed"] == 1
         assert data["failed"] == 1

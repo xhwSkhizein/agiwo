@@ -4,15 +4,15 @@ import time
 
 import pytest
 
-from agiwo.agent.execution_context import ExecutionContext, SessionSequenceCounter
-from agiwo.agent.inner.event_emitter import EventEmitter
+from agiwo.agent import AgentHooks, TerminationReason
+from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.inner.executor import AgentExecutor
+from agiwo.agent.inner.run_recorder import RunRecorder
 from agiwo.agent.options import AgentOptions
-from agiwo.agent import StepRecord, TerminationReason
 from agiwo.agent.runtime_tools import RuntimeToolOutcome
-from agiwo.agent.stream_channel import StreamChannel
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.tool.base import ToolDefinition, ToolResult
+from tests.utils.agent_context import build_agent_context
 
 
 class MockModel(Model):
@@ -124,15 +124,36 @@ class MockNormalTool:
         )
 
 
-def _make_context() -> ExecutionContext:
-    return ExecutionContext(
+def _make_context() -> AgentRunContext:
+    return build_agent_context(
         session_id="sess-1",
         run_id="run-1",
-        channel=StreamChannel(),
         agent_id="test-agent",
         agent_name="test-agent",
-        sequence_counter=SessionSequenceCounter(0),
     )
+
+
+def _build_executor(
+    *,
+    model: Model,
+    tools: list[object],
+    context: AgentRunContext,
+    options: AgentOptions | None = None,
+) -> tuple[AgentExecutor, RunRecorder]:
+    recorder = RunRecorder(
+        context=context,
+        hooks=AgentHooks(),
+        step_observers=[],
+    )
+    executor = AgentExecutor(
+        model=model,
+        tools=tools,
+        options=options,
+        hooks=AgentHooks(),
+        run_recorder=recorder,
+        root_path="/tmp",
+    )
+    return executor, recorder
 
 
 class TestExecutorTermination:
@@ -157,15 +178,14 @@ class TestExecutorTermination:
         model = MockModel([chunks_with_tool_call])
 
         context = _make_context()
-        emitter = EventEmitter(context)
-        executor = AgentExecutor(
+        executor, recorder = _build_executor(
             model=model,
             tools=[tool],
-            emitter=emitter,
+            context=context,
             options=AgentOptions(max_steps=10),
         )
 
-        user_step = StepRecord.user(context, sequence=1, user_input="test")
+        user_step = await recorder.create_user_step(user_input="test")
         output = await executor.execute(
             system_prompt="You are a test assistant.",
             user_step=user_step,
@@ -200,15 +220,14 @@ class TestExecutorTermination:
         model = MockModel([chunks_with_tool_call, chunks_completion])
 
         context = _make_context()
-        emitter = EventEmitter(context)
-        executor = AgentExecutor(
+        executor, recorder = _build_executor(
             model=model,
             tools=[tool],
-            emitter=emitter,
+            context=context,
             options=AgentOptions(max_steps=10),
         )
 
-        user_step = StepRecord.user(context, sequence=1, user_input="test")
+        user_step = await recorder.create_user_step(user_input="test")
         output = await executor.execute(
             system_prompt="You are a test assistant.",
             user_step=user_step,

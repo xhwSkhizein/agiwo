@@ -5,11 +5,16 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any
 
-from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent import AgentContext
 from agiwo.agent.runtime_tools import RuntimeToolOutcome
 from agiwo.agent.runtime import TerminationReason
-from agiwo.scheduler.control import SchedulerControl
-from agiwo.scheduler.models import WakeType
+from agiwo.scheduler.control import (
+    CancelChildRequest,
+    SchedulerControl,
+    SleepRequest,
+    SpawnChildRequest,
+)
+from agiwo.scheduler.models import TimeUnit, WaitMode, WakeType
 from agiwo.scheduler.formatting import (
     build_child_result_detail_lines,
     summarize_text,
@@ -38,7 +43,7 @@ class SchedulerRuntimeTool(ABC):
     async def execute_for_agent(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: AgentContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome: ...
 
@@ -53,6 +58,75 @@ class SchedulerRuntimeTool(ABC):
             is_concurrency_safe=self.is_concurrency_safe(),
             timeout_seconds=self.timeout_seconds,
             cacheable=self.cacheable,
+        )
+
+    def _tool_call_id(self, parameters: dict[str, Any]) -> str:
+        return str(parameters.get("tool_call_id", ""))
+
+    def _success(
+        self,
+        *,
+        parameters: dict[str, Any],
+        start_time: float,
+        content: str,
+        output: object | None = None,
+        input_args: dict[str, Any] | None = None,
+        termination_reason: TerminationReason | None = None,
+    ) -> RuntimeToolOutcome:
+        return RuntimeToolOutcome(
+            result=ToolResult.success(
+                tool_name=self.get_name(),
+                tool_call_id=self._tool_call_id(parameters),
+                input_args=input_args if input_args is not None else parameters,
+                content=content,
+                output=output,
+                start_time=start_time,
+            ),
+            termination_reason=termination_reason,
+        )
+
+    def _failed(
+        self,
+        *,
+        parameters: dict[str, Any],
+        start_time: float,
+        error: str,
+        content: str | None = None,
+        output: object | None = None,
+        input_args: dict[str, Any] | None = None,
+    ) -> RuntimeToolOutcome:
+        return RuntimeToolOutcome(
+            result=ToolResult.failed(
+                tool_name=self.get_name(),
+                error=error,
+                tool_call_id=self._tool_call_id(parameters),
+                input_args=input_args if input_args is not None else parameters,
+                content=content,
+                output=output,
+                start_time=start_time,
+            )
+        )
+
+    def _denied(
+        self,
+        *,
+        parameters: dict[str, Any],
+        start_time: float,
+        reason: str,
+        content: str,
+        output: object | None = None,
+        input_args: dict[str, Any] | None = None,
+    ) -> RuntimeToolOutcome:
+        return RuntimeToolOutcome(
+            result=ToolResult.denied(
+                tool_name=self.get_name(),
+                reason=reason,
+                tool_call_id=self._tool_call_id(parameters),
+                input_args=input_args if input_args is not None else parameters,
+                content=content,
+                output=output,
+                start_time=start_time,
+            )
         )
 
 
@@ -101,20 +175,16 @@ class SpawnAgentTool(SchedulerRuntimeTool):
     async def execute_for_agent(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: AgentContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         start_time = time.time()
         parent_agent_id = context.agent_id
         if not parent_agent_id:
-            return RuntimeToolOutcome(
-                result=ToolResult.failed(
-                    tool_name=self.get_name(),
-                    error="Cannot spawn agent: no agent_id in execution context",
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    start_time=start_time,
-                )
+            return self._failed(
+                parameters=parameters,
+                start_time=start_time,
+                error="Cannot spawn agent: no agent_id in execution context",
             )
 
         task = parameters.get("task", "")
@@ -123,33 +193,28 @@ class SpawnAgentTool(SchedulerRuntimeTool):
         system_prompt = parameters.get("system_prompt")
         try:
             state = await self._port.spawn_child(
-                parent_agent_id=parent_agent_id,
-                session_id=context.session_id,
-                task=task,
-                instruction=instruction,
-                system_prompt=system_prompt,
-                custom_child_id=custom_child_id,
-            )
-        except ValueError as exc:
-            return RuntimeToolOutcome(
-                result=ToolResult.failed(
-                    tool_name=self.get_name(),
-                    error=str(exc),
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    start_time=start_time,
+                SpawnChildRequest(
+                    parent_agent_id=parent_agent_id,
+                    session_id=context.session_id,
+                    task=task,
+                    instruction=instruction,
+                    system_prompt=system_prompt,
+                    custom_child_id=custom_child_id,
                 )
             )
-
-        return RuntimeToolOutcome(
-            result=ToolResult.success(
-                tool_name=self.get_name(),
-                tool_call_id=parameters.get("tool_call_id", ""),
-                input_args={"task": task, "child_id": state.id},
-                content=f"Spawned child agent '{state.id}' for task: {task}",
-                output={"child_id": state.id, "status": "pending"},
+        except ValueError as exc:
+            return self._failed(
+                parameters=parameters,
                 start_time=start_time,
+                error=str(exc),
             )
+
+        return self._success(
+            parameters=parameters,
+            start_time=start_time,
+            input_args={"task": task, "child_id": state.id},
+            content=f"Spawned child agent '{state.id}' for task: {task}",
+            output={"child_id": state.id, "status": "pending"},
         )
 
 
@@ -216,78 +281,75 @@ class SleepAndWaitTool(SchedulerRuntimeTool):
     async def execute_for_agent(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: AgentContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         start_time = time.time()
         agent_id = context.agent_id
         if not agent_id:
-            return RuntimeToolOutcome(
-                result=ToolResult.failed(
-                    tool_name=self.get_name(),
-                    error="Cannot sleep: no agent_id in execution context",
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    start_time=start_time,
-                )
+            return self._failed(
+                parameters=parameters,
+                start_time=start_time,
+                error="Cannot sleep: no agent_id in execution context",
             )
 
         wake_type_str = parameters.get("wake_type", "waitset")
         delay_seconds = parameters.get("delay_seconds")
         time_unit_str = parameters.get("time_unit", "seconds")
         wait_mode_str = parameters.get("wait_mode", "all")
-        explicit_wait_for: list[str] | None = parameters.get("wait_for")
+        wait_for: list[str] | None = parameters.get("wait_for")
         timeout = parameters.get("timeout")
         explain = parameters.get("explain")
 
         try:
             wake_type = WakeType(wake_type_str)
         except ValueError:
-            return RuntimeToolOutcome(
-                result=ToolResult.failed(
-                    tool_name=self.get_name(),
-                    error=f"Invalid wake_type: {wake_type_str}",
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    start_time=start_time,
-                )
+            return self._failed(
+                parameters=parameters,
+                start_time=start_time,
+                error=f"Invalid wake_type: {wake_type_str}",
             )
 
         try:
-            wake_condition, summary = await self._port.sleep_current_agent(
-                agent_id=agent_id,
-                session_id=context.session_id,
-                wake_type=wake_type,
-                wake_type_str=wake_type_str,
-                wait_mode_str=wait_mode_str,
-                explicit_wait_for=explicit_wait_for,
-                timeout=timeout,
-                delay_seconds=delay_seconds,
-                time_unit_str=time_unit_str,
-                explain=explain,
-            )
-        except ValueError as exc:
-            return RuntimeToolOutcome(
-                result=ToolResult.failed(
-                    tool_name=self.get_name(),
-                    error=str(exc),
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    start_time=start_time,
+            sleep_result = await self._port.sleep_current_agent(
+                SleepRequest(
+                    agent_id=agent_id,
+                    session_id=context.session_id,
+                    wake_type=wake_type,
+                    wait_mode=self._resolve_wait_mode(wait_mode_str),
+                    wait_for=wait_for,
+                    timeout=timeout,
+                    delay_seconds=delay_seconds,
+                    time_unit=self._resolve_time_unit(time_unit_str),
+                    explain=explain,
                 )
             )
-
-        return RuntimeToolOutcome(
-            result=ToolResult.success(
-                tool_name=self.get_name(),
-                tool_call_id=parameters.get("tool_call_id", ""),
-                input_args=parameters,
-                content=summary,
-                output={"wake_type": wake_type_str, "agent_id": agent_id},
+        except ValueError as exc:
+            return self._failed(
+                parameters=parameters,
                 start_time=start_time,
-            ),
+                error=str(exc),
+            )
+
+        return self._success(
+            parameters=parameters,
+            start_time=start_time,
+            content=sleep_result.summary,
+            output={"wake_type": wake_type_str, "agent_id": agent_id},
             termination_reason=TerminationReason.SLEEPING,
         )
+
+    def _resolve_wait_mode(self, value: str) -> WaitMode:
+        try:
+            return WaitMode(value)
+        except ValueError:
+            return WaitMode.ALL
+
+    def _resolve_time_unit(self, value: str) -> TimeUnit:
+        try:
+            return TimeUnit(value)
+        except ValueError:
+            return TimeUnit.SECONDS
 
 
 class QuerySpawnedAgentTool(SchedulerRuntimeTool):
@@ -301,7 +363,7 @@ class QuerySpawnedAgentTool(SchedulerRuntimeTool):
 
     def get_description(self) -> str:
         return (
-            "Query the current status, result, and recent activity of a spawned child agent. "
+            "Query the current status and result of a spawned child agent. "
             "Use this after waking up to check what the child agents have accomplished."
         )
 
@@ -323,7 +385,7 @@ class QuerySpawnedAgentTool(SchedulerRuntimeTool):
     async def execute_for_agent(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: AgentContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         start_time = time.time()
@@ -331,16 +393,11 @@ class QuerySpawnedAgentTool(SchedulerRuntimeTool):
 
         state = await self._port.get_child_state(target_id)
         if state is None:
-            return RuntimeToolOutcome(
-                result=ToolResult.failed(
-                    tool_name=self.get_name(),
-                    error=f"Agent '{target_id}' not found",
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    content=f"Agent '{target_id}' not found.",
-                    output=None,
-                    start_time=start_time,
-                )
+            return self._failed(
+                parameters=parameters,
+                start_time=start_time,
+                error=f"Agent '{target_id}' not found",
+                content=f"Agent '{target_id}' not found.",
             )
 
         result_info: dict[str, Any] = {
@@ -350,12 +407,7 @@ class QuerySpawnedAgentTool(SchedulerRuntimeTool):
             "result_summary": state.result_summary,
             "explain": state.explain,
             "wake_count": state.wake_count,
-            "last_activity_at": state.last_activity_at.isoformat()
-            if state.last_activity_at
-            else None,
         }
-        if state.recent_steps:
-            result_info["recent_steps"] = state.recent_steps
 
         content_parts = [
             f"Agent: {state.id}",
@@ -368,31 +420,12 @@ class QuerySpawnedAgentTool(SchedulerRuntimeTool):
                 explain=state.explain,
             )
         )
-        if state.last_activity_at:
-            content_parts.append(f"Last activity: {state.last_activity_at.isoformat()}")
-        if state.recent_steps:
-            steps_text = []
-            for step in state.recent_steps[-3:]:
-                role = step.get("role", "?")
-                ts = step.get("timestamp", "")
-                tools = step.get("tool_calls", [])
-                if tools:
-                    steps_text.append(
-                        f"  [{ts[:19]}] {role}: called {', '.join(tools)}"
-                    )
-                else:
-                    steps_text.append(f"  [{ts[:19]}] {role}")
-            content_parts.append("Recent steps:\n" + "\n".join(steps_text))
 
-        return RuntimeToolOutcome(
-            result=ToolResult.success(
-                tool_name=self.get_name(),
-                tool_call_id=parameters.get("tool_call_id", ""),
-                input_args=parameters,
-                content="\n".join(content_parts),
-                output=result_info,
-                start_time=start_time,
-            )
+        return self._success(
+            parameters=parameters,
+            start_time=start_time,
+            content="\n".join(content_parts),
+            output=result_info,
         )
 
 
@@ -439,7 +472,7 @@ class CancelAgentTool(SchedulerRuntimeTool):
     async def execute_for_agent(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: AgentContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         start_time = time.time()
@@ -449,61 +482,54 @@ class CancelAgentTool(SchedulerRuntimeTool):
         reason = parameters.get("reason", "Cancelled by parent agent")
 
         try:
-            outcome, target_state, running_procs = await self._port.cancel_child(
-                caller_id=caller_id,
-                target_id=target_id,
-                force=force,
-                reason=reason,
+            cancel_result = await self._port.cancel_child(
+                CancelChildRequest(
+                    caller_id=caller_id,
+                    target_id=target_id,
+                    force=force,
+                    reason=reason,
+                )
             )
         except PermissionError as exc:
-            return RuntimeToolOutcome(
-                result=ToolResult.denied(
-                    tool_name=self.get_name(),
-                    reason=str(exc),
-                    tool_call_id=str(parameters.get("tool_call_id", "")),
-                    input_args=parameters,
-                    start_time=start_time,
-                    content=f"Permission denied: {exc}.",
-                    output={"success": False},
-                )
+            return self._denied(
+                parameters=parameters,
+                start_time=start_time,
+                reason=str(exc),
+                content=f"Permission denied: {exc}.",
+                output={"success": False},
             )
 
-        if outcome == "missing":
-            return RuntimeToolOutcome(
-                result=ToolResult.failed(
-                    tool_name=self.get_name(),
-                    error=f"Agent '{target_id}' not found",
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    content=f"Agent '{target_id}' not found.",
-                    output={"success": False},
-                    start_time=start_time,
-                )
+        if cancel_result.outcome == "missing":
+            return self._failed(
+                parameters=parameters,
+                start_time=start_time,
+                error=f"Agent '{target_id}' not found",
+                content=f"Agent '{target_id}' not found.",
+                output={"success": False},
             )
 
-        if outcome == "already_terminal" and target_state is not None:
-            return RuntimeToolOutcome(
-                result=ToolResult.success(
-                    tool_name=self.get_name(),
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    content=f"Agent '{target_id}' is already in terminal state: {target_state.status.value}.",
-                    output={"success": False, "status": target_state.status.value},
-                    start_time=start_time,
-                )
+        target_state = cancel_result.state
+        if cancel_result.outcome == "already_terminal" and target_state is not None:
+            return self._success(
+                parameters=parameters,
+                start_time=start_time,
+                content=(
+                    f"Agent '{target_id}' is already in terminal state: "
+                    f"{target_state.status.value}."
+                ),
+                output={"success": False, "status": target_state.status.value},
             )
 
-        if outcome == "requires_force" and target_state is not None:
+        if cancel_result.outcome == "requires_force" and target_state is not None:
             content_parts = [
-                f"Agent '{target_id}' is currently RUNNING. "
-                f"Last activity: {target_state.last_activity_at.isoformat() if target_state.last_activity_at else 'unknown'}.",
+                f"Agent '{target_id}' is currently RUNNING.",
             ]
             proc_info: list[dict] = []
-            if running_procs:
+            if cancel_result.running_processes:
                 content_parts.append(
-                    f"\n{len(running_procs)} background process(es) are running under this agent:"
+                    f"\n{len(cancel_result.running_processes)} background process(es) are running under this agent:"
                 )
-                for p in running_procs:
+                for p in cancel_result.running_processes:
                     content_parts.append(f"  - [{p['process_id']}] {p['command']}")
                     proc_info.append(p)
                 content_parts.append(
@@ -513,31 +539,23 @@ class CancelAgentTool(SchedulerRuntimeTool):
                 content_parts.append(
                     "\nNo background processes detected. Use force=true to cancel."
                 )
-            return RuntimeToolOutcome(
-                result=ToolResult.success(
-                    tool_name=self.get_name(),
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    content="\n".join(content_parts),
-                    output={
-                        "success": False,
-                        "requires_force": True,
-                        "status": target_state.status.value,
-                        "running_processes": proc_info,
-                    },
-                    start_time=start_time,
-                )
+            return self._success(
+                parameters=parameters,
+                start_time=start_time,
+                content="\n".join(content_parts),
+                output={
+                    "success": False,
+                    "requires_force": True,
+                    "status": target_state.status.value,
+                    "running_processes": proc_info,
+                },
             )
 
-        return RuntimeToolOutcome(
-            result=ToolResult.success(
-                tool_name=self.get_name(),
-                tool_call_id=parameters.get("tool_call_id", ""),
-                input_args=parameters,
-                content=f"Agent '{target_id}' and its subtree have been cancelled. Reason: {reason}",
-                output={"success": True, "agent_id": target_id},
-                start_time=start_time,
-            )
+        return self._success(
+            parameters=parameters,
+            start_time=start_time,
+            content=f"Agent '{target_id}' and its subtree have been cancelled. Reason: {reason}",
+            output={"success": True, "agent_id": target_id},
         )
 
 
@@ -552,7 +570,7 @@ class ListAgentsTool(SchedulerRuntimeTool):
 
     def get_description(self) -> str:
         return (
-            "List all direct child agents with their status, task, results, and recent activity. "
+            "List all direct child agents with their status, task, and results. "
             "Use this to get an overview of all spawned agents and decide on next steps."
         )
 
@@ -569,7 +587,7 @@ class ListAgentsTool(SchedulerRuntimeTool):
     async def execute_for_agent(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: AgentContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         start_time = time.time()
@@ -581,15 +599,11 @@ class ListAgentsTool(SchedulerRuntimeTool):
         )
 
         if not children:
-            return RuntimeToolOutcome(
-                result=ToolResult.success(
-                    tool_name=self.get_name(),
-                    tool_call_id=parameters.get("tool_call_id", ""),
-                    input_args=parameters,
-                    content="No child agents found.",
-                    output={"agents": []},
-                    start_time=start_time,
-                )
+            return self._success(
+                parameters=parameters,
+                start_time=start_time,
+                content="No child agents found.",
+                output={"agents": []},
             )
 
         now = datetime.now(timezone.utc)
@@ -612,13 +626,8 @@ class ListAgentsTool(SchedulerRuntimeTool):
                 "created_ago_seconds": running_secs,
                 "wake_count": state.wake_count,
                 "explain": state.explain,
-                "last_activity_at": state.last_activity_at.isoformat()
-                if state.last_activity_at
-                else None,
                 "result_summary": summarize_text(state.result_summary, 200),
             }
-            if state.recent_steps:
-                info["recent_steps"] = state.recent_steps[-3:]
 
             agent_infos.append(info)
 
@@ -630,18 +639,11 @@ class ListAgentsTool(SchedulerRuntimeTool):
                 explain=state.explain,
             ):
                 line += f"\n  {detail}"
-            if state.last_activity_at:
-                activity_ago = self._port.age_seconds(state.last_activity_at, now=now)
-                line += f"\n  Last activity: {activity_ago}s ago"
             content_lines.append(line)
 
-        return RuntimeToolOutcome(
-            result=ToolResult.success(
-                tool_name=self.get_name(),
-                tool_call_id=parameters.get("tool_call_id", ""),
-                input_args=parameters,
-                content="\n".join(content_lines),
-                output={"agents": agent_infos},
-                start_time=start_time,
-            )
+        return self._success(
+            parameters=parameters,
+            start_time=start_time,
+            content="\n".join(content_lines),
+            output={"agents": agent_infos},
         )

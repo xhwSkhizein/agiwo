@@ -7,10 +7,9 @@ from agiwo.agent.inner.compaction.messages import build_compacted_messages
 from agiwo.agent.inner.compaction.parser import parse_compact_response
 from agiwo.agent.inner.compaction.prompt import DEFAULT_COMPACT_PROMPT
 from agiwo.agent.inner.compaction.transcript import save_transcript
-from agiwo.agent.inner.event_emitter import EventEmitter
 from agiwo.agent.inner.llm_handler import LLMStreamHandler
+from agiwo.agent.inner.run_recorder import RunRecorder
 from agiwo.agent.inner.run_state import RunState
-from agiwo.agent.runtime import StepRecord
 from agiwo.agent.storage.session import SessionStorage
 from agiwo.config.settings import settings
 from agiwo.utils.abort_signal import AbortSignal
@@ -25,14 +24,12 @@ class CompactionRuntime:
     def __init__(
         self,
         llm_handler: LLMStreamHandler,
-        emitter: EventEmitter,
         session_storage: SessionStorage,
         *,
         compact_prompt: str | None = None,
         root_path: str | None = None,
     ) -> None:
         self.llm_handler = llm_handler
-        self.emitter = emitter
         self.session_storage = session_storage
         self.compact_prompt = compact_prompt
         self.root_path = root_path or settings.root_path
@@ -49,9 +46,59 @@ class CompactionRuntime:
         threshold = int(max_context_window * settings.compact_threshold_ratio)
         return estimated_tokens >= threshold
 
+    async def compact_if_needed(
+        self,
+        *,
+        state: RunState,
+        run_recorder: RunRecorder,
+        abort_signal: AbortSignal | None,
+        max_context_window: int | None,
+    ) -> CompactResult | None:
+        if not self.should_compact(state.messages, max_context_window):
+            return None
+
+        retry_count = settings.compact_retry_count
+        last_error: Exception | None = None
+        for attempt in range(retry_count + 1):
+            try:
+                result = await self.compact(
+                    state,
+                    run_recorder,
+                    abort_signal,
+                )
+                logger.info(
+                    "compact_success",
+                    run_id=state.context.run_id,
+                    start_seq=result.metadata.start_seq,
+                    end_seq=result.metadata.end_seq,
+                    before_tokens=result.metadata.before_token_estimate,
+                    after_tokens=result.metadata.after_token_estimate,
+                    attempt=attempt + 1,
+                )
+                return result
+            except Exception as error:  # noqa: BLE001 - compaction retries guard the runtime boundary
+                last_error = error
+                logger.warning(
+                    "compact_attempt_failed",
+                    run_id=state.context.run_id,
+                    attempt=attempt + 1,
+                    max_attempts=retry_count + 1,
+                    error=str(error),
+                )
+                if attempt < retry_count:
+                    continue
+
+        logger.error(
+            "compact_failed_all_retries",
+            run_id=state.context.run_id,
+            error=str(last_error),
+        )
+        return None
+
     async def compact(
         self,
         state: RunState,
+        run_recorder: RunRecorder,
         abort_signal: AbortSignal | None,
     ) -> CompactResult:
         metrics_resolver = self.llm_handler.metrics_resolver
@@ -67,27 +114,22 @@ class CompactionRuntime:
             previous_summary=previous_summary or "None",
         )
 
-        user_seq = await state.next_sequence()
-        compact_user_step = StepRecord.user(
-            state.context,
-            sequence=user_seq,
+        compact_user_step = await run_recorder.create_user_step(
             content=compact_prompt_content,
             name="compact_request",
         )
-        await self.emitter.emit_step_completed(compact_user_step)
-        state.track_step(compact_user_step, append_message=True)
+        await run_recorder.commit_step(compact_user_step, append_message=True)
 
         compact_messages = list(state.messages)
         step, llm_context = await self.llm_handler.stream_assistant_step(
             state,
-            self.emitter.emit_step_delta,
+            run_recorder,
             abort_signal,
             messages=compact_messages,
             tools=None,
         )
         step.name = "compact"
-        await self.emitter.emit_step_completed(step, llm=llm_context)
-        state.track_step(step, append_message=False)
+        await run_recorder.commit_step(step, llm=llm_context, append_message=False)
 
         response_content = step.content or ""
         analysis = parse_compact_response(response_content)
@@ -135,7 +177,6 @@ class CompactionRuntime:
             compact_tokens=(step.metrics.total_tokens if step.metrics else 0),
         )
 
-        state.messages = compacted_messages
         state.last_compact_metadata = metadata
         state.compact_start_seq = end_seq + 1
 

@@ -111,13 +111,10 @@ export default function AgentChatPage() {
             if (!data) {
               continue;
             }
-            if (data.type === "scheduler_completed" || data.type === "scheduler_failed") {
-              continue;
-            }
             const agentEvent = data as AgentStreamEventPayload;
 
-            if (agentEvent.type === "run_started" && agentEvent.data?.session_id) {
-              capturedSessionId = String(agentEvent.data.session_id);
+            if (agentEvent.type === "run_started" && agentEvent.session_id) {
+              capturedSessionId = agentEvent.session_id;
               if (!sessionId) setSessionId(capturedSessionId);
             }
 

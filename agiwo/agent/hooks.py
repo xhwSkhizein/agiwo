@@ -10,7 +10,7 @@ from typing import Any, Awaitable, Callable
 
 from agiwo.agent.input import UserInput
 from agiwo.agent.memory_types import MemoryRecord
-from agiwo.agent.runtime import AgentContext, RunOutput, StepRecord, StreamEvent
+from agiwo.agent.runtime import AgentContext, RunOutput, StepRecord
 from agiwo.tool.base import ToolResult
 
 
@@ -24,7 +24,6 @@ AfterToolCallHook = Callable[[str, str, dict[str, Any], ToolResult], Awaitable[N
 BeforeLLMCallHook = Callable[[list[dict]], Awaitable[list[dict] | None]]
 AfterLLMCallHook = Callable[[StepRecord], Awaitable[None]]
 OnStepHook = Callable[[StepRecord], Awaitable[None]]
-OnEventHook = Callable[[StreamEvent], Awaitable[None]]
 
 # Memory hooks
 MemoryWriteHook = Callable[[UserInput, RunOutput, AgentContext], Awaitable[None]]
@@ -51,7 +50,6 @@ class AgentHooks:
             Return modified messages or None to keep original.
         on_after_llm_call: Called after each LLM call. Receives the assistant StepRecord.
         on_step: Called when any step (user/assistant/tool) is committed.
-        on_event: Called for every StreamEvent emitted.
 
     Memory hooks:
         on_memory_write: Called to persist information to external memory.
@@ -68,7 +66,6 @@ class AgentHooks:
     on_before_llm_call: BeforeLLMCallHook | None = None
     on_after_llm_call: AfterLLMCallHook | None = None
     on_step: OnStepHook | None = None
-    on_event: OnEventHook | None = None
 
     # Memory
     on_memory_write: MemoryWriteHook | None = None

@@ -35,6 +35,8 @@ ENV/
 .vscode/
 .idea/
 .windsurf/
+.claude/
+.conductor/
 *.swp
 *.swo
 *~

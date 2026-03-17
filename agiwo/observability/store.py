@@ -6,13 +6,13 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection
 
-from agiwo.observability.base import BaseTraceStorage, TraceQuery
+from agiwo.observability.base import BaseTraceStorage, TraceQuery, _coerce_query
 from agiwo.observability.trace import Trace
+from agiwo.utils.logging import get_logger
 from agiwo.utils.storage_support.mongo_runtime import (
     MongoCollectionRuntime,
     MongoIndexSpec,
 )
-from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -20,11 +20,6 @@ logger = get_logger(__name__)
 class MongoTraceStorage(BaseTraceStorage):
     """
     MongoDB implementation of BaseTraceStorage.
-
-    Features:
-    - Async MongoDB operations
-    - In-memory ring buffer for real-time access
-    - SSE subscriber support
     """
 
     def __init__(
@@ -32,15 +27,10 @@ class MongoTraceStorage(BaseTraceStorage):
         mongo_uri: str | None = None,
         db_name: str = "agiwo",
         collection_name: str = "traces",
-        buffer_size: int = 200,
     ) -> None:
         self.mongo_uri = mongo_uri
         self.db_name = db_name
         self.collection_name = collection_name
-        self.buffer_size = buffer_size
-        self._initialize_runtime_state(buffer_size=buffer_size)
-
-        # MongoDB client (lazy init)
         self._client: Any = None
         self._collection: AsyncIOMotorCollection[Any] | None = None
         self._initialized = False
@@ -93,11 +83,6 @@ class MongoTraceStorage(BaseTraceStorage):
             self._initialized = False
 
     async def save_trace(self, trace: Trace) -> None:
-        """Save trace"""
-        # Add to buffer
-        self._append_to_buffer(trace)
-
-        # Persist to MongoDB
         if self._collection is not None:
             try:
                 doc = trace.model_dump(mode="json", exclude_none=True)
@@ -113,17 +98,8 @@ class MongoTraceStorage(BaseTraceStorage):
                     error=str(e),
                 )
 
-        # Notify subscribers
-        await self._notify_subscribers(trace)
 
     async def get_trace(self, trace_id: str) -> Trace | None:
-        """Get single trace"""
-        # Check buffer first
-        buffered = self._get_buffered_trace(trace_id)
-        if buffered is not None:
-            return buffered
-
-        # Query MongoDB
         if self._collection is not None:
             try:
                 doc = await self._collection.find_one({"trace_id": trace_id})
@@ -179,29 +155,25 @@ class MongoTraceStorage(BaseTraceStorage):
             query[field]["$lte"] = upper
 
     async def query_traces(self, query: TraceQuery | dict[str, Any]) -> list[Trace]:
-        """Query traces"""
-        query = self._coerce_query(query)
-        mongo_query = self._build_mongo_query(query)
+        coerced = _coerce_query(query)
+        mongo_query = self._build_mongo_query(coerced)
 
-        # Query MongoDB
         if self._collection is not None:
             try:
                 cursor = (
                     self._collection.find(mongo_query)
                     .sort("start_time", -1)
-                    .skip(query.offset)
-                    .limit(query.limit)
+                    .skip(coerced.offset)
+                    .limit(coerced.limit)
                 )
-                docs = await cursor.to_list(length=query.limit)
+                docs = await cursor.to_list(length=coerced.limit)
                 return [Trace(**doc) for doc in docs]
             except Exception as e:  # noqa: BLE001 - trace query boundary
                 logger.error("trace_query_failed", error=str(e))
 
-        # Fallback to buffer
-        return self._query_buffer(query)
+        return []
 
     async def close(self) -> None:
-        """Close MongoDB connection"""
         if self._client is not None:
             await self.disconnect()
 

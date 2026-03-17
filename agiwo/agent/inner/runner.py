@@ -1,201 +1,176 @@
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import Awaitable, Callable, Sequence
+from uuid import uuid4
 
+from agiwo.agent.execution import AgentExecutionHandle
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.input import UserInput
-from agiwo.agent.input_codec import normalize_to_message
+from agiwo.agent.input_codec import extract_text, normalize_to_message
 from agiwo.agent.inner.context import AgentRunContext
-from agiwo.agent.inner.event_emitter import EventEmitter
-from agiwo.agent.inner.event_pump import EventPump
+from agiwo.agent.inner.definition import ResolvedExecutionDefinition
 from agiwo.agent.inner.executor import AgentExecutor
-from agiwo.agent.inner.run_payloads import build_run_completed_event_data
-from agiwo.agent.inner.step_recorder import StepRecorder
-from agiwo.agent.inner.storage_sink import StorageSink
-from agiwo.agent.runtime import Run, RunOutput, RunStatus, StreamEvent
+from agiwo.agent.inner.resource_owner import ActiveRootExecution, AgentResourceOwner
+from agiwo.agent.inner.run_recorder import RunRecorder
+from agiwo.agent.inner.session_runtime import AgentSessionRuntime
+from agiwo.agent.runtime import Run, RunOutput, RunStatus
+from agiwo.agent.scheduler_port import StepObserver
 from agiwo.agent.trace import AgentTraceCollector
 from agiwo.utils.abort_signal import AbortSignal
-from agiwo.utils.logging import get_logger
-
-logger = get_logger(__name__)
 
 
 class AgentRunner:
     """Single owner for root/child run orchestration."""
 
-    def __init__(self, agent) -> None:
-        self._agent = agent
-        self._current_steering_queue: asyncio.Queue | None = None
-
-    async def steer(self, message: str) -> bool:
-        if not message.strip() or self._current_steering_queue is None:
-            return False
-        await self._current_steering_queue.put(message)
-        return True
-
-    async def run_root(
+    def start_root(
         self,
         user_input: UserInput,
         *,
+        agent_id: str,
+        agent_name: str,
+        resource_owner: AgentResourceOwner,
+        step_observers: Sequence[StepObserver],
+        resolve_definition: Callable[[], Awaitable[ResolvedExecutionDefinition]],
         session_id: str | None = None,
         user_id: str | None = None,
         metadata: dict | None = None,
         abort_signal: AbortSignal | None = None,
-    ) -> RunOutput:
-        execution = self._start_root_execution(
-            user_input,
-            session_id=session_id,
+    ) -> tuple[AgentExecutionHandle, ActiveRootExecution]:
+        resolved_session_id = session_id or str(uuid4())
+        resolved_abort_signal = abort_signal or AbortSignal()
+        trace_runtime = self._start_trace_runtime(
+            resource_owner=resource_owner,
+            agent_id=agent_id,
+            session_id=resolved_session_id,
+            user_id=user_id,
+            user_input=user_input,
+        )
+        session_runtime = AgentSessionRuntime(
+            session_id=resolved_session_id,
+            run_step_storage=resource_owner.run_step_storage,
+            session_storage=resource_owner.session_storage,
+            trace_runtime=trace_runtime,
+            trace_id=trace_runtime.trace_id if trace_runtime is not None else None,
+            abort_signal=resolved_abort_signal,
+        )
+        context = AgentRunContext.create_root(
+            session_runtime=session_runtime,
+            agent_id=agent_id,
+            agent_name=agent_name,
             user_id=user_id,
             metadata=metadata,
-            abort_signal=abort_signal,
         )
-        try:
-            result = await execution.task
-            await execution.pump.wait()
-            return result
-        finally:
-            await self._cleanup_root_execution(execution)
-
-    async def run_root_stream(
-        self,
-        user_input: UserInput,
-        *,
-        session_id: str | None = None,
-        user_id: str | None = None,
-        metadata: dict | None = None,
-        abort_signal: AbortSignal | None = None,
-    ) -> AsyncIterator[StreamEvent]:
-        execution = self._start_root_execution(
-            user_input,
-            session_id=session_id,
-            user_id=user_id,
-            metadata=metadata,
-            abort_signal=abort_signal,
+        task = asyncio.create_task(
+            self._execute_root(
+                user_input,
+                context=context,
+                step_observers=step_observers,
+                resolve_definition=resolve_definition,
+                abort_signal=resolved_abort_signal,
+            )
         )
-        stream = execution.pump.subscribe()
-        try:
-            async for event in stream:
-                yield event
-            if execution.task.done() and not execution.task.cancelled():
-                if exc := execution.task.exception():
-                    raise exc
-            await execution.task
-            await execution.pump.wait()
-        finally:
-            await self._cleanup_root_execution(execution)
+        handle = AgentExecutionHandle(
+            run_id=context.run_id,
+            session_id=context.session_id,
+            session_runtime=session_runtime,
+            task=task,
+        )
+        execution = ActiveRootExecution(
+            run_id=context.run_id,
+            task=task,
+            cancel_callback=lambda reason=None: resolved_abort_signal.abort(
+                reason or "Cancelled by caller"
+            ),
+        )
+        return handle, execution
 
     async def run_child(
         self,
         user_input: UserInput,
         *,
+        definition: ResolvedExecutionDefinition,
         parent_context: AgentRunContext,
+        step_observers: Sequence[StepObserver],
+        metadata_updates: dict | None = None,
         abort_signal: AbortSignal | None = None,
     ) -> RunOutput:
         context = parent_context.new_child(
-            agent_id=self._agent.id,
-            agent_name=self._agent.name,
+            agent_id=definition.agent_id,
+            agent_name=definition.agent_name,
         )
+        if metadata_updates:
+            context.metadata.update(metadata_updates)
+        child_abort_signal = abort_signal or parent_context.session_runtime.abort_signal
         return await self._execute_workflow(
             user_input,
             context=context,
-            close_channel_on_complete=False,
-            abort_signal=abort_signal,
+            definition=definition,
+            step_observers=step_observers,
+            close_session_on_complete=False,
+            abort_signal=child_abort_signal,
         )
 
-    def _start_root_execution(
+    async def _execute_root(
         self,
         user_input: UserInput,
         *,
-        session_id: str | None,
-        user_id: str | None,
-        metadata: dict | None,
-        abort_signal: AbortSignal | None,
-    ):
-        steering_queue: asyncio.Queue = asyncio.Queue()
-        context = AgentRunContext.create_root(
-            session_id=session_id or self._agent._new_session_id(),
-            agent_id=self._agent.id,
-            agent_name=self._agent.name,
-            run_step_storage=self._agent.run_step_storage,
-            user_id=user_id,
-            metadata=metadata,
-            steering_queue=steering_queue,
+        context: AgentRunContext,
+        step_observers: Sequence[StepObserver],
+        resolve_definition: Callable[[], Awaitable[ResolvedExecutionDefinition]],
+        abort_signal: AbortSignal,
+    ) -> RunOutput:
+        definition = await resolve_definition()
+        return await self._execute_workflow(
+            user_input,
+            context=context,
+            definition=definition,
+            step_observers=step_observers,
+            close_session_on_complete=True,
+            abort_signal=abort_signal,
         )
-        run = self._create_run(user_input, context)
-        collector = None
-        if self._agent.trace_storage is not None:
-            collector = AgentTraceCollector(store=self._agent.trace_storage)
-            collector.start(
-                agent_id=self._agent.id,
-                session_id=context.session_id,
-                user_id=context.user_id,
-                input_query=self._agent._extract_text(user_input),
-            )
-        pump = EventPump(
-            channel=context.channel,
-            storage_sink=StorageSink(self._agent.run_step_storage, run),
-            hooks=self._agent.hooks,
-            trace_collector=collector,
-        )
-        pump.start()
-        self._current_steering_queue = steering_queue
-        task = asyncio.create_task(
-            self._execute_workflow(
-                user_input,
-                context=context,
-                close_channel_on_complete=True,
-                abort_signal=abort_signal,
-            )
-        )
-        return _RootExecution(context=context, task=task, pump=pump)
 
     async def _execute_workflow(
         self,
         user_input: UserInput,
         *,
         context: AgentRunContext,
-        close_channel_on_complete: bool,
-        abort_signal: AbortSignal | None,
+        definition: ResolvedExecutionDefinition,
+        step_observers: Sequence[StepObserver],
+        close_session_on_complete: bool,
+        abort_signal: AbortSignal,
     ) -> RunOutput:
-        system_prompt = await self._agent._runtime_state.prompt_runtime.get_system_prompt()
-        emitter = EventEmitter(context)
-        recorder = StepRecorder(
+        recorder = RunRecorder(
             context=context,
-            emitter=emitter,
-            hooks=self._agent.hooks,
-            step_observers=list(self._agent._step_observers),
+            hooks=definition.hooks,
+            step_observers=step_observers,
         )
+        run = self._create_run(user_input, context)
+        await recorder.start_run(run)
         try:
+            before_run_hook_result = await self._run_before_run_hook(
+                hooks=definition.hooks,
+                user_input=user_input,
+                context=context,
+            )
+            memories = await self._retrieve_memories(
+                hooks=definition.hooks,
+                user_input=user_input,
+                context=context,
+            )
             user_step = await recorder.create_user_step(user_input=user_input)
-            await recorder.record(user_step, append_message=False)
-            await emitter.emit_run_started({"query": user_input, "session_id": context.session_id})
-
-            before_run_hook_result = None
-            if self._agent.hooks.on_before_run:
-                before_run_hook_result = await self._agent.hooks.on_before_run(
-                    user_input,
-                    context,
-                )
-
-            memories = []
-            if self._agent.hooks.on_memory_retrieve and user_input:
-                memories = await self._agent.hooks.on_memory_retrieve(user_input, context)
+            await recorder.commit_step(user_step, append_message=False)
 
             user_message = normalize_to_message(user_input)
             executor = AgentExecutor(
-                model=self._agent.model,
-                tools=list(self._agent.tools),
-                emitter=emitter,
-                options=self._agent._config.options,
-                hooks=self._agent.hooks,
-                run_step_storage=self._agent.run_step_storage,
-                session_storage=self._agent.session_storage,
-                root_path=self._agent._config.options.get_effective_root_path(),
-                step_observers=list(self._agent._step_observers),
-                step_recorder=recorder,
+                model=definition.model,
+                tools=list(definition.tools),
+                options=definition.options,
+                hooks=definition.hooks,
+                run_recorder=recorder,
+                root_path=definition.options.get_effective_root_path(),
             )
             result = await executor.execute(
-                system_prompt=system_prompt,
+                system_prompt=definition.system_prompt,
                 user_step=user_step,
                 context=context,
                 memories=memories,
@@ -204,34 +179,61 @@ class AgentRunner:
                 abort_signal=abort_signal,
             )
 
-            if self._agent.hooks.on_after_run:
-                await self._agent.hooks.on_after_run(result, context)
-            if self._agent.hooks.on_memory_write and result.response:
-                await self._agent.hooks.on_memory_write(user_input, result, context)
+            if definition.hooks.on_after_run:
+                await definition.hooks.on_after_run(result, context)
+            if definition.hooks.on_memory_write and result.response:
+                await definition.hooks.on_memory_write(user_input, result, context)
 
-            await emitter.emit_run_completed(build_run_completed_event_data(result))
+            await recorder.complete_run(result)
             return result
         except Exception as error:
-            await emitter.emit_run_failed(error)
+            await recorder.fail_run(error)
             raise
         finally:
-            if close_channel_on_complete:
-                await context.channel.close()
+            if close_session_on_complete:
+                await context.session_runtime.close()
 
-    async def _cleanup_root_execution(self, execution: "_RootExecution") -> None:
-        if self._current_steering_queue is execution.context.steering_queue:
-            self._current_steering_queue = None
-        if not execution.task.done():
-            execution.task.cancel()
-            try:
-                async with asyncio.timeout(self._agent._config.options.stream_cleanup_timeout):
-                    await execution.task
-            except (asyncio.TimeoutError, asyncio.CancelledError):
-                logger.warning("root_execution_cancelled_timeout", agent_id=self._agent.id)
-        try:
-            await execution.pump.wait()
-        except asyncio.CancelledError:
-            pass
+    @staticmethod
+    async def _run_before_run_hook(
+        *,
+        hooks: AgentHooks,
+        user_input: UserInput,
+        context: AgentRunContext,
+    ):
+        if hooks.on_before_run is None:
+            return None
+        return await hooks.on_before_run(user_input, context)
+
+    @staticmethod
+    async def _retrieve_memories(
+        *,
+        hooks: AgentHooks,
+        user_input: UserInput,
+        context: AgentRunContext,
+    ) -> list:
+        if hooks.on_memory_retrieve is None or not user_input:
+            return []
+        return await hooks.on_memory_retrieve(user_input, context)
+
+    @staticmethod
+    def _start_trace_runtime(
+        *,
+        resource_owner: AgentResourceOwner,
+        agent_id: str,
+        session_id: str,
+        user_id: str | None,
+        user_input: UserInput,
+    ) -> AgentTraceCollector | None:
+        if resource_owner.trace_storage is None:
+            return None
+        collector = AgentTraceCollector(store=resource_owner.trace_storage)
+        collector.start(
+            agent_id=agent_id,
+            session_id=session_id,
+            user_id=user_id,
+            input_query=extract_text(user_input),
+        )
+        return collector
 
     @staticmethod
     def _create_run(user_input: UserInput, context: AgentRunContext) -> Run:
@@ -245,19 +247,6 @@ class AgentRunner:
         )
         run.metrics.start_at = time.time()
         return run
-
-
-class _RootExecution:
-    def __init__(
-        self,
-        *,
-        context: AgentRunContext,
-        task: asyncio.Task[RunOutput],
-        pump: EventPump,
-    ) -> None:
-        self.context = context
-        self.task = task
-        self.pump = pump
 
 
 __all__ = ["AgentRunner"]

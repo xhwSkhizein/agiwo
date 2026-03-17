@@ -3,15 +3,14 @@ from datetime import datetime, timezone
 from agiwo.agent import (
     ContentPart,
     ContentType,
-    EventType,
     MessageRole,
+    StepCompletedEvent,
     StepMetrics,
     StepRecord,
-    StreamEvent,
     UserMessage,
     serialize_user_input,
 )
-from agiwo.scheduler.models import AgentState, AgentStateStatus, WakeCondition, WakeType
+from agiwo.scheduler.models import AgentState, AgentStateStatus
 from server.domain.agent_configs import (
     AgentOptionsInput,
     ModelParamsInput,
@@ -40,11 +39,13 @@ def test_stream_event_step_payload_matches_rest_step_response() -> None:
         content=[{"type": "text", "text": "hello"}],
         created_at=datetime(2026, 3, 9, tzinfo=timezone.utc),
     )
-    event = StreamEvent(
-        type=EventType.STEP_COMPLETED,
+    event = StepCompletedEvent(
+        session_id="sess-1",
         run_id="run-1",
-        step=step,
         agent_id="agent-1",
+        parent_run_id=None,
+        depth=0,
+        step=step,
         timestamp=datetime(2026, 3, 9, 1, tzinfo=timezone.utc),
     )
 
@@ -84,13 +85,10 @@ def test_scheduler_state_response_normalizes_serialized_user_input() -> None:
     state = AgentState(
         id="agent-1",
         session_id="sess-1",
-        status=AgentStateStatus.SLEEPING,
+        status=AgentStateStatus.QUEUED,
         task=serialize_user_input([ContentPart(type=ContentType.TEXT, text="queued")]),
-        wake_condition=WakeCondition(
-            type=WakeType.TASK_SUBMITTED,
-            submitted_task=serialize_user_input(
-                [ContentPart(type=ContentType.TEXT, text="wake me")]
-            ),
+        pending_input=serialize_user_input(
+            [ContentPart(type=ContentType.TEXT, text="wake me")]
         ),
     )
 
@@ -98,8 +96,8 @@ def test_scheduler_state_response_normalizes_serialized_user_input() -> None:
 
     assert payload["task"][0]["type"] == "text"
     assert payload["task"][0]["text"] == "queued"
-    assert payload["wake_condition"]["submitted_task"][0]["type"] == "text"
-    assert payload["wake_condition"]["submitted_task"][0]["text"] == "wake me"
+    assert payload["pending_input"][0]["type"] == "text"
+    assert payload["pending_input"][0]["text"] == "wake me"
 
 
 def test_agent_config_schema_and_registry_share_normalization_policy() -> None:

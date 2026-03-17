@@ -5,9 +5,7 @@ All scheduling limit checks converge here. Tools and Scheduler call TaskGuard
 instead of implementing checks themselves.
 """
 
-from datetime import datetime, timedelta, timezone
-
-from agiwo.scheduler.models import AgentState, AgentStateStatus, TaskLimits
+from agiwo.scheduler.models import ACTIVE_AGENT_STATUSES, AgentState, TaskLimits
 from agiwo.scheduler.store import AgentStateStorage
 from agiwo.utils.logging import get_logger
 
@@ -40,17 +38,15 @@ class TaskGuard:
             )
             return reason
 
-        children = await self._store.get_states_by_parent(parent_state.id)
+        children = await self._store.list_states(
+            parent_id=parent_state.id,
+            session_id=parent_state.session_id,
+            limit=1000,
+        )
         active_children = [
             c
             for c in children
-            if c.status
-            in (
-                AgentStateStatus.PENDING,
-                AgentStateStatus.RUNNING,
-                AgentStateStatus.SLEEPING,
-            )
-            and c.session_id == parent_state.session_id
+            if c.status in ACTIVE_AGENT_STATUSES
         ]
         if len(active_children) >= self._limits.max_children_per_agent:
             reason = (
@@ -69,7 +65,7 @@ class TaskGuard:
 
     async def check_wake(self, state: AgentState) -> str | None:
         """Check if waking an agent is allowed. Returns None=allowed, str=rejection reason."""
-        if state.parent_id is None:
+        if state.is_root:
             # Root agent can always be woken
             return None
         if state.wake_count >= self._limits.max_wake_count:
@@ -86,36 +82,3 @@ class TaskGuard:
             return reason
 
         return None
-
-    async def find_timed_out(self, now: datetime) -> list[AgentState]:
-        """Find all SLEEPING states that have timed out."""
-        return await self._store.find_timed_out(now)
-
-    async def find_unhealthy(
-        self, now: datetime, threshold_seconds: float | None = None
-    ) -> list[AgentState]:
-        """Find RUNNING agents that appear stuck.
-
-        An agent is considered unhealthy when:
-        - last_activity_at is older than threshold_seconds, OR
-        - last_activity_at is None and updated_at is older than threshold_seconds
-        """
-        threshold = (
-            threshold_seconds
-            if threshold_seconds is not None
-            else self._limits.health_check_threshold_seconds
-        )
-        cutoff = now - timedelta(seconds=threshold)
-        running_states = await self._store.find_running()
-
-        unhealthy: list[AgentState] = []
-        for state in running_states:
-            activity_ts = state.last_activity_at or state.updated_at
-            if activity_ts.tzinfo is None:
-                activity_ts = activity_ts.replace(tzinfo=timezone.utc)
-            cutoff_ts = cutoff
-            if cutoff_ts.tzinfo is None:
-                cutoff_ts = cutoff_ts.replace(tzinfo=timezone.utc)
-            if activity_ts <= cutoff_ts:
-                unhealthy.append(state)
-        return unhealthy

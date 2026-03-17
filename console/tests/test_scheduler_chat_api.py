@@ -4,15 +4,13 @@ Integration tests for the Scheduler Chat API endpoints.
 Tests the /api/scheduler/chat/* routes using httpx TestClient.
 """
 
-from datetime import datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.agent import EventType, StepDelta, StreamEvent
+from agiwo.agent import RunCompletedEvent, StepDelta, StepDeltaEvent
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -136,14 +134,14 @@ class TestSchedulerChatCancel:
         assert updated.status == AgentStateStatus.FAILED
 
     @pytest.mark.asyncio
-    async def test_cancel_sleeping_state(self, client):
-        """Cancel succeeds for a sleeping state."""
+    async def test_cancel_waiting_state(self, client):
+        """Cancel succeeds for a waiting state."""
         scheduler = _runtime(client).scheduler
         assert scheduler is not None
         state = AgentState(
             id="sleeping-state",
             session_id="sess-3",
-            status=AgentStateStatus.SLEEPING,
+            status=AgentStateStatus.WAITING,
             task="Waiting task",
         )
         await scheduler.store.save_state(state)
@@ -164,7 +162,7 @@ class TestSchedulerChatCancel:
         parent = AgentState(
             id="parent-cancel",
             session_id="sess-4",
-            status=AgentStateStatus.SLEEPING,
+            status=AgentStateStatus.WAITING,
             task="Parent task",
         )
         child1 = AgentState(
@@ -233,7 +231,6 @@ class TestSchedulerChatEndpoint:
         class FakeStreamingAgent:
             def __init__(self) -> None:
                 self.closed = False
-                self.hooks = None
 
             async def close(self) -> None:
                 self.closed = True
@@ -247,29 +244,41 @@ class TestSchedulerChatEndpoint:
         scheduler = _runtime(client).scheduler
         assert scheduler is not None
 
-        async def fake_submit(agent, message: str, *, session_id: str, abort_signal):
-            del abort_signal
+        async def fake_stream(
+            message: str,
+            *,
+            agent,
+            session_id: str,
+            abort_signal,
+            timeout: int,
+        ):
             assert agent is fake_agent
             assert message == "hello"
             assert session_id == "session-1"
-            assert fake_agent.hooks is not None
-            await fake_agent.hooks.on_event(
-                StreamEvent(
-                    type=EventType.STEP_DELTA,
-                    run_id="run-1",
-                    delta=StepDelta(content="hello"),
-                    timestamp=datetime(2026, 3, 10),
-                )
-            )
-            return "state-1"
-
-        async def fake_wait_for(state_id: str, timeout: int):
-            assert state_id == "state-1"
             assert timeout == 600
-            return SimpleNamespace(response="done", termination_reason=None)
-
-        monkeypatch.setattr(scheduler, "submit", fake_submit)
-        monkeypatch.setattr(scheduler, "wait_for", fake_wait_for)
+            del abort_signal
+            yield StepDeltaEvent(
+                    session_id="session-1",
+                    run_id="run-1",
+                    agent_id="agent-1",
+                    parent_run_id=None,
+                    depth=0,
+                    step_id="step-1",
+                    delta=StepDelta(content="hello"),
+            )
+            yield RunCompletedEvent(
+                session_id="session-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                parent_run_id=None,
+                depth=0,
+                response="done",
+            )
+        monkeypatch.setattr(
+            scheduler,
+            "stream",
+            fake_stream,
+        )
 
         async with client.stream(
             "POST",
@@ -280,6 +289,6 @@ class TestSchedulerChatEndpoint:
             lines = [line async for line in response.aiter_lines()]
 
         assert any(line == "event: step_delta" for line in lines)
-        assert any(line == "event: scheduler_completed" for line in lines)
-        assert any('"state_id": "state-1"' in line for line in lines)
+        assert any(line == "event: run_completed" for line in lines)
+        assert any('"response": "done"' in line for line in lines)
         assert fake_agent.closed is True

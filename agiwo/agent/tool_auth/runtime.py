@@ -2,12 +2,12 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from agiwo.agent.execution_context import ExecutionContext
 from agiwo.agent.tool_auth.notifier import (
     NoOpToolConsentNotifier,
     ToolConsentNotifier,
 )
 from agiwo.agent.tool_auth.state import ConsentWaiter
+from agiwo.agent.runtime import AgentContext
 from agiwo.tool.authz import ConsentStore, PermissionPolicy
 
 
@@ -39,7 +39,7 @@ class ToolAuthorizationRuntime:
         tool_call_id: str,
         tool_name: str,
         tool_args: dict[str, Any],
-        context: ExecutionContext,
+        context: AgentContext,
         timeout: float = 300.0,
     ) -> AuthorizationOutcome:
         if self._policy is None:

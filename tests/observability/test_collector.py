@@ -3,12 +3,14 @@ from datetime import datetime, timezone
 import pytest
 
 from agiwo.agent import (
-    EventType,
     LLMCallContext,
     MessageRole,
+    Run,
+    RunOutput,
+    RunStatus,
     StepMetrics,
     StepRecord,
-    StreamEvent,
+    TerminationReason,
 )
 from agiwo.agent.trace import AgentTraceCollector
 from agiwo.observability.trace import SpanKind
@@ -23,13 +25,13 @@ async def test_collect_routes_assistant_and_tool_steps() -> None:
         session_id="session-1",
         input_query="search for updates",
     )
-
-    await collector.collect(
-        StreamEvent(
-            type=EventType.RUN_STARTED,
-            run_id="run-1",
+    collector.on_run_started(
+        Run(
+            id="run-1",
             agent_id="agent-1",
-            data={"session_id": "session-1"},
+            session_id="session-1",
+            user_input="search",
+            status=RunStatus.RUNNING,
         )
     )
 
@@ -60,18 +62,14 @@ async def test_collect_routes_assistant_and_tool_steps() -> None:
             provider="test-provider",
         ),
     )
-    await collector.collect(
-        StreamEvent(
-            type=EventType.STEP_COMPLETED,
-            run_id="run-1",
-            step=assistant_step,
-            llm=LLMCallContext(
-                messages=[{"role": "user", "content": "search"}],
-                tools=[{"name": "web_search"}],
-                request_params={"temperature": 0.1},
-                finish_reason="tool_calls",
-            ),
-        )
+    await collector.on_step(
+        assistant_step,
+        LLMCallContext(
+            messages=[{"role": "user", "content": "search"}],
+            tools=[{"name": "web_search"}],
+            request_params={"temperature": 0.1},
+            finish_reason="tool_calls",
+        ),
     )
 
     tool_step = StepRecord(
@@ -85,12 +83,15 @@ async def test_collect_routes_assistant_and_tool_steps() -> None:
         content_for_user="Found matching documents",
         metrics=StepMetrics(duration_ms=75.0),
     )
-    await collector.collect(
-        StreamEvent(
-            type=EventType.STEP_COMPLETED,
+    await collector.on_step(tool_step)
+    await collector.on_run_completed(
+        RunOutput(
+            session_id="session-1",
             run_id="run-1",
-            step=tool_step,
-        )
+            response="Found matching documents",
+            termination_reason=TerminationReason.COMPLETED,
+        ),
+        run_id="run-1",
     )
 
     trace = collector._trace

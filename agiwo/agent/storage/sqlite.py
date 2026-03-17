@@ -64,7 +64,6 @@ class SQLiteRunStepStorage(RunStepStorage):
                 CREATE TABLE IF NOT EXISTS runs (
                     id TEXT PRIMARY KEY,
                     agent_id TEXT NOT NULL,
-                    runnable_type TEXT NOT NULL DEFAULT 'agent',
                     session_id TEXT NOT NULL,
                     user_id TEXT,
                     user_input TEXT NOT NULL,
@@ -96,13 +95,7 @@ class SQLiteRunStepStorage(RunStepStorage):
                     metrics TEXT,
                     created_at TEXT NOT NULL,
                     parent_run_id TEXT,
-                    trace_id TEXT,
-                    span_id TEXT,
-                    parent_span_id TEXT,
                     depth INTEGER DEFAULT 0,
-                    llm_messages TEXT,
-                    llm_tools TEXT,
-                    llm_request_params TEXT,
                     UNIQUE(session_id, sequence)
                 )
                 """,
@@ -130,60 +123,33 @@ class SQLiteRunStepStorage(RunStepStorage):
             await self.connect()
 
     def _serialize_model(self, model: Run | StepRecord) -> dict:
-        if isinstance(model, Run):
-            data = serialize_run_for_storage(model)
-        else:
-            data = serialize_step_for_storage(model)
-
-        # Map Run model fields to database columns
-        if isinstance(model, Run):
-            # Map agent_id to agent_id for database compatibility
-            if "agent_id" in data:
-                data["agent_id"] = data.pop("agent_id")
-                data["runnable_type"] = "agent"
-        elif isinstance(model, StepRecord):
-            # Map agent_id to agent_id for database compatibility
-            if "agent_id" in data:
-                data["agent_id"] = data.pop("agent_id")
-                data["runnable_type"] = "agent"
-
+        data = (
+            serialize_run_for_storage(model)
+            if isinstance(model, Run)
+            else serialize_step_for_storage(model)
+        )
         if "metrics" in data:
-            data["metrics"] = json.dumps(data["metrics"])
+            data["metrics"] = self._dumps(data["metrics"])
         if "tool_calls" in data:
-            data["tool_calls"] = json.dumps(data["tool_calls"])
+            data["tool_calls"] = self._dumps(data["tool_calls"])
         return data
 
     def _deserialize_run(self, row: aiosqlite.Row) -> Run:
         """Deserialize database row to Run model."""
         data = dict(row)
 
-        # Parse JSON fields
         if data.get("metrics"):
-            data["metrics"] = json.loads(data["metrics"])
-
-        # Deserialize user_input from JSON string
-        if "agent_id" in data:
-            data["agent_id"] = data.pop("agent_id")
+            data["metrics"] = self._loads(data["metrics"])
         return deserialize_run_from_storage(data)
 
     def _deserialize_step(self, row: aiosqlite.Row) -> StepRecord:
         """Deserialize database row to StepRecord model."""
         data = dict(row)
 
-        # Parse JSON fields
         if data.get("metrics"):
-            data["metrics"] = json.loads(data["metrics"])
+            data["metrics"] = self._loads(data["metrics"])
         if data.get("tool_calls"):
-            data["tool_calls"] = json.loads(data["tool_calls"])
-        data.pop("llm_messages", None)
-        data.pop("llm_tools", None)
-        data.pop("llm_request_params", None)
-        data.pop("trace_id", None)
-        data.pop("span_id", None)
-        data.pop("parent_span_id", None)
-
-        if "agent_id" in data:
-            data["agent_id"] = data.pop("agent_id")
+            data["tool_calls"] = self._loads(data["tool_calls"])
         return deserialize_step_from_storage(data)
 
     # --- Run Operations ---
@@ -271,13 +237,8 @@ class SQLiteRunStepStorage(RunStepStorage):
         try:
             if self._connection is None:
                 raise RuntimeError("Database connection not established")
-            run = await self.get_run(run_id)
             await self._connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
-
-            if run and run.session_id:
-                await self._connection.execute(
-                    "DELETE FROM steps WHERE session_id = ?", (run.session_id,)
-                )
+            await self._connection.execute("DELETE FROM steps WHERE run_id = ?", (run_id,))
 
             await self._connection.commit()
         except Exception as e:
@@ -325,8 +286,18 @@ class SQLiteRunStepStorage(RunStepStorage):
         await self._ensure_connection()
 
         try:
-            for step in steps:
-                await self.save_step(step)
+            serialized = [self._serialize_model(step) for step in steps]
+            columns = ", ".join(serialized[0].keys())
+            placeholders = ", ".join(["?" for _ in serialized[0]])
+            query = f"""
+                INSERT OR REPLACE INTO steps ({columns})
+                VALUES ({placeholders})
+            """
+            await self._connection.executemany(
+                query,
+                [list(item.values()) for item in serialized],
+            )
+            await self._connection.commit()
         except Exception as e:
             logger.error("save_steps_batch_failed", error=str(e), count=len(steps))
             raise
@@ -526,6 +497,14 @@ class SQLiteRunStepStorage(RunStepStorage):
                 tool_call_id=tool_call_id,
             )
             raise
+
+    @staticmethod
+    def _dumps(value) -> str:
+        return json.dumps(value)
+
+    @staticmethod
+    def _loads(value: str):
+        return json.loads(value)
 
 
 __all__ = ["SQLiteRunStepStorage"]

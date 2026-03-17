@@ -7,13 +7,13 @@ from typing import Any
 
 import aiosqlite
 
-from agiwo.observability.base import BaseTraceStorage, TraceQuery
-from agiwo.observability.trace import Trace, Span
+from agiwo.observability.base import BaseTraceStorage, TraceQuery, _coerce_query
+from agiwo.observability.trace import Span, Trace
+from agiwo.utils.logging import get_logger
 from agiwo.utils.storage_support.sqlite_runtime import (
     SQLiteConnectionRuntime,
     execute_statements,
 )
-from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -21,25 +21,15 @@ logger = get_logger(__name__)
 class SQLiteTraceStorage(BaseTraceStorage):
     """
     SQLite implementation of TraceStorage.
-
-    Features:
-    - Async SQLite operations
-    - In-memory ring buffer for real-time access
-    - SSE subscriber support
     """
 
     def __init__(
         self,
         db_path: str,
         collection_name: str,
-        buffer_size: int = 200,
     ) -> None:
         self.db_path = db_path
         self.collection_name = collection_name
-        self.buffer_size = buffer_size
-        self._initialize_runtime_state(buffer_size=buffer_size)
-
-        # SQLite connection (lazy init)
         self._connection: aiosqlite.Connection | None = None
         self._runtime = SQLiteConnectionRuntime(
             db_path=db_path,
@@ -134,11 +124,6 @@ class SQLiteTraceStorage(BaseTraceStorage):
         return Trace.model_validate(data)
 
     async def save_trace(self, trace: Trace) -> None:
-        """Save trace"""
-        # Add to buffer
-        self._append_to_buffer(trace)
-
-        # Persist to SQLite
         if self._connection is None:
             await self.initialize()
 
@@ -165,16 +150,8 @@ class SQLiteTraceStorage(BaseTraceStorage):
                 error=str(e),
             )
 
-        # Notify subscribers
-        await self._notify_subscribers(trace)
 
     async def get_trace(self, trace_id: str) -> Trace | None:
-        """Get single trace"""
-        # Check buffer first
-        buffered = self._get_buffered_trace(trace_id)
-        if buffered is not None:
-            return buffered
-        # Query SQLite
         if self._connection is None:
             await self.initialize()
 
@@ -230,13 +207,12 @@ class SQLiteTraceStorage(BaseTraceStorage):
         return sql_query, params
 
     async def query_traces(self, query: TraceQuery | dict[str, Any]) -> list[Trace]:
-        """Query traces"""
-        query = self._coerce_query(query)
+        coerced = _coerce_query(query)
         if self._connection is None:
             await self.initialize()
 
         try:
-            sql_query, params = self._build_sql_query(query)
+            sql_query, params = self._build_sql_query(coerced)
             if self._connection is None:
                 raise RuntimeError("Database connection not established")
             traces = []
@@ -247,11 +223,9 @@ class SQLiteTraceStorage(BaseTraceStorage):
         except Exception as e:  # noqa: BLE001 - trace query boundary
             logger.error("trace_query_failed", error=str(e))
 
-        # Fallback to buffer
-        return self._query_buffer(query)
+        return []
 
     async def close(self) -> None:
-        """Release connection back to pool."""
         await self.disconnect()
 
 

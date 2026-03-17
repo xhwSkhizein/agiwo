@@ -11,11 +11,13 @@ except ImportError:
 
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.config.settings import settings
-from agiwo.llm.helper import (
+from agiwo.llm.event_normalizer import (
     AnthropicStreamTranslator,
+    normalize_bedrock_anthropic_event,
+)
+from agiwo.llm.message_converter import (
     convert_openai_messages_to_anthropic,
     convert_openai_tools_to_anthropic,
-    normalize_bedrock_anthropic_event,
 )
 from agiwo.utils.logging import get_logger
 

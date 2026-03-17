@@ -7,13 +7,11 @@ Consolidates all Agent construction paths:
 - resume_persistent_agent: wake a persistent agent with new task
 """
 
-import json
 from typing import Any
 
-from agiwo.agent import Agent, AgentConfig, StreamEvent
+from agiwo.agent import Agent, AgentConfig
 from agiwo.agent.runtime_tools import RuntimeToolLike
 from agiwo.agent.options import AgentOptions
-from agiwo.agent.serialization import serialize_stream_event_payload
 from agiwo.llm.base import Model
 from agiwo.llm import create_model_from_dict
 from agiwo.scheduler.models import AgentState
@@ -73,11 +71,6 @@ def build_agent_options(config: AgentConfigRecord, console_config: ConsoleConfig
         run_step_storage=build_run_step_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),
     )
-
-
-def serialize_event(event: StreamEvent) -> str:
-    """Serialize a StreamEvent to JSON string for SSE data field."""
-    return json.dumps(serialize_stream_event_payload(event), default=str)
 
 
 async def build_agent(
@@ -191,4 +184,4 @@ async def resume_persistent_agent(
     if agent is None:
         agent = await rehydrate_agent(state, registry, console_config)
 
-    await scheduler.submit_task(state_id, message, agent=agent)
+    await scheduler.enqueue_input(state_id, message, agent=agent)

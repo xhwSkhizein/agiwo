@@ -19,7 +19,7 @@
 | `agiwo/agent/` | Agent 对外入口与运行时领域模型。包含 `runtime_tools/` 宿主工具适配层、`trace/` agent trace adapter、`inner/` 执行内部实现、`prompt/` prompt runtime、`tool_auth/` 工具授权运行时、`storage/` Run/Session 持久化。包根 `agiwo.agent` 是公开 API，纯配置模型落在 `config.py`，其余 canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、工具侧授权领域模型（`authz/`）、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
-| `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade，`engine.py` 负责状态机与 tick orchestration，`runner.py` 负责单次 agent cycle 执行，`coordinator.py` 只管进程内协作状态，`control.py` 定义 tools 依赖的窄接口，`store/` 只负责持久化。 |
+| `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade，`engine.py` 负责公开编排 API 并组装内部 owner；共享状态迁移收口到 `state_ops.py`，tick phases 收口到 `tick_ops.py`，tree cancel/shutdown 收口到 `tree_ops.py`，tool-facing control helpers 收口到 `control_ops.py`，`runner.py` 负责单次 agent cycle 执行，`wake_messages.py` 负责唤醒消息构造，`coordinator.py` 只管进程内协作状态，`control.py` 定义 tools 依赖的窄接口，`store/` 只负责持久化。 |
 | `agiwo/observability/` | Trace/Span 模型、查询接口与 trace storage 实现；agent 事件到 Trace 的适配层已收口到 `agiwo/agent/trace/`。 |
 | `agiwo/embedding/` | Embedding 抽象与 factory，包含本地/OpenAI 风格实现。 |
 | `agiwo/skill/` | Skill 的发现、路径规则（`config.py`）、加载、注册、异常定义，以及 `SkillTool` 桥接。 |
@@ -58,9 +58,12 @@
 
 - `Agent` 是具体类，不是 ABC。
 - 公开构造入口是 `Agent(AgentConfig(...), *, model=..., tools=..., hooks=..., id=...)`；`AgentConfig` 只承载纯配置，不放 live object。
-- 对外执行入口是 `run(...)` 和 `run_stream(...)`；`derive_child(...)` 是当前继承父 Agent 配置生成子 Agent 的标准方式。
-- `Agent` 内部分离纯配置、可复用运行时依赖（model / provided tools / hooks）、以及 agent-local runtime state（storage / prompt builder / skill manager）；核心执行循环在 `agiwo/agent/inner/`。
-- `AgentHooks` 是可选 async 回调的 dataclass；当前 hook 覆盖 run、tool、LLM、step/event、memory write/retrieve。
+- 对外执行原语是 `start(...) -> AgentExecutionHandle`；`run(...)` / `run_stream(...)` 只是便利封装。嵌套 child 定义统一通过 `derive_child_spec(...) -> ChildAgentSpec` 生成；`ChildAgentSpec` 只保留覆写数据，不携带 live runtime。
+- `run(...)` 只支持 root run；嵌套 agent 执行是内部协议，由 `runtime_tools/AgentTool` 通过 `Agent.run_child(...)` 进入，不再暴露公开 `context` 参数。
+- `AgentExecutionHandle` 是一次活执行实例，持有 `run_id/session_id`、`stream()/wait()/steer()/cancel()`；`steer()` 不再属于 `Agent` 模板对象。
+- `Agent` 内部分离 definition-scoped owner（`AgentDefinitionRuntime` 负责 hooks / sdk tools / prompt runtime / skill manager / root-child-scheduler child 派生）与 resource-scoped owner（`AgentResourceOwner` 持有 run-step storage / session storage / trace storage / active root executions）；核心执行循环在 `agiwo/agent/inner/`。
+- `AgentSessionRuntime` 是 session 级共享 owner，持有 sequence owner、trace_id、abort signal、steering queue 和 stream subscribers。
+- `AgentHooks` 是可选 async 回调的 dataclass；当前 hook 覆盖 run、tool、LLM、step、memory write/retrieve。
 - `StepRecord` 使用工厂方法创建，不要直接构造。
 
 ### Model
@@ -87,21 +90,23 @@
 ### Scheduler
 
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
-- 当前公开编排接口包括：`run`、`submit`、`submit_task`、`wait_for`、`submit_and_subscribe`、`submit_task_and_subscribe`、`steer`、`cancel`、`shutdown`。
+- 当前公开编排接口包括：`run`、`submit`、`enqueue_input`、`stream`、`wait_for`、`steer`、`cancel`、`shutdown`。
 - `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 `SchedulerEngine`。
-- `SchedulerEngine` 是唯一的编排 owner：提交、等待、steer、cancel、shutdown、tick 各阶段、以及 scheduler tools 的 control 能力都在这里。
-- `SchedulerRunner` 只负责单次执行：运行 root/child/wake cycle、构造 wake message、把 `RunOutput` 翻译成 scheduler outcome。
-- `SchedulerCoordinator` 只保存进程内状态：已注册 agent、abort signal、active task、dispatch dedupe、wait event、output channel；不得依赖 store。
+- `SchedulerEngine` 是公开编排 owner：提交、等待、steer、cancel、shutdown 等入口留在这里；共享状态迁移下沉到 `SchedulerStateOps`，tick 各阶段下沉到 `SchedulerTickOps`，tree cancel/shutdown 下沉到 `SchedulerTreeOps`，tool-facing control helper 下沉到 `SchedulerControlOps`。
+- `SchedulerRunner` 只负责单次执行：运行 root/child/wake cycle、构造 wake message、把 `RunOutput` 翻译成 scheduler outcome；scheduler 内部执行原语已经收口到 `SchedulerAgentPort.start(...) -> AgentExecutionHandlePort`，唯一 live observation path 是 `AgentExecutionHandle.stream()`。
+- `SchedulerCoordinator` 只保存进程内状态：已注册 agent、active execution handle、abort signal、active task、dispatch dedupe、wait event、stream channel；不得依赖 store。
 - `SchedulerControl` 是 scheduler tools 唯一允许依赖的接口；tools 不得直接碰 store / guard / coordinator / runner。
-- `TaskGuard` 是 spawn/wake/timeout/health check 的唯一护栏入口。
-- 当前唤醒路径包括 `WAITSET`、`TIMER`、`PERIODIC`、`TASK_SUBMITTED`、`PENDING_EVENTS`。
-- scheduler state storage 当前支持 memory/sqlite，由 `Scheduler` 自己创建和持有。
+- `TaskGuard` 是 spawn/wake 的唯一护栏入口。
+- scheduler 状态现在显式区分 `WAITING`、`IDLE`、`QUEUED`；不要再把待命/排队语义塞回一个泛化 `SLEEPING`。
+- 当前唤醒路径包括 `WAITSET`、`TIMER`、`PERIODIC`、`PENDING_EVENTS`。
+- scheduler state storage 当前支持 memory/sqlite，由 `Scheduler` 自己创建和持有；store 边界保持为通用 repo（`save/get/patch/list`），wake/timeout/debounce/signal 规则统一放在 scheduler 侧 selectors/tick/state ops。
+- `Scheduler` 的外部流式协议直接复用 `AgentStreamItem`；不要在 SDK core 再维护第二套 live-output protocol。
 
 ### Storage & Observability
 
 - Run/Step 持久化通过 `AgentOptions.run_step_storage` 配置；Trace 持久化通过 `AgentOptions.trace_storage` 配置。
 - Session/compact metadata 存储与 run-step storage 分离，位于 `agiwo/agent/storage/session.py`。
-- 事件管线仍然是：`Executor -> EventEmitter -> StreamChannel -> Storage/Trace consumers -> user`。
+- Agent 运行记录管线已收口为同步单 owner：`RunRecorder` 统一负责 step/run lifecycle、storage write、trace callback、step observer 与 stream fanout；`AgentExecutionHandle.stream()` / `run_stream()` 对外暴露的是 typed `AgentStreamItem`。
 - `BaseTraceStorage` 既支持查询，也支持实时订阅，Console trace SSE 会用到这个能力。
 
 ## Architecture Boundaries
@@ -114,6 +119,7 @@
 - 哨兵判断优先用 `is not None`；truthy 检查只在语义明确时使用。
 - 不为“可能以后有用”保留遗留兼容层；除非明确要求，否则直接删除旧路径。
 - 遇到循环依赖优先重构依赖方向，不要靠局部导入规避。
+- 同一外部 use case 不得并列暴露两套 public API；内部可以保留多种 lifecycle mutation 动作，但 facade 必须内化复杂度。
 
 ### Console
 
@@ -139,6 +145,7 @@
 - 不要在 agent 包外越权依赖 `agiwo.agent.inner`。
 - 不要在 scheduler tools 里依赖 `SchedulerEngine` / `SchedulerCoordinator` / `AgentStateStorage` / `TaskGuard`；一律只依赖 `SchedulerControl`。
 - 不要把 store mutation、递归 cancel/shutdown、tick dispatch 重新塞回 `Scheduler` facade。
+- 不要在 SDK core 里同时维护 text-only 和 typed 两套 scheduler stream API；如需文本适配，只能放在消费侧边缘。
 - 当同一语义逻辑出现第 2 次时就要评估抽象；不要继续把热点文件堆成 God Object。
 
 ## Lint & Guardrails
@@ -181,7 +188,10 @@ uv run pytest tests/ -v
 
 ### Recent Changes
 
-- **2026-03-15**：`Agent` 运行时组装已收口到 `agent.assembly + runtime_state`；scheduler 通过 `agent.scheduler_port` 依赖稳定编排 seam，不再直接依赖 `Agent` 实现细节；trace storage 构造权已移到 `observability.factory`；scheduler store 编解码已收口到 `scheduler.store.codec`；builtin tools 改为显式 `ensure_builtin_tools_loaded()`；`skill.prompt_catalog` 与 `web_reader` 包内子模块用于收窄内部职责。
+- **2026-03-17**：scheduler 已收口为单流模型：公开流式 API 统一为 `Scheduler.stream(...) -> AsyncIterator[AgentStreamItem]`，`submit_task` 改名为 `enqueue_input`；scheduler 内部唯一 live observation path 为 `AgentExecutionHandle.stream()`；`SchedulerOutput`、额外 scheduler terminal stream events、step-observer 同步链路，以及 `recent_steps / last_activity_at / health check` 已移除。
+- **2026-03-17**：`agiwo/agent` 已进一步收口：`runtime_state.py` 已删除，definition owner 收口到 `agent.inner.definition_runtime.AgentDefinitionRuntime`，resource owner 收口到 `AgentResourceOwner`，root execution 生命周期由 `ActiveRootExecution` 统一跟踪，stream 消费清理统一走 `agent.streaming`；`AgentExecutor` 已收回为执行循环 owner，tool batch、termination policy、steering 注入与 bootstrap 分别下沉到独立内部 helper。
+- **2026-03-16**：`Agent` 已收口为 `template/facade + ExecutionHandle` 模型：公开原语改为 `start(...) -> AgentExecutionHandle`，`Agent.steer()` 与 `derive_child()` 已移除；嵌套 child 改为纯数据 `ChildAgentSpec`，执行开始时再解析成 `ResolvedExecutionDefinition`；`trace_id` owner 上移到 `AgentSessionRuntime`；资源生命周期收口到 `AgentResourceOwner`；scheduler/console 内部执行 seam 已改为 handle。
+- **2026-03-15**：scheduler 通过 `agent.scheduler_port` 依赖稳定编排 seam，不再直接依赖 `Agent` 实现细节；trace storage 构造权已移到 `observability.factory`；scheduler store 编解码已收口到 `scheduler.store.codec`；builtin tools 改为显式 `ensure_builtin_tools_loaded()`；`skill.prompt_catalog` 与 `web_reader` 包内子模块用于收窄内部职责。
 - **2026-03-15**：Tool runtime 已分成纯 `BaseTool + ToolContext` 与 agent-side `AgentRuntimeTool`；`AgentTool` 已收口到 `agent.runtime_tools/`，agent trace adapter 已收口到 `agent.trace/`；workspace/memory/prompt/skill 路径规则已拆到独立 owner；compaction 执行逻辑已下沉到 `agent.inner.compaction/`，`tool.permission` 被替换为 `tool.authz/ + agent.tool_auth/`。
 - **2026-03-12**：`agiwo/agent/schema.py` 已删除；公开导出统一收口到 `agiwo.agent`，输入/运行时/compact/memory 模型继续按职责落在独立模块。
 - **2026-03-12**：Scheduler 已按 `facade + engine + runner + coordinator + control + store` 收口；`tool_port.py`、`tool_support.py`、`services/tick_engine.py` 已移除，scheduler tools 统一依赖 `SchedulerControl`。

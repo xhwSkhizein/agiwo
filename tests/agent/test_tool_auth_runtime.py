@@ -2,9 +2,11 @@ import asyncio
 
 import pytest
 
-from agiwo.agent.execution_context import ExecutionContext
-from agiwo.agent.stream_channel import StreamChannel
+from agiwo.agent.inner.context import AgentRunContext
+from agiwo.agent.inner.session_runtime import AgentSessionRuntime
 from agiwo.agent.tool_auth import ConsentWaiter, ToolAuthorizationRuntime
+from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.tool.authz import ConsentDecision, InMemoryConsentStore, PermissionPolicy, ToolPermissionProfile
 
 
@@ -20,13 +22,17 @@ class RecordingNotifier:
         self.denied_calls.append(kwargs)
 
 
-def build_context(*, user_id: str | None = "user-1") -> ExecutionContext:
-    return ExecutionContext(
+def build_context(*, user_id: str | None = "user-1") -> AgentRunContext:
+    session_runtime = AgentSessionRuntime(
         session_id="session-1",
+        run_step_storage=InMemoryRunStepStorage(),
+        session_storage=InMemorySessionStorage(),
+    )
+    return AgentRunContext(
+        session_runtime=session_runtime,
         run_id="run-1",
         agent_id="agent-1",
         agent_name="agent-1",
-        channel=StreamChannel(),
         user_id=user_id,
     )
 

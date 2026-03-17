@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Protocol, runtime_checkable
 
+from agiwo.agent.execution import AgentExecutionHandlePort
 from agiwo.agent.input import UserInput
-from agiwo.agent.runtime import RunOutput, StepRecord
+from agiwo.agent.runtime import StepRecord
 from agiwo.utils.abort_signal import AbortSignal
 
 
@@ -35,30 +36,21 @@ class SchedulerAgentPort(Protocol):
     def set_termination_summary_enabled(self, enabled: bool) -> None:
         ...
 
-    def add_step_observer(self, observer: StepObserver) -> None:
-        ...
-
-    def remove_step_observer(self, observer: StepObserver) -> None:
-        ...
-
-    async def run(
+    def start(
         self,
         user_input: UserInput,
         *,
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
-    ) -> RunOutput:
+    ) -> AgentExecutionHandlePort:
         ...
 
-    async def derive_child_for_scheduler(
+    async def create_scheduler_child(
         self,
         *,
         child_id: str,
         overrides: ChildAgentOverrides,
     ) -> "SchedulerAgentPort":
-        ...
-
-    async def steer(self, message: str) -> bool:
         ...
 
     async def close(self) -> None:
@@ -88,41 +80,32 @@ class AgentSchedulerPort:
     def set_termination_summary_enabled(self, enabled: bool) -> None:
         self._agent.set_termination_summary_enabled(enabled)
 
-    def add_step_observer(self, observer: StepObserver) -> None:
-        self._agent.add_step_observer(observer)
-
-    def remove_step_observer(self, observer: StepObserver) -> None:
-        self._agent.remove_step_observer(observer)
-
-    async def run(
+    def start(
         self,
         user_input: UserInput,
         *,
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
-    ) -> RunOutput:
-        return await self._agent.run(
+    ) -> AgentExecutionHandlePort:
+        return self._agent.start(
             user_input,
             session_id=session_id,
             abort_signal=abort_signal,
         )
 
-    async def derive_child_for_scheduler(
+    async def create_scheduler_child(
         self,
         *,
         child_id: str,
         overrides: ChildAgentOverrides,
     ) -> "SchedulerAgentPort":
-        child = await self._agent.derive_child(
+        child = await self._agent.create_scheduler_child_agent(
             child_id=child_id,
             instruction=overrides.instruction,
-            system_prompt_override=overrides.system_prompt,
+            system_prompt=overrides.system_prompt,
             exclude_tool_names=overrides.exclude_tool_names,
         )
         return AgentSchedulerPort(child)
-
-    async def steer(self, message: str) -> bool:
-        return await self._agent.steer(message)
 
     async def close(self) -> None:
         await self._agent.close()

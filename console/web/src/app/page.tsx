@@ -77,7 +77,11 @@ export default function DashboardPage() {
         <StatCard label="Agents" value={agents.length} icon={Bot} href="/agents" />
         <StatCard
           label="Scheduled"
-          value={schedulerStats ? `${schedulerStats.running + schedulerStats.sleeping} active` : "0"}
+          value={
+            schedulerStats
+              ? `${schedulerStats.running + schedulerStats.waiting + schedulerStats.queued} active`
+              : "0"
+          }
           icon={CalendarClock}
           href="/scheduler"
         />

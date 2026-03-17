@@ -3,7 +3,7 @@
 import pytest
 from agiwo.agent import Agent, AgentConfig
 from agiwo.tool.base import BaseTool, ToolResult
-from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.inner.context import AgentRunContext
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.tool.builtin.registry import DEFAULT_TOOLS
 from agiwo.llm.base import StreamChunk
@@ -30,7 +30,7 @@ class MockTool(BaseTool):
     async def execute(
         self,
         parameters: dict,
-        context: ExecutionContext,
+        context: AgentRunContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         return ToolResult(

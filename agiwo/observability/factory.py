@@ -27,22 +27,18 @@ def create_trace_storage(
     if storage_type == "sqlite":
         db_path = cfg.get("db_path", "agiwo.db")
         collection_name = cfg.get("collection_name", "agiwo_traces")
-        buffer_size = cfg.get("buffer_size", 200)
         return SQLiteTraceStorage(
             db_path=db_path,
             collection_name=collection_name,
-            buffer_size=buffer_size,
         )  # noqa: AGW013 - observability factory owns trace storage construction
     if storage_type == "mongodb":
         mongo_uri = cfg.get("mongo_uri")
         db_name = cfg.get("db_name", "agiwo")
         collection_name = cfg.get("collection_name", "traces")
-        buffer_size = cfg.get("buffer_size", 200)
         return MongoTraceStorage(
             mongo_uri=mongo_uri,
             db_name=db_name,
             collection_name=collection_name,
-            buffer_size=buffer_size,
         )  # noqa: AGW013 - observability factory owns trace storage construction
     raise ValueError(f"Unknown trace_storage_type: {storage_type}")
 

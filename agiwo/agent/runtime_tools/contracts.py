@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.runtime import TerminationReason
 from agiwo.tool.base import ToolDefinition, ToolResult
 from agiwo.utils.abort_signal import AbortSignal
@@ -37,7 +37,7 @@ class AgentRuntimeTool(Protocol):
     async def execute_for_agent(
         self,
         parameters: dict[str, Any],
-        context: ExecutionContext,
+        context: AgentRunContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         """Execute tool inside an agent runtime."""

@@ -57,7 +57,7 @@ async def _execute_agents(
 ) -> CommandResult:
     del ctx, args
 
-    states = await scheduler.store.list_all(limit=20)
+    states = await scheduler.store.list_states(limit=20)
     if not states:
         return CommandResult(text="当前没有 Agent 状态记录。")
 

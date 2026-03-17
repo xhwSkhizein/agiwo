@@ -4,16 +4,14 @@ LLM Stream Handler - Handles LLM streaming and Step building.
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Awaitable, Callable
 
+from agiwo.agent.inner.run_recorder import RunRecorder
 from agiwo.agent.inner.step_builder import StepBuilder
 from agiwo.agent.inner.run_state import RunState
-from agiwo.agent.runtime import StepDelta, StepMetrics, LLMCallContext, StepRecord
+from agiwo.agent.runtime import StepMetrics, LLMCallContext, StepRecord
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator, UsageEstimate
 from agiwo.utils.abort_signal import AbortSignal
-
-EmitDeltaFn = Callable[[str, StepDelta], Awaitable[None]]
 
 
 class LLMStreamHandler:
@@ -26,7 +24,7 @@ class LLMStreamHandler:
     async def stream_assistant_step(
         self,
         state: RunState,
-        emit_delta: EmitDeltaFn,
+        run_recorder: RunRecorder,
         abort_signal: AbortSignal | None,
         *,
         messages: list[dict] | None = None,
@@ -48,7 +46,7 @@ class LLMStreamHandler:
             request_params=self._get_request_params(),
         )
 
-        builder = await self._create_step_builder(state, emit_delta)
+        builder = await self._create_step_builder(run_recorder)
 
         async for chunk in self.model.arun_stream(messages, tools=tools):
             self._check_abort(abort_signal)
@@ -61,23 +59,15 @@ class LLMStreamHandler:
 
     async def _create_step_builder(
         self,
-        state: RunState,
-        emit_delta: EmitDeltaFn,
+        run_recorder: RunRecorder,
     ) -> StepBuilder:
         """Create StepBuilder."""
-        seq = await state.next_sequence()
-        step = StepRecord.assistant(
-            state.context,
-            sequence=seq,
-            content="",
-            tool_calls=None,
-            metrics=StepMetrics(
-                start_at=datetime.now(timezone.utc),
-                model_name=getattr(self.model, "model_name", None),
-                provider=getattr(self.model, "provider", None),
-            ),
-        )
-        return StepBuilder(step=step, emit_delta=emit_delta)
+        step = await run_recorder.create_assistant_step()
+        if step.metrics is None:
+            step.metrics = StepMetrics(start_at=datetime.now(timezone.utc))
+        step.metrics.model_name = getattr(self.model, "model_name", None)
+        step.metrics.provider = getattr(self.model, "provider", None)
+        return StepBuilder(step=step, emit_delta=run_recorder.publish_delta)
 
     def _resolve_step_metrics(
         self,

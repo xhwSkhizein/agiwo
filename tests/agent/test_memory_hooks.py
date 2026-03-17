@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agiwo.agent import Agent, AgentConfig, AgentHooks, MemoryRecord
-from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.memory_hooks import DefaultMemoryHook, create_default_memory_hooks
 from agiwo.llm.base import Model
 
@@ -38,7 +38,7 @@ class TestDefaultMemoryHook:
 
     def test_resolve_workspace(self, temp_workspace):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=ExecutionContext)
+        context = MagicMock(spec=AgentRunContext)
         context.agent_name = "test-agent"
 
         with patch("os.path.expanduser", return_value=str(temp_workspace.parent)):
@@ -48,8 +48,9 @@ class TestDefaultMemoryHook:
 
     def test_resolve_workspace_no_agent_name(self):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=ExecutionContext)
+        context = MagicMock(spec=AgentRunContext)
         context.agent_name = None
+        context.agent_id = None
 
         result = hook._resolve_workspace(context)
         assert result is None
@@ -57,7 +58,7 @@ class TestDefaultMemoryHook:
     @pytest.mark.asyncio
     async def test_retrieve_memories_empty_query(self):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=ExecutionContext)
+        context = MagicMock(spec=AgentRunContext)
 
         result = await hook.retrieve_memories("", context)
         assert result == []
@@ -65,7 +66,7 @@ class TestDefaultMemoryHook:
     @pytest.mark.asyncio
     async def test_retrieve_memories_short_query(self):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=ExecutionContext)
+        context = MagicMock(spec=AgentRunContext)
 
         result = await hook.retrieve_memories("hi", context)
         assert result == []
@@ -73,8 +74,9 @@ class TestDefaultMemoryHook:
     @pytest.mark.asyncio
     async def test_retrieve_memories_no_workspace(self):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=ExecutionContext)
+        context = MagicMock(spec=AgentRunContext)
         context.agent_name = None
+        context.agent_id = None
 
         result = await hook.retrieve_memories("test query", context)
         assert result == []
@@ -178,7 +180,7 @@ class TestMemoryHookIntegration:
         )
 
         # Mock context with agent_name that maps to our temp workspace
-        context = MagicMock(spec=ExecutionContext)
+        context = MagicMock(spec=AgentRunContext)
         context.agent_name = str(temp_workspace.name)
         context.agent_id = str(temp_workspace.name)
 
@@ -206,7 +208,7 @@ class TestMemoryHookIntegration:
             root_path=temp_workspace.parent,
         )
 
-        context = MagicMock(spec=ExecutionContext)
+        context = MagicMock(spec=AgentRunContext)
         context.agent_name = str(temp_workspace.name)
         context.agent_id = str(temp_workspace.name)
 

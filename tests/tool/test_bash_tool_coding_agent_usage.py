@@ -6,17 +6,17 @@ import shutil
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
-from agiwo.agent.execution_context import ExecutionContext
+from agiwo.agent.inner.context import AgentRunContext
 from agiwo.tool.builtin.bash_tool.process_tool import (
     BashProcessTool,
     BashProcessToolConfig,
 )
 from agiwo.tool.builtin.bash_tool.sandbox.local import LocalSandbox
 from agiwo.tool.builtin.bash_tool.tool import BashTool, BashToolConfig
+from tests.utils.agent_context import build_agent_context
 
 
 def has_codex_binary() -> bool:
@@ -31,9 +31,7 @@ skip_without_codex = pytest.mark.skipif(
 
 @pytest.fixture
 def mock_context():
-    context = MagicMock(spec=ExecutionContext)
-    context.agent_id = "coding-agent"
-    return context
+    return build_agent_context(agent_id="coding-agent", agent_name="coding-agent")
 
 
 @pytest.fixture
@@ -46,7 +44,7 @@ def local_tools(tmp_path: Path) -> tuple[BashTool, BashProcessTool]:
 
 async def _wait_for_job_exit(
     process_tool: BashProcessTool,
-    context: ExecutionContext,
+    context: AgentRunContext,
     job_id: str,
     timeout_seconds: float = 8.0,
 ) -> None:
@@ -64,7 +62,7 @@ async def _wait_for_job_exit(
 
 async def _wait_for_log_contains(
     process_tool: BashProcessTool,
-    context: ExecutionContext,
+    context: AgentRunContext,
     job_id: str,
     expected: str,
     timeout_seconds: float = 8.0,
@@ -95,7 +93,7 @@ class TestBashToolCodingAgentUsage:
     async def test_codex_foreground_with_cwd_and_pty(
         self,
         local_tools: tuple[BashTool, BashProcessTool],
-        mock_context: ExecutionContext,
+        mock_context: AgentRunContext,
         tmp_path: Path,
     ):
         bash_tool, _ = local_tools
@@ -123,7 +121,7 @@ class TestBashToolCodingAgentUsage:
     async def test_codex_background_and_process_tool_flow(
         self,
         local_tools: tuple[BashTool, BashProcessTool],
-        mock_context: ExecutionContext,
+        mock_context: AgentRunContext,
         tmp_path: Path,
     ):
         bash_tool, process_tool = local_tools
@@ -212,7 +210,7 @@ class TestBashToolCodingAgentUsage:
     async def test_process_tool_input_for_background_pty_job(
         self,
         local_tools: tuple[BashTool, BashProcessTool],
-        mock_context: ExecutionContext,
+        mock_context: AgentRunContext,
         tmp_path: Path,
     ):
         bash_tool, process_tool = local_tools

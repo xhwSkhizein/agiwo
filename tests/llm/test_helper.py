@@ -1,5 +1,5 @@
 import pytest
-from agiwo.llm.helper import (
+from agiwo.llm.event_normalizer import (
     AnthropicStreamEvent,
     AnthropicStreamTranslator,
     normalize_anthropic_stop_reason,

@@ -5,6 +5,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from pydantic import TypeAdapter
+
 from agiwo.agent.input_codec import (
     deserialize_user_input,
     normalize_to_message,
@@ -14,14 +16,13 @@ from agiwo.agent.input_codec import (
 from agiwo.agent.runtime import (
     MessageRole,
     Run,
-    RunMetrics,
-    RunStatus,
-    StepMetrics,
     StepRecord,
 )
 
 _RUN_FIELD_NAMES = {field.name for field in fields(Run)}
 _STEP_FIELD_NAMES = {field.name for field in fields(StepRecord)}
+_RUN_ADAPTER = TypeAdapter(Run)
+_STEP_ADAPTER = TypeAdapter(StepRecord)
 
 
 def _drop_none(value: Any) -> Any:
@@ -64,6 +65,13 @@ def _as_storage_dict(value: object) -> dict[str, Any]:
     return value
 
 
+def _filter_storage_fields(
+    data: dict[str, Any],
+    field_names: set[str],
+) -> dict[str, Any]:
+    return {key: value for key, value in data.items() if key in field_names}
+
+
 def serialize_run_for_storage(run: Run) -> dict[str, Any]:
     data = _as_storage_dict(_normalize_storage_value(asdict(run)))
     data["status"] = run.status.value
@@ -86,42 +94,29 @@ def serialize_step_for_storage(step: StepRecord) -> dict[str, Any]:
 
 
 def deserialize_run_from_storage(data: dict[str, Any]) -> Run:
-    run_data = {
-        key: value for key, value in data.items() if key in _RUN_FIELD_NAMES
-    }
-
-    if isinstance(run_data.get("status"), str):
-        run_data["status"] = RunStatus(run_data["status"])
-    if isinstance(run_data.get("metrics"), dict):
-        run_data["metrics"] = RunMetrics(**run_data["metrics"])
+    run_data = _filter_storage_fields(data, _RUN_FIELD_NAMES)
     if isinstance(run_data.get("user_input"), str):
         run_data["user_input"] = deserialize_user_input(run_data["user_input"])
-
-    return Run(**run_data)
+    return _RUN_ADAPTER.validate_python(run_data)
 
 
 def deserialize_step_from_storage(data: dict[str, Any]) -> StepRecord:
-    step_data = {
-        key: value for key, value in data.items() if key in _STEP_FIELD_NAMES
-    }
-
-    if isinstance(step_data.get("role"), str):
-        step_data["role"] = MessageRole(step_data["role"])
-    if isinstance(step_data.get("metrics"), dict):
-        step_data["metrics"] = StepMetrics(**step_data["metrics"])
+    step_data = _filter_storage_fields(data, _STEP_FIELD_NAMES)
     if isinstance(step_data.get("user_input"), str):
         step_data["user_input"] = deserialize_user_input(step_data["user_input"])
 
+    step = _STEP_ADAPTER.validate_python(step_data)
+
     if (
-        step_data.get("role") == MessageRole.USER
-        and step_data.get("user_input") is not None
-        and step_data.get("content") is None
+        step.role == MessageRole.USER
+        and step.user_input is not None
+        and step.content is None
     ):
-        step_data["content"] = to_message_content(
-            normalize_to_message(step_data["user_input"]).content
+        step.content = to_message_content(
+            normalize_to_message(step.user_input).content
         )
 
-    return StepRecord(**step_data)
+    return step
 
 
 __all__ = [

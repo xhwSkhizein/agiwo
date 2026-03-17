@@ -10,12 +10,12 @@ from typing import Any, AsyncIterator
 
 from agiwo.agent.agent import Agent
 from agiwo.agent.input import UserInput
+from agiwo.agent.runtime import AgentStreamItem, RunOutput
 from agiwo.agent.scheduler_port import adapt_scheduler_agent
-from agiwo.agent.runtime import RunOutput
 from agiwo.scheduler.coordinator import SchedulerCoordinator
 from agiwo.scheduler.engine import SchedulerEngine
 from agiwo.scheduler.guard import TaskGuard
-from agiwo.scheduler.models import AgentState, SchedulerConfig, SchedulerOutput
+from agiwo.scheduler.models import AgentState, SchedulerConfig
 from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
     ListAgentsTool,
@@ -24,7 +24,10 @@ from agiwo.scheduler.runtime_tools import (
     SpawnAgentTool,
 )
 from agiwo.scheduler.runner import SchedulerRunner
+from agiwo.scheduler.state_ops import SchedulerStateOps
 from agiwo.scheduler.store import AgentStateStorage, create_agent_state_storage
+from agiwo.scheduler.tick_ops import SchedulerTickOps
+from agiwo.scheduler.tree_ops import SchedulerTreeOps
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -41,17 +44,36 @@ class Scheduler:
         self._check_interval = self._config.check_interval
         self._semaphore = asyncio.Semaphore(self._config.max_concurrent)
         self._coordinator = SchedulerCoordinator()
+        self._state_ops = SchedulerStateOps(
+            store=self._store,
+            coordinator=self._coordinator,
+        )
+        self._tree_ops = SchedulerTreeOps(
+            store=self._store,
+            coordinator=self._coordinator,
+            state_ops=self._state_ops,
+        )
         self._runner = SchedulerRunner(
             store=self._store,
             coordinator=self._coordinator,
             semaphore=self._semaphore,
+            state_ops=self._state_ops,
         )
-        self._engine = SchedulerEngine(
+        self._tick_ops = SchedulerTickOps(
             config=self._config,
             store=self._store,
             guard=self._guard,
             coordinator=self._coordinator,
             runner=self._runner,
+            state_ops=self._state_ops,
+        )
+        self._engine = SchedulerEngine(
+            store=self._store,
+            coordinator=self._coordinator,
+            runner=self._runner,
+            state_ops=self._state_ops,
+            tree_ops=self._tree_ops,
+            tick_ops=self._tick_ops,
         )
         self._running = False
         self._loop_task: asyncio.Task | None = None
@@ -59,7 +81,6 @@ class Scheduler:
         self._engine.set_scheduling_tools(self._scheduling_tools)
 
     def _create_scheduling_tools(self) -> list:
-        """Create the scheduling tools injected into agents."""
         return [
             SpawnAgentTool(self._engine),
             SleepAndWaitTool(self._engine),
@@ -69,7 +90,6 @@ class Scheduler:
         ]
 
     async def start(self) -> None:
-        """Start the background scheduling loop."""
         if self._running:
             return
         self._running = True
@@ -77,7 +97,6 @@ class Scheduler:
         logger.info("scheduler_started", check_interval=self._check_interval)
 
     async def stop(self) -> None:
-        """Gracefully stop the scheduler."""
         self._running = False
 
         if self._coordinator.active_tasks:
@@ -116,8 +135,12 @@ class Scheduler:
         return self._store
 
     def get_registered_agent(self, state_id: str) -> Agent | None:
-        """Return the in-memory agent object for a scheduler state."""
         return self._engine.get_registered_agent(state_id)
+
+    def _adapt_agent(self, agent: Agent | None):
+        if agent is None:
+            return None
+        return adapt_scheduler_agent(agent)
 
     async def run(
         self,
@@ -129,9 +152,8 @@ class Scheduler:
         abort_signal: AbortSignal | None = None,
         persistent: bool = False,
     ) -> RunOutput:
-        agent_port = adapt_scheduler_agent(agent)
         return await self._engine.run(
-            agent_port,
+            self._adapt_agent(agent),
             user_input,
             session_id=session_id,
             timeout=timeout,
@@ -149,9 +171,8 @@ class Scheduler:
         persistent: bool = False,
         agent_config_id: str | None = None,
     ) -> str:
-        agent_port = adapt_scheduler_agent(agent)
         return await self._engine.submit(
-            agent_port,
+            self._adapt_agent(agent),
             user_input,
             session_id=session_id,
             abort_signal=abort_signal,
@@ -159,59 +180,44 @@ class Scheduler:
             agent_config_id=agent_config_id,
         )
 
-    async def submit_task(
+    async def enqueue_input(
         self,
         state_id: str,
-        task: UserInput,
+        user_input: UserInput,
         *,
         agent: Agent | None = None,
     ) -> None:
-        agent_port = adapt_scheduler_agent(agent) if agent is not None else None
-        await self._engine.submit_task(state_id, task, agent=agent_port)
+        await self._engine.enqueue_input(
+            state_id,
+            user_input,
+            agent=self._adapt_agent(agent),
+        )
 
-    async def submit_and_subscribe(
+    async def stream(
         self,
-        agent: Agent,
         user_input: UserInput,
         *,
+        agent: Agent | None = None,
+        state_id: str | None = None,
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
         persistent: bool = False,
         agent_config_id: str | None = None,
         timeout: float | None = None,
-        include_child_outputs: bool = True,
-    ) -> AsyncIterator[SchedulerOutput]:
-        agent_port = adapt_scheduler_agent(agent)
-        async for output in self._engine.submit_and_subscribe(
-            agent_port,
+        include_child_events: bool = True,
+    ) -> AsyncIterator[AgentStreamItem]:
+        async for item in self._engine.stream(
             user_input,
+            agent=self._adapt_agent(agent),
+            state_id=state_id,
             session_id=session_id,
             abort_signal=abort_signal,
             persistent=persistent,
             agent_config_id=agent_config_id,
             timeout=timeout,
-            include_child_outputs=include_child_outputs,
+            include_child_events=include_child_events,
         ):
-            yield output
-
-    async def submit_task_and_subscribe(
-        self,
-        state_id: str,
-        task: UserInput,
-        *,
-        agent: Agent | None = None,
-        timeout: float | None = None,
-        include_child_outputs: bool = True,
-    ) -> AsyncIterator[SchedulerOutput]:
-        agent_port = adapt_scheduler_agent(agent) if agent is not None else None
-        async for output in self._engine.submit_task_and_subscribe(
-            state_id,
-            task,
-            agent=agent_port,
-            timeout=timeout,
-            include_child_outputs=include_child_outputs,
-        ):
-            yield output
+            yield item
 
     async def wait_for(
         self,
@@ -239,7 +245,6 @@ class Scheduler:
         return await self._engine.shutdown(state_id)
 
     async def _loop(self) -> None:
-        """Background scheduler loop."""
         logger.info("scheduler_loop_started")
         while self._running:
             try:

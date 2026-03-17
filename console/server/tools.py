@@ -122,8 +122,7 @@ async def build_tools(
     return tools
 
 
-def build_agent_tool(ref: AgentToolRef, agent: Agent) -> AgentTool:
-    del ref
+def build_agent_tool(_ref: AgentToolRef, agent: Agent) -> AgentTool:
     return AgentTool(agent)
 
 

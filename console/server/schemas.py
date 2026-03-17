@@ -188,7 +188,6 @@ class WakeConditionResponse(BaseModel):
     time_value: float | None = None
     time_unit: str | None = None
     wakeup_at: str | None = None
-    submitted_task: UserInput | None = None
     timeout_at: str | None = None
 
 
@@ -198,6 +197,7 @@ class AgentStateResponse(BaseModel):
     status: str
     task: UserInput
     parent_id: str | None = None
+    pending_input: UserInput | None = None
     config_overrides: dict[str, Any] = Field(default_factory=dict)
     wake_condition: WakeConditionResponse | None = None
     result_summary: str | None = None
@@ -231,7 +231,9 @@ class SchedulerStatsResponse(BaseModel):
     total: int
     pending: int
     running: int
-    sleeping: int
+    waiting: int
+    idle: int
+    queued: int
     completed: int
     failed: int
 
@@ -274,20 +276,41 @@ class StepDeltaResponse(BaseModel):
     usage: dict[str, int] | None = None
 
 
-class StreamEventPayload(BaseModel):
+class AgentStreamItemPayload(BaseModel):
     type: str
+    session_id: str
     run_id: str
-    delta: StepDeltaResponse | None = None
-    step: StepResponse | None = None
-    data: dict[str, Any] | None = None
-    agent_id: str | None = None
-    span_id: str | None = None
+    agent_id: str
     parent_run_id: str | None = None
-    parent_span_id: str | None = None
-    trace_id: str | None = None
-    step_id: str | None = None
     depth: int = 0
     timestamp: str | None = None
+
+
+class RunStartedEventPayload(AgentStreamItemPayload):
+    type: str = "run_started"
+
+
+class StepDeltaEventPayload(AgentStreamItemPayload):
+    type: str = "step_delta"
+    step_id: str
+    delta: StepDeltaResponse
+
+
+class StepCompletedEventPayload(AgentStreamItemPayload):
+    type: str = "step_completed"
+    step: StepResponse
+
+
+class RunCompletedEventPayload(AgentStreamItemPayload):
+    type: str = "run_completed"
+    response: str | None = None
+    metrics: RunMetricsResponse | None = None
+    termination_reason: str | None = None
+
+
+class RunFailedEventPayload(AgentStreamItemPayload):
+    type: str = "run_failed"
+    error: str
 
 
 # ── Chat ────────────────────────────────────────────────────────────────
