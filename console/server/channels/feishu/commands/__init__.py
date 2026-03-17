@@ -2,7 +2,7 @@
 
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.agent_runtime import AgentRuntimeManager
+from server.channels.agent_executor import AgentExecutor
 from server.channels.feishu.commands.base import (
     CommandContext,
     CommandHandler,
@@ -14,22 +14,27 @@ from server.channels.feishu.commands.base import (
 from server.channels.feishu.commands.context import build_context_command_specs
 from server.channels.feishu.commands.scheduler import build_scheduler_command_specs
 from server.channels.feishu.commands.session import build_session_command_specs
-from server.channels.session_manager import SessionManager
+from server.channels.runtime_agent_pool import RuntimeAgentPool
+from server.channels.session import SessionContextService, SessionManager
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
 
 
 def build_feishu_command_registry(
     *,
-    runtime_mgr: AgentRuntimeManager,
+    session_service: SessionContextService,
+    agent_pool: RuntimeAgentPool,
+    executor: AgentExecutor,
     session_manager: SessionManager,
     scheduler: Scheduler,
     agent_registry: AgentRegistry,
     console_config: ConsoleConfig,
 ) -> CommandRegistry:
     specs: list[CommandSpec] = [
-        *build_session_command_specs(runtime_mgr, session_manager, scheduler),
-        *build_context_command_specs(runtime_mgr, scheduler),
+        *build_session_command_specs(
+            session_service, executor, session_manager, scheduler,
+        ),
+        *build_context_command_specs(agent_pool, scheduler),
         *build_scheduler_command_specs(
             scheduler,
             agent_registry,

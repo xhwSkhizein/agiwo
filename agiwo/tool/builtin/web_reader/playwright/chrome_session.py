@@ -21,6 +21,7 @@ from agiwo.tool.builtin.web_reader.playwright.cdp_browser import (
 from agiwo.tool.builtin.web_reader.playwright.exceptions import (
     SessionInvalidException,
 )
+from agiwo.config.settings import settings
 from agiwo.utils.logging import get_logger
 
 
@@ -80,9 +81,7 @@ class ChromeSessionManager:
     ) -> BrowserContext:
         """Launch browser and create browser context"""
         if self._config.save_login_state:
-            user_data_dir = os.path.join(
-                os.getcwd(), "browser_data", self._config.user_data_dir
-            )
+            user_data_dir = self._config.user_data_dir
             context = await chromium.launch_persistent_context(
                 user_data_dir=user_data_dir,
                 accept_downloads=True,

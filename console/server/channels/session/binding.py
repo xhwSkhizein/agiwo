@@ -4,31 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import uuid4
 
-from server.channels.models import ChannelChatContext, Session
-
-
-@dataclass(frozen=True)
-class SessionIdentity:
-    base_agent_id: str
-    runtime_agent_id: str
-    scheduler_state_id: str
-
-
-@dataclass(frozen=True)
-class SessionBinding:
-    chat_context_id: str
-    chat_context_scope_id: str
-    chat_context_base_agent_id: str
-    current_session_id: str
-    session_id: str
-    identity: SessionIdentity
+from server.channels.session.models import ChannelChatContext, Session
 
 
 @dataclass(frozen=True)
 class SessionMutationPlan:
     chat_context: ChannelChatContext
     current_session: Session
-    binding: SessionBinding
     previous_session: Session | None = None
     retired_runtime_agent_id: str | None = None
 
@@ -62,20 +44,6 @@ class BaseAgentNotFoundError(SessionContextError):
     def __init__(self, base_agent_id: str) -> None:
         super().__init__(f"Base agent not found: {base_agent_id}")
         self.base_agent_id = base_agent_id
-
-
-def describe_session_binding(
-    chat_context: ChannelChatContext,
-    session: Session,
-) -> SessionBinding:
-    return SessionBinding(
-        chat_context_id=chat_context.id,
-        chat_context_scope_id=chat_context.scope_id,
-        chat_context_base_agent_id=chat_context.base_agent_id,
-        current_session_id=chat_context.current_session_id,
-        session_id=session.id,
-        identity=_describe_session_identity(session),
-    )
 
 
 def open_initial_session(
@@ -116,7 +84,6 @@ def open_initial_session(
     return SessionMutationPlan(
         chat_context=chat_context,
         current_session=session,
-        binding=describe_session_binding(chat_context, session),
     )
 
 
@@ -142,7 +109,6 @@ def open_new_session(
     return SessionMutationPlan(
         chat_context=chat_context,
         current_session=session,
-        binding=describe_session_binding(chat_context, session),
     )
 
 
@@ -159,7 +125,6 @@ def switch_session(
         chat_context=chat_context,
         current_session=target_session,
         previous_session=previous_session,
-        binding=describe_session_binding(chat_context, target_session),
     )
 
 
@@ -184,7 +149,6 @@ def repair_missing_base_agent(
     return SessionMutationPlan(
         chat_context=chat_context,
         current_session=session,
-        binding=describe_session_binding(chat_context, session),
         retired_runtime_agent_id=retired_runtime_agent_id,
     )
 
@@ -199,15 +163,13 @@ def sync_chat_context_base_agent(
     return chat_context
 
 
-def assign_runtime_identity(session: Session, runtime_agent_id: str) -> SessionIdentity:
+def assign_runtime_identity(session: Session, runtime_agent_id: str) -> None:
     session.runtime_agent_id = runtime_agent_id
     session.scheduler_state_id = runtime_agent_id
-    return _describe_session_identity(session)
 
 
-def assign_scheduler_state(session: Session, scheduler_state_id: str) -> SessionIdentity:
+def assign_scheduler_state(session: Session, scheduler_state_id: str) -> None:
     session.scheduler_state_id = scheduler_state_id
-    return _describe_session_identity(session)
 
 
 def _set_chat_context_base_agent(
@@ -218,14 +180,6 @@ def _set_chat_context_base_agent(
 ) -> None:
     chat_context.base_agent_id = base_agent_id
     chat_context.updated_at = now
-
-
-def _describe_session_identity(session: Session) -> SessionIdentity:
-    return SessionIdentity(
-        base_agent_id=session.base_agent_id,
-        runtime_agent_id=session.runtime_agent_id,
-        scheduler_state_id=session.scheduler_state_id,
-    )
 
 
 def _set_current_session(
@@ -241,15 +195,12 @@ def _set_current_session(
 __all__ = [
     "BaseAgentNotFoundError",
     "ChatContextNotFoundError",
-    "SessionBinding",
     "SessionContextError",
-    "SessionIdentity",
     "SessionMutationPlan",
     "SessionNotFoundError",
     "SessionNotInChatContextError",
     "assign_runtime_identity",
     "assign_scheduler_state",
-    "describe_session_binding",
     "open_initial_session",
     "open_new_session",
     "repair_missing_base_agent",

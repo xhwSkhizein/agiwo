@@ -12,8 +12,8 @@ from agiwo.scheduler.models import AgentStateStatus
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
-from server.channels.session_binding import assign_runtime_identity
-from server.channels.models import ChannelChatSessionStore, Session
+from server.channels.session.binding import assign_runtime_identity
+from server.channels.session.models import ChannelChatSessionStore, Session
 from server.config import ConsoleConfig
 from server.services.agent_lifecycle import build_agent
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry

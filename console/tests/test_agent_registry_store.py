@@ -6,10 +6,10 @@ import pytest
 from agiwo.config.settings import settings as sdk_settings
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord
-from server.services.agent_registry_memory_store import InMemoryAgentRegistryStore
-from server.services.agent_registry_mongo_store import MongoAgentRegistryStore
-from server.services.agent_registry_sqlite_store import SqliteAgentRegistryStore
-from server.services.agent_registry_store import create_agent_registry_store
+from server.services.agent_registry.store import create_agent_registry_store
+from server.services.agent_registry.store.memory import InMemoryAgentRegistryStore
+from server.services.agent_registry.store.mongo import MongoAgentRegistryStore
+from server.services.agent_registry.store.sqlite import SqliteAgentRegistryStore
 
 
 def _make_record(
@@ -232,11 +232,11 @@ async def test_mongo_agent_registry_store_round_trips_records(
         released.append(mongo_uri)
 
     monkeypatch.setattr(
-        "server.services.agent_registry_mongo_store.get_shared_mongo_client",
+        "server.services.agent_registry.store.mongo.get_shared_mongo_client",
         fake_get_shared_mongo_client,
     )
     monkeypatch.setattr(
-        "server.services.agent_registry_mongo_store.release_shared_mongo_client",
+        "server.services.agent_registry.store.mongo.release_shared_mongo_client",
         fake_release_shared_mongo_client,
     )
 

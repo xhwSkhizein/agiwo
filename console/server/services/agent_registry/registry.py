@@ -1,12 +1,12 @@
-"""Agent registry domain service and public models."""
+"""Agent registry domain service — CRUD operations and domain validation."""
 
 from datetime import datetime
 
 from server.config import ConsoleConfig
 from server.domain.agent_configs import AgentConfigInput
 from server.domain.tool_references import serialize_tool_references
-from server.services.agent_registry_models import AgentConfigRecord
-from server.services.agent_registry_store import (
+from server.services.agent_registry.models import AgentConfigRecord
+from server.services.agent_registry.store import (
     AgentRegistryStore,
     create_agent_registry_store,
 )
@@ -99,4 +99,4 @@ class AgentRegistry:
         return self._store
 
 
-__all__ = ["AgentConfigRecord", "AgentRegistry"]
+__all__ = ["AgentRegistry"]

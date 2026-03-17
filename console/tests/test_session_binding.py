@@ -1,15 +1,14 @@
 from datetime import datetime, timezone
 
-from server.channels.models import ChannelChatContext, Session
-from server.channels.session_binding import (
+from server.channels.session.binding import (
     assign_runtime_identity,
     assign_scheduler_state,
-    describe_session_binding,
     open_initial_session,
     open_new_session,
     repair_missing_base_agent,
     switch_session,
 )
+from server.channels.session.models import ChannelChatContext, Session
 
 
 def _chat_context() -> ChannelChatContext:
@@ -58,9 +57,8 @@ def test_open_initial_session_builds_aligned_session_plan() -> None:
 
     assert mutation.chat_context.current_session_id == mutation.current_session.id
     assert mutation.current_session.base_agent_id == "agent-1"
-    assert mutation.binding.current_session_id == mutation.current_session.id
-    assert mutation.binding.identity.runtime_agent_id == ""
-    assert mutation.binding.identity.scheduler_state_id == ""
+    assert mutation.current_session.runtime_agent_id == ""
+    assert mutation.current_session.scheduler_state_id == ""
 
 
 def test_open_new_session_uses_explicit_base_agent_and_rebases_context() -> None:
@@ -77,7 +75,6 @@ def test_open_new_session_uses_explicit_base_agent_and_rebases_context() -> None
     assert mutation.chat_context.base_agent_id == "agent-2"
     assert mutation.chat_context.current_session_id == mutation.current_session.id
     assert mutation.current_session.base_agent_id == "agent-2"
-    assert mutation.binding.identity.base_agent_id == "agent-2"
 
 
 def test_repair_missing_base_agent_tracks_retired_runtime_agent() -> None:
@@ -102,13 +99,13 @@ def test_repair_missing_base_agent_tracks_retired_runtime_agent() -> None:
 def test_runtime_and_scheduler_identity_updates_flow_through_domain_helpers() -> None:
     session = _session()
 
-    runtime_identity = assign_runtime_identity(session, "runtime-2")
-    scheduler_identity = assign_scheduler_state(session, "state-2")
+    assign_runtime_identity(session, "runtime-2")
+    assert session.runtime_agent_id == "runtime-2"
+    assert session.scheduler_state_id == "runtime-2"
 
-    assert runtime_identity.runtime_agent_id == "runtime-2"
-    assert runtime_identity.scheduler_state_id == "runtime-2"
-    assert scheduler_identity.runtime_agent_id == "runtime-2"
-    assert scheduler_identity.scheduler_state_id == "state-2"
+    assign_scheduler_state(session, "state-2")
+    assert session.runtime_agent_id == "runtime-2"
+    assert session.scheduler_state_id == "state-2"
 
 
 def test_switch_session_returns_updated_binding() -> None:
@@ -135,4 +132,5 @@ def test_switch_session_returns_updated_binding() -> None:
 
     assert mutation.chat_context.current_session_id == "sess-2"
     assert mutation.current_session.updated_at == now
-    assert mutation.binding == describe_session_binding(chat_context, target_session)
+    assert mutation.previous_session is not None
+    assert mutation.previous_session.id == "sess-1"

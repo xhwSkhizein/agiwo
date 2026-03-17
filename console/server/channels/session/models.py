@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from agiwo.agent import UserMessage
 
 if TYPE_CHECKING:
-    from server.channels.session_binding import SessionMutationPlan
+    from server.channels.session.binding import SessionMutationPlan
 
 
 @dataclass

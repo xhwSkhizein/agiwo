@@ -4,7 +4,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 
-from server.channels.models import InboundMessage
+from server.channels.session.models import InboundMessage
 
 _GROUP_HISTORY_MAX_ITEMS = 20
 _GROUP_HISTORY_WINDOW_MS = 15 * 60 * 1000

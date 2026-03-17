@@ -49,7 +49,9 @@ class WebReaderApiConfig:
     browser_idle_ttl_seconds: int = 300
     browser_max_uses: int = 20
     save_login_state: bool = True
-    user_data_dir: str = "browser_data"
+    user_data_dir: str = field(
+        default_factory=lambda: str(settings.get_root_path() / "browser_data")
+    )
     browser_launch_timeout: int = 30
     auto_close_browser: bool = True
 

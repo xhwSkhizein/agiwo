@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Request
 
 from agiwo.agent.storage.base import RunStepStorage
-from server.services.notifying_trace_storage import NotifyingTraceStorage
+from server.services.storage_wiring import NotifyingTraceStorage
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.channels.feishu import FeishuChannelService

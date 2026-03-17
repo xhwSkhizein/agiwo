@@ -14,25 +14,28 @@ from typing import Any
 
 from agiwo.agent import UserMessage
 from agiwo.scheduler.scheduler import Scheduler
+from agiwo.utils.logging import get_logger
 
-from server.channels.agent_runtime import AgentRuntimeManager
+from server.channels.agent_executor import AgentExecutor
 from server.channels.base import BaseChannelService
 from server.channels.feishu.api_client import FeishuApiClient
-from server.channels.feishu.attachment_resolver import FeishuAttachmentResolver
 from server.channels.feishu.commands import build_feishu_command_registry
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.connection import FeishuConnection
 from server.channels.feishu.delivery_service import FeishuDeliveryService
 from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
-from server.channels.feishu.inbound_envelope import FeishuInboundEnvelope
 from server.channels.feishu.inbound_handler import FeishuInboundHandler
-from server.channels.feishu.message_builder import FeishuUserMessageBuilder
-from server.channels.feishu.message_parser import FeishuMessageParser
-from server.channels.feishu.sender_resolver import FeishuSenderResolver
-from server.channels.feishu.store import FeishuChannelStore
-from server.channels.models import BatchContext, InboundMessage
+from server.channels.feishu.message_builder import FeishuAttachmentResolver, FeishuUserMessageBuilder
+from server.channels.feishu.message_parser import (
+    FeishuInboundEnvelope,
+    FeishuMessageParser,
+    FeishuSenderResolver,
+)
+from server.channels.feishu.store import create_feishu_channel_store
+from server.channels.runtime_agent_pool import RuntimeAgentPool
+from server.channels.session import SessionContextService
+from server.channels.session.models import BatchContext, InboundMessage
 from server.config import ConsoleConfig
-from agiwo.utils.logging import get_logger
 from server.services.agent_registry import AgentRegistry
 
 logger = get_logger(__name__)
@@ -52,7 +55,7 @@ class FeishuChannelService(BaseChannelService):
             app_secret=config.feishu_app_secret,
             api_base_url=config.feishu_api_base_url,
         )
-        self._store = FeishuChannelStore(
+        self._store = create_feishu_channel_store(
             db_path=config.sqlite_db_path,
             use_persistent_store=config.metadata_storage_type == "sqlite",
         )
@@ -73,16 +76,26 @@ class FeishuChannelService(BaseChannelService):
             sdk_log_level=config.feishu_sdk_log_level,
         )
 
-        runtime_mgr = AgentRuntimeManager(
+        session_service = SessionContextService(
+            store=self._store,
+            agent_registry=agent_registry,
+            default_agent_name=config.feishu_default_agent_name,
+        )
+        agent_pool = RuntimeAgentPool(
             scheduler=scheduler,
             agent_registry=agent_registry,
             console_config=config,
             store=self._store,
-            default_agent_name=config.feishu_default_agent_name,
-            scheduler_wait_timeout=config.feishu_scheduler_wait_timeout,
+        )
+        executor = AgentExecutor(
+            scheduler=scheduler,
+            store=self._store,
+            timeout=config.feishu_scheduler_wait_timeout,
         )
         super().__init__(
-            runtime_mgr=runtime_mgr,
+            session_service=session_service,
+            agent_pool=agent_pool,
+            executor=executor,
             debounce_ms=config.feishu_debounce_ms,
             max_batch_window_ms=config.feishu_max_batch_window_ms,
         )
@@ -103,7 +116,9 @@ class FeishuChannelService(BaseChannelService):
             truncate_for_log=self._truncate_for_log,
         )
         command_registry = build_feishu_command_registry(
-            runtime_mgr=self._runtime_mgr,
+            session_service=session_service,
+            agent_pool=agent_pool,
+            executor=executor,
             session_manager=self._session_mgr,
             scheduler=scheduler,
             agent_registry=agent_registry,
@@ -117,7 +132,7 @@ class FeishuChannelService(BaseChannelService):
             content_extractor=content_extractor,
             group_history_store=group_history_store,
             store=self._store,
-            runtime_mgr=self._runtime_mgr,
+            session_service=session_service,
             session_manager=self._session_mgr,
             command_registry=command_registry,
             delivery_service=self._delivery_service,

@@ -2,10 +2,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from server.channels.feishu.sqlite_store import SqliteFeishuChannelStore
 from server.channels.feishu.store import create_feishu_channel_store
-from server.channels.models import ChannelChatContext, Session
-from server.channels.session_binding import open_initial_session
+from server.channels.feishu.store.sqlite import SqliteFeishuChannelStore
+from server.channels.session.binding import open_initial_session
+from server.channels.session.models import ChannelChatContext, Session
 
 
 def _make_chat_context(

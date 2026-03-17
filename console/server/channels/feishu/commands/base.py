@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 
-from server.channels.models import ChannelChatContext, Session
+from server.channels.session.models import ChannelChatContext, Session
 
 
 @dataclass
@@ -144,20 +144,11 @@ class HelpCommand(CommandHandler):
         return CommandResult(text="\n".join(lines))
 
 
-def register_command_specs(
-    registry: CommandRegistry,
-    specs: Iterable[CommandSpec],
-) -> None:
-    """Register declarative command specs onto an existing registry."""
-
-    for spec in specs:
-        registry.register(DeclarativeCommandHandler(spec))
-
-
 def build_command_registry(specs: Iterable[CommandSpec]) -> CommandRegistry:
     """Create a registry from declarative command specs and append ``/help``."""
 
     registry = CommandRegistry()
-    register_command_specs(registry, specs)
+    for spec in specs:
+        registry.register(DeclarativeCommandHandler(spec))
     registry.register(HelpCommand(registry))
     return registry

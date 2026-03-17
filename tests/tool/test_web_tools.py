@@ -1,9 +1,11 @@
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import SecretStr
 
 from agiwo.agent.inner.context import AgentRunContext
+from agiwo.config.settings import settings
 from agiwo.llm.base import StreamChunk
 from agiwo.tool.builtin.config import WebReaderApiConfig
 from agiwo.tool.builtin.html_extract import HtmlContent
@@ -31,6 +33,18 @@ class StubToolModel:
         self.calls.append({"messages": messages, "tools": tools})
         for response in self.responses:
             yield StreamChunk(content=response)
+
+
+def test_web_reader_config_resolves_user_data_dir_under_root_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root_path = tmp_path / ".agiwo-root"
+    monkeypatch.setattr(settings, "root_path", str(root_path))
+
+    config = WebReaderApiConfig()
+
+    assert config.user_data_dir == str(root_path.resolve() / "browser_data")
 
 
 def test_web_tool_schemas_and_descriptions_match_runtime_support() -> None:

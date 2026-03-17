@@ -6,16 +6,16 @@ import pytest
 
 from agiwo.scheduler.models import AgentStateStatus
 
-from server.channels.agent_runtime import AgentRuntimeManager
-from server.channels.models import (
+from server.channels.agent_executor import AgentExecutor
+from server.channels.runtime_agent_pool import RuntimeAgentPool
+from server.channels.session import SessionContextService
+from server.channels.session.binding import SessionMutationPlan
+from server.channels.session.models import (
     BatchContext,
     ChannelChatContext,
     Session,
     SessionWithContext,
 )
-from server.channels.session_binding import SessionMutationPlan
-from server.channels.runtime_agent_pool import RuntimeAgentPool
-from server.channels.scheduler_session_bridge import SchedulerSessionBridge
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord
 
@@ -97,7 +97,7 @@ class FakeAgent:
 
 
 @pytest.mark.asyncio
-async def test_runtime_manager_closes_retired_runtime_agent_on_session_rebind() -> None:
+async def test_session_service_returns_retired_agent_id_on_rebind() -> None:
     store = FakeChannelChatSessionStore()
     chat_context = ChannelChatContext(
         id="ctx-1",
@@ -134,19 +134,13 @@ async def test_runtime_manager_closes_retired_runtime_agent_on_session_rebind() 
         get_agent=AsyncMock(return_value=None),
         get_agent_by_name=AsyncMock(return_value=default_config),
     )
-    scheduler = SimpleNamespace()
-    manager = AgentRuntimeManager(
-        scheduler=scheduler,
-        agent_registry=registry,
-        console_config=ConsoleConfig(),
+    service = SessionContextService(
         store=store,
+        agent_registry=registry,
         default_agent_name="default",
-        scheduler_wait_timeout=30,
     )
-    retired_agent = FakeAgent("runtime-old")
-    manager.runtime_agents["runtime-old"] = retired_agent
 
-    result = await manager.get_or_create_current_session(
+    result = await service.get_or_create_current_session(
         BatchContext(
             chat_context_scope_id="scope-1",
             channel_instance_id="feishu-main",
@@ -159,15 +153,12 @@ async def test_runtime_manager_closes_retired_runtime_agent_on_session_rebind() 
     )
 
     assert result.session.base_agent_id == "agent-default"
-    assert result.session.runtime_agent_id == "agent-default-rebind"
-    assert result.session.scheduler_state_id == "agent-default-rebind"
+    assert result.retired_runtime_agent_id == "runtime-old"
     assert result.chat_context.base_agent_id == "agent-default"
-    assert retired_agent.closed is True
-    assert "runtime-old" not in manager.runtime_agents
 
 
 @pytest.mark.asyncio
-async def test_runtime_manager_create_new_session_honors_explicit_base_agent_for_existing_context() -> None:
+async def test_session_service_create_new_session_honors_explicit_base_agent() -> None:
     store = FakeChannelChatSessionStore()
     now = datetime.now(timezone.utc)
     existing_context = ChannelChatContext(
@@ -184,16 +175,13 @@ async def test_runtime_manager_create_new_session_honors_explicit_base_agent_for
     )
     await store.upsert_chat_context(existing_context)
 
-    manager = AgentRuntimeManager(
-        scheduler=SimpleNamespace(),
-        agent_registry=SimpleNamespace(),
-        console_config=ConsoleConfig(),
+    service = SessionContextService(
         store=store,
+        agent_registry=SimpleNamespace(),
         default_agent_name="default",
-        scheduler_wait_timeout=30,
     )
 
-    created = await manager.create_new_session(
+    created = await service.create_new_session(
         chat_context_scope_id="scope-1",
         channel_instance_id="feishu-main",
         chat_id="chat-1",
@@ -312,18 +300,24 @@ async def test_runtime_agent_pool_defers_refresh_while_state_running(
 
 
 @pytest.mark.asyncio
-async def test_scheduler_session_bridge_steers_running_state_and_returns_empty_stream() -> None:
+async def test_agent_executor_steers_running_state_and_returns_empty_stream() -> None:
     store = FakeChannelChatSessionStore()
+    fake_state = SimpleNamespace(
+        status=AgentStateStatus.RUNNING,
+        is_root=True,
+        is_persistent=True,
+        is_active=lambda: True,
+    )
     scheduler = SimpleNamespace(
-        get_state=AsyncMock(return_value=SimpleNamespace(status=AgentStateStatus.RUNNING)),
+        get_state=AsyncMock(return_value=fake_state),
         steer=AsyncMock(return_value=True),
         stream=AsyncMock(),
         wait_for=AsyncMock(),
     )
-    bridge = SchedulerSessionBridge(
+    executor = AgentExecutor(
         scheduler=scheduler,
         store=store,
-        scheduler_wait_timeout=60,
+        timeout=60,
     )
     session = Session(
         id="sess-1",
@@ -336,13 +330,8 @@ async def test_scheduler_session_bridge_steers_running_state_and_returns_empty_s
         updated_at=datetime.now(timezone.utc),
     )
 
-    output_stream = await bridge.submit_to_scheduler(
-        FakeAgent("runtime-1"),
-        session,
-        "hello",
-    )
+    outputs = [item async for item in executor.execute(FakeAgent("runtime-1"), session, "hello")]
 
-    outputs = [item async for item in output_stream]
     assert outputs == []
     scheduler.steer.assert_awaited_once_with("runtime-1", "hello", urgent=False)
     scheduler.stream.assert_not_called()

@@ -11,9 +11,10 @@ from abc import ABC, abstractmethod
 from agiwo.agent import UserMessage, extract_text
 from agiwo.utils.logging import get_logger
 
-from server.channels.agent_runtime import AgentRuntimeManager
-from server.channels.models import BatchContext, BatchPayload, InboundMessage
-from server.channels.session_manager import SessionManager
+from server.channels.agent_executor import AgentExecutor
+from server.channels.runtime_agent_pool import RuntimeAgentPool
+from server.channels.session import SessionContextService, SessionManager
+from server.channels.session.models import BatchContext, BatchPayload, InboundMessage
 
 logger = get_logger(__name__)
 
@@ -31,11 +32,15 @@ class BaseChannelService(ABC):
     def __init__(
         self,
         *,
-        runtime_mgr: AgentRuntimeManager,
+        session_service: SessionContextService,
+        agent_pool: RuntimeAgentPool,
+        executor: AgentExecutor,
         debounce_ms: int,
         max_batch_window_ms: int,
     ) -> None:
-        self._runtime_mgr = runtime_mgr
+        self._session_service = session_service
+        self._agent_pool = agent_pool
+        self._executor = executor
         self._session_mgr = SessionManager(
             on_batch_ready=self._on_batch_ready,
             debounce_ms=debounce_ms,
@@ -44,15 +49,23 @@ class BaseChannelService(ABC):
 
     async def close_base(self) -> None:
         await self._session_mgr.close()
-        await self._runtime_mgr.close()
+        await self._agent_pool.close()
 
     @property
     def session_manager(self) -> SessionManager:
         return self._session_mgr
 
     @property
-    def runtime_manager(self) -> AgentRuntimeManager:
-        return self._runtime_mgr
+    def session_service(self) -> SessionContextService:
+        return self._session_service
+
+    @property
+    def agent_pool(self) -> RuntimeAgentPool:
+        return self._agent_pool
+
+    @property
+    def executor(self) -> AgentExecutor:
+        return self._executor
 
     # -- Generic pipeline (not overridden by subclasses) ---------------------
 
@@ -90,16 +103,18 @@ class BaseChannelService(ABC):
             await self._deliver_reply(batch.context, failure_text)
 
     async def _execute_batch(self, batch: BatchPayload) -> None:
-        created = await self._runtime_mgr.get_or_create_current_session(batch.context)
-        session = created.session
-        agent = await self._runtime_mgr.get_or_create_runtime_agent(session)
-
-        output_stream = await self._runtime_mgr.submit_to_scheduler(
-            agent, session, batch.user_message,
+        resolution = await self._session_service.get_or_create_current_session(
+            batch.context,
         )
+        if resolution.retired_runtime_agent_id is not None:
+            await self._agent_pool.close_runtime_agent(
+                resolution.retired_runtime_agent_id,
+            )
+        session = resolution.session
+        agent = await self._agent_pool.get_or_create_runtime_agent(session)
 
         is_first_output = True
-        async for output in output_stream:
+        async for output in self._executor.execute(agent, session, batch.user_message):
             text = self._truncate_text(output)
             if is_first_output:
                 await self._deliver_reply(batch.context, text)

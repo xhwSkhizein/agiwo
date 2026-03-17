@@ -4,7 +4,7 @@ from agiwo.utils.mongo_pool import (
     get_shared_mongo_client,
     release_shared_mongo_client,
 )
-from server.services.agent_registry_models import AgentConfigRecord
+from server.services.agent_registry.models import AgentConfigRecord
 
 
 class MongoAgentRegistryStore:

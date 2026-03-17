@@ -7,7 +7,7 @@ from typing import Any
 import aiosqlite
 
 from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
-from server.services.agent_registry_models import AgentConfigRecord
+from server.services.agent_registry.models import AgentConfigRecord
 
 
 class SqliteAgentRegistryStore:

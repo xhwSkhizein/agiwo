@@ -1,9 +1,126 @@
-"""Feishu inbound message parsing facade."""
+"""Feishu inbound message parsing: envelope types, sender resolution, and parsing facade."""
 
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+from agiwo.utils.logging import get_logger
+
+from server.channels.feishu.api_client import FeishuApiClient
 from server.channels.feishu.content_extractor import FeishuContentExtractor
-from server.channels.feishu.inbound_envelope import FeishuInboundEnvelope
-from server.channels.feishu.sender_resolver import FeishuSenderResolver
-from server.channels.models import InboundMessage
+from server.channels.session.models import InboundMessage
+
+logger = get_logger(__name__)
+
+# ── Inbound envelope types ──────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class FeishuMention:
+    open_id: str
+
+
+@dataclass(frozen=True)
+class FeishuInboundEnvelope:
+    event_type: str
+    event_id: str
+    message_id: str
+    chat_id: str
+    chat_type: str
+    sender_open_id: str
+    message_type: str
+    content: str
+    event_time_ms: int
+    thread_id: str | None = None
+    mentions: tuple[FeishuMention, ...] = field(default_factory=tuple)
+
+    def to_payload_dict(self) -> dict[str, object]:
+        return {
+            "header": {
+                "event_id": self.event_id,
+                "event_type": self.event_type,
+                "token": "",
+            },
+            "event": {
+                "message": {
+                    "message_id": self.message_id,
+                    "chat_id": self.chat_id,
+                    "chat_type": self.chat_type,
+                    "thread_id": self.thread_id,
+                    "message_type": self.message_type,
+                    "content": self.content,
+                    "mentions": [
+                        {"id": {"open_id": mention.open_id}}
+                        for mention in self.mentions
+                    ],
+                    "create_time": self.event_time_ms,
+                },
+                "sender": {
+                    "sender_id": {
+                        "open_id": self.sender_open_id,
+                    }
+                },
+            },
+        }
+
+
+# ── Sender name resolution ──────────────────────────────────────────────────
+
+_SENDER_NAME_CACHE_TTL_SECONDS = 3600
+
+
+@dataclass
+class _SenderNameCacheEntry:
+    display_name: str
+    expire_at: float
+
+
+class FeishuSenderResolver:
+    def __init__(
+        self,
+        *,
+        api: FeishuApiClient,
+        cache_ttl_seconds: int = _SENDER_NAME_CACHE_TTL_SECONDS,
+    ) -> None:
+        self._api = api
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._sender_name_cache: dict[str, _SenderNameCacheEntry] = {}
+
+    async def resolve_sender_name(self, sender_open_id: str) -> str:
+        now = time.time()
+        cached = self._sender_name_cache.get(sender_open_id)
+        if cached is not None and now < cached.expire_at:
+            return cached.display_name
+
+        fallback = self._format_sender_name(sender_open_id)
+        try:
+            display_name = await self._api.get_user_display_name(sender_open_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "feishu_resolve_sender_name_failed",
+                sender_open_id=sender_open_id,
+                error=str(exc),
+            )
+            return fallback
+
+        if display_name is None:
+            return fallback
+
+        self._sender_name_cache[sender_open_id] = _SenderNameCacheEntry(
+            display_name=display_name,
+            expire_at=now + self._cache_ttl_seconds,
+        )
+        return display_name
+
+    def _format_sender_name(self, sender_open_id: str) -> str:
+        normalized = sender_open_id.strip()
+        if not normalized:
+            return "user"
+        suffix = normalized[-6:] if len(normalized) >= 6 else normalized
+        return f"user_{suffix}"
+
+
+# ── Message parser ───────────────────────────────────────────────────────────
 
 
 class FeishuMessageParser:
@@ -52,4 +169,9 @@ class FeishuMessageParser:
         )
 
 
-__all__ = ["FeishuMessageParser"]
+__all__ = [
+    "FeishuInboundEnvelope",
+    "FeishuMention",
+    "FeishuMessageParser",
+    "FeishuSenderResolver",
+]

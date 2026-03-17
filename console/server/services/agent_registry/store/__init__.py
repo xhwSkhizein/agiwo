@@ -3,10 +3,10 @@
 from typing import Protocol
 
 from server.config import ConsoleConfig
-from server.services.agent_registry_memory_store import InMemoryAgentRegistryStore
-from server.services.agent_registry_models import AgentConfigRecord
-from server.services.agent_registry_mongo_store import MongoAgentRegistryStore
-from server.services.agent_registry_sqlite_store import SqliteAgentRegistryStore
+from server.services.agent_registry.models import AgentConfigRecord
+from server.services.agent_registry.store.memory import InMemoryAgentRegistryStore
+from server.services.agent_registry.store.mongo import MongoAgentRegistryStore
+from server.services.agent_registry.store.sqlite import SqliteAgentRegistryStore
 
 
 class AgentRegistryStore(Protocol):

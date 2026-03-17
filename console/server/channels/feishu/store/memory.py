@@ -1,7 +1,7 @@
 """In-memory Feishu channel metadata store."""
 
-from server.channels.models import ChannelChatContext, Session, SessionWithContext
-from server.channels.session_binding import SessionMutationPlan
+from server.channels.session.models import ChannelChatContext, Session, SessionWithContext
+from server.channels.session.binding import SessionMutationPlan
 
 
 class InMemoryFeishuChannelStore:

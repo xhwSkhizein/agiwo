@@ -34,7 +34,7 @@
 | --- | --- |
 | `console/server/` | FastAPI 控制面与 runtime 集成。 |
 | `console/server/routers/` | API/SSE 边界，只做 HTTP 路由与请求/响应装配。 |
-| `console/server/services/` | 应用服务层，负责 agent lifecycle、registry、storage wiring、SSE、session summary 等。 |
+| `console/server/services/` | 应用服务层。`agent_lifecycle.py`（构建/恢复/恢复 agent）、`agent_registry/`（配置 CRUD + store 子包）、`storage_wiring.py`（存储 config builders + NotifyingTraceStorage）、`chat_sse.py`、`metrics.py`。 |
 | `console/server/domain/` | Console 共享领域模型，避免业务层直接依赖 API DTO。 |
 | `console/server/channels/` | 渠道运行时抽象、session binding/context 管理，以及 Feishu 等渠道集成。 |
 | `console/server/tools.py` | Console 侧唯一的工具 catalog、tool reference 解析与工具组装入口。 |
@@ -126,11 +126,15 @@
 - `console/server/schemas.py` 与 `console/server/response_serialization.py` 只属于 API/SSE 边界。
 - 共享的 Console 领域模型放 `console/server/domain/`。
 - Console 自己持有 API/表单 DTO；不要再把 `Input/Patch` 请求模型塞回 SDK。
-- session identity 相关字段（`current_session_id`、`base_agent_id`、`runtime_agent_id`、`scheduler_state_id`）应通过 `console/server/channels/session_binding.py` 协调，并经 `ChannelChatSessionStore.apply_session_mutation(...)` 原子写入。
+- session 相关代码收口到 `console/server/channels/session/` 包：`models.py`（数据模型与 store protocol）、`binding.py`（domain 操作与异常）、`context_service.py`（session/chat-context 协调）、`manager.py`（消息批处理与防抖）。session identity 字段通过 `binding.py` 协调，经 `ChannelChatSessionStore.apply_session_mutation(...)` 原子写入。
+- 渠道运行时由三个独立子服务组成：`SessionContextService`（session/chat-context 生命周期）、`RuntimeAgentPool`（runtime agent 缓存与 config 指纹刷新）、`AgentExecutor`（scheduler 交互与状态路由）。`BaseChannelService` 直接持有这三者，不再经过 facade。
+- `AgentExecutor.execute()` 对 scheduler 状态做显式路由：None/COMPLETED/FAILED → submit；IDLE/FAILED(persistent) → enqueue；RUNNING/WAITING/QUEUED → steer；PENDING → wait then retry。timeout 为可选参数，默认不设硬超时。
+- Feishu store 实现收口到 `console/server/channels/feishu/store/` 包：`__init__.py`（protocol + factory）、`memory.py`（内存实现）、`sqlite.py`（SQLite 实现）。
+- Feishu 模块合并约定：`message_parser.py` 包含 envelope 类型 + sender 解析 + 解析 facade；`message_builder.py` 包含 attachment 解析 + UserMessage 构建；`connection.py` 包含 SDK 适配层 + WebSocket 连接管理。
 - Console 工具的展示、解析、组装都必须经过 `ConsoleToolCatalog`。
 - Agent 配置写入保持 full replace；不要回到 partial merge / patch DTO 语义。
-- `StorageManager` 只管理 run-step/trace/citation；scheduler state storage 由 `Scheduler` 持有。
-- Feishu 入站先规范成 `FeishuInboundEnvelope`；parser 保持薄编排，内容提取、sender lookup、群历史状态交给专门模块。
+- `storage_wiring.py` 同时包含 storage config builders 和 `NotifyingTraceStorage`（Console 侧 trace pub/sub）。
+- Agent registry 收口到 `console/server/services/agent_registry/` 包：`registry.py`（CRUD 服务）、`models.py`（AgentConfigRecord）、`store/`（protocol + factory + memory/mongo/sqlite 实现）。
 
 ### Configuration
 

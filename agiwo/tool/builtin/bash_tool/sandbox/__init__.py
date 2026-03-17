@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from agiwo.config.settings import settings
 from agiwo.tool.builtin.bash_tool.sandbox.local import LocalSandbox
 
 _SHARED_LOCAL_SANDBOXES: dict[str, LocalSandbox] = {}
@@ -9,7 +10,7 @@ _SHARED_LOCAL_SANDBOXES: dict[str, LocalSandbox] = {}
 
 def get_shared_local_sandbox(
     *,
-    workspace_dir: str | None = ".",
+    workspace_dir: str | Path = settings.root_path,
     max_processes: int = 10,
 ) -> LocalSandbox:
     """Reuse one LocalSandbox per workspace so bash tools share job state."""

@@ -7,20 +7,21 @@ from functools import partial
 
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.agent_runtime import AgentRuntimeManager
-from server.channels.session_binding import (
+from server.channels.agent_executor import AgentExecutor
+from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
+from server.channels.feishu.commands.status_text import format_scheduler_status
+from server.channels.session import SessionContextService, SessionManager
+from server.channels.session.binding import (
     ChatContextNotFoundError,
     SessionNotFoundError,
     SessionNotInChatContextError,
 )
-from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
-from server.channels.feishu.commands.status_text import format_scheduler_status
-from server.channels.models import Session
-from server.channels.session_manager import SessionManager
+from server.channels.session.models import Session
 
 
 def build_session_command_specs(
-    runtime_mgr: AgentRuntimeManager,
+    session_service: SessionContextService,
+    executor: AgentExecutor,
     session_manager: SessionManager,
     scheduler: Scheduler,
 ) -> list[CommandSpec]:
@@ -28,23 +29,28 @@ def build_session_command_specs(
         CommandSpec(
             name="new",
             description="创建新会话，重置当前对话上下文",
-            execute=partial(_execute_new_session, runtime_mgr, session_manager),
+            execute=partial(
+                _execute_new_session, session_service, executor, session_manager,
+            ),
         ),
         CommandSpec(
             name="list",
             description="列出历史会话和概览",
-            execute=partial(_execute_list_sessions, runtime_mgr, scheduler),
+            execute=partial(_execute_list_sessions, session_service, scheduler),
         ),
         CommandSpec(
             name="switch",
             description="切换当前会话 — /switch <session_id>",
-            execute=partial(_execute_switch_session, runtime_mgr, session_manager),
+            execute=partial(
+                _execute_switch_session, session_service, executor, session_manager,
+            ),
         ),
     ]
 
 
 async def _execute_new_session(
-    runtime_mgr: AgentRuntimeManager,
+    session_service: SessionContextService,
+    executor: AgentExecutor,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
@@ -60,14 +66,11 @@ async def _execute_new_session(
     cleanup_error: str | None = None
     if current_session is not None:
         try:
-            await runtime_mgr.terminate_session_runtime(
-                current_session,
-                "用户执行 /new 重置会话",
-            )
+            await executor.cancel_if_active(current_session, "用户执行 /new 重置会话")
         except Exception as exc:  # noqa: BLE001
             cleanup_error = str(exc)
 
-    created = await runtime_mgr.create_new_session(
+    created = await session_service.create_new_session(
         chat_context_scope_id=ctx.chat_context_scope_id,
         channel_instance_id=ctx.channel_instance_id,
         chat_id=ctx.chat_id,
@@ -88,7 +91,8 @@ async def _execute_new_session(
 
 
 async def _execute_switch_session(
-    runtime_mgr: AgentRuntimeManager,
+    session_service: SessionContextService,
+    executor: AgentExecutor,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
@@ -101,7 +105,7 @@ async def _execute_switch_session(
         return CommandResult(text=f"当前已在会话 {target_session_id}。")
 
     try:
-        switched = await runtime_mgr.switch_session(
+        switched = await session_service.switch_session(
             chat_context_scope_id=ctx.chat_context_scope_id,
             target_session_id=target_session_id,
         )
@@ -116,10 +120,7 @@ async def _execute_switch_session(
     previous = switched.previous_session
     if previous is not None and previous.id != switched.current_session.id:
         try:
-            await runtime_mgr.terminate_session_runtime(
-                previous,
-                "用户执行 /switch 切换会话",
-            )
+            await executor.cancel_if_active(previous, "用户执行 /switch 切换会话")
         except Exception as exc:  # noqa: BLE001
             cleanup_error = str(exc)
 
@@ -135,14 +136,14 @@ async def _execute_switch_session(
 
 
 async def _execute_list_sessions(
-    runtime_mgr: AgentRuntimeManager,
+    session_service: SessionContextService,
     scheduler: Scheduler,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
     del args
 
-    items = await runtime_mgr.list_user_sessions(
+    items = await session_service.list_user_sessions(
         user_open_id=ctx.trigger_user_open_id,
         current_chat_context_scope_id=ctx.chat_context_scope_id,
     )

@@ -5,16 +5,14 @@ from typing import Any
 
 from agiwo.utils.logging import get_logger
 
-from server.channels.agent_runtime import AgentRuntimeManager
 from server.channels.feishu.commands import CommandContext, CommandRegistry
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.delivery_service import FeishuDeliveryService
 from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
-from server.channels.feishu.inbound_envelope import FeishuInboundEnvelope
-from server.channels.feishu.message_parser import FeishuMessageParser
+from server.channels.feishu.message_parser import FeishuInboundEnvelope, FeishuMessageParser
 from server.channels.feishu.store import FeishuChannelStoreBackend
-from server.channels.models import BatchContext, InboundMessage
-from server.channels.session_manager import SessionManager
+from server.channels.session import SessionContextService, SessionManager
+from server.channels.session.models import BatchContext, InboundMessage
 
 logger = get_logger(__name__)
 
@@ -30,7 +28,7 @@ class FeishuInboundHandler:
         content_extractor: FeishuContentExtractor,
         group_history_store: FeishuGroupHistoryStore,
         store: FeishuChannelStoreBackend,
-        runtime_mgr: AgentRuntimeManager,
+        session_service: SessionContextService,
         session_manager: SessionManager,
         command_registry: CommandRegistry,
         delivery_service: FeishuDeliveryService,
@@ -43,7 +41,7 @@ class FeishuInboundHandler:
         self._content_extractor = content_extractor
         self._group_history_store = group_history_store
         self._store = store
-        self._runtime_mgr = runtime_mgr
+        self._session_service = session_service
         self._session_mgr = session_manager
         self._command_registry = command_registry
         self._delivery_service = delivery_service
@@ -99,7 +97,7 @@ class FeishuInboundHandler:
         return {"msg": "ok"}
 
     async def _enqueue_message(self, inbound: InboundMessage) -> None:
-        default_agent = await self._runtime_mgr.resolve_default_agent_config()
+        default_agent = await self._session_service.resolve_default_agent_config()
         if default_agent is None:
             raise RuntimeError(
                 f"default_agent_name_not_found: {self._default_agent_name}"
@@ -152,10 +150,10 @@ class FeishuInboundHandler:
         return {"msg": "command_executed"}
 
     async def _build_command_context(self, inbound: InboundMessage) -> CommandContext:
-        default_agent = await self._runtime_mgr.resolve_default_agent_config()
+        default_agent = await self._session_service.resolve_default_agent_config()
         chat_context_scope_id = self._build_chat_context_scope_id(inbound)
         chat_context, current_session = (
-            await self._runtime_mgr.get_chat_context_and_current_session(
+            await self._session_service.get_chat_context_and_current_session(
                 chat_context_scope_id
             )
         )

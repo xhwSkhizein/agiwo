@@ -6,8 +6,8 @@ import os
 import aiosqlite
 
 from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
-from server.channels.models import ChannelChatContext, Session, SessionWithContext
-from server.channels.session_binding import SessionMutationPlan
+from server.channels.session.models import ChannelChatContext, Session, SessionWithContext
+from server.channels.session.binding import SessionMutationPlan
 
 _SESSION_WITH_CONTEXT_SELECT = """
 SELECT

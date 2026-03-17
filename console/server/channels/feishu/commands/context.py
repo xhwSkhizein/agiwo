@@ -12,10 +12,10 @@ from agiwo.llm.limits import (
 )
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.agent_runtime import AgentRuntimeManager
 from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
 from server.channels.feishu.commands.status_text import format_scheduler_status
-from server.channels.models import Session
+from server.channels.session.models import Session
+from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.services.metrics import summarize_runs_paginated
 
 
@@ -23,25 +23,25 @@ _PROMPT_PREVIEW_MAX_LEN = 5000
 
 
 def build_context_command_specs(
-    runtime_mgr: AgentRuntimeManager,
+    agent_pool: RuntimeAgentPool,
     scheduler: Scheduler,
 ) -> list[CommandSpec]:
     return [
         CommandSpec(
             name="context",
             description="查看当前会话的 SystemPrompt 和概览",
-            execute=partial(_execute_context, runtime_mgr),
+            execute=partial(_execute_context, agent_pool),
         ),
         CommandSpec(
             name="status",
             description="查看当前对话的统计信息",
-            execute=partial(_execute_status, runtime_mgr, scheduler),
+            execute=partial(_execute_status, agent_pool, scheduler),
         ),
     ]
 
 
 async def _execute_context(
-    runtime_mgr: AgentRuntimeManager,
+    agent_pool: RuntimeAgentPool,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
@@ -51,7 +51,7 @@ async def _execute_context(
     if current_session is None:
         return CommandResult(text="当前会话未初始化，请先发送一条消息。")
 
-    agent, error_text = await _load_session_agent(runtime_mgr, current_session)
+    agent, error_text = await _load_session_agent(agent_pool, current_session)
     if error_text is not None:
         return CommandResult(text=error_text)
     if agent is None:
@@ -74,7 +74,7 @@ async def _execute_context(
 
 
 async def _execute_status(
-    runtime_mgr: AgentRuntimeManager,
+    agent_pool: RuntimeAgentPool,
     scheduler: Scheduler,
     ctx: CommandContext,
     args: str,
@@ -85,7 +85,7 @@ async def _execute_status(
     if current_session is None:
         return CommandResult(text="当前会话未初始化，请先发送一条消息。")
 
-    agent, error_text = await _load_session_agent(runtime_mgr, current_session)
+    agent, error_text = await _load_session_agent(agent_pool, current_session)
     if error_text is not None:
         return CommandResult(text=error_text)
     if agent is None:
@@ -147,15 +147,15 @@ async def _execute_status(
 
 
 async def _load_session_agent(
-    runtime_mgr: AgentRuntimeManager,
+    agent_pool: RuntimeAgentPool,
     current_session: Session,
 ) -> tuple[Agent | None, str | None]:
-    agent = runtime_mgr.runtime_agents.get(current_session.runtime_agent_id)
+    agent = agent_pool.runtime_agents.get(current_session.runtime_agent_id)
     if agent is not None:
         return (agent, None)
 
     try:
-        return (await runtime_mgr.get_or_create_runtime_agent(current_session), None)
+        return (await agent_pool.get_or_create_runtime_agent(current_session), None)
     except Exception as exc:  # noqa: BLE001
         return (None, f"加载 Agent 失败: {exc}")
 

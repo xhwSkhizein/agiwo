@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from server.channels.models import Attachment
+from server.channels.session.models import Attachment
 
 _TEXT_MENTION_PATTERN = re.compile(r"<at[^>]*>.*?</at>", re.IGNORECASE)
 

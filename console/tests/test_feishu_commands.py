@@ -11,8 +11,8 @@ from server.channels.feishu.commands.base import (
     CommandSpec,
     build_command_registry,
 )
-from server.channels.models import Session
-from server.channels.session_binding import SessionNotFoundError
+from server.channels.session.binding import SessionNotFoundError
+from server.channels.session.models import Session
 from server.config import ConsoleConfig
 
 
@@ -76,7 +76,9 @@ async def test_build_command_registry_wraps_specs_and_adds_help() -> None:
 
 def test_build_feishu_command_registry_includes_expected_commands() -> None:
     registry = build_feishu_command_registry(
-        runtime_mgr=SimpleNamespace(),
+        session_service=SimpleNamespace(),
+        agent_pool=SimpleNamespace(),
+        executor=SimpleNamespace(),
         session_manager=SimpleNamespace(),
         scheduler=SimpleNamespace(),
         agent_registry=SimpleNamespace(),
@@ -99,18 +101,18 @@ def test_build_feishu_command_registry_includes_expected_commands() -> None:
 
 
 @pytest.mark.asyncio
-async def test_switch_command_maps_known_errors_from_runtime_manager() -> None:
+async def test_switch_command_maps_known_errors_from_session_service() -> None:
     session_manager = SimpleNamespace(reset_chat_context=Mock())
-    runtime_mgr = SimpleNamespace(
+    session_service = SimpleNamespace(
         switch_session=AsyncMock(side_effect=SessionNotFoundError("sess-2")),
-        terminate_session_runtime=AsyncMock(),
         create_new_session=AsyncMock(),
         list_user_sessions=AsyncMock(),
-        runtime_agents={},
-        get_or_create_runtime_agent=AsyncMock(),
     )
+    executor = SimpleNamespace(cancel_if_active=AsyncMock())
     registry = build_feishu_command_registry(
-        runtime_mgr=runtime_mgr,
+        session_service=session_service,
+        agent_pool=SimpleNamespace(runtime_agents={}, get_or_create_runtime_agent=AsyncMock()),
+        executor=executor,
         session_manager=session_manager,
         scheduler=SimpleNamespace(),
         agent_registry=SimpleNamespace(),
@@ -128,4 +130,4 @@ async def test_switch_command_maps_known_errors_from_runtime_manager() -> None:
 
     assert result.text == "会话不存在: sess-2"
     session_manager.reset_chat_context.assert_not_called()
-    runtime_mgr.terminate_session_runtime.assert_not_called()
+    executor.cancel_if_active.assert_not_called()

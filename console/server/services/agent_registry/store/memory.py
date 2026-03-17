@@ -1,6 +1,6 @@
 """In-memory backend for agent registry."""
 
-from server.services.agent_registry_models import AgentConfigRecord
+from server.services.agent_registry.models import AgentConfigRecord
 
 
 def _record_sort_key(record: AgentConfigRecord) -> tuple[object, object, str]:

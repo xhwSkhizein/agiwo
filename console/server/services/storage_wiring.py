@@ -1,14 +1,71 @@
-"""Console storage config builders — pure functions, no class wrapper."""
+"""Console storage wiring — config builders and NotifyingTraceStorage."""
+
+import asyncio
+from typing import Any
 
 from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.factory import StorageFactory
+from agiwo.observability.base import BaseTraceStorage, TraceQuery
 from agiwo.observability.factory import create_trace_storage as _sdk_create_trace_storage
+from agiwo.observability.trace import Trace
 from agiwo.scheduler.models import AgentStateStorageConfig
 from agiwo.tool.storage.citation import CitationStoreConfig
 
 from server.config import ConsoleConfig
-from server.services.notifying_trace_storage import NotifyingTraceStorage
+
+
+# ── NotifyingTraceStorage ────────────────────────────────────────────────────
+
+
+class NotifyingTraceStorage(BaseTraceStorage):
+    """Decorator that notifies subscribers whenever a trace is saved.
+
+    SDK storage stays pure (save/get/query/close).
+    Real-time notification is a Console concern for the trace SSE endpoint.
+    """
+
+    def __init__(
+        self,
+        inner: BaseTraceStorage,
+        queue_maxsize: int = 100,
+    ) -> None:
+        self._inner = inner
+        self._subscribers: list[asyncio.Queue[Trace]] = []
+        self._queue_maxsize = queue_maxsize
+
+    def subscribe(self) -> asyncio.Queue[Trace]:
+        queue: asyncio.Queue[Trace] = asyncio.Queue(maxsize=self._queue_maxsize)
+        self._subscribers.append(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue[Trace]) -> None:
+        if queue in self._subscribers:
+            self._subscribers.remove(queue)
+
+    async def initialize(self) -> None:
+        await self._inner.initialize()
+
+    async def save_trace(self, trace: Trace) -> None:
+        await self._inner.save_trace(trace)
+        for queue in self._subscribers:
+            try:
+                queue.put_nowait(trace)
+            except asyncio.QueueFull:
+                pass
+
+    async def get_trace(self, trace_id: str) -> Trace | None:
+        return await self._inner.get_trace(trace_id)
+
+    async def query_traces(self, query: TraceQuery | dict[str, Any]) -> list[Trace]:
+        return await self._inner.query_traces(query)
+
+    async def close(self) -> None:
+        self._subscribers.clear()
+        await self._inner.close()
+
+
+# ── Storage config builders ──────────────────────────────────────────────────
 
 
 def build_run_step_storage_config(console_config: ConsoleConfig) -> RunStepStorageConfig:

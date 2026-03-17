@@ -7,21 +7,19 @@ from datetime import datetime, timezone
 
 from agiwo.utils.logging import get_logger
 
-from server.channels.session_binding import (
+from server.channels.session.binding import (
     BaseAgentNotFoundError,
     ChatContextNotFoundError,
-    SessionBinding,
     SessionMutationPlan,
     SessionNotFoundError,
     SessionNotInChatContextError,
-    describe_session_binding,
     open_initial_session,
     open_new_session,
     repair_missing_base_agent,
     switch_session,
     sync_chat_context_base_agent,
 )
-from server.channels.models import (
+from server.channels.session.models import (
     BatchContext,
     ChannelChatContext,
     ChannelChatSessionStore,
@@ -37,7 +35,6 @@ logger = get_logger(__name__)
 
 @dataclass
 class SessionContextResolution:
-    binding: SessionBinding
     chat_context: ChannelChatContext
     session: Session
     retired_runtime_agent_id: str | None = None
@@ -92,7 +89,6 @@ class SessionContextService:
                 created_by="AUTO",
             )
             return SessionContextResolution(
-                binding=created.binding,
                 chat_context=created.chat_context,
                 session=created.current_session,
             )
@@ -113,7 +109,6 @@ class SessionContextService:
                 created_by="AUTO_RECOVER",
             )
             return SessionContextResolution(
-                binding=created.binding,
                 chat_context=created.chat_context,
                 session=created.current_session,
             )
@@ -217,10 +212,6 @@ class SessionContextService:
         items.sort(key=lambda item: item.session.updated_at, reverse=True)
         return items
 
-    async def touch_session(self, session: Session) -> None:
-        session.updated_at = datetime.now(timezone.utc)
-        await self._store.upsert_session(session)
-
     async def _create_chat_context_with_session(
         self,
         *,
@@ -269,7 +260,6 @@ class SessionContextService:
         base_config = await self._agent_registry.get_agent(session.base_agent_id)
         if base_config is not None:
             return SessionContextResolution(
-                binding=describe_session_binding(chat_context, session),
                 chat_context=chat_context,
                 session=session,
             )
@@ -296,7 +286,6 @@ class SessionContextService:
             new_runtime_agent_id=mutation.current_session.runtime_agent_id,
         )
         return SessionContextResolution(
-            binding=mutation.binding,
             chat_context=mutation.chat_context,
             session=mutation.current_session,
             retired_runtime_agent_id=mutation.retired_runtime_agent_id,

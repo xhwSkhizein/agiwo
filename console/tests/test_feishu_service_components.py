@@ -6,18 +6,19 @@ import pytest
 
 from agiwo.agent import ContentPart, ContentType
 
-from server.channels.feishu.attachment_resolver import FeishuAttachmentResolver
 from server.channels.feishu.commands.base import CommandResult
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.connection import FeishuConnection
 from server.channels.feishu.delivery_service import FeishuDeliveryService
 from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
-from server.channels.feishu.inbound_envelope import FeishuInboundEnvelope
 from server.channels.feishu.inbound_handler import FeishuInboundHandler
-from server.channels.feishu.message_builder import FeishuUserMessageBuilder
-from server.channels.feishu.message_parser import FeishuMessageParser
-from server.channels.feishu.sender_resolver import FeishuSenderResolver
-from server.channels.models import Attachment, BatchContext, InboundMessage
+from server.channels.feishu.message_builder import FeishuAttachmentResolver, FeishuUserMessageBuilder
+from server.channels.feishu.message_parser import (
+    FeishuInboundEnvelope,
+    FeishuMessageParser,
+    FeishuSenderResolver,
+)
+from server.channels.session.models import Attachment, BatchContext, InboundMessage
 from server.config import ConsoleConfig
 
 
@@ -264,7 +265,7 @@ async def test_inbound_handler_executes_commands_before_ack_or_enqueue() -> None
     content_extractor = SimpleNamespace(normalize_message_text=Mock(return_value="hello"))
     group_history_store = SimpleNamespace(record_message=Mock())
     store = SimpleNamespace(claim_event=AsyncMock(return_value=True))
-    runtime_mgr = SimpleNamespace(
+    session_service = SimpleNamespace(
         resolve_default_agent_config=AsyncMock(return_value=SimpleNamespace(id="agent-1")),
         get_chat_context_and_current_session=AsyncMock(return_value=(None, None)),
     )
@@ -286,7 +287,7 @@ async def test_inbound_handler_executes_commands_before_ack_or_enqueue() -> None
         content_extractor=content_extractor,
         group_history_store=group_history_store,
         store=store,
-        runtime_mgr=runtime_mgr,
+        session_service=session_service,
         session_manager=session_manager,
         command_registry=command_registry,
         delivery_service=delivery_service,
@@ -315,7 +316,7 @@ async def test_inbound_handler_acknowledges_and_enqueues_non_command_messages() 
     content_extractor = SimpleNamespace(normalize_message_text=Mock(return_value="hello bot"))
     group_history_store = SimpleNamespace(record_message=Mock())
     store = SimpleNamespace(claim_event=AsyncMock(return_value=True))
-    runtime_mgr = SimpleNamespace(
+    session_service = SimpleNamespace(
         resolve_default_agent_config=AsyncMock(return_value=SimpleNamespace(id="agent-1")),
     )
     session_manager = SimpleNamespace(enqueue=AsyncMock())
@@ -331,7 +332,7 @@ async def test_inbound_handler_acknowledges_and_enqueues_non_command_messages() 
         content_extractor=content_extractor,
         group_history_store=group_history_store,
         store=store,
-        runtime_mgr=runtime_mgr,
+        session_service=session_service,
         session_manager=session_manager,
         command_registry=SimpleNamespace(try_parse=Mock(return_value=None)),
         delivery_service=delivery_service,
