@@ -47,6 +47,7 @@ def _build_default_agent_config(config: ConsoleConfig) -> AgentConfigRecord:
         model_provider=config.default_agent_model_provider,
         model_name=config.default_agent_model_name,
         system_prompt=config.default_agent_system_prompt,
+        tools=config.default_agent_tools,
         options=build_default_agent_options(),
         model_params=config.default_agent_model_params,
     )
