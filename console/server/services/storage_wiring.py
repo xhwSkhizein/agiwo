@@ -83,11 +83,9 @@ def build_agent_state_storage_config(
     console_config: ConsoleConfig,
 ) -> AgentStateStorageConfig:
     storage_type = console_config.metadata_storage_type
+    # AgentStateStorageConfig does not support mongodb; fall back to memory
     if storage_type == "mongodb":
-        raise ValueError(
-            "AGIWO_CONSOLE_METADATA_STORAGE_TYPE=mongodb is not supported for "
-            "AgentStateStorageConfig; use sqlite or memory."
-        )
+        return AgentStateStorageConfig(storage_type="memory")
 
     return _build_storage_config(
         AgentStateStorageConfig,

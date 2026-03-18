@@ -65,7 +65,7 @@ class BaseChannelService(ABC):
         self._deferred_replies = DeferredReplyManager(
             executor=executor,
             session_service=session_service,
-            deliver_message=self._deliver_message,
+            deliver_chunked=self._deliver_message,
         )
         self._session_mgr = SessionManager(
             on_batch_ready=self._on_batch_ready,

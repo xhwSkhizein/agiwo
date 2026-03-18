@@ -14,6 +14,7 @@ class BaseAgentNotFoundError(ChannelError):
 
     def __init__(self, base_agent_id: str) -> None:
         self.base_agent_id = base_agent_id
+        self.agent_id = base_agent_id
         super().__init__(f"base_agent_not_found: {base_agent_id}")
 
 
