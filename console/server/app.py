@@ -16,6 +16,7 @@ from server.dependencies import (
     bind_console_runtime,
     clear_console_runtime,
 )
+from server.channels.base import safe_close_all
 from server.channels.feishu import FeishuChannelService
 from server.services.agent_registry import AgentRegistry, AgentConfigRecord
 from server.services.agent_lifecycle import build_default_agent_options
@@ -114,13 +115,17 @@ async def lifespan(app: FastAPI):
     yield
 
     clear_console_runtime(app)
+    closables: list[object] = []
     if feishu_channel_service is not None:
-        await feishu_channel_service.close()
-    await sched.stop()
-    await agent_registry.close()
-    await run_step_storage.close()
+        closables.append(feishu_channel_service)
+    closables.extend([agent_registry, run_step_storage])
     if trace_storage is not None:
-        await trace_storage.close()
+        closables.append(trace_storage)
+    try:
+        await sched.stop()
+    except Exception:  # noqa: BLE001
+        logger.warning("resource_close_failed", resource="Scheduler", exc_info=True)
+    await safe_close_all(*closables)
 
 
 def create_app() -> FastAPI:
