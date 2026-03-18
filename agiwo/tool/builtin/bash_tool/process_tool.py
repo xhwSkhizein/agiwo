@@ -8,7 +8,7 @@ from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.tool.process import AgentProcessRegistry
 from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
-from agiwo.tool.builtin.bash_tool.tool import truncate_output
+from agiwo.tool.builtin.bash_tool.result_formatter import truncate_output
 from agiwo.tool.builtin.bash_tool.types import CommandResult, ProcessInfo, Sandbox
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.utils.abort_signal import AbortSignal
