@@ -12,9 +12,9 @@ class PreviousTaskRunningError(ChannelError):
 class BaseAgentNotFoundError(ChannelError):
     """Raised when the base agent does not exist or has been deleted."""
 
-    def __init__(self, agent_name: str) -> None:
-        self.agent_name = agent_name
-        super().__init__(f"base_agent_not_found: {agent_name}")
+    def __init__(self, agent_id: str) -> None:
+        self.agent_id = agent_id
+        super().__init__(f"base_agent_not_found: {agent_id}")
 
 
 class DefaultAgentNameNotFoundError(ChannelError):

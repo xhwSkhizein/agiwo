@@ -194,39 +194,29 @@ class BaseChannelService(ABC):
         """将长文本分块，保留完整信息而不是截断。"""
         if len(text) <= max_len:
             return [text]
-        
-        # 预估总块数
-        estimated_chunks = (len(text) + max_len - 1) // max_len
-        
-        chunks = []
+
+        raw_chunks: list[str] = []
         current_pos = 0
         total_len = len(text)
-        
+
         while current_pos < total_len:
-            remaining = total_len - current_pos
-            
-            if remaining <= max_len:
-                chunks.append(text[current_pos:])
+            if total_len - current_pos <= max_len:
+                raw_chunks.append(text[current_pos:])
                 break
-            
-            # 尝试在换行符处分割
+
             chunk_end = current_pos + max_len
             last_newline = text.rfind("\n", current_pos, chunk_end)
-            
             if last_newline > current_pos:
                 chunk_end = last_newline + 1
-            
-            chunk = text[current_pos:chunk_end]
-            
-            # 添加续页标记（除了最后一块）
-            chunk_index = len(chunks) + 1
-            if chunk_index < estimated_chunks:
-                chunk = chunk + f"\n\n[续 {chunk_index}/{estimated_chunks}]"
-            
-            chunks.append(chunk)
+
+            raw_chunks.append(text[current_pos:chunk_end])
             current_pos = chunk_end
-        
-        return chunks
+
+        total = len(raw_chunks)
+        return [
+            chunk + f"\n\n[续 {i + 1}/{total}]" if i < total - 1 else chunk
+            for i, chunk in enumerate(raw_chunks)
+        ]
 
     def _truncate_for_log(self, text: str, max_len: int = _MAX_LOG_TEXT_LEN) -> str:
         if len(text) <= max_len:

@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 from agiwo.utils.logging import get_logger
 
+from server.channels.exceptions import BaseAgentNotFoundError
 from server.channels.session.binding import (
-    BaseAgentNotFoundError,
     ChatContextNotFoundError,
     SessionMutationPlan,
     SessionNotFoundError,

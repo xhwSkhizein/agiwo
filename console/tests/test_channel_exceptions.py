@@ -35,11 +35,11 @@ class TestPreviousTaskRunningError:
 
 
 class TestBaseAgentNotFoundError:
-    def test_stores_agent_name(self) -> None:
+    def test_stores_agent_id(self) -> None:
         err = BaseAgentNotFoundError("my-agent")
-        assert err.agent_name == "my-agent"
+        assert err.agent_id == "my-agent"
 
-    def test_message_contains_agent_name(self) -> None:
+    def test_message_contains_agent_id(self) -> None:
         err = BaseAgentNotFoundError("my-agent")
         assert "my-agent" in str(err)
 

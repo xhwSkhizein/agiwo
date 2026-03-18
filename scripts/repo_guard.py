@@ -74,7 +74,7 @@ ALLOWED_CONSOLE_API_IMPORT_PATHS = {
     Path("console/server/response_serialization.py"),
 }
 ALLOWED_SESSION_IDENTITY_ASSIGN_PATHS = {
-    Path("console/server/channels/session_binding.py"),
+    Path("console/server/channels/session/binding.py"),
 }
 ALLOWED_SESSION_IDENTITY_ASSIGN_PREFIXES = (Path("console/tests"),)
 ALLOWED_FEISHU_SDK_IMPORT_PATHS = {

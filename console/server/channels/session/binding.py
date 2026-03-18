@@ -40,12 +40,6 @@ class SessionNotInChatContextError(SessionContextError):
         self.chat_context_id = chat_context_id
 
 
-class BaseAgentNotFoundError(SessionContextError):
-    def __init__(self, base_agent_id: str) -> None:
-        super().__init__(f"Base agent not found: {base_agent_id}")
-        self.base_agent_id = base_agent_id
-
-
 def open_initial_session(
     *,
     chat_context_scope_id: str,
@@ -193,7 +187,6 @@ def _set_current_session(
 
 
 __all__ = [
-    "BaseAgentNotFoundError",
     "ChatContextNotFoundError",
     "SessionContextError",
     "SessionMutationPlan",
