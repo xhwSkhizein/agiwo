@@ -391,9 +391,9 @@ Machine learning applications are everywhere.
         assert len(results) >= 1
         found_ml = any("file2.md" in r.path for r in results)
         assert found_ml, "Should find machine learning content"
-        assert not any(
-            "file3.md" in r.path for r in results[:2]
-        ), "Gardening should not rank high"
+        assert not any("file3.md" in r.path for r in results[:2]), (
+            "Gardening should not rank high"
+        )
 
         store.close()
 

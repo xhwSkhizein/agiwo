@@ -274,12 +274,12 @@ class AgentExecutor:
         abort_signal: AbortSignal | None,
     ) -> TerminationReason | None:
         prepared_calls = await self._prepare_tool_calls(tool_calls)
-        outcomes: list[RuntimeToolOutcome] = (
-            await self.tool_runtime.execute_resolved_batch(
-                prepared_calls,
-                context=state.context,
-                abort_signal=abort_signal,
-            )
+        outcomes: list[
+            RuntimeToolOutcome
+        ] = await self.tool_runtime.execute_resolved_batch(
+            prepared_calls,
+            context=state.context,
+            abort_signal=abort_signal,
         )
         return await self._record_tool_outcomes(
             run_recorder=run_recorder,

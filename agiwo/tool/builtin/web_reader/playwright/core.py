@@ -171,9 +171,7 @@ class PlaywrightCrawler:
             return None
         return content
 
-    async def crawl_url(
-        self, url: str, retries: int = 0
-    ) -> HtmlContent | None:  # noqa: C901, PLR0912
+    async def crawl_url(self, url: str, retries: int = 0) -> HtmlContent | None:  # noqa: C901, PLR0912
         """
         Crawl a single URL.
 

@@ -76,9 +76,7 @@ class CompactionRuntime:
                     attempt=attempt + 1,
                 )
                 return result
-            except (
-                Exception
-            ) as error:  # noqa: BLE001 - compaction retries guard the runtime boundary
+            except Exception as error:  # noqa: BLE001 - compaction retries guard the runtime boundary
                 last_error = error
                 logger.warning(
                     "compact_attempt_failed",

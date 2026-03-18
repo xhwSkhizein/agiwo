@@ -159,9 +159,10 @@ class DeferredReplyManager:
         session_id: str,
         state_id: str,
     ) -> bool:
-        _chat_context, current_session = (
-            await self._session_service.get_chat_context_and_current_session(scope_id)
-        )
+        (
+            _chat_context,
+            current_session,
+        ) = await self._session_service.get_chat_context_and_current_session(scope_id)
         if current_session is None:
             return False
         return (
