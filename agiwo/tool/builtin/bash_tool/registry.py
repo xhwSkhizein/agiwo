@@ -185,11 +185,11 @@ class ProcessRegistry:
         except Exception:
             try:
                 stdout_fp.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             try:
                 stderr_fp.close()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
             if master_fd is not None:
                 try:
@@ -469,7 +469,7 @@ class ProcessRegistry:
             for fp in handles:
                 try:
                     fp.close()
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass  # Ignore close errors
 
     def _close_pty_handle(self, process_id: str) -> None:
@@ -498,7 +498,7 @@ class ProcessRegistry:
             try:
                 stdout_fp.write(text)
                 stdout_fp.flush()
-            except Exception:
+            except Exception:  # noqa: BLE001
                 break
 
     @staticmethod

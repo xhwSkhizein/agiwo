@@ -233,7 +233,7 @@ class PlaywrightCrawler:
                 await asyncio.sleep(5 * (retries + 1))
                 return await self.crawl_url(url, retries + 1)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             self.logger.error(f"Crawl failed: {e}", url=url)
             failed_requests = self.stats.get("failed_requests", 0)
             if isinstance(failed_requests, int):
@@ -241,7 +241,7 @@ class PlaywrightCrawler:
 
             # Health check, reconnect if connection is broken
             if self.session_manager is None:
-                raise SessionInvalidException("Session manager not available")
+                raise SessionInvalidException("Session manager not available") from None
             if not await self.session_manager.health_check():
                 self.logger.info(
                     "Connection broken detected, attempting to reconnect..."
@@ -286,7 +286,7 @@ class PlaywrightCrawler:
                         json.dumps(content, ensure_ascii=False, indent=2),
                         encoding="utf-8",
                     )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 self.logger.error(f"Failed to process URL: {e}")
 
         self.logger.info(

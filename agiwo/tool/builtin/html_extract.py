@@ -238,6 +238,6 @@ def extract_content_from_html(html: str, original_url: str) -> HtmlContent | Non
         json_data = json.loads(result)
 
         return HtmlContent(**json_data, raw_html=html)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         logger.error("Content extraction failed", error=str(e))
         return None

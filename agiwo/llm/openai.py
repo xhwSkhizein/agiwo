@@ -1,5 +1,4 @@
 from typing import AsyncIterator
-import json
 
 try:
     from openai import (
@@ -10,7 +9,7 @@ try:
         RateLimitError,
     )
 except ImportError:
-    raise ImportError("Please install openai package: pip install openai")
+    raise ImportError("Please install openai package: pip install openai") from None
 
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.llm.event_normalizer import normalize_usage_metrics

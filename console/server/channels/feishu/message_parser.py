@@ -1,7 +1,6 @@
 """Feishu inbound message parsing: envelope types, sender resolution, and parsing facade."""
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from agiwo.utils.logging import get_logger

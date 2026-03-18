@@ -5,7 +5,6 @@ Manages browser sessions and contexts for Playwright-based web fetching.
 """
 
 import asyncio
-import os
 
 from playwright.async_api import (
     BrowserContext,
@@ -21,7 +20,6 @@ from agiwo.tool.builtin.web_reader.playwright.cdp_browser import (
 from agiwo.tool.builtin.web_reader.playwright.exceptions import (
     SessionInvalidException,
 )
-from agiwo.config.settings import settings
 from agiwo.utils.logging import get_logger
 
 
@@ -63,14 +61,14 @@ class ChromeSessionManager:
                 self.logger.info("Successfully connected to Chrome")
                 return True
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 self.logger.error(f"Connection failed: {e}")
                 if self.cdp_browser:
                     self.logger.error(
                         "Please ensure Chrome is started with remote debugging: "
                         f"chrome --remote-debugging-port={self.cdp_browser.debug_port}"
                     )
-                raise SessionInvalidException(f"Failed to connect to Chrome: {e}")
+                raise SessionInvalidException(f"Failed to connect to Chrome: {e}") from e
 
     async def launch_browser(
         self,
@@ -124,7 +122,7 @@ class ChromeSessionManager:
 
             return self.context
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             self.logger.error(
                 f"CDP mode launch failed, falling back to standard mode: {e}"
             )
@@ -167,7 +165,7 @@ class ChromeSessionManager:
             page = await self.context.new_page()
             await page.close()
             return True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             self.logger.warning(f"Health check failed: {e}")
             self._connected = False
             return False

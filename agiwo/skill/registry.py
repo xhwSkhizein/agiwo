@@ -101,7 +101,7 @@ class SkillRegistry:
                         name=metadata.name,
                         path=str(skill_path),
                     )
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     logger.warning(
                         "skill_parse_failed",
                         path=str(skill_path),

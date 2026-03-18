@@ -22,11 +22,18 @@ def test_create_model_builds_provider_specific_instance() -> None:
     assert model.max_output_tokens == 512
 
 
-def test_create_model_from_dict_uses_max_output_tokens() -> None:
+def test_create_model_from_dict_uses_max_output_tokens(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
     model = create_model_from_dict(
         provider="deepseek",
         model_name="deepseek-chat",
-        params={"max_output_tokens": 321, "temperature": 0.05},
+        params={
+            "max_output_tokens": 321,
+            "temperature": 0.05,
+            "api_key_env_name": "DEEPSEEK_API_KEY",
+        },
     )
 
     assert isinstance(model, DeepseekModel)

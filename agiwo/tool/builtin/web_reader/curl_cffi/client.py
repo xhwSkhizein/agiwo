@@ -63,7 +63,7 @@ class SimpleAsyncClient:
                 return None
 
             return extract_content_from_html(html=response.text, original_url=url)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"Error fetching content with curl_cffi: {e}", url=url)
             return None
 

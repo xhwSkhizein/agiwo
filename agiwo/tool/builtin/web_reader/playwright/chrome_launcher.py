@@ -210,7 +210,7 @@ class ChromeLauncher:
                             f"[BrowserLauncher] Browser is ready on port {debug_port}"
                         )
                         return True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 pass
 
             time.sleep(0.5)
@@ -243,12 +243,12 @@ class ChromeLauncher:
                     timeout=5,
                 )
                 version = result.stdout.strip() if result.stdout else "Unknown Version"
-            except Exception:
+            except Exception:  # noqa: BLE001
                 version = "Unknown Version"
 
             return name, version
 
-        except Exception:
+        except Exception:  # noqa: BLE001
             return "Unknown Browser", "Unknown Version"
 
     def cleanup(self):
@@ -307,7 +307,7 @@ class ChromeLauncher:
                         process.wait(timeout=5)
 
             logger.info("[BrowserLauncher] Browser process closed")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"[BrowserLauncher] Error closing browser process: {e}")
         finally:
             self.browser_process = None

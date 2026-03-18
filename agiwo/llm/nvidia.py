@@ -1,7 +1,6 @@
-from typing import Any, AsyncIterator
+from typing import Any
 
 from agiwo.config.settings import settings
-from agiwo.llm.base import StreamChunk
 from agiwo.llm.openai import OpenAIModel
 
 

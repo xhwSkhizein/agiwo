@@ -2,11 +2,10 @@
 
 import json
 from collections.abc import Collection
-from datetime import datetime, timezone
+from datetime import datetime
 
 import aiosqlite
 
-from agiwo.agent.input import UserInput
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,

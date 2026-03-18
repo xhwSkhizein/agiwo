@@ -108,7 +108,7 @@ class CDPBrowserManager:
                         f"[CDPBrowserManager] CDP port {debug_port} is not accessible"
                     )
                     return False
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(f"[CDPBrowserManager] CDP connection test failed: {e}")
             return False
 
@@ -262,7 +262,7 @@ class CDPBrowserManager:
                 logger.info(
                     f"[CDPBrowserManager] Added anti-detection script: {script_path}"
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(
                     f"[CDPBrowserManager] Failed to add anti-detection script: {e}"
                 )
@@ -275,7 +275,7 @@ class CDPBrowserManager:
             try:
                 await self.browser_context.add_cookies(cookies)
                 logger.info(f"[CDPBrowserManager] Added {len(cookies)} cookies")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f"[CDPBrowserManager] Failed to add cookies: {e}")
 
     async def get_cookies(self) -> list:
@@ -286,7 +286,7 @@ class CDPBrowserManager:
             try:
                 cookies = await self.browser_context.cookies()
                 return cookies
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f"[CDPBrowserManager] Failed to get cookies: {e}")
                 return []
         return []
@@ -301,7 +301,7 @@ class CDPBrowserManager:
                 try:
                     await self.browser_context.close()
                     logger.info("[CDPBrowserManager] Browser context closed")
-                except Exception as context_error:
+                except Exception as context_error:  # noqa: BLE001
                     logger.warning(
                         f"[CDPBrowserManager] Failed to close browser context: "
                         f"{context_error}"
@@ -314,7 +314,7 @@ class CDPBrowserManager:
                 try:
                     await self.browser.close()
                     logger.info("[CDPBrowserManager] Browser connection disconnected")
-                except Exception as browser_error:
+                except Exception as browser_error:  # noqa: BLE001
                     logger.warning(
                         f"[CDPBrowserManager] Failed to close browser connection: {browser_error}"
                     )
@@ -329,7 +329,7 @@ class CDPBrowserManager:
                     "[CDPBrowserManager] Browser process kept running (AUTO_CLOSE_BROWSER=False)"
                 )
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"[CDPBrowserManager] Error during cleanup: {e}")
 
     def is_connected(self) -> bool:
@@ -353,6 +353,6 @@ class CDPBrowserManager:
                 "debug_port": self.debug_port,
                 "is_connected": self.is_connected(),
             }
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Failed to get browser info", error=str(e))
             return {}

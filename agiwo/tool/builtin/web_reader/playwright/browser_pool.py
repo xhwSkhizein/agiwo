@@ -141,7 +141,7 @@ class BrowserPool:
     async def _safe_close(self, lease: BrowserLease) -> None:
         try:
             await lease.session_manager.disconnect()
-        except Exception as exc:  # pragma: no cover - defensive log
+        except Exception as exc:  # pragma:  # noqa: BLE001 no cover - defensive log
             logger.warning("Failed to close stale lease", error=str(exc))
 
     async def _create_lease_locked(self) -> BrowserLease:
@@ -159,5 +159,5 @@ class BrowserPool:
     async def _close_lease_locked(self, lease: BrowserLease) -> None:
         try:
             await lease.session_manager.disconnect()
-        except Exception as exc:  # pragma: no cover - defensive log
+        except Exception as exc:  # pragma:  # noqa: BLE001 no cover - defensive log
             logger.warning("Failed to close lease", error=str(exc))
