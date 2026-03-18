@@ -1,5 +1,6 @@
 """Parameter parsing and validation for BashTool."""
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,10 +34,17 @@ class BashParameterParser:
         timeout_value = parameters.get("timeout")
         if timeout_value is None:
             return None
+        # Reject boolean values explicitly
+        if isinstance(timeout_value, bool):
+            return ParseError("timeout must be a number")
         try:
-            return float(timeout_value)
+            parsed = float(timeout_value)
         except (TypeError, ValueError):
             return ParseError("timeout must be a number")
+        # Reject non-finite values (NaN, inf, -inf)
+        if not math.isfinite(parsed):
+            return ParseError("timeout must be a finite number")
+        return parsed
 
     def parse_flag(self, parameters: dict[str, Any], *, key: str) -> bool | ParseError:
         """Return parsed boolean or a ParseError."""

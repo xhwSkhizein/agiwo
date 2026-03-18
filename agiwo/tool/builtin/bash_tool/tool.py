@@ -223,7 +223,7 @@ class BashTool(BaseTool):
         result = self._apply_after_hook(foreground_command, result)
         return self._formatter.from_command_result(
             parameters,
-            command,
+            foreground_command,
             result,
             mode="pty" if use_pty else "pipe",
         )

@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from agiwo.agent import Agent, UserInput
 from agiwo.agent.runtime import AgentStreamItem, RunCompletedEvent, RunFailedEvent, RunOutput
-from agiwo.scheduler.models import AgentStateStatus
+from agiwo.scheduler.models import AgentState, AgentStateStatus
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
@@ -92,7 +92,7 @@ class AgentExecutor:
             return
         await self._scheduler.cancel(session.scheduler_state_id, reason)
 
-    async def get_state(self, state_id: str | None):
+    async def get_state(self, state_id: str | None) -> AgentState | None:
         """Fetch the latest scheduler state for a session-owned root."""
         if not state_id:
             return None

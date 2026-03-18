@@ -6,6 +6,7 @@ import pytest
 
 from agiwo.agent.input import ContentPart, ContentType, UserMessage
 from agiwo.scheduler.models import AgentState, AgentStateStatus
+from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
 from server.channels.feishu.commands import build_feishu_command_registry
 from server.channels.feishu.commands.base import (
     CommandContext,
@@ -15,6 +16,8 @@ from server.channels.feishu.commands.base import (
 )
 from server.channels.feishu.commands.scheduler import (
     _content_parts_to_string,
+    _execute_agents,
+    _execute_detail,
     _user_input_to_preview,
     _user_input_to_string,
 )
@@ -212,8 +215,6 @@ def test_content_parts_to_string_with_audio_video() -> None:
 @pytest.mark.asyncio
 async def test_agents_command_handles_user_message_task() -> None:
     """Test that /agents command correctly handles UserMessage as task."""
-    from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
-
     storage = InMemoryAgentStateStorage()
     # InMemory storage doesn't need connect()
 
@@ -232,8 +233,6 @@ async def test_agents_command_handles_user_message_task() -> None:
 
     scheduler = SimpleNamespace(store=storage)
 
-    from server.channels.feishu.commands.scheduler import _execute_agents
-
     ctx = _command_context()
     result = await _execute_agents(scheduler, ctx, "")
 
@@ -245,8 +244,6 @@ async def test_agents_command_handles_user_message_task() -> None:
 @pytest.mark.asyncio
 async def test_detail_command_handles_user_message_task() -> None:
     """Test that /detail command correctly handles UserMessage as task."""
-    from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
-
     storage = InMemoryAgentStateStorage()
     # InMemory storage doesn't need connect()
 
@@ -271,8 +268,6 @@ async def test_detail_command_handles_user_message_task() -> None:
         store=storage,
         get_state=storage.get_state,
     )
-
-    from server.channels.feishu.commands.scheduler import _execute_detail
 
     ctx = _command_context()
     result = await _execute_detail(scheduler, ctx, "test-agent-2")

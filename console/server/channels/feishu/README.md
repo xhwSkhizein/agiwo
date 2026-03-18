@@ -472,14 +472,24 @@ classDiagram
 
 ```python
 def _to_user_facing_error(self, error: Exception) -> str:
-    raw = str(error)
-    if raw == "previous_task_still_running_after_timeout":
+    from server.channels.exceptions import (
+        PreviousTaskRunningError,
+        BaseAgentNotFoundError,
+        DefaultAgentNameNotFoundError,
+    )
+    if isinstance(error, PreviousTaskRunningError):
         return "上一条任务仍在处理中，请稍后再试。"
-    if raw.startswith("base_agent_not_found:"):
-        return "默认 Agent 不存在或已被删除，请检查 AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME。"
-    if raw.startswith("default_agent_name_not_found:"):
-        return "当前默认 Agent 名称不存在，请检查 AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME。"
-    return f"执行失败: {raw}"
+    if isinstance(error, BaseAgentNotFoundError):
+        return (
+            f"默认 Agent 不存在或已被删除，"
+            f"请验证 Agent '{error.base_agent_id}' 是否存在于系统中。"
+        )
+    if isinstance(error, DefaultAgentNameNotFoundError):
+        return (
+            f"当前默认 Agent 名称 '{error.agent_name}' 不存在，"
+            "请检查 AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME。"
+        )
+    return f"执行失败: {error}"
 ```
 
 ---

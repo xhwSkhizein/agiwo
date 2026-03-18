@@ -10,8 +10,13 @@ def truncate_output(output: str, limit: int, stream: str) -> str:
     """Truncate output when it exceeds the configured size limit."""
     if len(output) <= limit:
         return output
-    removed = len(output) - limit
-    return f"{output[:limit]}\n[{stream} truncated: {removed} characters removed]"
+    # Reserve space for the suffix
+    suffix = f"\n[{stream} truncated: N characters removed]"
+    suffix_len = len(suffix) + 10  # Extra space for the number
+    available = max(1, limit - suffix_len)
+    removed = len(output) - available
+    suffix = f"\n[{stream} truncated: {removed} characters removed]"
+    return output[:available] + suffix
 
 
 class BashResultFormatter:
@@ -50,9 +55,13 @@ class BashResultFormatter:
                 input_args=parameters,
                 output=payload,
             )
+        # Fall back to exit code message if stderr is empty
+        error_msg = str(payload["stderr"])
+        if not error_msg:
+            error_msg = f"command exited with code {payload['exit_code']}"
         return ToolResult.failed(
             tool_name=self._tool_name,
-            error=str(payload["stderr"]),
+            error=error_msg,
             tool_call_id=str(parameters.get("tool_call_id", "")),
             input_args=parameters,
             content=content,

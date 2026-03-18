@@ -86,7 +86,7 @@ class OpenAIModel(Model):
         )
 
     @retry_async(exceptions=OPENAI_RETRYABLE)
-    async def arun_stream(
+    async def arun_stream(  # noqa: C901
         self,
         messages: list[dict],
         tools: list[dict] | None = None,

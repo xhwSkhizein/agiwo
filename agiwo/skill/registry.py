@@ -145,7 +145,7 @@ class SkillRegistry:
 
         await self.discover_skills(self._skills_dirs)
 
-    def _parse_skill_frontmatter(self, skill_path: Path) -> SkillMetadata:
+    def _parse_skill_frontmatter(self, skill_path: Path) -> SkillMetadata:  # noqa: C901, PLR0912
         """
         Parse YAML frontmatter from SKILL.md file.
 

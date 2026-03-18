@@ -12,7 +12,7 @@ from server.channels.session.models import BatchContext, Session
 
 logger = get_logger(__name__)
 
-DeliverMessage = Callable[[BatchContext, str], Awaitable[None]]
+DeliverChunked = Callable[[BatchContext, str], Awaitable[None]]
 
 
 @dataclass
@@ -31,11 +31,11 @@ class DeferredReplyManager:
         *,
         executor: AgentExecutor,
         session_service: SessionContextService,
-        deliver_message: DeliverMessage,
+        deliver_chunked: DeliverChunked,
     ) -> None:
         self._executor = executor
         self._session_service = session_service
-        self._deliver_message = deliver_message
+        self._deliver_chunked = deliver_chunked
         self._pending_by_scope: dict[str, _PendingDeferredReply] = {}
 
     async def close(self) -> None:
@@ -119,17 +119,18 @@ class DeferredReplyManager:
                 )
                 return
 
+            # Resolve final text the same as _execute_batch
             text = result.response or result.error
             if not text:
-                logger.info(
-                    "deferred_reply_skipped_empty_result",
-                    scope_id=scope_id,
-                    session_id=session_id,
-                    state_id=state_id,
-                )
-                return
+                # Get state to check result_summary
+                state = await self._executor.get_state(state_id)
+                if state is not None and state.result_summary:
+                    text = state.result_summary
+                else:
+                    text = "执行完成，但未产出可展示内容。"
 
-            await self._deliver_message(pending.context, text)
+            # Use channel's chunking-aware delivery
+            await self._deliver_chunked(pending.context, text)
             logger.info(
                 "deferred_reply_delivered",
                 scope_id=scope_id,

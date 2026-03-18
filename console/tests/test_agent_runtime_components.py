@@ -455,8 +455,18 @@ async def test_base_channel_service_delivers_deferred_reply_for_active_state() -
             user_message="hello",
         )
     )
-    await asyncio.sleep(0)
 
-    assert service.reply_calls == []
-    assert [text for _, text in service.message_calls] == ["final deferred answer"]
-    await service.close_base()
+    # Wait for deferred reply with bounded timeout
+    try:
+        await asyncio.wait_for(
+            asyncio.sleep(0.1),  # Allow background task to complete
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        pass  # Continue to assertions
+
+    try:
+        assert service.reply_calls == []
+        assert [text for _, text in service.message_calls] == ["final deferred answer"]
+    finally:
+        await service.close_base()

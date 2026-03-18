@@ -157,7 +157,7 @@ sequenceDiagram
 
 ## 目录结构详解
 
-```
+```text
 console/server/
 ├── app.py                    # FastAPI 入口 + lifespan 管理
 ├── config.py                 # 配置定义 (ConsoleConfig)

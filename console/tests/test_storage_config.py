@@ -1,5 +1,3 @@
-import pytest
-
 from agiwo.config.settings import settings as sdk_settings
 from server.config import ConsoleConfig
 from server.services.storage_wiring import (

@@ -1,5 +1,7 @@
 """Test message chunking in BaseChannelService."""
 
+import re
+
 import pytest
 
 from server.channels.base import BaseChannelService
@@ -103,7 +105,6 @@ def test_split_text_preserves_content(service):
     reconstructed = ""
     for chunk in chunks:
         clean = chunk
-        import re
         clean = re.sub(r"\n\n\[续 \d+/\d+\]", "", clean)
         reconstructed += clean
     

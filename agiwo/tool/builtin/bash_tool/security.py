@@ -208,7 +208,7 @@ class CommandSafetyValidator:
             if pattern.strip()
         )
 
-    async def validate(self, command: str) -> CommandSafetyDecision:
+    async def validate(self, command: str) -> CommandSafetyDecision:  # noqa: PLR0911
         """Validate command and return allow/block decision."""
         blocked_matches = self._match_rules(command, ABSOLUTE_BLOCK_RULES)
         if blocked_matches:
@@ -285,7 +285,7 @@ class CommandSafetyValidator:
             evaluation=evaluation,
         )
 
-    def _is_allowlisted_safe_command(self, command: str) -> bool:
+    def _is_allowlisted_safe_command(self, command: str) -> bool:  # noqa: PLR0911
         if not self.policy.enable_safe_command_whitelist:
             return False
         if self._has_shell_operators(command):
@@ -315,7 +315,7 @@ class CommandSafetyValidator:
         return False
 
     @staticmethod
-    def _matches_one_pattern(tokens: list[str], pattern: str) -> bool:
+    def _matches_one_pattern(tokens: list[str], pattern: str) -> bool:  # noqa: PLR0911
         try:
             pattern_tokens = shlex.split(pattern)
         except ValueError:

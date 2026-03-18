@@ -177,7 +177,7 @@ async def _execute_list_sessions(
         # Chat type indicator
         is_p2p = chat_context.chat_type == "p2p"
         chat_icon = "👤" if is_p2p else "👥"
-        chat_label = "私聊" if is_p2p else f"群聊"
+        chat_label = "私聊" if is_p2p else "群聊"
 
         # Status badge
         status_text = await _resolve_status_text(scheduler, session)

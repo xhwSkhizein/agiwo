@@ -114,7 +114,7 @@ async def _execute_agents(
                 text_element("   父Agent: "),
                 code(state.parent_id),
             ])
-        if state.task:
+        if state.task is not None:
             task_preview = _user_input_to_preview(state.task, max_len=50)
             content.append([
                 text_element("   任务: "),
@@ -156,7 +156,7 @@ async def _execute_detail(
     content: list[list[dict]] = []
 
     # Title with ID
-    content.append([bold(f"📊 Agent 详情")])
+    content.append([bold("📊 Agent 详情")])
     content.append(new_line())
 
     # Basic info section
@@ -204,12 +204,12 @@ async def _execute_detail(
     content.append(new_line())
     content.append([bold("🔹 任务")])
 
-    if state.task:
+    if state.task is not None:
         # Show full task without truncation
         task_text = _user_input_to_string(state.task)
         content.append([text_element(task_text)])
     else:
-        content.append([text_element("(无任务)"), ["italic"]])
+        content.append([text_element("(无任务)", ["italic"])])
 
     if state.result_summary:
         content.append(new_line())

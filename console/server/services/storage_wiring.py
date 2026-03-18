@@ -5,11 +5,10 @@ from typing import Any, Callable, TypeVar
 from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.factory import StorageFactory
-from agiwo.observability.base import BaseTraceStorage, TraceQuery
+from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.factory import (
     create_trace_storage as _sdk_create_trace_storage,
 )
-from agiwo.observability.trace import Trace
 from agiwo.scheduler.models import AgentStateStorageConfig
 from agiwo.tool.storage.citation import CitationStoreConfig
 
@@ -38,9 +37,11 @@ def _build_storage_config(
         return config_class(storage_type="sqlite", config=sqlite_builder())
     if storage_type == "memory":
         return config_class(storage_type="memory")
-    if mongo_builder is None:
-        raise ValueError(f"{config_class.__name__} does not support mongodb storage")
-    return config_class(storage_type="mongodb", config=mongo_builder())
+    if storage_type == "mongodb":
+        if mongo_builder is None:
+            raise ValueError(f"{config_class.__name__} does not support mongodb storage")
+        return config_class(storage_type="mongodb", config=mongo_builder())
+    raise ValueError(f"{config_class.__name__} does not support storage type: {storage_type}")
 
 
 def build_run_step_storage_config(console_config: ConsoleConfig) -> RunStepStorageConfig:

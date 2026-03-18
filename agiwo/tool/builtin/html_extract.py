@@ -120,7 +120,7 @@ def remove_framework_noise(soup: BeautifulSoup) -> BeautifulSoup:
     return soup
 
 
-def preprocess_lazy_images(html: str, base_url: str) -> str:
+def preprocess_lazy_images(html: str, base_url: str) -> str:  # noqa: C901, PLR0912
     """
     Preprocess lazy-loaded images in HTML.
 

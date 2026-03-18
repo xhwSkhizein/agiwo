@@ -31,7 +31,7 @@ def build_post_content(
 def text_element(text: str, style: list[str] | None = None) -> dict[str, Any]:
     """Create a text element."""
     elem: dict[str, Any] = {"tag": "text", "text": text}
-    if style:
+    if style is not None:
         elem["style"] = style
     return elem
 

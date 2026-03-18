@@ -205,7 +205,7 @@ class FeishuChannelService(BaseChannelService):
         if isinstance(error, PreviousTaskRunningError):
             return "上一条任务仍在处理中，请稍后再试。"
         if isinstance(error, BaseAgentNotFoundError):
-            return f"Agent '{error.agent_id}' 不存在或已被删除，请联系管理员。"
+            return f"指定的 Agent '{error.base_agent_id}' 不存在或已被删除，请验证该 Agent 是否存在于系统中。"
         if isinstance(error, DefaultAgentNameNotFoundError):
             return (
                 f"当前默认 Agent 名称 '{error.agent_name}' 不存在，请检查 "
