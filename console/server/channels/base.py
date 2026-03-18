@@ -23,6 +23,26 @@ _MAX_CHUNK_LEN = 6000
 _MAX_LOG_TEXT_LEN = 1200
 
 
+async def safe_close_all(*closables: object) -> None:
+    """Close multiple resources, logging and suppressing individual errors.
+
+    Each *closable* is expected to have an async ``close()`` method.
+    If any call raises, the error is logged but does **not** prevent the
+    remaining resources from being closed.
+    """
+    for obj in closables:
+        try:
+            close_fn = getattr(obj, "close", None)
+            if close_fn is not None:
+                await close_fn()
+        except Exception:  # noqa: BLE001 — must not leak during shutdown
+            logger.warning(
+                "resource_close_failed",
+                resource=type(obj).__name__,
+                exc_info=True,
+            )
+
+
 class BaseChannelService(ABC):
     """Generic channel service with batching, agent runtime, and scheduler integration.
 
@@ -54,9 +74,11 @@ class BaseChannelService(ABC):
         )
 
     async def close_base(self) -> None:
-        await self._deferred_replies.close()
-        await self._session_mgr.close()
-        await self._agent_pool.close()
+        await safe_close_all(
+            self._deferred_replies,
+            self._session_mgr,
+            self._agent_pool,
+        )
 
     @property
     def session_manager(self) -> SessionManager:
