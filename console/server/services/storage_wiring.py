@@ -13,7 +13,11 @@ from agiwo.observability.trace import Trace
 from agiwo.scheduler.models import AgentStateStorageConfig
 from agiwo.tool.storage.citation import CitationStoreConfig
 
+from agiwo.utils.logging import get_logger
+
 from server.config import ConsoleConfig
+
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 
@@ -71,10 +75,12 @@ def build_trace_storage_config(console_config: ConsoleConfig) -> TraceStorageCon
 def build_agent_state_storage_config(
     console_config: ConsoleConfig,
 ) -> AgentStateStorageConfig:
-    # AgentStateStorageConfig only supports sqlite and memory, not mongodb
-    # When mongodb is configured, fall back to memory
     storage_type = console_config.metadata_storage_type
     if storage_type == "mongodb":
+        logger.warning(
+            "agent_state_storage_mongodb_fallback",
+            reason="AgentStateStorageConfig does not support mongodb, falling back to memory",
+        )
         storage_type = "memory"
     
     return _build_storage_config(
