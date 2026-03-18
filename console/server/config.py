@@ -53,13 +53,22 @@ class ConsoleConfig(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
 
     # Default Agent Configuration
-    default_agent_id: str = "Walaha000"
-    default_agent_name: str = "Walaha"
-    default_agent_description: str = ""
+    default_agent_id: str = "default-console-agent"
+    default_agent_name: str = "Console Agent"
+    default_agent_description: str = "Default agent for Console channels"
     default_agent_model_provider: ModelProvider = "openai-compatible"
     default_agent_model_name: str = "codex-5.3"
     default_agent_model_params: dict[str, Any] = Field(default_factory=dict)
     default_agent_system_prompt: str = ""
+    default_agent_tools: list[str] = Field(
+        default_factory=lambda: [
+            "bash",
+            "bash_process",
+            "web_search",
+            "web_reader",
+            "memory_retrieval",
+        ]
+    )
 
     # Feishu channel
     feishu_enabled: bool = False
@@ -101,7 +110,7 @@ class ConsoleConfig(BaseSettings):
 
     @field_validator("default_agent_model_params", mode="before")
     @classmethod
-    def _normalize_default_agent_model_params(cls, value: Any) -> dict[str, Any]:
+    def _normalize_default_agent_model_params(cls, value: object) -> dict[str, Any]:
         sanitized = sanitize_model_params_data(value)
         if not isinstance(sanitized, dict):
             return {}
