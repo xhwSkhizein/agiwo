@@ -6,11 +6,11 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/status-experimental-orange" alt="Status">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <a href="https://github.com/xhwSkhizein/agiwo/actions/workflows/ci.yml">
+    <img src="https://github.com/xhwSkhizein/agiwo/actions/workflows/ci.yml/badge.svg" alt="CI">
+  </a>
 </p>
-
-> **Warning**
-> Agiwo is still an experimental project. APIs, module layout, and runtime behavior may change as the architecture continues to evolve.
 
 ## What Is Agiwo?
 
@@ -20,6 +20,21 @@ Agiwo has two parts:
 - **Console**: a FastAPI + Next.js control plane for managing agent configs, chatting over SSE, inspecting scheduler state, viewing traces, and integrating channels such as Feishu.
 
 The project favors explicit runtime wiring over hidden global state. Agent execution, tool execution, scheduler orchestration, and persistence are all separate layers.
+
+### Why Agiwo?
+
+| | Agiwo | LangChain | OpenAI Agents SDK |
+|---|---|---|---|
+| Streaming-first | ✅ All paths share pipeline | ❌ Wraps sync API | ✅ |
+| Multi-agent scheduler | ✅ Spawn/steer/cancel/sleep | ❌ (needs LangGraph) | ❌ |
+| Agent-as-tool composition | ✅ `as_tool(agent)` | ✅ (but heavy) | ✅ |
+| Hook system | ✅ 10 lifecycle hooks | ❌ | ❌ |
+| Tool caching | ✅ Session-scoped | ❌ | ❌ |
+| Memory retrieval | ✅ BM25 + vector hybrid | ✅ | ❌ |
+| Console web UI | ✅ Next.js | ❌ | ❌ |
+| Feishu integration | ✅ | ❌ | ❌ |
+| Zero global state | ✅ | ❌ | ✅ |
+| Token cost tracking | ✅ Per-step | ❌ | ✅ |
 
 ## Current Capabilities
 
@@ -36,7 +51,18 @@ The project favors explicit runtime wiring over hidden global state. Agent execu
 ### Install
 
 ```bash
-git clone <repo-url>
+# Core SDK (OpenAI provider only)
+pip install agiwo
+
+# With specific providers/features
+pip install "agiwo[anthropic]"          # Anthropic provider
+pip install "agiwo[web]"               # Web tools (web_reader, Playwright)
+pip install "agiwo[feishu]"            # Feishu channel integration
+pip install "agiwo[mongo]"             # MongoDB storage backends
+pip install "agiwo[all]"               # Everything
+
+# From source (development)
+git clone https://github.com/xhwSkhizein/agiwo.git
 cd agiwo
 uv sync
 ```

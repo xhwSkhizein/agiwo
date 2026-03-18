@@ -182,7 +182,7 @@ class ProcessRegistry:
                 start_new_session=True,
                 close_fds=True,
             )
-        except Exception:
+        except Exception:  # noqa: BLE001
             try:
                 stdout_fp.close()
             except Exception:  # noqa: BLE001

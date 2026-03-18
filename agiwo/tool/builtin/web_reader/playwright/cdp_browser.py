@@ -61,7 +61,7 @@ class CDPBrowserManager:
             self.browser_context = browser_context
             return browser_context
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"[CDPBrowserManager] CDP browser launch failed: {e}")
             await self.cleanup()
             raise
@@ -181,7 +181,7 @@ class CDPBrowserManager:
                         raise RuntimeError("webSocketDebuggerUrl not found")
                 else:
                     raise RuntimeError(f"HTTP {response.status_code}: {response.text}")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"[CDPBrowserManager] Failed to get WebSocket URL: {e}")
             raise
 
@@ -208,7 +208,7 @@ class CDPBrowserManager:
             else:
                 raise RuntimeError("CDP connection failed")
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"[CDPBrowserManager] CDP connection failed: {e}")
             raise
 

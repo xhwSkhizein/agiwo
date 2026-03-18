@@ -1,0 +1,116 @@
+# Console Overview
+
+The Console is a control plane for managing Agiwo agents. It consists of a FastAPI backend and a Next.js frontend.
+
+## Architecture
+
+```
+Console
+├── FastAPI Server (console/server/)
+│   ├── REST API — Agent config CRUD, scheduler state, traces
+│   ├── SSE API — Real-time chat and trace streaming
+│   ├── Channel Runtime — Feishu (and extensible to others)
+│   └── Services — Agent lifecycle, registry, storage
+└── Next.js Web UI (console/web/)
+    ├── Agent Management — Create, edit, view agents
+    ├── Chat — Interactive chat with agents
+    ├── Scheduler — View and manage scheduled agents
+    └── Traces — Inspect execution traces
+```
+
+## Quick Start
+
+### Start the API Server
+
+```bash
+cd console
+cp .env.example .env
+# Edit .env with your provider credentials
+
+uv run uvicorn server.app:app --reload --env-file .env
+```
+
+The server starts at `http://localhost:8422`.
+
+### Start the Web UI
+
+```bash
+cd console/web
+npm install
+
+# Point to the API
+echo 'NEXT_PUBLIC_API_URL=http://localhost:8422' > .env.local
+
+npm run dev
+```
+
+The UI starts at `http://localhost:3000`.
+
+## Health Check
+
+```bash
+curl http://localhost:8422/api/health
+# {"status": "ok"}
+```
+
+## Configuration
+
+Console-specific settings use the `AGIWO_CONSOLE_*` prefix:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AGIWO_CONSOLE_HOST` | `0.0.0.0` | Server bind address |
+| `AGIWO_CONSOLE_PORT` | `8422` | Server port |
+| `AGIWO_CONSOLE_*` | — | See `console/server/config.py` |
+
+SDK settings (`AGIWO_*`) and provider credentials (`OPENAI_API_KEY`, etc.) are also read by the Console.
+
+## Features
+
+### Agent Management
+
+- Create and configure agents via API or UI
+- Store agent configs in SQLite, MongoDB, or memory
+- Full replace semantics (not patch/merge)
+
+### Chat
+
+- Interactive chat with agents over SSE
+- Real-time streaming responses
+- Session management and continuity
+
+### Scheduler
+
+- View all scheduled agent states
+- Monitor running, waiting, and queued agents
+- Cancel or steer agents from the UI
+
+### Traces
+
+- Browse execution traces
+- Drill into individual steps
+- View token usage and costs
+- Real-time trace streaming via SSE
+
+### Channels
+
+- **Feishu**: Full integration with Feishu messaging
+  - WebSocket connection for real-time messages
+  - Command parsing and routing
+  - Group and direct message support
+  - Message history storage
+
+## Extending the Console
+
+### Adding a Channel
+
+1. Create a new package in `console/server/channels/your_channel/`
+2. Implement `BaseChannelService`
+3. Register in the channel factory
+
+### Adding an API Route
+
+1. Create a router in `console/server/routers/your_router.py`
+2. Include it in `console/server/app.py`
+
+See the existing Feishu implementation for reference.
