@@ -41,9 +41,7 @@ class ConsoleConfig(BaseSettings):
     # "none" is treated the same as "memory" for lightweight runtime-only tracing.
     trace_storage_type: Literal["none", "memory", "sqlite", "mongodb"] = "sqlite"
 
-    # Storage backend for console metadata (agent registry, channel runtime).
-    # Scheduler state storage currently supports memory/sqlite only:
-    # metadata_storage_type=mongodb falls back to in-memory scheduler state.
+    # Storage backend for console metadata (agent registry, channel runtime, scheduler state).
     metadata_storage_type: Literal["memory", "sqlite", "mongodb"] = "sqlite"
 
     # MongoDB settings (used when any *_storage_type=mongodb)

@@ -1,17 +1,21 @@
+import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from agiwo.agent.runtime import RunOutput, TerminationReason
 from agiwo.scheduler.models import AgentStateStatus
 
 from server.channels.agent_executor import AgentExecutor
+from server.channels.base import BaseChannelService
 from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.channels.session import SessionContextService
 from server.channels.session.binding import SessionMutationPlan
 from server.channels.session.models import (
     BatchContext,
+    BatchPayload,
     ChannelChatContext,
     Session,
     SessionWithContext,
@@ -98,6 +102,51 @@ class FakeAgent:
 
     async def close(self) -> None:
         self.closed = True
+
+
+class _TestChannelService(BaseChannelService):
+    def __init__(self, *, session_service, agent_pool, executor) -> None:
+        self.reply_calls: list[tuple[BatchContext, str]] = []
+        self.message_calls: list[tuple[BatchContext, str]] = []
+        super().__init__(
+            session_service=session_service,
+            agent_pool=agent_pool,
+            executor=executor,
+            debounce_ms=1,
+            max_batch_window_ms=1,
+        )
+
+    async def _build_user_message(self, context, messages):
+        del context, messages
+        return "hello"
+
+    async def _deliver_reply(self, context: BatchContext, text: str) -> None:
+        self.reply_calls.append((context, text))
+
+    async def _deliver_message(self, context: BatchContext, text: str) -> None:
+        self.message_calls.append((context, text))
+
+    def _to_user_facing_error(self, error: Exception) -> str:
+        return str(error)
+
+
+class _DeferredExecutor:
+    def __init__(self, state, result: RunOutput) -> None:
+        self._state = state
+        self._result = result
+
+    async def execute(self, agent, session, user_input):
+        del agent, session, user_input
+        if False:
+            yield ""
+
+    async def get_state(self, state_id: str | None):
+        del state_id
+        return self._state
+
+    async def wait_for(self, state_id: str) -> RunOutput:
+        del state_id
+        return self._result
 
 
 @pytest.mark.asyncio
@@ -343,3 +392,81 @@ async def test_agent_executor_steers_running_state_and_returns_empty_stream() ->
     scheduler.steer.assert_awaited_once_with("runtime-1", "hello", urgent=False)
     scheduler.stream.assert_not_called()
     assert store.sessions["sess-1"] is session
+
+
+@pytest.mark.asyncio
+async def test_base_channel_service_delivers_deferred_reply_for_active_state() -> None:
+    now = datetime.now(timezone.utc)
+    session = Session(
+        id="sess-1",
+        chat_context_id="ctx-1",
+        base_agent_id="base-agent",
+        runtime_agent_id="runtime-1",
+        scheduler_state_id="runtime-1",
+        created_by="AUTO",
+        created_at=now,
+        updated_at=now,
+    )
+    state = SimpleNamespace(
+        is_active=lambda: True,
+        result_summary=None,
+    )
+    executor = _DeferredExecutor(
+        state=state,
+        result=RunOutput(
+            response="final deferred answer",
+            termination_reason=TerminationReason.COMPLETED,
+        ),
+    )
+    session_service = SimpleNamespace(
+        get_or_create_current_session=AsyncMock(
+            return_value=SimpleNamespace(
+                session=session,
+                retired_runtime_agent_id=None,
+            )
+        ),
+        get_chat_context_and_current_session=AsyncMock(
+            return_value=(SimpleNamespace(id="ctx-1"), session)
+        ),
+    )
+    agent_pool = SimpleNamespace(
+        get_or_create_runtime_agent=AsyncMock(return_value=FakeAgent("runtime-1")),
+        close=AsyncMock(),
+    )
+    service = _TestChannelService(
+        session_service=session_service,
+        agent_pool=agent_pool,
+        executor=executor,
+    )
+    batch_context = BatchContext(
+        chat_context_scope_id="scope-1",
+        channel_instance_id="feishu-main",
+        chat_id="chat-1",
+        chat_type="p2p",
+        trigger_user_id="user-1",
+        trigger_message_id="msg-1",
+        base_agent_id="agent-1",
+    )
+
+    await service._execute_batch(
+        BatchPayload(
+            context=batch_context,
+            messages=[],
+            user_message="hello",
+        )
+    )
+
+    # Wait for deferred reply with bounded timeout
+    try:
+        await asyncio.wait_for(
+            asyncio.sleep(0.1),  # Allow background task to complete
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        pass  # Continue to assertions
+
+    try:
+        assert service.reply_calls == []
+        assert [text for _, text in service.message_calls] == ["final deferred answer"]
+    finally:
+        await service.close_base()

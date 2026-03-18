@@ -110,9 +110,9 @@ class AgentTraceCollector:
         if span is not None:
             span.complete(
                 status=SpanStatus.OK,
-                output_preview=output.response[: self.PREVIEW_LENGTH]
-                if output.response
-                else None,
+                output_preview=(
+                    output.response[: self.PREVIEW_LENGTH] if output.response else None
+                ),
             )
         if span is not None and span.parent_span_id is None:
             trace.complete(status=SpanStatus.OK, final_output=output.response)

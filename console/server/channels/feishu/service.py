@@ -16,8 +16,13 @@ from agiwo.agent import UserMessage
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
+from server.channels.base import BaseChannelService, safe_close_all
+from server.channels.exceptions import (
+    BaseAgentNotFoundError,
+    DefaultAgentNameNotFoundError,
+    PreviousTaskRunningError,
+)
 from server.channels.agent_executor import AgentExecutor
-from server.channels.base import BaseChannelService
 from server.channels.feishu.api_client import FeishuApiClient
 from server.channels.feishu.commands import build_feishu_command_registry
 from server.channels.feishu.content_extractor import FeishuContentExtractor
@@ -161,9 +166,13 @@ class FeishuChannelService(BaseChannelService):
     async def close(self) -> None:
         self._closed = True
         await self.close_base()
-        await self._connection.stop()
-        await self._api.close()
-        await self._store.close()
+        try:
+            await self._connection.stop()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "resource_close_failed", resource="FeishuConnection", exc_info=True
+            )
+        await safe_close_all(self._api, self._store)
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def get_status(self) -> dict[str, Any]:
@@ -195,17 +204,13 @@ class FeishuChannelService(BaseChannelService):
         await self._delivery_service.deliver_message(context, text)
 
     def _to_user_facing_error(self, error: Exception) -> str:
-        raw = str(error)
-        if raw == "previous_task_still_running_after_timeout":
+        if isinstance(error, PreviousTaskRunningError):
             return "上一条任务仍在处理中，请稍后再试。"
-        if raw.startswith("base_agent_not_found:"):
+        if isinstance(error, BaseAgentNotFoundError):
+            return f"指定的 Agent '{error.base_agent_id}' 不存在或已被删除，请验证该 Agent 是否存在于系统中。"
+        if isinstance(error, DefaultAgentNameNotFoundError):
             return (
-                "默认 Agent 不存在或已被删除，请检查 "
+                f"当前默认 Agent 名称 '{error.agent_name}' 不存在，请检查 "
                 "AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME。"
             )
-        if raw.startswith("default_agent_name_not_found:"):
-            return (
-                "当前默认 Agent 名称不存在，请检查 "
-                "AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME。"
-            )
-        return f"执行失败: {raw}"
+        return f"执行失败: {str(error)}"

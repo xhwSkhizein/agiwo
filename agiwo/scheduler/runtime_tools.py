@@ -617,12 +617,14 @@ class ListAgentsTool(SchedulerRuntimeTool):
                 "agent_id": state.id,
                 "status": state.status.value,
                 "task": (
-                    state.task[:100] + "..."
-                    if isinstance(state.task, str) and len(str(state.task)) > 100
-                    else state.task
-                )
-                if isinstance(state.task, str)
-                else str(state.task),
+                    (
+                        state.task[:100] + "..."
+                        if isinstance(state.task, str) and len(str(state.task)) > 100
+                        else state.task
+                    )
+                    if isinstance(state.task, str)
+                    else str(state.task)
+                ),
                 "created_ago_seconds": running_secs,
                 "wake_count": state.wake_count,
                 "explain": state.explain,

@@ -13,6 +13,14 @@ from server.channels.feishu.commands.base import (
     CommandResult,
     CommandSpec,
 )
+from server.channels.feishu.commands.post_builder import (
+    bold,
+    build_post_content,
+    code,
+    new_line,
+    separator_line,
+    text_element,
+)
 from server.channels.feishu.commands.status_text import format_scheduler_status
 from server.channels.session import SessionContextService, SessionManager
 from server.channels.session.binding import (
@@ -160,26 +168,91 @@ async def _execute_list_sessions(
     if not items:
         return CommandResult(text="暂无会话记录。")
 
-    lines: list[str] = [f"会话列表 (共 {len(items)} 个):\n"]
+    content: list[list[dict]] = []
+
+    # Title line
+    content.append([bold(f"📋 会话列表 (共 {len(items)} 个)")])
+    content.append(new_line())
+
     for i, item in enumerate(items, 1):
-        marker_current = " [当前]" if item.is_current else ""
-        marker_context = " [当前上下文]" if item.in_current_context else ""
         chat_context = item.chat_context
         session = item.session
-        chat_label = (
-            "私聊"
-            if chat_context.chat_type == "p2p"
-            else f"群聊 {chat_context.chat_id}..."
-        )
+
+        # Chat type indicator
+        is_p2p = chat_context.chat_type == "p2p"
+        chat_icon = "👤" if is_p2p else "👥"
+        chat_label = "私聊" if is_p2p else "群聊"
+
+        # Status badge
         status_text = await _resolve_status_text(scheduler, session)
-        lines.append(
-            f"{i}. {chat_label}{marker_current}{marker_context}\n"
-            f"   状态: {status_text}\n"
-            f"   会话ID: {session.id}\n"
-            f"   in_current_context: {'true' if item.in_current_context else 'false'}\n"
-            f"   更新于: {_format_time(session.updated_at)}"
+        status_emoji = _status_to_emoji(status_text)
+
+        # Header line with number and badges
+        header_parts = [
+            bold(f"{i}. "),
+            text_element(f"{chat_icon} {chat_label}"),
+        ]
+        if item.is_current:
+            header_parts.append(text_element("  [当前会话]", ["bold", "italic"]))
+        if item.in_current_context:
+            header_parts.append(text_element("  [当前上下文]", ["italic"]))
+        content.append(header_parts)
+
+        # Detail lines
+        content.append(
+            [
+                text_element("   状态: "),
+                text_element(f"{status_emoji} {status_text}"),
+            ]
         )
-    return CommandResult(text="\n".join(lines))
+        content.append(
+            [
+                text_element("   会话ID: "),
+                code(session.id),
+            ]
+        )
+        if session.scheduler_state_id:
+            content.append(
+                [
+                    text_element("   调度ID: "),
+                    code(session.scheduler_state_id),
+                ]
+            )
+        content.append(
+            [
+                text_element("   更新于: "),
+                text_element(_format_time(session.updated_at)),
+            ]
+        )
+
+        # Separator between items (except last)
+        if i < len(items):
+            content.append(separator_line())
+
+    # Tips
+    content.append(new_line())
+    content.append([text_element("💡 提示: 使用 /switch <会话ID> 切换会话")])
+
+    post_content = build_post_content("会话列表", content)
+    return CommandResult(post_content=post_content)
+
+
+def _status_to_emoji(status: str) -> str:
+    """Convert status text to emoji."""
+    status_map = {
+        "运行中": "🟢",
+        "等待中": "⏳",
+        "队列中": "📋",
+        "闲置": "⚪",
+        "已完成": "✅",
+        "失败": "❌",
+        "取消": "🚫",
+        "未启动": "⚪",
+    }
+    for key, emoji in status_map.items():
+        if key in status:
+            return emoji
+    return "⚪"
 
 
 def _switch_session_error_text(

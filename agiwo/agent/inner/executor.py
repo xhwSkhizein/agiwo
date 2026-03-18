@@ -23,6 +23,7 @@ from agiwo.agent.runtime import (
     StepRecord,
     TerminationReason,
 )
+from agiwo.agent.runtime_tools.contracts import RuntimeToolOutcome
 from agiwo.tool.base import ToolResult
 from agiwo.agent.runtime_tools import RuntimeToolLike
 from agiwo.config.settings import settings
@@ -273,7 +274,9 @@ class AgentExecutor:
         abort_signal: AbortSignal | None,
     ) -> TerminationReason | None:
         prepared_calls = await self._prepare_tool_calls(tool_calls)
-        outcomes = await self.tool_runtime.execute_resolved_batch(
+        outcomes: list[
+            RuntimeToolOutcome
+        ] = await self.tool_runtime.execute_resolved_batch(
             prepared_calls,
             context=state.context,
             abort_signal=abort_signal,
@@ -310,7 +313,7 @@ class AgentExecutor:
         *,
         run_recorder: RunRecorder,
         prepared_calls: list[ResolvedToolCall | ToolResult],
-        outcomes: list,
+        outcomes: list[RuntimeToolOutcome],
     ) -> TerminationReason | None:
         for prepared, outcome in zip(prepared_calls, outcomes):
             result = outcome.result

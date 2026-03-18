@@ -36,7 +36,12 @@ class CommandContext:
 class CommandResult:
     """Response produced by a command handler."""
 
-    text: str
+    text: str = ""
+    post_content: dict | None = None  # Feishu rich-text (post) message content
+
+    def is_post(self) -> bool:
+        """Check if result contains rich-text content."""
+        return self.post_content is not None
 
 
 CommandExecutor = Callable[[CommandContext, str], Awaitable[CommandResult]]

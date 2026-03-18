@@ -5,6 +5,7 @@ from typing import Any
 
 from agiwo.utils.logging import get_logger
 
+from server.channels.exceptions import DefaultAgentNameNotFoundError
 from server.channels.feishu.commands import CommandContext, CommandRegistry
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.delivery_service import FeishuDeliveryService
@@ -50,7 +51,7 @@ class FeishuInboundHandler:
         self._delivery_service = delivery_service
         self._truncate_for_log = truncate_for_log
 
-    async def process_envelope(
+    async def process_envelope(  # noqa: PLR0911
         self, envelope: FeishuInboundEnvelope
     ) -> dict[str, object]:
         if envelope.event_type != "im.message.receive_v1":
@@ -99,17 +100,28 @@ class FeishuInboundHandler:
         if command_result is not None:
             return command_result
 
+        # Resolve default agent before ACK to catch config errors early
+        try:
+            default_agent = await self._session_service.resolve_default_agent_config()
+            if default_agent is None and self._default_agent_name:
+                raise DefaultAgentNameNotFoundError(self._default_agent_name)
+        except DefaultAgentNameNotFoundError:
+            # Return user-facing error without ACKing
+            return {
+                "msg": "default_agent_not_found",
+                "error": (
+                    f"默认 Agent '{self._default_agent_name}' 不存在，"
+                    "请检查 AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME 配置。"
+                ),
+            }
+
         await self._delivery_service.send_ack(inbound)
-        await self._enqueue_message(inbound)
+        await self._enqueue_message(inbound, default_agent)
         return {"msg": "ok"}
 
-    async def _enqueue_message(self, inbound: InboundMessage) -> None:
-        default_agent = await self._session_service.resolve_default_agent_config()
-        if default_agent is None:
-            raise RuntimeError(
-                f"default_agent_name_not_found: {self._default_agent_name}"
-            )
-
+    async def _enqueue_message(
+        self, inbound: InboundMessage, default_agent: Any
+    ) -> None:
         chat_context_scope_id = self._build_chat_context_scope_id(inbound)
         context = BatchContext(
             chat_context_scope_id=chat_context_scope_id,
@@ -151,6 +163,11 @@ class FeishuInboundHandler:
             )
             result_text = f"命令执行失败: {exc}"
         else:
+            if result.is_post() and result.post_content:
+                await self._delivery_service.send_command_response_post(
+                    inbound, result.post_content
+                )
+                return {"msg": "command_executed"}
             result_text = result.text
 
         await self._delivery_service.send_command_response(inbound, result_text)

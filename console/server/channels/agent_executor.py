@@ -15,8 +15,13 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 from agiwo.agent import Agent, UserInput
-from agiwo.agent.runtime import AgentStreamItem, RunCompletedEvent, RunFailedEvent
-from agiwo.scheduler.models import AgentStateStatus
+from agiwo.agent.runtime import (
+    AgentStreamItem,
+    RunCompletedEvent,
+    RunFailedEvent,
+    RunOutput,
+)
+from agiwo.scheduler.models import AgentState, AgentStateStatus
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
@@ -91,6 +96,16 @@ class AgentExecutor:
         if state is None or not state.is_active():
             return
         await self._scheduler.cancel(session.scheduler_state_id, reason)
+
+    async def get_state(self, state_id: str | None) -> AgentState | None:
+        """Fetch the latest scheduler state for a session-owned root."""
+        if not state_id:
+            return None
+        return await self._scheduler.get_state(state_id)
+
+    async def wait_for(self, state_id: str) -> RunOutput:
+        """Wait until a root state settles to IDLE/COMPLETED/FAILED."""
+        return await self._scheduler.wait_for(state_id, timeout=None)
 
     # -- Private: action handlers ----------------------------------------------
 

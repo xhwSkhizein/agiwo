@@ -2,11 +2,9 @@
 Traces API router.
 """
 
-import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Query, HTTPException
-from sse_starlette.sse import EventSourceResponse
 
 from server.dependencies import ConsoleRuntimeDep
 from server.response_serialization import trace_to_list_item, trace_to_response
@@ -40,30 +38,6 @@ async def list_traces(
 
     traces = await store.query_traces(query)
     return [trace_to_list_item(t) for t in traces]
-
-
-@router.get("/stream")
-async def stream_traces(runtime: ConsoleRuntimeDep) -> EventSourceResponse:
-    """SSE endpoint for real-time trace updates."""
-    store = runtime.trace_storage
-
-    queue = store.subscribe()
-
-    async def event_generator():
-        try:
-            while True:
-                try:
-                    trace = await asyncio.wait_for(queue.get(), timeout=30.0)
-                    item = trace_to_list_item(trace)
-                    yield {"event": "trace", "data": item.model_dump_json()}
-                except asyncio.TimeoutError:
-                    yield {"event": "ping", "data": ""}
-        except asyncio.CancelledError:
-            pass
-        finally:
-            store.unsubscribe(queue)
-
-    return EventSourceResponse(event_generator())
 
 
 @router.get("/{trace_id}", response_model=TraceResponse)

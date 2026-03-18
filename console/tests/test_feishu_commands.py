@@ -4,12 +4,22 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from agiwo.agent.input import ContentPart, ContentType, UserMessage
+from agiwo.scheduler.models import AgentState, AgentStateStatus
+from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
 from server.channels.feishu.commands import build_feishu_command_registry
 from server.channels.feishu.commands.base import (
     CommandContext,
     CommandResult,
     CommandSpec,
     build_command_registry,
+)
+from server.channels.feishu.commands.scheduler import (
+    _content_parts_to_string,
+    _execute_agents,
+    _execute_detail,
+    _user_input_to_preview,
+    _user_input_to_string,
 )
 from server.channels.session.binding import SessionNotFoundError
 from server.channels.session.models import Session
@@ -133,3 +143,146 @@ async def test_switch_command_maps_known_errors_from_session_service() -> None:
     assert result.text == "会话不存在: sess-2"
     session_manager.reset_chat_context.assert_not_called()
     executor.cancel_if_active.assert_not_called()
+
+
+# ========== UserInput conversion tests ==========
+
+
+def test_user_input_to_string_with_plain_string() -> None:
+    """Test converting a plain string UserInput."""
+    assert _user_input_to_string("Hello world") == "Hello world"
+
+
+def test_user_input_to_string_with_user_message() -> None:
+    """Test converting a UserMessage object."""
+    msg = UserMessage(content=[ContentPart(type=ContentType.TEXT, text="Test message")])
+    assert _user_input_to_string(msg) == "Test message"
+
+
+def test_user_input_to_string_with_content_parts_list() -> None:
+    """Test converting a list of ContentPart objects."""
+    parts = [
+        ContentPart(type=ContentType.TEXT, text="First"),
+        ContentPart(type=ContentType.TEXT, text="Second"),
+    ]
+    assert _user_input_to_string(parts) == "First Second"
+
+
+def test_user_input_to_string_with_multimodal_content() -> None:
+    """Test converting multimodal content with images and files."""
+    parts = [
+        ContentPart(type=ContentType.TEXT, text="Check this image"),
+        ContentPart(type=ContentType.IMAGE, url="https://example.com/img.png"),
+        ContentPart(type=ContentType.FILE, metadata={"name": "doc.pdf"}),
+    ]
+    result = _user_input_to_string(parts)
+    assert "Check this image" in result
+    assert "[图片]" in result
+    assert "[文件]" in result
+
+
+def test_user_input_to_preview_truncates_long_text() -> None:
+    """Test that preview truncates long text correctly."""
+    long_text = "A" * 100
+    preview = _user_input_to_preview(long_text, max_len=50)
+    assert len(preview) <= 50
+    assert preview.endswith("...")
+
+
+def test_user_input_to_preview_short_text_untouched() -> None:
+    """Test that short text is not truncated."""
+    short_text = "Short text"
+    assert _user_input_to_preview(short_text, max_len=50) == "Short text"
+
+
+def test_content_parts_to_string_with_empty_list() -> None:
+    """Test converting empty content parts list."""
+    assert _content_parts_to_string([]) == "(无内容)"
+
+
+def test_content_parts_to_string_with_audio_video() -> None:
+    """Test converting audio and video content parts."""
+    parts = [
+        ContentPart(type=ContentType.AUDIO, url="https://example.com/audio.mp3"),
+        ContentPart(type=ContentType.VIDEO, url="https://example.com/video.mp4"),
+    ]
+    result = _content_parts_to_string(parts)
+    assert "[音频]" in result
+    assert "[视频]" in result
+
+
+# ========== Integration tests for commands with UserInput tasks ==========
+
+
+@pytest.mark.asyncio
+async def test_agents_command_handles_user_message_task() -> None:
+    """Test that /agents command correctly handles UserMessage as task."""
+    storage = InMemoryAgentStateStorage()
+    # InMemory storage doesn't need connect()
+
+    # Create a state with UserMessage as task (the problematic case)
+    task_msg = UserMessage(
+        content=[ContentPart(type=ContentType.TEXT, text="Do something")]
+    )
+    state = AgentState(
+        id="test-agent-1",
+        session_id="sess-1",
+        status=AgentStateStatus.IDLE,
+        task=task_msg,  # This is a UserMessage, not a string!
+        is_persistent=True,
+        depth=0,
+        wake_count=1,
+    )
+    await storage.save_state(state)
+
+    scheduler = SimpleNamespace(store=storage)
+
+    ctx = _command_context()
+    result = await _execute_agents(scheduler, ctx, "")
+
+    # Should return a post content result, not raise TypeError
+    assert result.is_post()
+    assert result.post_content is not None
+
+
+@pytest.mark.asyncio
+async def test_detail_command_handles_user_message_task() -> None:
+    """Test that /detail command correctly handles UserMessage as task."""
+    storage = InMemoryAgentStateStorage()
+    # InMemory storage doesn't need connect()
+
+    # Create a state with UserMessage as task
+    task_msg = UserMessage(
+        content=[
+            ContentPart(type=ContentType.TEXT, text="This is a complex task"),
+            ContentPart(type=ContentType.TEXT, text="with multiple parts"),
+        ]
+    )
+    state = AgentState(
+        id="test-agent-2",
+        session_id="sess-1",
+        status=AgentStateStatus.RUNNING,
+        task=task_msg,
+        is_persistent=False,
+        depth=1,
+        wake_count=0,
+        parent_id="parent-1",
+    )
+    await storage.save_state(state)
+
+    scheduler = SimpleNamespace(
+        store=storage,
+        get_state=storage.get_state,
+    )
+
+    ctx = _command_context()
+    result = await _execute_detail(scheduler, ctx, "test-agent-2")
+
+    # Should return a post content result with full task text
+    assert result.is_post()
+    assert result.post_content is not None
+    # The task text should be in the post content
+    zh_cn = result.post_content.get("zh_cn", {})
+    content_lines = zh_cn.get("content", [])
+    all_text = " ".join(str(line) for line in content_lines)
+    assert "complex task" in all_text or "multiple parts" in all_text

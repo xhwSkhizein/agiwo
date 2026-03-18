@@ -32,7 +32,7 @@ def _coerce_query(query: TraceQuery | dict[str, Any]) -> TraceQuery:
     return TraceQuery(**query)
 
 
-def _matches_query(trace: Trace, query: TraceQuery) -> bool:
+def _matches_query(trace: Trace, query: TraceQuery) -> bool:  # noqa: PLR0911
     if query.agent_id and trace.agent_id != query.agent_id:
         return False
     if query.session_id and trace.session_id != query.session_id:

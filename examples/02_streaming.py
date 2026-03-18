@@ -5,7 +5,6 @@ Real-time streaming output as the LLM generates tokens.
 """
 
 import asyncio
-import sys
 
 from agiwo import Agent, AgentConfig
 from agiwo.llm import OpenAIModel

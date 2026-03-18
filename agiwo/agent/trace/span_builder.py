@@ -95,9 +95,11 @@ def build_assistant_step_span(
         end_time=end_time,
         duration_ms=duration_ms,
         status=SpanStatus.OK,
-        output_preview=step.content[:preview_length]
-        if isinstance(step.content, str) and step.content
-        else None,
+        output_preview=(
+            step.content[:preview_length]
+            if isinstance(step.content, str) and step.content
+            else None
+        ),
         llm_details=build_llm_details(step, llm),
     )
 

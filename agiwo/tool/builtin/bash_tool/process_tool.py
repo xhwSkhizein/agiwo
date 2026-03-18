@@ -8,7 +8,8 @@ from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.tool.process import AgentProcessRegistry
 from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
-from agiwo.tool.builtin.bash_tool.tool import truncate_output
+from agiwo.tool.builtin.bash_tool.parameter_parser import BashParameterParser
+from agiwo.tool.builtin.bash_tool.result_formatter import truncate_output
 from agiwo.tool.builtin.bash_tool.types import CommandResult, ProcessInfo, Sandbox
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.utils.abort_signal import AbortSignal
@@ -471,17 +472,7 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
 
     @staticmethod
     def _parse_bool(value: object) -> bool | None:
-        if value is None:
-            return None
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"true", "1", "yes", "on"}:
-                return True
-            if normalized in {"false", "0", "no", "off"}:
-                return False
-        return None
+        return BashParameterParser.parse_bool(value)
 
     @staticmethod
     def _coerce_int(

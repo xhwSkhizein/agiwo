@@ -40,7 +40,9 @@ async def main() -> None:
         tools=[as_tool(researcher)],
     )
 
-    result = await writer.run("Write a brief intro about the history of the Python programming language.")
+    result = await writer.run(
+        "Write a brief intro about the history of the Python programming language."
+    )
     print(result.response)
 
     # Cleanup both agents

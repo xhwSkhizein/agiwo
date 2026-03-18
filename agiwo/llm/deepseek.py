@@ -17,8 +17,7 @@ DSML_FUNCTION_CALLS_PATTERN = re.compile(
 )
 
 DSML_INVOKE_PATTERN = re.compile(
-    r'<｜DSML｜invoke\s+name="([^"]+)">'
-    r"(.*?)</｜DSML｜invoke>",
+    r'<｜DSML｜invoke\s+name="([^"]+)">' r"(.*?)</｜DSML｜invoke>",
     re.DOTALL,
 )
 

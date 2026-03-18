@@ -1,88 +1,61 @@
-"""Console storage wiring — config builders and NotifyingTraceStorage."""
+"""Console storage wiring — config builders."""
 
-import asyncio
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.factory import StorageFactory
-from agiwo.observability.base import BaseTraceStorage, TraceQuery
+from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.factory import (
     create_trace_storage as _sdk_create_trace_storage,
 )
-from agiwo.observability.trace import Trace
 from agiwo.scheduler.models import AgentStateStorageConfig
 from agiwo.tool.storage.citation import CitationStoreConfig
 
+from agiwo.utils.logging import get_logger
+
 from server.config import ConsoleConfig
 
+logger = get_logger(__name__)
 
-# ── NotifyingTraceStorage ────────────────────────────────────────────────────
-
-
-class NotifyingTraceStorage(BaseTraceStorage):
-    """Decorator that notifies subscribers whenever a trace is saved.
-
-    SDK storage stays pure (save/get/query/close).
-    Real-time notification is a Console concern for the trace SSE endpoint.
-    """
-
-    def __init__(
-        self,
-        inner: BaseTraceStorage,
-        queue_maxsize: int = 100,
-    ) -> None:
-        self._inner = inner
-        self._subscribers: list[asyncio.Queue[Trace]] = []
-        self._queue_maxsize = queue_maxsize
-
-    def subscribe(self) -> asyncio.Queue[Trace]:
-        queue: asyncio.Queue[Trace] = asyncio.Queue(maxsize=self._queue_maxsize)
-        self._subscribers.append(queue)
-        return queue
-
-    def unsubscribe(self, queue: asyncio.Queue[Trace]) -> None:
-        if queue in self._subscribers:
-            self._subscribers.remove(queue)
-
-    async def initialize(self) -> None:
-        await self._inner.initialize()
-
-    async def save_trace(self, trace: Trace) -> None:
-        await self._inner.save_trace(trace)
-        for queue in self._subscribers:
-            try:
-                queue.put_nowait(trace)
-            except asyncio.QueueFull:
-                pass
-
-    async def get_trace(self, trace_id: str) -> Trace | None:
-        return await self._inner.get_trace(trace_id)
-
-    async def query_traces(self, query: TraceQuery | dict[str, Any]) -> list[Trace]:
-        return await self._inner.query_traces(query)
-
-    async def close(self) -> None:
-        self._subscribers.clear()
-        await self._inner.close()
+T = TypeVar("T")
 
 
 # ── Storage config builders ──────────────────────────────────────────────────
 
 
+def _build_storage_config(
+    config_class: type[T],
+    storage_type: str,
+    sqlite_builder: Callable[[], dict[str, Any]] | None = None,
+    mongo_builder: Callable[[], dict[str, Any]] | None = None,
+) -> T:
+    """通用存储配置构建函数，消除重复代码。"""
+    if storage_type == "sqlite":
+        if sqlite_builder is None:
+            raise ValueError(f"{config_class.__name__} does not support sqlite storage")
+        return config_class(storage_type="sqlite", config=sqlite_builder())
+    if storage_type == "memory":
+        return config_class(storage_type="memory")
+    if storage_type == "mongodb":
+        if mongo_builder is None:
+            raise ValueError(
+                f"{config_class.__name__} does not support mongodb storage"
+            )
+        return config_class(storage_type="mongodb", config=mongo_builder())
+    raise ValueError(
+        f"{config_class.__name__} does not support storage type: {storage_type}"
+    )
+
+
 def build_run_step_storage_config(
     console_config: ConsoleConfig,
 ) -> RunStepStorageConfig:
-    if console_config.run_step_storage_type == "sqlite":
-        return RunStepStorageConfig(
-            storage_type="sqlite",
-            config={"db_path": console_config.sqlite_db_path},
-        )
-    if console_config.run_step_storage_type == "memory":
-        return RunStepStorageConfig(storage_type="memory")
-    return RunStepStorageConfig(
-        storage_type="mongodb",
-        config={
+    return _build_storage_config(
+        RunStepStorageConfig,
+        console_config.run_step_storage_type,
+        sqlite_builder=lambda: {"db_path": console_config.sqlite_db_path},
+        mongo_builder=lambda: {
             "mongo_uri": console_config.mongodb_uri,
             "db_name": console_config.mongodb_db_name,
         },
@@ -91,19 +64,14 @@ def build_run_step_storage_config(
 
 def build_trace_storage_config(console_config: ConsoleConfig) -> TraceStorageConfig:
     effective_type = console_config.effective_trace_storage_type
-    if effective_type == "memory":
-        return TraceStorageConfig(storage_type="memory")
-    if effective_type == "sqlite":
-        return TraceStorageConfig(
-            storage_type="sqlite",
-            config={
-                "db_path": console_config.sqlite_db_path,
-                "collection_name": console_config.sqlite_trace_collection,
-            },
-        )
-    return TraceStorageConfig(
-        storage_type="mongodb",
-        config={
+    return _build_storage_config(
+        TraceStorageConfig,
+        effective_type,
+        sqlite_builder=lambda: {
+            "db_path": console_config.sqlite_db_path,
+            "collection_name": console_config.sqlite_trace_collection,
+        },
+        mongo_builder=lambda: {
             "mongo_uri": console_config.mongodb_uri,
             "db_name": console_config.mongodb_db_name,
             "collection_name": console_config.mongodb_trace_collection,
@@ -114,12 +82,15 @@ def build_trace_storage_config(console_config: ConsoleConfig) -> TraceStorageCon
 def build_agent_state_storage_config(
     console_config: ConsoleConfig,
 ) -> AgentStateStorageConfig:
-    if console_config.metadata_storage_type == "sqlite":
-        return AgentStateStorageConfig(
-            storage_type="sqlite",
-            config={"db_path": console_config.sqlite_db_path},
-        )
-    return AgentStateStorageConfig(storage_type="memory")
+    return _build_storage_config(
+        AgentStateStorageConfig,
+        console_config.metadata_storage_type,
+        sqlite_builder=lambda: {"db_path": console_config.sqlite_db_path},
+        mongo_builder=lambda: {
+            "uri": console_config.mongodb_uri,
+            "db_name": console_config.mongodb_db_name,
+        },
+    )
 
 
 def build_citation_store_config(console_config: ConsoleConfig) -> CitationStoreConfig:
@@ -142,8 +113,8 @@ def create_run_step_storage(config: ConsoleConfig) -> RunStepStorage:
     return StorageFactory.create_run_step_storage(build_run_step_storage_config(config))
 
 
-def create_trace_storage(config: ConsoleConfig) -> NotifyingTraceStorage:
+def create_trace_storage(config: ConsoleConfig) -> BaseTraceStorage:
     storage = _sdk_create_trace_storage(build_trace_storage_config(config))
     if storage is None:
         raise ValueError("Console requires trace_storage to be configured")
-    return NotifyingTraceStorage(storage)
+    return storage

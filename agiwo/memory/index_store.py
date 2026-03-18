@@ -106,16 +106,19 @@ class MemoryIndexStore:
         """Initialize database schema."""
         cursor = self._conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS files (
                 path TEXT PRIMARY KEY,
                 hash TEXT NOT NULL,
                 mtime INTEGER NOT NULL,
                 size INTEGER NOT NULL
             )
-        """)
+        """
+        )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS chunks (
                 chunk_id TEXT PRIMARY KEY,
                 path TEXT NOT NULL,
@@ -127,11 +130,13 @@ class MemoryIndexStore:
                 embedding TEXT NOT NULL DEFAULT '',
                 updated_at INTEGER NOT NULL
             )
-        """)
+        """
+        )
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path)")
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS embedding_cache (
                 content_hash TEXT NOT NULL,
                 model_id TEXT NOT NULL,
@@ -139,9 +144,11 @@ class MemoryIndexStore:
                 updated_at INTEGER NOT NULL,
                 PRIMARY KEY (content_hash, model_id)
             )
-        """)
+        """
+        )
 
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
                 text,
                 chunk_id UNINDEXED,
@@ -150,7 +157,8 @@ class MemoryIndexStore:
                 end_line UNINDEXED,
                 tokenize = "unicode61"
             )
-        """)
+        """
+        )
 
         self._conn.commit()
 
@@ -162,12 +170,14 @@ class MemoryIndexStore:
 
             dims = self._embedding_dims
             cursor = self._conn.cursor()
-            cursor.execute(f"""
+            cursor.execute(
+                f"""
                 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
                     chunk_id TEXT PRIMARY KEY,
                     embedding FLOAT[{dims}]
                 )
-            """)
+            """
+            )
             self._conn.commit()
             return True
         except (sqlite3.OperationalError, AttributeError) as exc:

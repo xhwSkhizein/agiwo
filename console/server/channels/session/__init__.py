@@ -1,7 +1,7 @@
 """Channel session management: models, binding, context service, and batching."""
 
+from server.channels.exceptions import BaseAgentNotFoundError
 from server.channels.session.binding import (
-    BaseAgentNotFoundError,
     ChatContextNotFoundError,
     SessionContextError,
     SessionMutationPlan,

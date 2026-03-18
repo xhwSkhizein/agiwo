@@ -124,9 +124,11 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             status=AgentStateStatus(row["status"]),
             task=deserialize_user_input_for_store(row["task"]),
             parent_id=row.get("parent_id"),
-            pending_input=deserialize_user_input_for_store(row["pending_input"])
-            if row.get("pending_input")
-            else None,
+            pending_input=(
+                deserialize_user_input_for_store(row["pending_input"])
+                if row.get("pending_input")
+                else None
+            ),
             config_overrides=config_overrides,
             wake_condition=wake_condition,
             result_summary=row.get("result_summary"),
@@ -197,9 +199,11 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 state.parent_id,
                 state.status.value,
                 serialize_user_input_for_store(state.task),
-                serialize_user_input_for_store(state.pending_input)
-                if state.pending_input is not None
-                else None,
+                (
+                    serialize_user_input_for_store(state.pending_input)
+                    if state.pending_input is not None
+                    else None
+                ),
                 json.dumps(state.config_overrides),
                 *wake_values,
                 state.result_summary,
