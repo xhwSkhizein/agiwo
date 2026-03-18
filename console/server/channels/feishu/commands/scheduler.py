@@ -7,12 +7,17 @@ for managing scheduler agents directly from Feishu chat.
 
 from functools import partial
 
+from agiwo.agent.input import ContentPart, UserInput, UserMessage
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.feishu.commands.base import (
-    CommandContext,
-    CommandResult,
-    CommandSpec,
+from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
+from server.channels.feishu.commands.post_builder import (
+    bold,
+    build_post_content,
+    code,
+    new_line,
+    separator_line,
+    text_element,
 )
 from server.channels.feishu.commands.status_text import format_scheduler_status
 from server.config import ConsoleConfig
@@ -65,15 +70,69 @@ async def _execute_agents(
     if not states:
         return CommandResult(text="当前没有 Agent 状态记录。")
 
-    lines = [f"Agent 列表 (共 {len(states)} 个):\n"]
+    content: list[list[dict]] = []
+
+    # Title
+    content.append([bold(f"🤖 Agent 列表 (共 {len(states)} 个)")])
+    content.append(new_line())
+
     for i, state in enumerate(states, 1):
         status_label = format_scheduler_status(state.status)
-        persistent = " [持久]" if state.is_persistent else ""
-        lines.append(
-            f"{i}. {state.id}{persistent}\n"
-            f"   状态: {status_label} | 唤醒: {state.wake_count} 次"
-        )
-    return CommandResult(text="\n".join(lines))
+        status_emoji = _status_to_emoji(status_label)
+        persistent = "📌" if state.is_persistent else ""
+        depth_indent = "  " * (state.depth if state.depth > 0 else 0)
+
+        # Header line with depth indicator
+        header_parts = [
+            bold(f"{i}. "),
+            text_element(f"{depth_indent}{status_emoji} "),
+            code(state.id),
+        ]
+        if persistent:
+            header_parts.append(text_element(f" {persistent}"))
+        content.append(header_parts)
+
+        # Details
+        content.append([
+            text_element(f"   状态: {status_label}"),
+        ])
+        content.append([
+            text_element(f"   深度: {state.depth} | 唤醒: {state.wake_count} 次"),
+        ])
+        if state.session_id:
+            content.append([
+                text_element("   会话ID: "),
+                code(state.session_id),
+            ])
+        if state.agent_config_id:
+            content.append([
+                text_element("   配置ID: "),
+                code(state.agent_config_id),
+            ])
+        if state.parent_id:
+            content.append([
+                text_element("   父Agent: "),
+                code(state.parent_id),
+            ])
+        if state.task:
+            task_preview = _user_input_to_preview(state.task, max_len=50)
+            content.append([
+                text_element("   任务: "),
+                text_element(task_preview, ["italic"]),
+            ])
+
+        # Separator between items
+        if i < len(states):
+            content.append(separator_line())
+
+    # Tips
+    content.append(new_line())
+    content.append([
+        text_element("💡 提示: 使用 /detail <state_id> 查看详情")
+    ])
+
+    post_content = build_post_content("Agent 列表", content)
+    return CommandResult(post_content=post_content)
 
 
 async def _execute_detail(
@@ -92,21 +151,90 @@ async def _execute_detail(
         return CommandResult(text=f"未找到 Agent: {state_id}")
 
     status_label = format_scheduler_status(state.status)
-    lines = [
-        f"Agent: {state.id}",
-        f"状态: {status_label}",
-        f"会话: {state.session_id}",
-        f"持久: {'是' if state.is_persistent else '否'}",
-        f"深度: {state.depth}",
-        f"唤醒次数: {state.wake_count}",
-    ]
+    status_emoji = _status_to_emoji(status_label)
+
+    content: list[list[dict]] = []
+
+    # Title with ID
+    content.append([bold(f"📊 Agent 详情")])
+    content.append(new_line())
+
+    # Basic info section
+    content.append([bold("🔹 基本信息")])
+    content.append([
+        text_element("  ID: "),
+        code(state.id),
+    ])
+    content.append([
+        text_element("  状态: "),
+        text_element(f"{status_emoji} {status_label}"),
+    ])
+    content.append([
+        text_element("  持久化: "),
+        text_element("是 📌" if state.is_persistent else "否"),
+    ])
+    content.append([
+        text_element("  深度: "),
+        text_element(str(state.depth)),
+    ])
+    content.append([
+        text_element("  唤醒次数: "),
+        text_element(str(state.wake_count)),
+    ])
+
+    content.append(new_line())
+    content.append([bold("🔹 关联信息")])
+
+    if state.session_id:
+        content.append([
+            text_element("  会话ID: "),
+            code(state.session_id),
+        ])
     if state.agent_config_id:
-        lines.append(f"配置ID: {state.agent_config_id}")
+        content.append([
+            text_element("  配置ID: "),
+            code(state.agent_config_id),
+        ])
     if state.parent_id:
-        lines.append(f"父Agent: {state.parent_id}")
+        content.append([
+            text_element("  父Agent: "),
+            code(state.parent_id),
+        ])
+
+    content.append(new_line())
+    content.append([bold("🔹 任务")])
+
+    if state.task:
+        # Show full task without truncation
+        task_text = _user_input_to_string(state.task)
+        content.append([text_element(task_text)])
+    else:
+        content.append([text_element("(无任务)"), ["italic"]])
+
     if state.result_summary:
-        lines.append(f"结果摘要: {state.result_summary[:200]}")
-    return CommandResult(text="\n".join(lines))
+        content.append(new_line())
+        content.append([bold("🔹 结果摘要")])
+        # Show full summary without truncation
+        content.append([text_element(state.result_summary)])
+
+    # Wake condition
+    if state.wake_condition:
+        content.append(new_line())
+        content.append([bold("🔹 唤醒条件")])
+        wake_type = state.wake_condition.wait_for
+        content.append([text_element(f"  类型: {wake_type}")])
+        if state.wake_condition.completed_ids:
+            completed = ", ".join(state.wake_condition.completed_ids)
+            content.append([
+                text_element("  已完成: "),
+                code(completed),
+            ])
+
+    content.append(new_line())
+    content.append([text_element("💡 提示: /steer <state_id> <消息> 发送引导消息")])
+
+    post_content = build_post_content("Agent 详情", content)
+    return CommandResult(post_content=post_content)
 
 
 async def _execute_steer(
@@ -179,3 +307,70 @@ def _parse_state_message_args(
     if len(parts) < 2:
         return CommandResult(text=usage_text)
     return (parts[0], parts[1])
+
+
+def _status_to_emoji(status: str) -> str:
+    """Convert scheduler status text to emoji."""
+    status_map = {
+        "运行中": "🟢",
+        "等待中": "⏳",
+        "队列中": "📋",
+        "闲置": "⚪",
+        "已完成": "✅",
+        "失败": "❌",
+        "取消": "🚫",
+        "未启动": "⚪",
+    }
+    for key, emoji in status_map.items():
+        if key in status:
+            return emoji
+    return "⚪"
+
+
+def _user_input_to_string(user_input: UserInput) -> str:
+    """Convert UserInput to plain string representation.
+
+    Handles str, list[ContentPart], or UserMessage.
+    """
+    if isinstance(user_input, str):
+        return user_input
+    if isinstance(user_input, UserMessage):
+        return _content_parts_to_string(user_input.content)
+    if isinstance(user_input, list):
+        return _content_parts_to_string(user_input)
+    return str(user_input)
+
+
+def _user_input_to_preview(user_input: UserInput, max_len: int = 50) -> str:
+    """Convert UserInput to a short preview string.
+
+    Args:
+        user_input: The task input (str, list[ContentPart], or UserMessage)
+        max_len: Maximum length for the preview
+
+    Returns:
+        Truncated string with ellipsis if needed
+    """
+    text = _user_input_to_string(user_input)
+    if len(text) > max_len:
+        return text[: max_len - 3] + "..."
+    return text
+
+
+def _content_parts_to_string(parts: list[ContentPart]) -> str:
+    """Convert list of ContentPart to string (extract text from each part)."""
+    texts: list[str] = []
+    for part in parts:
+        if part.text:
+            texts.append(part.text)
+        elif part.type.value == "image":
+            texts.append("[图片]")
+        elif part.type.value == "file":
+            texts.append("[文件]")
+        elif part.type.value == "audio":
+            texts.append("[音频]")
+        elif part.type.value == "video":
+            texts.append("[视频]")
+        else:
+            texts.append(f"[{part.type.value}]")
+    return " ".join(texts) if texts else "(无内容)"

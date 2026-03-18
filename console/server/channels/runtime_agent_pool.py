@@ -12,6 +12,7 @@ from agiwo.scheduler.models import AgentStateStatus
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
+from server.channels.exceptions import BaseAgentNotFoundError
 from server.channels.session.binding import assign_runtime_identity
 from server.channels.session.models import ChannelChatSessionStore, Session
 from server.config import ConsoleConfig
@@ -44,7 +45,7 @@ class RuntimeAgentPool:
     async def get_or_create_runtime_agent(self, session: Session) -> Agent:
         base_config = await self._agent_registry.get_agent(session.base_agent_id)
         if base_config is None:
-            raise RuntimeError(f"base_agent_not_found: {session.base_agent_id}")
+            raise BaseAgentNotFoundError(session.base_agent_id)
 
         expected_fingerprint = self._build_runtime_config_fingerprint(base_config)
         existing = self._runtime_agents.get(session.runtime_agent_id)

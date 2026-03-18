@@ -5,6 +5,7 @@ from typing import Any
 
 from agiwo.utils.logging import get_logger
 
+from server.channels.exceptions import DefaultAgentNameNotFoundError
 from server.channels.feishu.commands import CommandContext, CommandRegistry
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.delivery_service import FeishuDeliveryService
@@ -106,9 +107,7 @@ class FeishuInboundHandler:
     async def _enqueue_message(self, inbound: InboundMessage) -> None:
         default_agent = await self._session_service.resolve_default_agent_config()
         if default_agent is None:
-            raise RuntimeError(
-                f"default_agent_name_not_found: {self._default_agent_name}"
-            )
+            raise DefaultAgentNameNotFoundError(self._default_agent_name)
 
         chat_context_scope_id = self._build_chat_context_scope_id(inbound)
         context = BatchContext(
@@ -151,6 +150,11 @@ class FeishuInboundHandler:
             )
             result_text = f"命令执行失败: {exc}"
         else:
+            if result.is_post() and result.post_content:
+                await self._delivery_service.send_command_response_post(
+                    inbound, result.post_content
+                )
+                return {"msg": "command_executed"}
             result_text = result.text
 
         await self._delivery_service.send_command_response(inbound, result_text)

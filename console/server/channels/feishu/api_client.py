@@ -64,6 +64,47 @@ class FeishuApiClient:
             json_body=payload,
         )
 
+    async def reply_post(self, message_id: str, post_content: dict) -> None:
+        """Reply with a rich-text (post) message.
+
+        post_content format (zh_cn locale):
+        {
+            "zh_cn": {
+                "title": "...",
+                "content": [
+                    [{"tag": "text", "text": "..."}, {"tag": "at", ...}],
+                    ...
+                ]
+            }
+        }
+        """
+        payload = {
+            "msg_type": "post",
+            "content": json.dumps(post_content, ensure_ascii=False),
+            "reply_in_thread": False,
+            "uuid": str(uuid4()),
+        }
+        await self._authorized_request(
+            "POST",
+            f"/open-apis/im/v1/messages/{message_id}/reply",
+            json_body=payload,
+        )
+
+    async def create_post_message(self, chat_id: str, post_content: dict) -> None:
+        """Create a new rich-text (post) message in chat."""
+        payload = {
+            "receive_id": chat_id,
+            "msg_type": "post",
+            "content": json.dumps(post_content, ensure_ascii=False),
+            "uuid": str(uuid4()),
+        }
+        await self._authorized_request(
+            "POST",
+            "/open-apis/im/v1/messages",
+            params={"receive_id_type": "chat_id"},
+            json_body=payload,
+        )
+
     async def download_image(self, image_key: str) -> bytes:
         """Download image binary from IM API.
 

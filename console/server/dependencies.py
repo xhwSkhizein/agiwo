@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Request
 
 from agiwo.agent.storage.base import RunStepStorage
-from server.services.storage_wiring import NotifyingTraceStorage
+from agiwo.observability.base import BaseTraceStorage
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.channels.feishu import FeishuChannelService
@@ -20,7 +20,7 @@ _RUNTIME_STATE_KEY = "console_runtime"
 class ConsoleRuntime:
     config: ConsoleConfig
     run_step_storage: RunStepStorage
-    trace_storage: NotifyingTraceStorage
+    trace_storage: BaseTraceStorage
     agent_registry: AgentRegistry
     scheduler: Scheduler | None = None
     feishu_channel_service: FeishuChannelService | None = None
@@ -54,7 +54,7 @@ def get_run_step_storage(runtime: "ConsoleRuntimeDep") -> RunStepStorage:
     return runtime.run_step_storage
 
 
-def get_trace_storage(runtime: "ConsoleRuntimeDep") -> NotifyingTraceStorage:
+def get_trace_storage(runtime: "ConsoleRuntimeDep") -> BaseTraceStorage:
     return runtime.trace_storage
 
 

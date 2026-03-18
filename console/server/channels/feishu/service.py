@@ -16,8 +16,13 @@ from agiwo.agent import UserMessage
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
-from server.channels.agent_executor import AgentExecutor
 from server.channels.base import BaseChannelService
+from server.channels.exceptions import (
+    BaseAgentNotFoundError,
+    DefaultAgentNameNotFoundError,
+    PreviousTaskRunningError,
+)
+from server.channels.agent_executor import AgentExecutor
 from server.channels.feishu.api_client import FeishuApiClient
 from server.channels.feishu.commands import build_feishu_command_registry
 from server.channels.feishu.content_extractor import FeishuContentExtractor
@@ -195,17 +200,16 @@ class FeishuChannelService(BaseChannelService):
         await self._delivery_service.deliver_message(context, text)
 
     def _to_user_facing_error(self, error: Exception) -> str:
-        raw = str(error)
-        if raw == "previous_task_still_running_after_timeout":
+        if isinstance(error, PreviousTaskRunningError):
             return "上一条任务仍在处理中，请稍后再试。"
-        if raw.startswith("base_agent_not_found:"):
+        if isinstance(error, BaseAgentNotFoundError):
             return (
-                "默认 Agent 不存在或已被删除，请检查 "
+                f"默认 Agent '{error.agent_name}' 不存在或已被删除，请检查 "
                 "AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME。"
             )
-        if raw.startswith("default_agent_name_not_found:"):
+        if isinstance(error, DefaultAgentNameNotFoundError):
             return (
-                "当前默认 Agent 名称不存在，请检查 "
+                f"当前默认 Agent 名称 '{error.agent_name}' 不存在，请检查 "
                 "AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME。"
             )
-        return f"执行失败: {raw}"
+        return f"执行失败: {str(error)}"

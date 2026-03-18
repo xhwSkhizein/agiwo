@@ -150,6 +150,30 @@ class FeishuDeliveryService:
             )
             await self._api.create_text_message(inbound.chat_id, reply_text)
 
+    async def send_command_response_post(
+        self,
+        inbound: InboundMessage,
+        post_content: dict,
+    ) -> None:
+        """Send command response as rich-text (post) message."""
+        try:
+            await self._api.reply_post(inbound.message_id, post_content)
+            logger.info(
+                "feishu_command_response_post_sent",
+                channel="feishu",
+                chat_id=inbound.chat_id,
+                message_id=inbound.message_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "feishu_command_response_post_failed",
+                message_id=inbound.message_id,
+                error=str(exc),
+            )
+            # Fallback to plain text
+            title = post_content.get("zh_cn", {}).get("title", "响应")
+            await self._api.reply_text(inbound.message_id, f"[{title}] (富文本发送失败)")
+
     def _format_group_reply(
         self,
         chat_type: str,
