@@ -62,7 +62,9 @@ def serialize_trace_payload(
 ) -> dict[str, Any]:
     payload = serialize_trace_base_payload(trace)
     if include_spans:
-        payload["spans"] = [serialize_span_payload(span) for span in (trace.spans or [])]
+        payload["spans"] = [
+            serialize_span_payload(span) for span in (trace.spans or [])
+        ]
     return payload
 
 

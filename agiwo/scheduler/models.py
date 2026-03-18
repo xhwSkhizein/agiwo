@@ -178,9 +178,7 @@ class AgentState:
 
     def is_idle_root(self) -> bool:
         return (
-            self.is_root
-            and self.is_persistent
-            and self.status == AgentStateStatus.IDLE
+            self.is_root and self.is_persistent and self.status == AgentStateStatus.IDLE
         )
 
     def is_queued_root(self) -> bool:
@@ -191,9 +189,14 @@ class AgentState:
         )
 
     def can_accept_enqueue_input(self) -> bool:
-        return self.is_root and self.is_persistent and self.status in (
-            AgentStateStatus.IDLE,
-            AgentStateStatus.FAILED,
+        return (
+            self.is_root
+            and self.is_persistent
+            and self.status
+            in (
+                AgentStateStatus.IDLE,
+                AgentStateStatus.FAILED,
+            )
         )
 
     def resolve_runtime_session_id(self) -> str:

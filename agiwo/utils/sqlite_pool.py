@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 class SQLiteConnectionPool:
     """
     Singleton connection pool for SQLite databases.
-    
+
     Each unique db_path gets one shared connection.
     Thread-safe via asyncio.Lock.
     """
@@ -43,7 +43,7 @@ class SQLiteConnectionPool:
     async def get_connection(self, db_path: str) -> aiosqlite.Connection:
         """
         Get a shared connection for the given db_path.
-        
+
         Creates a new connection if one doesn't exist.
         Increments reference count for tracking.
         """
@@ -76,7 +76,7 @@ class SQLiteConnectionPool:
     async def release_connection(self, db_path: str) -> None:
         """
         Release a connection reference.
-        
+
         Connection is closed when reference count reaches 0.
         """
         lock = self._get_lock()

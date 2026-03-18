@@ -162,7 +162,9 @@ class TestLocalSandboxProcessLimit:
         sandbox = LocalSandbox(workspace_dir=str(tmp_path))
         called: dict[str, object] = {}
         sandbox._registry.write_process_stdin = (  # type: ignore[method-assign]
-            lambda process_id, data: called.update({"process_id": process_id, "data": data})
+            lambda process_id, data: called.update(
+                {"process_id": process_id, "data": data}
+            )
         )
 
         await sandbox.write_process_stdin("job_1", "input\n")

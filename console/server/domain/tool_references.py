@@ -62,7 +62,7 @@ def parse_tool_reference(value: object) -> ToolReference:
     if not normalized:
         raise InvalidToolReferenceError(value)
     if normalized.startswith(AGENT_TOOL_PREFIX):
-        agent_id = normalized[len(AGENT_TOOL_PREFIX):].strip()
+        agent_id = normalized[len(AGENT_TOOL_PREFIX) :].strip()
         if not agent_id:
             raise InvalidToolReferenceError(value)
         return AgentToolRef(agent_id=agent_id)

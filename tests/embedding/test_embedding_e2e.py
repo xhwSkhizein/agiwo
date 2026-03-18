@@ -28,13 +28,12 @@ def has_local_model() -> bool:
 
 
 skip_without_openai = pytest.mark.skipif(
-    not has_openai_key(),
-    reason="OPENAI_API_KEY not set"
+    not has_openai_key(), reason="OPENAI_API_KEY not set"
 )
 
 skip_without_local_model = pytest.mark.skipif(
     not has_local_model(),
-    reason="AGIWO_LOCAL_EMBEDDING_MODEL_PATH not set or model not found"
+    reason="AGIWO_LOCAL_EMBEDDING_MODEL_PATH not set or model not found",
 )
 
 
@@ -370,9 +369,7 @@ This document covers various machine learning algorithms including:
 
 Machine learning applications are everywhere.
 """)
-        (memory_dir / "file3.md").write_text(
-            "Unrelated content about gardening tips."
-        )
+        (memory_dir / "file3.md").write_text("Unrelated content about gardening tips.")
 
         store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
 
@@ -382,7 +379,9 @@ Machine learning applications are everywhere.
         assert len(results) >= 1
         found_ml = any("file2.md" in r.path for r in results)
         assert found_ml, "Should find machine learning content"
-        assert not any("file3.md" in r.path for r in results[:2]), "Gardening should not rank high"
+        assert not any("file3.md" in r.path for r in results[:2]), (
+            "Gardening should not rank high"
+        )
 
         store.close()
 
@@ -391,13 +390,15 @@ Machine learning applications are everywhere.
         """Test that line numbers in results are accurate."""
         memory_dir = temp_workspace / "MEMORY"
 
-        content = "\n".join([
-            "Line 1: Introduction",
-            "Line 2: Background",
-            "Line 3: The important keyword appears here",
-            "Line 4: More content",
-            "Line 5: Conclusion",
-        ])
+        content = "\n".join(
+            [
+                "Line 1: Introduction",
+                "Line 2: Background",
+                "Line 3: The important keyword appears here",
+                "Line 4: More content",
+                "Line 5: Conclusion",
+            ]
+        )
         (memory_dir / "test.md").write_text(content)
 
         store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")

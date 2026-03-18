@@ -48,7 +48,9 @@ def test_web_reader_config_resolves_user_data_dir_under_root_path(
 
 
 def test_web_tool_schemas_and_descriptions_match_runtime_support() -> None:
-    with patch("agiwo.tool.builtin.web_search.web_search_tool.settings") as mock_settings:
+    with patch(
+        "agiwo.tool.builtin.web_search.web_search_tool.settings"
+    ) as mock_settings:
         mock_settings.web_search_serper_api_key = None
         mock_settings.web_search_api_timeout = 10
         mock_settings.web_search_api_max_results = 5
@@ -77,7 +79,9 @@ def test_web_tool_schemas_and_descriptions_match_runtime_support() -> None:
 
 @pytest.mark.asyncio
 async def test_web_search_without_api_key_returns_runtime_error() -> None:
-    with patch("agiwo.tool.builtin.web_search.web_search_tool.settings") as mock_settings:
+    with patch(
+        "agiwo.tool.builtin.web_search.web_search_tool.settings"
+    ) as mock_settings:
         mock_settings.web_search_serper_api_key = None
         mock_settings.web_search_api_timeout = 10
         mock_settings.web_search_api_max_results = 5
@@ -184,7 +188,9 @@ async def test_web_search_and_reader_share_citations_via_config() -> None:
         storage_type="memory",
         collection_name="test-web-shared-citations",
     )
-    with patch("agiwo.tool.builtin.web_search.web_search_tool.settings") as mock_settings:
+    with patch(
+        "agiwo.tool.builtin.web_search.web_search_tool.settings"
+    ) as mock_settings:
         mock_settings.web_search_serper_api_key = SecretStr("test-key")
         mock_settings.web_search_api_timeout = 10
         mock_settings.web_search_api_max_results = 5

@@ -11,8 +11,7 @@ StepObserver = Callable[[StepRecord], Awaitable[None]]
 
 
 class SchedulerToolLike(Protocol):
-    def get_name(self) -> str:
-        ...
+    def get_name(self) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -27,14 +26,11 @@ class SchedulerAgentPort(Protocol):
     id: str
 
     @property
-    def tools(self) -> tuple[SchedulerToolLike, ...]:
-        ...
+    def tools(self) -> tuple[SchedulerToolLike, ...]: ...
 
-    def install_runtime_tools(self, tools: list[object]) -> None:
-        ...
+    def install_runtime_tools(self, tools: list[object]) -> None: ...
 
-    def set_termination_summary_enabled(self, enabled: bool) -> None:
-        ...
+    def set_termination_summary_enabled(self, enabled: bool) -> None: ...
 
     def start(
         self,
@@ -42,22 +38,18 @@ class SchedulerAgentPort(Protocol):
         *,
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
-    ) -> AgentExecutionHandlePort:
-        ...
+    ) -> AgentExecutionHandlePort: ...
 
     async def create_scheduler_child(
         self,
         *,
         child_id: str,
         overrides: ChildAgentOverrides,
-    ) -> "SchedulerAgentPort":
-        ...
+    ) -> "SchedulerAgentPort": ...
 
-    async def close(self) -> None:
-        ...
+    async def close(self) -> None: ...
 
-    def unwrap_agent(self) -> object | None:
-        ...
+    def unwrap_agent(self) -> object | None: ...
 
 
 class AgentSchedulerPort:

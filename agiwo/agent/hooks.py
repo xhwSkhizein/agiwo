@@ -27,9 +27,7 @@ OnStepHook = Callable[[StepRecord], Awaitable[None]]
 
 # Memory hooks
 MemoryWriteHook = Callable[[UserInput, RunOutput, AgentContext], Awaitable[None]]
-MemoryRetrieveHook = Callable[
-    [UserInput, AgentContext], Awaitable[list[MemoryRecord]]
-]
+MemoryRetrieveHook = Callable[[UserInput, AgentContext], Awaitable[list[MemoryRecord]]]
 
 
 @dataclass

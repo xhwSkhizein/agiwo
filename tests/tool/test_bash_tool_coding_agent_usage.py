@@ -144,7 +144,11 @@ class TestBashToolCodingAgentUsage:
         job_id = start_result.output["job_id"]
 
         status_result = await process_tool.execute(
-            {"action": "status", "job_id": job_id, "tool_call_id": "tc_codex_bg_status"},
+            {
+                "action": "status",
+                "job_id": job_id,
+                "tool_call_id": "tc_codex_bg_status",
+            },
             mock_context,
         )
         assert status_result.output["ok"] is True

@@ -81,7 +81,9 @@ class TestBashToolBasic:
         assert call["pty_rows"] == 40
         assert call["stdin"] == "hi\n"
 
-    async def test_bashctl_like_command_is_forwarded_to_shell(self, bash_tool, mock_context):
+    async def test_bashctl_like_command_is_forwarded_to_shell(
+        self, bash_tool, mock_context
+    ):
         await bash_tool.execute(
             {"command": "bashctl jobs", "tool_call_id": "tc_005c"},
             mock_context,
@@ -106,11 +108,18 @@ class TestBashToolBackgroundJobs:
         assert result.output["state"] == "running"
         assert "job_" in result.output["job_id"]
         assert result.output["mode"] == "pipe"
-        assert bash_tool.config.sandbox.started_process_calls[-1]["agent_id"] == "agent_1"
+        assert (
+            bash_tool.config.sandbox.started_process_calls[-1]["agent_id"] == "agent_1"
+        )
 
     async def test_start_background_job_with_pty(self, bash_tool, mock_context):
         result = await bash_tool.execute(
-            {"command": "codex", "pty": True, "background": True, "tool_call_id": "tc_006b"},
+            {
+                "command": "codex",
+                "pty": True,
+                "background": True,
+                "tool_call_id": "tc_006b",
+            },
             mock_context,
         )
 
@@ -121,7 +130,9 @@ class TestBashToolBackgroundJobs:
 
 
 class TestBashToolSafetyValidator:
-    async def test_safety_validator_blocks_dangerous(self, bash_tool_with_validator, mock_context):
+    async def test_safety_validator_blocks_dangerous(
+        self, bash_tool_with_validator, mock_context
+    ):
         result = await bash_tool_with_validator.execute(
             {"command": "echo dangerous marker", "tool_call_id": "tc_021"},
             mock_context,
@@ -131,7 +142,9 @@ class TestBashToolSafetyValidator:
         assert result.output["exit_code"] == 126
         assert "dangerous" in result.output["stderr"]
 
-    async def test_safety_validator_allows_safe(self, bash_tool_with_validator, mock_context):
+    async def test_safety_validator_allows_safe(
+        self, bash_tool_with_validator, mock_context
+    ):
         result = await bash_tool_with_validator.execute(
             {"command": "echo hello", "tool_call_id": "tc_022"},
             mock_context,
@@ -145,7 +158,9 @@ class TestBashToolDefaultSafety:
         tool = BashTool()
         assert isinstance(tool.config.command_safety_validator, CommandSafetyValidator)
 
-    async def test_default_safety_blocks_risky_command_without_execution(self, mock_sandbox, mock_context):
+    async def test_default_safety_blocks_risky_command_without_execution(
+        self, mock_sandbox, mock_context
+    ):
         tool = BashTool(
             BashToolConfig(
                 sandbox=mock_sandbox,
@@ -201,7 +216,9 @@ class TestBashToolTiming:
 class TestBashToolHooks:
     async def test_before_hook_modifies_command(self, mock_sandbox, mock_context):
         def before_hook(input_data):
-            return BeforeBashCallOutput(command=input_data.command.replace("OLD", "NEW"))
+            return BeforeBashCallOutput(
+                command=input_data.command.replace("OLD", "NEW")
+            )
 
         tool = BashTool(
             BashToolConfig(

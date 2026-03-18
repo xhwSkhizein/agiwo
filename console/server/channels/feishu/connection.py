@@ -93,6 +93,7 @@ def _disable_auto_reconnect(client: object | None) -> None:
     except AttributeError:
         return
 
+
 logger = get_logger(__name__)
 
 OnEnvelopeCallback = Callable[[FeishuInboundEnvelope], Awaitable[object]]
@@ -306,9 +307,7 @@ class FeishuConnection:
         for task in pending:
             task.cancel()
         if pending:
-            loop.run_until_complete(
-                asyncio.gather(*pending, return_exceptions=True)
-            )
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
 
     def _extract_mentions(self, message: object) -> list[FeishuMention]:
         mentions: list[FeishuMention] = []

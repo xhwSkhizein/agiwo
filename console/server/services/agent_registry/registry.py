@@ -95,7 +95,9 @@ class AgentRegistry:
         return await self._require_store().delete_agent(agent_id)
 
     def _require_store(self) -> AgentRegistryStore:
-        assert self._store is not None, "AgentRegistry.initialize() must be called before use"
+        assert self._store is not None, (
+            "AgentRegistry.initialize() must be called before use"
+        )
         return self._store
 
 

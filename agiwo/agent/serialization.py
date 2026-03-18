@@ -53,7 +53,9 @@ def _normalize_tagged_user_input(value: dict[str, Any]) -> UserInput | dict[str,
 def serialize_user_input_payload(
     value: UserInput | dict[str, Any] | None,
 ) -> str | dict[str, Any] | list[Any] | None:
-    normalized = _deserialize_string_user_input(value) if isinstance(value, str) else value
+    normalized = (
+        _deserialize_string_user_input(value) if isinstance(value, str) else value
+    )
     if isinstance(normalized, dict):
         normalized = _normalize_tagged_user_input(normalized)
     if isinstance(normalized, UserMessage):
@@ -75,7 +77,9 @@ def serialize_run_user_input_payload(
     return serialize_user_input(user_input)
 
 
-def serialize_step_metrics_payload(metrics: StepMetrics | None) -> dict[str, Any] | None:
+def serialize_step_metrics_payload(
+    metrics: StepMetrics | None,
+) -> dict[str, Any] | None:
     if metrics is None:
         return None
     return metrics.to_dict()

@@ -9,7 +9,10 @@ from server.channels.feishu.commands import CommandContext, CommandRegistry
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.delivery_service import FeishuDeliveryService
 from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
-from server.channels.feishu.message_parser import FeishuInboundEnvelope, FeishuMessageParser
+from server.channels.feishu.message_parser import (
+    FeishuInboundEnvelope,
+    FeishuMessageParser,
+)
 from server.channels.feishu.store import FeishuChannelStoreBackend
 from server.channels.session import SessionContextService, SessionManager
 from server.channels.session.models import BatchContext, InboundMessage
@@ -47,7 +50,9 @@ class FeishuInboundHandler:
         self._delivery_service = delivery_service
         self._truncate_for_log = truncate_for_log
 
-    async def process_envelope(self, envelope: FeishuInboundEnvelope) -> dict[str, object]:
+    async def process_envelope(
+        self, envelope: FeishuInboundEnvelope
+    ) -> dict[str, object]:
         if envelope.event_type != "im.message.receive_v1":
             return {"msg": "ignored_non_message_event"}
 
@@ -74,7 +79,9 @@ class FeishuInboundHandler:
 
         self._group_history_store.record_message(
             inbound,
-            normalized_text=self._content_extractor.normalize_message_text(inbound.text),
+            normalized_text=self._content_extractor.normalize_message_text(
+                inbound.text
+            ),
         )
         if not self._should_trigger(inbound):
             logger.info(
@@ -152,10 +159,11 @@ class FeishuInboundHandler:
     async def _build_command_context(self, inbound: InboundMessage) -> CommandContext:
         default_agent = await self._session_service.resolve_default_agent_config()
         chat_context_scope_id = self._build_chat_context_scope_id(inbound)
-        chat_context, current_session = (
-            await self._session_service.get_chat_context_and_current_session(
-                chat_context_scope_id
-            )
+        (
+            chat_context,
+            current_session,
+        ) = await self._session_service.get_chat_context_and_current_session(
+            chat_context_scope_id
         )
         base_agent_id = default_agent.id if default_agent is not None else ""
         return CommandContext(

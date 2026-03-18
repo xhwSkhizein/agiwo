@@ -58,7 +58,9 @@ class StepBuilder:
             self.step.metrics.output_tokens = normalized["output_tokens"]
             self.step.metrics.total_tokens = normalized["total_tokens"]
             self.step.metrics.cache_read_tokens = normalized["cache_read_tokens"]
-            self.step.metrics.cache_creation_tokens = normalized["cache_creation_tokens"]
+            self.step.metrics.cache_creation_tokens = normalized[
+                "cache_creation_tokens"
+            ]
             self.step.metrics.usage_source = "provider"
             delta.usage = normalized
 

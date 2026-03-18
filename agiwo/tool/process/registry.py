@@ -12,4 +12,3 @@ class AgentProcessRegistry(Protocol):
         state: str = "running",
     ) -> list[dict[str, object]]:
         """Return structured process summaries owned by one agent."""
-

@@ -243,7 +243,9 @@ class TestSchedulerStats:
 
 class TestPersistentAgentEndpoints:
     @pytest.mark.asyncio
-    async def test_create_persistent_agent_generates_unique_state_ids_without_session_id(self, client):
+    async def test_create_persistent_agent_generates_unique_state_ids_without_session_id(
+        self, client
+    ):
         registry = _runtime(client).agent_registry
         config = await registry.create_agent(
             AgentConfigRecord(

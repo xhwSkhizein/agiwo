@@ -74,9 +74,7 @@ def build_assistant_step_span(
     )
 
     name = (
-        step.metrics.model_name
-        if step.metrics and step.metrics.model_name
-        else "llm"
+        step.metrics.model_name if step.metrics and step.metrics.model_name else "llm"
     )
 
     span = Span(

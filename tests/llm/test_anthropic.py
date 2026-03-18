@@ -1,7 +1,7 @@
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from agiwo.llm.anthropic import AnthropicModel
-from agiwo.llm.base import StreamChunk
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ async def test_anthropic_model_arun_stream_basic(mock_settings, mock_anthropic_c
 
     async def async_iter(self):
         yield mock_event
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_anthropic_client.messages.create = AsyncMock(return_value=mock_stream)
@@ -52,7 +52,9 @@ async def test_anthropic_model_arun_stream_basic(mock_settings, mock_anthropic_c
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.anthropic.settings")
-async def test_anthropic_model_arun_stream_with_system_prompt(mock_settings, mock_anthropic_client):
+async def test_anthropic_model_arun_stream_with_system_prompt(
+    mock_settings, mock_anthropic_client
+):
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
         id="claude-3-5-sonnet",
@@ -75,7 +77,7 @@ async def test_anthropic_model_arun_stream_with_system_prompt(mock_settings, moc
 
     async def async_iter(self):
         yield mock_event
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_anthropic_client.messages.create = AsyncMock(return_value=mock_stream)
@@ -96,7 +98,9 @@ async def test_anthropic_model_arun_stream_with_system_prompt(mock_settings, moc
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.anthropic.settings")
-async def test_anthropic_model_arun_stream_with_usage(mock_settings, mock_anthropic_client):
+async def test_anthropic_model_arun_stream_with_usage(
+    mock_settings, mock_anthropic_client
+):
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
         id="claude-3-5-sonnet",
@@ -112,7 +116,6 @@ async def test_anthropic_model_arun_stream_with_usage(mock_settings, mock_anthro
     model.model_name = "claude-3-5-sonnet"
     model.max_tokens_to_sample = 100
 
-    from types import SimpleNamespace
     mock_usage = SimpleNamespace()
     mock_usage.input_tokens = 10
     mock_usage.output_tokens = 5
@@ -134,7 +137,7 @@ async def test_anthropic_model_arun_stream_with_usage(mock_settings, mock_anthro
     async def async_iter(self):
         yield mock_start_event
         yield mock_delta_event
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_anthropic_client.messages.create = AsyncMock(return_value=mock_stream)
@@ -153,7 +156,9 @@ async def test_anthropic_model_arun_stream_with_usage(mock_settings, mock_anthro
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.anthropic.settings")
-async def test_anthropic_model_arun_stream_with_tool_use(mock_settings, mock_anthropic_client):
+async def test_anthropic_model_arun_stream_with_tool_use(
+    mock_settings, mock_anthropic_client
+):
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
         id="claude-3-5-sonnet",
@@ -180,9 +185,7 @@ async def test_anthropic_model_arun_stream_with_tool_use(mock_settings, mock_ant
 
     mock_delta_event = MagicMock()
     mock_delta_event.type = "content_block_delta"
-    mock_delta_event.delta = MagicMock(
-        type="input_json_delta", partial_json='{"x": 1}'
-    )
+    mock_delta_event.delta = MagicMock(type="input_json_delta", partial_json='{"x": 1}')
     mock_delta_event.index = 0
 
     mock_stop_event = MagicMock()
@@ -193,7 +196,7 @@ async def test_anthropic_model_arun_stream_with_tool_use(mock_settings, mock_ant
         yield mock_start_event
         yield mock_delta_event
         yield mock_stop_event
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_anthropic_client.messages.create = AsyncMock(return_value=mock_stream)

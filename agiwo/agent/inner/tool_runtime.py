@@ -167,7 +167,10 @@ class ToolRuntime:
         safe_indices: list[int] = []
         unsafe_indices: list[int] = []
         for index, prepared in enumerate(prepared_calls):
-            if isinstance(prepared, ResolvedToolCall) and not prepared.tool.is_concurrency_safe():
+            if (
+                isinstance(prepared, ResolvedToolCall)
+                and not prepared.tool.is_concurrency_safe()
+            ):
                 unsafe_indices.append(index)
             else:
                 safe_indices.append(index)

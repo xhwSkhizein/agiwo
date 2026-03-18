@@ -144,7 +144,9 @@ def _simple_completion(text: str = "Done") -> list[StreamChunk]:
     return [StreamChunk(content=text), StreamChunk(finish_reason="stop")]
 
 
-def _tool_call(tool_name: str, args: str = "{}", tc_id: str = "tc-1") -> list[StreamChunk]:
+def _tool_call(
+    tool_name: str, args: str = "{}", tc_id: str = "tc-1"
+) -> list[StreamChunk]:
     return [
         StreamChunk(
             tool_calls=[
@@ -744,7 +746,9 @@ class TestSchedulerStream:
     async def test_stream_new_root_run(self):
         async with Scheduler(_fast_config()) as scheduler:
             model = MockModel([_simple_completion("Streamed answer")])
-            agent = _make_agent(name="stream-root", model=model, id="stream-root", tools=[])
+            agent = _make_agent(
+                name="stream-root", model=model, id="stream-root", tools=[]
+            )
 
             items = [
                 item
@@ -769,7 +773,9 @@ class TestSchedulerStream:
                     _simple_completion("Second answer"),
                 ]
             )
-            agent = _make_agent(name="stream-persist", model=model, id="stream-persist", tools=[])
+            agent = _make_agent(
+                name="stream-persist", model=model, id="stream-persist", tools=[]
+            )
 
             state_id = await scheduler.submit(
                 agent,

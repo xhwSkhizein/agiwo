@@ -217,7 +217,9 @@ class SQLiteAgentStateStorage(AgentStateStorage):
 
     async def get_state(self, state_id: str) -> AgentState | None:
         conn = await self._get_conn()
-        cursor = await conn.execute("SELECT * FROM agent_states WHERE id = ?", (state_id,))
+        cursor = await conn.execute(
+            "SELECT * FROM agent_states WHERE id = ?", (state_id,)
+        )
         row = await cursor.fetchone()
         if row is None:
             return None

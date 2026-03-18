@@ -7,7 +7,9 @@ from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.factory import StorageFactory
 from agiwo.observability.base import BaseTraceStorage, TraceQuery
-from agiwo.observability.factory import create_trace_storage as _sdk_create_trace_storage
+from agiwo.observability.factory import (
+    create_trace_storage as _sdk_create_trace_storage,
+)
 from agiwo.observability.trace import Trace
 from agiwo.scheduler.models import AgentStateStorageConfig
 from agiwo.tool.storage.citation import CitationStoreConfig
@@ -68,7 +70,9 @@ class NotifyingTraceStorage(BaseTraceStorage):
 # ── Storage config builders ──────────────────────────────────────────────────
 
 
-def build_run_step_storage_config(console_config: ConsoleConfig) -> RunStepStorageConfig:
+def build_run_step_storage_config(
+    console_config: ConsoleConfig,
+) -> RunStepStorageConfig:
     if console_config.run_step_storage_type == "sqlite":
         return RunStepStorageConfig(
             storage_type="sqlite",

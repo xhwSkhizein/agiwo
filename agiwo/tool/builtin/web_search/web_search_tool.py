@@ -108,7 +108,9 @@ To fetch full content from a search result, use web_reader with the result index
             payload["tbs"] = tbs
         return payload
 
-    async def _google_search_with_serper(self, query: str) -> list[dict[str, str]] | str:
+    async def _google_search_with_serper(
+        self, query: str
+    ) -> list[dict[str, str]] | str:
         if not self.serper_api_key:
             return (
                 "Error: SERPER_API_KEY is not set. "
@@ -255,7 +257,11 @@ To fetch full content from a search result, use web_reader with the result index
             )
             start_index = (
                 max(
-                    (source.index for source in existing_sources if source.index is not None),
+                    (
+                        source.index
+                        for source in existing_sources
+                        if source.index is not None
+                    ),
                     default=-1,
                 )
                 + 1
@@ -268,9 +274,11 @@ To fetch full content from a search result, use web_reader with the result index
                 session_id=session_id,
                 sources=citation_sources,
             )
-            simplified_results = await self._citation_source_store.get_simplified_sources(
-                session_id=session_id,
-                citation_ids=citation_ids,
+            simplified_results = (
+                await self._citation_source_store.get_simplified_sources(
+                    session_id=session_id,
+                    citation_ids=citation_ids,
+                )
             )
 
             logger.info(
@@ -322,7 +330,9 @@ To fetch full content from a search result, use web_reader with the result index
                     start_time=start_time,
                 )
             query = query.strip()
-            session_id = str(parameters.get("session_id") or context.session_id or "default")
+            session_id = str(
+                parameters.get("session_id") or context.session_id or "default"
+            )
 
             raw_results = await self._google_search_with_serper(query)
             if isinstance(raw_results, str):

@@ -9,7 +9,11 @@ from functools import partial
 
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
+from server.channels.feishu.commands.base import (
+    CommandContext,
+    CommandResult,
+    CommandSpec,
+)
 from server.channels.feishu.commands.status_text import format_scheduler_status
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry

@@ -19,11 +19,9 @@ logger = get_logger(__name__)
 
 
 class LlamaEmbeddingClient(Protocol):
-    def embed(self, text: str) -> list[float] | list[list[float]]:
-        ...
+    def embed(self, text: str) -> list[float] | list[list[float]]: ...
 
-    def n_embd(self) -> int:
-        ...
+    def n_embd(self) -> int: ...
 
 
 @dataclass

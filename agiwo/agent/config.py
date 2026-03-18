@@ -13,4 +13,3 @@ class AgentConfig:
     description: str = ""
     system_prompt: str = ""
     options: AgentOptions = field(default_factory=AgentOptions)
-

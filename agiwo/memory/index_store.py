@@ -47,7 +47,9 @@ class MemoryIndexStore:
         self._embedding_api_key = (
             embedding_api_key or settings.get_embedding_api_key() or ""
         )
-        self._embedding_api_base = embedding_api_base or settings.embedding_base_url or ""
+        self._embedding_api_base = (
+            embedding_api_base or settings.embedding_base_url or ""
+        )
         self._top_k = top_k
 
         self._conn: sqlite3.Connection | None = None
@@ -267,7 +269,13 @@ class MemoryIndexStore:
                 INSERT INTO chunks_fts (text, chunk_id, path, start_line, end_line)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (chunk.text, chunk.chunk_id, rel_path, chunk.start_line, chunk.end_line),
+                (
+                    chunk.text,
+                    chunk.chunk_id,
+                    rel_path,
+                    chunk.start_line,
+                    chunk.end_line,
+                ),
             )
 
             if self._vec_available and embedding:

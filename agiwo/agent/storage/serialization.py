@@ -28,9 +28,7 @@ _STEP_ADAPTER = TypeAdapter(StepRecord)
 def _drop_none(value: Any) -> Any:
     if isinstance(value, dict):
         return {
-            key: _drop_none(item)
-            for key, item in value.items()
-            if item is not None
+            key: _drop_none(item) for key, item in value.items() if item is not None
         }
     if isinstance(value, list):
         return [_drop_none(item) for item in value if item is not None]
@@ -51,9 +49,7 @@ def _normalize_storage_value(value: Any) -> Any:
             if item is not None
         }
     if isinstance(value, list):
-        return [
-            _normalize_storage_value(item) for item in value if item is not None
-        ]
+        return [_normalize_storage_value(item) for item in value if item is not None]
     if isinstance(value, tuple):
         return [_normalize_storage_value(item) for item in value if item is not None]
     return value
@@ -112,9 +108,7 @@ def deserialize_step_from_storage(data: dict[str, Any]) -> StepRecord:
         and step.user_input is not None
         and step.content is None
     ):
-        step.content = to_message_content(
-            normalize_to_message(step.user_input).content
-        )
+        step.content = to_message_content(normalize_to_message(step.user_input).content)
 
     return step
 

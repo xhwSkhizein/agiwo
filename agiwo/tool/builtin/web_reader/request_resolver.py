@@ -23,8 +23,7 @@ class CitationSourceLookupStore(Protocol):
         self,
         session_id: str,
         index: int,
-    ) -> CitationSourceRaw | None:
-        ...
+    ) -> CitationSourceRaw | None: ...
 
 
 async def resolve_web_reader_request(

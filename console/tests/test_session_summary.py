@@ -115,4 +115,7 @@ async def test_collect_session_aggregates_uses_latest_run_and_paginates() -> Non
     assert summary.run_count == 2
     assert isinstance(summary.metrics, RunMetricsSummary)
     assert summary.metrics.run_count == 2
-    assert chat_summary["last_input"] == '{"__type": "content_parts", "parts": [{"type": "text", "text": "latest"}]}'
+    assert (
+        chat_summary["last_input"]
+        == '{"__type": "content_parts", "parts": [{"type": "text", "text": "latest"}]}'
+    )

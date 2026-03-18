@@ -41,14 +41,19 @@ def test_metrics_resolver_backfills_missing_fields() -> None:
         metrics=StepMetrics(),
     )
 
-    request_estimate = handler.metrics_resolver.estimate_request([{"role": "user", "content": "x"}], None)
+    request_estimate = handler.metrics_resolver.estimate_request(
+        [{"role": "user", "content": "x"}], None
+    )
     handler._resolve_step_metrics(step, request_estimate)
 
     assert step.metrics is not None
     assert step.metrics.input_tokens is not None
     assert step.metrics.output_tokens is not None
     assert step.metrics.output_tokens > 0
-    assert step.metrics.total_tokens == step.metrics.input_tokens + step.metrics.output_tokens
+    assert (
+        step.metrics.total_tokens
+        == step.metrics.input_tokens + step.metrics.output_tokens
+    )
     assert step.metrics.cache_read_tokens == 0
     assert step.metrics.cache_creation_tokens == 0
     assert step.metrics.usage_source == "estimated"

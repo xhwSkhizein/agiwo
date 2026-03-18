@@ -100,8 +100,8 @@ class LLMStreamHandler:
         if step.metrics.output_tokens is None:
             step.metrics.output_tokens = estimated_output
         if step.metrics.total_tokens is None:
-            step.metrics.total_tokens = (
-                (step.metrics.input_tokens or 0) + (step.metrics.output_tokens or 0)
+            step.metrics.total_tokens = (step.metrics.input_tokens or 0) + (
+                step.metrics.output_tokens or 0
             )
         if step.metrics.cache_read_tokens is None:
             step.metrics.cache_read_tokens = (

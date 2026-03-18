@@ -19,7 +19,9 @@ class TestBashProcessToolBasic:
         assert result.output["ok"] is True
         assert "no jobs" in result.output["stdout"]
 
-    async def test_jobs_with_running_filter(self, bash_tool, bash_process_tool, mock_context):
+    async def test_jobs_with_running_filter(
+        self, bash_tool, bash_process_tool, mock_context
+    ):
         await bash_tool.execute(
             {"command": "sleep 10", "background": True, "tool_call_id": "tc_102"},
             mock_context,
@@ -115,7 +117,12 @@ class TestBashProcessToolBasic:
 
     async def test_input(self, bash_tool, bash_process_tool, mock_context):
         job_result = await bash_tool.execute(
-            {"command": "codex", "pty": True, "background": True, "tool_call_id": "tc_113"},
+            {
+                "command": "codex",
+                "pty": True,
+                "background": True,
+                "tool_call_id": "tc_113",
+            },
             mock_context,
         )
         job_id = job_result.output["job_id"]
@@ -161,7 +168,9 @@ class TestBashProcessToolLogs:
         assert result.output["ok"] is False
         assert "job not found" in result.output["stderr"]
 
-    async def test_logs_invalid_stream(self, bash_tool, bash_process_tool, mock_context):
+    async def test_logs_invalid_stream(
+        self, bash_tool, bash_process_tool, mock_context
+    ):
         await bash_tool.execute(
             {"command": "sleep 10", "background": True, "tool_call_id": "tc_118"},
             mock_context,
@@ -240,9 +249,16 @@ class TestBashProcessToolInvalidRequests:
         assert result.output["ok"] is False
         assert "requires job_id" in result.output["stderr"]
 
-    async def test_input_requires_text(self, bash_tool, bash_process_tool, mock_context):
+    async def test_input_requires_text(
+        self, bash_tool, bash_process_tool, mock_context
+    ):
         job_result = await bash_tool.execute(
-            {"command": "codex", "pty": True, "background": True, "tool_call_id": "tc_126"},
+            {
+                "command": "codex",
+                "pty": True,
+                "background": True,
+                "tool_call_id": "tc_126",
+            },
             mock_context,
         )
 
@@ -258,7 +274,9 @@ class TestBashProcessToolInvalidRequests:
         assert result.output["ok"] is False
         assert result.output["exit_code"] == 2
 
-    async def test_list_agent_processes_probe(self, bash_tool, bash_process_tool, mock_context):
+    async def test_list_agent_processes_probe(
+        self, bash_tool, bash_process_tool, mock_context
+    ):
         await bash_tool.execute(
             {"command": "sleep 10", "background": True, "tool_call_id": "tc_128"},
             mock_context,
@@ -272,7 +290,9 @@ class TestBashProcessToolInvalidRequests:
 
 class TestBashProcessToolHttpServerScenario:
     @pytest.mark.asyncio
-    async def test_http_server_lifecycle(self, bash_tool, bash_process_tool, mock_context):
+    async def test_http_server_lifecycle(
+        self, bash_tool, bash_process_tool, mock_context
+    ):
         start_result = await bash_tool.execute(
             {
                 "command": "python -m http.server 18888",

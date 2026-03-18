@@ -63,14 +63,14 @@ def session_aggregate_to_summary_data(session: SessionAggregate) -> SessionSumma
 def session_aggregate_to_chat_summary(session: SessionAggregate) -> dict[str, object]:
     last_run = session.last_run
     last_input = (
-        serialize_run_user_input_payload(last_run.user_input)
-        if last_run
-        else None
+        serialize_run_user_input_payload(last_run.user_input) if last_run else None
     )
     return {
         "session_id": session.session_id,
         "run_count": session.metrics.run_count,
-        "last_input": last_input[:200] if isinstance(last_input, str) and last_input else None,
+        "last_input": last_input[:200]
+        if isinstance(last_input, str) and last_input
+        else None,
         "last_response": (
             last_run.response_content[:200]
             if last_run and last_run.response_content

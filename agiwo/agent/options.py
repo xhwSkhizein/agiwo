@@ -57,6 +57,7 @@ class AgentOptions(BaseModel):
         trace_storage: Configuration for trace/observability persistence.
             Defaults to None (tracing disabled). Enable for observability features.
     """
+
     model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
 
     config_root: str = ""

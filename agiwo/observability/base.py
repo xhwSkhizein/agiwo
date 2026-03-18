@@ -49,14 +49,12 @@ def _matches_query(trace: Trace, query: TraceQuery) -> bool:
         return False
 
     duration_ms = trace.duration_ms
-    if (
-        query.min_duration_ms is not None
-        and (duration_ms is None or duration_ms < query.min_duration_ms)
+    if query.min_duration_ms is not None and (
+        duration_ms is None or duration_ms < query.min_duration_ms
     ):
         return False
-    if (
-        query.max_duration_ms is not None
-        and (duration_ms is None or duration_ms > query.max_duration_ms)
+    if query.max_duration_ms is not None and (
+        duration_ms is None or duration_ms > query.max_duration_ms
     ):
         return False
     return True

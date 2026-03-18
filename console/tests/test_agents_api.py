@@ -103,7 +103,9 @@ async def test_update_agent_put_replaces_full_agent_config(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_available_tools_uses_catalog_for_builtin_and_agent_entries(client) -> None:
+async def test_list_available_tools_uses_catalog_for_builtin_and_agent_entries(
+    client,
+) -> None:
     registry = _runtime(client).agent_registry
     created = await registry.create_agent(
         AgentConfigRecord(

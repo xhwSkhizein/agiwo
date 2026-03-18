@@ -157,7 +157,7 @@ class FeishuDeliveryService:
         text: str,
     ) -> str:
         if chat_type == "group":
-            return f"<at user_id=\"{user_id}\">发起人</at> " + text
+            return f'<at user_id="{user_id}">发起人</at> ' + text
         return text
 
 

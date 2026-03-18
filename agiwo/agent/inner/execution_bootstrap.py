@@ -37,7 +37,9 @@ async def prepare_execution(
 ) -> PreparedExecution:
     session_storage = context.session_runtime.session_storage
     run_step_storage = context.session_runtime.run_step_storage
-    last_compact: CompactMetadata | None = await session_storage.get_latest_compact_metadata(
+    last_compact: (
+        CompactMetadata | None
+    ) = await session_storage.get_latest_compact_metadata(
         context.session_id,
         context.agent_id,
     )

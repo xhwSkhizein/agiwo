@@ -61,7 +61,9 @@ class CancellableStreamingModel(Model):
     """Streaming model that stays live until the run is aborted."""
 
     def __init__(self) -> None:
-        super().__init__(id="cancellable-model", name="cancellable-model", temperature=0.0)
+        super().__init__(
+            id="cancellable-model", name="cancellable-model", temperature=0.0
+        )
 
     async def arun_stream(self, messages, tools=None) -> AsyncIterator[StreamChunk]:
         del messages, tools
@@ -137,7 +139,11 @@ async def test_sequence_allocation_is_shared_between_root_and_child_contexts() -
     child_user = await child_recorder.create_user_step(user_input="child task")
     root_assistant = await parent_recorder.create_assistant_step()
 
-    assert [root_user.sequence, child_user.sequence, root_assistant.sequence] == [1, 2, 3]
+    assert [root_user.sequence, child_user.sequence, root_assistant.sequence] == [
+        1,
+        2,
+        3,
+    ]
 
 
 @pytest.mark.asyncio
@@ -270,7 +276,10 @@ async def _execute_agent(mode: str) -> dict[str, object]:
             output = await agent.run("hello", session_id=session_id)
             assert output.response == "final answer"
         else:
-            streamed_events = [event async for event in agent.run_stream("hello", session_id=session_id)]
+            streamed_events = [
+                event
+                async for event in agent.run_stream("hello", session_id=session_id)
+            ]
             assert streamed_events
 
         runs = await agent.run_step_storage.list_runs(session_id=session_id)

@@ -26,6 +26,7 @@ from agiwo.config.settings import (
 
 class ModelConfig(BaseModel):
     """Serializable model construction config."""
+
     model_config = ConfigDict(extra="ignore")
 
     provider: ModelProvider
@@ -43,6 +44,7 @@ class ModelConfig(BaseModel):
     output_price: float = 0.0
     aws_region: str | None = None
     aws_profile: str | None = None
+
 
 @dataclass(frozen=True)
 class ProviderSpec:
@@ -80,9 +82,7 @@ def _require_absolute_base_url(provider: str, base_url: str | None) -> str:
     normalized = base_url.strip()
     parsed = urlparse(normalized)
     if parsed.scheme not in {"http", "https"}:
-        raise ValueError(
-            f"{provider} base_url must start with http:// or https://"
-        )
+        raise ValueError(f"{provider} base_url must start with http:// or https://")
     return normalized
 
 
@@ -144,9 +144,7 @@ PROVIDER_SPECS: dict[ModelProvider, ProviderSpec] = {
 
 _missing_provider_specs = set(ALL_MODEL_PROVIDERS) - set(PROVIDER_SPECS)
 if _missing_provider_specs:
-    raise RuntimeError(
-        f"Missing provider specs for: {sorted(_missing_provider_specs)}"
-    )
+    raise RuntimeError(f"Missing provider specs for: {sorted(_missing_provider_specs)}")
 
 
 def create_model(config: ModelConfig) -> Model:

@@ -76,9 +76,7 @@ ALLOWED_CONSOLE_API_IMPORT_PATHS = {
 ALLOWED_SESSION_IDENTITY_ASSIGN_PATHS = {
     Path("console/server/channels/session_binding.py"),
 }
-ALLOWED_SESSION_IDENTITY_ASSIGN_PREFIXES = (
-    Path("console/tests"),
-)
+ALLOWED_SESSION_IDENTITY_ASSIGN_PREFIXES = (Path("console/tests"),)
 ALLOWED_FEISHU_SDK_IMPORT_PATHS = {
     Path("console/server/channels/feishu/connection.py"),
     Path("console/server/channels/feishu/sdk_adapter.py"),
@@ -533,9 +531,8 @@ def _detect_special_function_errors(
     node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> list[GuardError]:
     errors: list[GuardError] = []
-    if (
-        node.name == "needs_permissions"
-        and not _is_allowed_prefix(path, ALLOWED_DEAD_PERMISSION_API_PREFIXES)
+    if node.name == "needs_permissions" and not _is_allowed_prefix(
+        path, ALLOWED_DEAD_PERMISSION_API_PREFIXES
     ):
         errors.append(
             _make_error(
@@ -610,11 +607,15 @@ def _detect_function_errors(
 
 
 def _is_model_dump_exclude_unset_call(node: ast.Call) -> bool:
-    return isinstance(node.func, ast.Attribute) and node.func.attr == "model_dump" and any(
-        keyword.arg == "exclude_unset"
-        and isinstance(keyword.value, ast.Constant)
-        and keyword.value.value is True
-        for keyword in node.keywords
+    return (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "model_dump"
+        and any(
+            keyword.arg == "exclude_unset"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
     )
 
 
@@ -638,9 +639,9 @@ def _detect_call_errors(path: Path, node: ast.Call) -> list[GuardError]:
                 ),
             )
         )
-    if path == Path("agiwo/scheduler/scheduler.py") and _is_scheduler_delegate_private_call(
-        node
-    ):
+    if path == Path(
+        "agiwo/scheduler/scheduler.py"
+    ) and _is_scheduler_delegate_private_call(node):
         errors.append(
             _make_error(
                 path,
@@ -710,9 +711,8 @@ def _detect_call_errors(path: Path, node: ast.Call) -> list[GuardError]:
                 ),
             )
         )
-    if (
-        call_target in MODEL_CONSTRUCTOR_NAMES
-        and not _is_allowed_prefix(path, ALLOWED_MODEL_CONSTRUCTOR_PREFIXES)
+    if call_target in MODEL_CONSTRUCTOR_NAMES and not _is_allowed_prefix(
+        path, ALLOWED_MODEL_CONSTRUCTOR_PREFIXES
     ):
         errors.append(
             _make_error(
@@ -725,9 +725,9 @@ def _detect_call_errors(path: Path, node: ast.Call) -> list[GuardError]:
                 ),
             )
         )
-    if _is_direct_toolresult_constructor(node) and not _allows_direct_toolresult_constructor(
-        path
-    ):
+    if _is_direct_toolresult_constructor(
+        node
+    ) and not _allows_direct_toolresult_constructor(path):
         errors.append(
             _make_error(
                 path,
@@ -740,10 +740,9 @@ def _detect_call_errors(path: Path, node: ast.Call) -> list[GuardError]:
                 ),
             )
         )
-    if (
-        path == Path("console/server/routers/agents.py")
-        and _is_model_dump_exclude_unset_call(node)
-    ):
+    if path == Path(
+        "console/server/routers/agents.py"
+    ) and _is_model_dump_exclude_unset_call(node):
         errors.append(
             _make_error(
                 path,
@@ -758,7 +757,9 @@ def _detect_call_errors(path: Path, node: ast.Call) -> list[GuardError]:
     return errors
 
 
-def _detect_import_name_errors(path: Path, module_name: str, line: int) -> list[GuardError]:
+def _detect_import_name_errors(
+    path: Path, module_name: str, line: int
+) -> list[GuardError]:
     errors: list[GuardError] = []
     if (
         _is_console_api_boundary_import(module_name)
@@ -788,7 +789,9 @@ def _detect_import_name_errors(path: Path, module_name: str, line: int) -> list[
                 ),
             )
         )
-    if _imports_bash_tool_impl(module_name) and path.as_posix().startswith("agiwo/scheduler/"):
+    if _imports_bash_tool_impl(module_name) and path.as_posix().startswith(
+        "agiwo/scheduler/"
+    ):
         errors.append(
             _make_error(
                 path,
@@ -800,10 +803,9 @@ def _detect_import_name_errors(path: Path, module_name: str, line: int) -> list[
                 ),
             )
         )
-    if (
-        path == Path("console/server/services/storage_manager.py")
-        and _imports_scheduler_store_impl(module_name)
-    ):
+    if path == Path(
+        "console/server/services/storage_manager.py"
+    ) and _imports_scheduler_store_impl(module_name):
         errors.append(
             _make_error(
                 path,
@@ -879,9 +881,8 @@ def _detect_attribute_errors(path: Path, node: ast.Attribute) -> list[GuardError
                 ),
             )
         )
-    if (
-        path.as_posix().startswith("console/server/")
-        and _is_agent_state_storage_access(node)
+    if path.as_posix().startswith("console/server/") and _is_agent_state_storage_access(
+        node
     ):
         errors.append(
             _make_error(
@@ -905,11 +906,12 @@ def _detect_annassign_errors(path: Path, node: ast.AnnAssign) -> list[GuardError
     return [error]
 
 
-def _detect_assign_errors(path: Path, node: ast.Assign | ast.AugAssign) -> list[GuardError]:
-    if (
-        not path.as_posix().startswith("console/server/channels/")
-        or _allows_session_identity_assignment(path)
-    ):
+def _detect_assign_errors(
+    path: Path, node: ast.Assign | ast.AugAssign
+) -> list[GuardError]:
+    if not path.as_posix().startswith(
+        "console/server/channels/"
+    ) or _allows_session_identity_assignment(path):
         return []
 
     targets: list[ast.AST]
@@ -1326,7 +1328,9 @@ def _detect_agents_router_tool_text_errors(
     return errors
 
 
-def _detect_console_tool_catalog_text_errors(path: Path, content: str) -> list[GuardError]:
+def _detect_console_tool_catalog_text_errors(
+    path: Path, content: str
+) -> list[GuardError]:
     errors = _detect_tool_reference_domain_text_errors(path, content)
     errors.extend(_detect_console_tool_catalog_contract_text_errors(path, content))
     errors.extend(_detect_agent_lifecycle_tool_text_errors(path, content))
@@ -1397,21 +1401,17 @@ def main() -> None:
         return
 
     blocking = [
-        finding
-        for finding in findings
-        if finding.code not in WARNING_ONLY_CODES
+        finding for finding in findings if finding.code not in WARNING_ONLY_CODES
     ]
-    warnings = [
-        finding
-        for finding in findings
-        if finding.code in WARNING_ONLY_CODES
-    ]
+    warnings = [finding for finding in findings if finding.code in WARNING_ONLY_CODES]
 
     for warning in sorted(
         warnings,
         key=lambda item: (item.path.as_posix(), item.line, item.code),
     ):
-        print(f"{warning.path}:{warning.line}: warning {warning.code} {warning.message}")
+        print(
+            f"{warning.path}:{warning.line}: warning {warning.code} {warning.message}"
+        )
 
     if not blocking:
         print(f"repo_guard: ok ({len(paths)} files, {len(warnings)} warnings)")

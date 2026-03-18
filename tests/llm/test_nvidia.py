@@ -1,7 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from agiwo.llm.nvidia import NvidiaModel
-from agiwo.llm.base import StreamChunk
 
 
 @pytest.fixture
@@ -37,7 +36,7 @@ async def test_nvidia_model_arun_stream_basic(mock_settings, mock_openai_client)
 
     async def async_iter(self):
         yield mock_chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)
@@ -54,7 +53,9 @@ async def test_nvidia_model_arun_stream_basic(mock_settings, mock_openai_client)
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.nvidia.settings")
-async def test_nvidia_model_arun_stream_with_reasoning(mock_settings, mock_openai_client):
+async def test_nvidia_model_arun_stream_with_reasoning(
+    mock_settings, mock_openai_client
+):
     mock_settings.nvidia_api_key = None
     model = NvidiaModel(
         id="meta/llama-3.1-8b-instruct",
@@ -83,7 +84,7 @@ async def test_nvidia_model_arun_stream_with_reasoning(mock_settings, mock_opena
 
     async def async_iter(self):
         yield mock_chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)

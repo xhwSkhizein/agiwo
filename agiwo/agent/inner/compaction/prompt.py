@@ -38,6 +38,8 @@ The conversation context is approaching the limit. Please provide a comprehensiv
 Respond ONLY with the JSON object, no additional text.
 """
 
-DEFAULT_ASSISTANT_RESPONSE = "Understood. I have the context from the summary. Continuing."
+DEFAULT_ASSISTANT_RESPONSE = (
+    "Understood. I have the context from the summary. Continuing."
+)
 
 __all__ = ["DEFAULT_COMPACT_PROMPT", "DEFAULT_ASSISTANT_RESPONSE"]

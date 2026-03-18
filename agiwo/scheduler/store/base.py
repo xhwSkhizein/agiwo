@@ -14,12 +14,10 @@ class AgentStateStorage(ABC):
     """Abstract base for generic scheduler state/event persistence."""
 
     @abstractmethod
-    async def save_state(self, state: AgentState) -> None:
-        ...
+    async def save_state(self, state: AgentState) -> None: ...
 
     @abstractmethod
-    async def get_state(self, state_id: str) -> AgentState | None:
-        ...
+    async def get_state(self, state_id: str) -> AgentState | None: ...
 
     @abstractmethod
     async def list_states(
@@ -31,12 +29,10 @@ class AgentStateStorage(ABC):
         signal_propagated: bool | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> list[AgentState]:
-        ...
+    ) -> list[AgentState]: ...
 
     @abstractmethod
-    async def save_event(self, event: PendingEvent) -> None:
-        ...
+    async def save_event(self, event: PendingEvent) -> None: ...
 
     @abstractmethod
     async def list_events(
@@ -44,12 +40,10 @@ class AgentStateStorage(ABC):
         *,
         target_agent_id: str | None = None,
         session_id: str | None = None,
-    ) -> list[PendingEvent]:
-        ...
+    ) -> list[PendingEvent]: ...
 
     @abstractmethod
-    async def delete_events(self, event_ids: list[str]) -> None:
-        ...
+    async def delete_events(self, event_ids: list[str]) -> None: ...
 
     async def close(self) -> None:
         pass

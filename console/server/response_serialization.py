@@ -80,7 +80,9 @@ def trace_to_response(trace: Trace) -> TraceResponse:
     return TraceResponse(**serialize_trace_payload(trace))
 
 
-def wake_condition_to_response(wake_condition: WakeCondition | None) -> WakeConditionResponse | None:
+def wake_condition_to_response(
+    wake_condition: WakeCondition | None,
+) -> WakeConditionResponse | None:
     payload = serialize_wake_condition_payload(wake_condition)
     if payload is None:
         return None

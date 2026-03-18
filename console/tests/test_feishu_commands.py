@@ -111,7 +111,9 @@ async def test_switch_command_maps_known_errors_from_session_service() -> None:
     executor = SimpleNamespace(cancel_if_active=AsyncMock())
     registry = build_feishu_command_registry(
         session_service=session_service,
-        agent_pool=SimpleNamespace(runtime_agents={}, get_or_create_runtime_agent=AsyncMock()),
+        agent_pool=SimpleNamespace(
+            runtime_agents={}, get_or_create_runtime_agent=AsyncMock()
+        ),
         executor=executor,
         session_manager=session_manager,
         scheduler=SimpleNamespace(),
