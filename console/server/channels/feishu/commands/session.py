@@ -8,7 +8,11 @@ from functools import partial
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.channels.agent_executor import AgentExecutor
-from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
+from server.channels.feishu.commands.base import (
+    CommandContext,
+    CommandResult,
+    CommandSpec,
+)
 from server.channels.feishu.commands.post_builder import (
     bold,
     build_post_content,
@@ -195,23 +199,31 @@ async def _execute_list_sessions(
         content.append(header_parts)
 
         # Detail lines
-        content.append([
-            text_element("   状态: "),
-            text_element(f"{status_emoji} {status_text}"),
-        ])
-        content.append([
-            text_element("   会话ID: "),
-            code(session.id),
-        ])
+        content.append(
+            [
+                text_element("   状态: "),
+                text_element(f"{status_emoji} {status_text}"),
+            ]
+        )
+        content.append(
+            [
+                text_element("   会话ID: "),
+                code(session.id),
+            ]
+        )
         if session.scheduler_state_id:
-            content.append([
-                text_element("   调度ID: "),
-                code(session.scheduler_state_id),
-            ])
-        content.append([
-            text_element("   更新于: "),
-            text_element(_format_time(session.updated_at)),
-        ])
+            content.append(
+                [
+                    text_element("   调度ID: "),
+                    code(session.scheduler_state_id),
+                ]
+            )
+        content.append(
+            [
+                text_element("   更新于: "),
+                text_element(_format_time(session.updated_at)),
+            ]
+        )
 
         # Separator between items (except last)
         if i < len(items):

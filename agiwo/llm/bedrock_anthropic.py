@@ -135,9 +135,9 @@ class BedrockAnthropicModel(Model):
                 "bedrock_request_failed",
                 model=self.id,
                 error=str(e),
-                error_code=e.response["Error"]["Code"]
-                if hasattr(e, "response")
-                else None,
+                error_code=(
+                    e.response["Error"]["Code"] if hasattr(e, "response") else None
+                ),
                 exc_info=True,
             )
             raise

@@ -37,11 +37,11 @@ async def prepare_execution(
 ) -> PreparedExecution:
     session_storage = context.session_runtime.session_storage
     run_step_storage = context.session_runtime.run_step_storage
-    last_compact: (
-        CompactMetadata | None
-    ) = await session_storage.get_latest_compact_metadata(
-        context.session_id,
-        context.agent_id,
+    last_compact: CompactMetadata | None = (
+        await session_storage.get_latest_compact_metadata(
+            context.session_id,
+            context.agent_id,
+        )
     )
     compact_start_seq = last_compact.end_seq + 1 if last_compact is not None else 0
 

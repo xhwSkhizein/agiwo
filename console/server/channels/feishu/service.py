@@ -169,7 +169,9 @@ class FeishuChannelService(BaseChannelService):
         try:
             await self._connection.stop()
         except Exception:  # noqa: BLE001
-            logger.warning("resource_close_failed", resource="FeishuConnection", exc_info=True)
+            logger.warning(
+                "resource_close_failed", resource="FeishuConnection", exc_info=True
+            )
         await safe_close_all(self._api, self._store)
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 

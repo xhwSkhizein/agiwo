@@ -151,12 +151,12 @@ class InMemoryRunStepStorage(RunStepStorage):
     def __init__(self) -> None:
         self.runs: dict[str, Run] = {}
         self.steps: dict[str, list[StepRecord]] = {}  # session_id -> list[StepRecord]
-        self._id_index: dict[
-            str, dict[str, int]
-        ] = {}  # session_id -> {step_id -> list_index}
-        self._seq_index: dict[
-            str, dict[int, int]
-        ] = {}  # session_id -> {sequence -> list_index}
+        self._id_index: dict[str, dict[str, int]] = (
+            {}
+        )  # session_id -> {step_id -> list_index}
+        self._seq_index: dict[str, dict[int, int]] = (
+            {}
+        )  # session_id -> {sequence -> list_index}
         self._sequence_counters: dict[str, int] = {}  # session_id -> counter
         self._sequence_locks: dict[str, asyncio.Lock] = {}  # session_id -> lock
 

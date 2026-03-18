@@ -419,9 +419,13 @@ class SchedulerRunner:
             target,
             task=user_input,
             pending_input=None,
-            wake_condition=None
-            if spec.clear_wake_condition or state.is_waiting() or state.is_queued_root()
-            else ...,
+            wake_condition=(
+                None
+                if spec.clear_wake_condition
+                or state.is_waiting()
+                or state.is_queued_root()
+                else ...
+            ),
             wake_count=wake_count,
         )
 
@@ -541,9 +545,9 @@ class SchedulerRunner:
             payload={
                 **payload,
                 "child_agent_id": state.id,
-                "child_task": state.task
-                if isinstance(state.task, str)
-                else str(state.task),
+                "child_task": (
+                    state.task if isinstance(state.task, str) else str(state.task)
+                ),
             },
             source_agent_id=state.id,
             created_at=datetime.now(timezone.utc),

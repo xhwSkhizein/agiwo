@@ -169,7 +169,8 @@ class TestMemoryRetrievalE2E:
         """Test retrieval with BM25 only (no embedding)."""
         memory_dir = temp_workspace / "MEMORY"
 
-        (memory_dir / "2025-01-15.md").write_text("""
+        (memory_dir / "2025-01-15.md").write_text(
+            """
 # Architecture Decision Record
 
 ## Context
@@ -184,9 +185,11 @@ We decided to use PostgreSQL for the following reasons:
 ## Consequences
 - Need to set up PostgreSQL server
 - Team needs PostgreSQL training
-""")
+"""
+        )
 
-        (memory_dir / "2025-01-20.md").write_text("""
+        (memory_dir / "2025-01-20.md").write_text(
+            """
 # Meeting Notes
 
 ## Attendees
@@ -200,7 +203,8 @@ We decided to use PostgreSQL for the following reasons:
 ## Action Items
 - Bob: Set up PostgreSQL server
 - Alice: Create migration scripts
-""")
+"""
+        )
 
         store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
 
@@ -222,7 +226,8 @@ We decided to use PostgreSQL for the following reasons:
         """Test hybrid retrieval with OpenAI embeddings."""
         memory_dir = temp_workspace / "MEMORY"
 
-        (memory_dir / "tech_decisions.md").write_text("""
+        (memory_dir / "tech_decisions.md").write_text(
+            """
 # Technology Stack Decisions
 
 ## Frontend
@@ -236,9 +241,11 @@ FastAPI was selected for the backend:
 - High performance
 - Automatic OpenAPI docs
 - Native async support
-""")
+"""
+        )
 
-        (memory_dir / "project_notes.md").write_text("""
+        (memory_dir / "project_notes.md").write_text(
+            """
 # Project Notes
 
 ## Week 1
@@ -250,7 +257,8 @@ FastAPI was selected for the backend:
 - Implemented user authentication
 - Added database migrations
 - Set up monitoring
-""")
+"""
+        )
 
         store = MemoryIndexStore(temp_workspace, embedding_provider="openai")
 
@@ -324,7 +332,8 @@ FastAPI was selected for the backend:
         """Test retrieval of Chinese content."""
         memory_dir = temp_workspace / "MEMORY"
 
-        (memory_dir / "chinese_notes.md").write_text("""
+        (memory_dir / "chinese_notes.md").write_text(
+            """
 # 项目笔记
 
 ## 技术选型
@@ -336,7 +345,8 @@ FastAPI was selected for the backend:
 ## 下一步计划
 - 完成用户认证模块
 - 实现数据同步功能
-""")
+"""
+        )
 
         store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
 
@@ -358,7 +368,8 @@ FastAPI was selected for the backend:
         (memory_dir / "file1.md").write_text(
             "This document is about cooking recipes and food preparation."
         )
-        (memory_dir / "file2.md").write_text("""
+        (memory_dir / "file2.md").write_text(
+            """
 # Machine Learning Guide
 
 Machine learning is a powerful technique for building intelligent systems.
@@ -368,7 +379,8 @@ This document covers various machine learning algorithms including:
 - Reinforcement learning
 
 Machine learning applications are everywhere.
-""")
+"""
+        )
         (memory_dir / "file3.md").write_text("Unrelated content about gardening tips.")
 
         store = MemoryIndexStore(temp_workspace, embedding_provider="disabled")
@@ -379,9 +391,9 @@ Machine learning applications are everywhere.
         assert len(results) >= 1
         found_ml = any("file2.md" in r.path for r in results)
         assert found_ml, "Should find machine learning content"
-        assert not any("file3.md" in r.path for r in results[:2]), (
-            "Gardening should not rank high"
-        )
+        assert not any(
+            "file3.md" in r.path for r in results[:2]
+        ), "Gardening should not rank high"
 
         store.close()
 

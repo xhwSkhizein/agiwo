@@ -54,14 +54,14 @@ def test_split_text_long_message_without_newlines(service):
     """Long messages without newlines should be split at max_len."""
     text = "x" * 15000
     chunks = service._split_text_into_chunks(text)
-    
+
     assert len(chunks) == 3
     # First two chunks should have continuation markers
     assert "[续 1/3]" in chunks[0]
     assert "[续 2/3]" in chunks[1]
     # Last chunk should not have a marker
     assert "[续" not in chunks[2]
-    
+
     # Verify all content is preserved (minus markers)
     reconstructed = "".join(
         chunk.replace("\n\n[续 1/3]", "").replace("\n\n[续 2/3]", "")
@@ -74,9 +74,9 @@ def test_split_text_long_message_with_newlines(service):
     """Long messages with newlines should split at newline boundaries."""
     lines = [f"Line {i}" for i in range(1000)]
     text = "\n".join(lines)
-    
+
     chunks = service._split_text_into_chunks(text)
-    
+
     assert len(chunks) > 1
     # Each chunk should end with a newline (except possibly the last)
     for chunk in chunks[:-1]:
@@ -89,7 +89,7 @@ def test_split_text_custom_max_length(service):
     """Should respect custom max_len parameter."""
     text = "x" * 500
     chunks = service._split_text_into_chunks(text, max_len=200)
-    
+
     assert len(chunks) == 3
     # Each chunk should be around 200 chars (plus marker)
     for chunk in chunks[:-1]:
@@ -100,14 +100,14 @@ def test_split_text_preserves_content(service):
     """All content should be preserved across chunks."""
     text = "A" * 5000 + "B" * 5000 + "C" * 5000
     chunks = service._split_text_into_chunks(text)
-    
+
     # Remove all continuation markers
     reconstructed = ""
     for chunk in chunks:
         clean = chunk
         clean = re.sub(r"\n\n\[续 \d+/\d+\]", "", clean)
         reconstructed += clean
-    
+
     assert reconstructed == text
 
 

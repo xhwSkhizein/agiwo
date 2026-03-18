@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from agiwo.tool.base import BaseTool, ToolResult
-from agiwo.tool.builtin.bash_tool.parameter_parser import BashParameterParser, ParseError
+from agiwo.tool.builtin.bash_tool.parameter_parser import (
+    BashParameterParser,
+    ParseError,
+)
 from agiwo.tool.builtin.bash_tool.result_formatter import BashResultFormatter
 from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
 from agiwo.tool.builtin.bash_tool.security import CommandSafetyValidator

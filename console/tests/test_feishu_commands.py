@@ -147,6 +147,7 @@ async def test_switch_command_maps_known_errors_from_session_service() -> None:
 
 # ========== UserInput conversion tests ==========
 
+
 def test_user_input_to_string_with_plain_string() -> None:
     """Test converting a plain string UserInput."""
     assert _user_input_to_string("Hello world") == "Hello world"
@@ -212,6 +213,7 @@ def test_content_parts_to_string_with_audio_video() -> None:
 
 # ========== Integration tests for commands with UserInput tasks ==========
 
+
 @pytest.mark.asyncio
 async def test_agents_command_handles_user_message_task() -> None:
     """Test that /agents command correctly handles UserMessage as task."""
@@ -219,7 +221,9 @@ async def test_agents_command_handles_user_message_task() -> None:
     # InMemory storage doesn't need connect()
 
     # Create a state with UserMessage as task (the problematic case)
-    task_msg = UserMessage(content=[ContentPart(type=ContentType.TEXT, text="Do something")])
+    task_msg = UserMessage(
+        content=[ContentPart(type=ContentType.TEXT, text="Do something")]
+    )
     state = AgentState(
         id="test-agent-1",
         session_id="sess-1",
@@ -248,10 +252,12 @@ async def test_detail_command_handles_user_message_task() -> None:
     # InMemory storage doesn't need connect()
 
     # Create a state with UserMessage as task
-    task_msg = UserMessage(content=[
-        ContentPart(type=ContentType.TEXT, text="This is a complex task"),
-        ContentPart(type=ContentType.TEXT, text="with multiple parts"),
-    ])
+    task_msg = UserMessage(
+        content=[
+            ContentPart(type=ContentType.TEXT, text="This is a complex task"),
+            ContentPart(type=ContentType.TEXT, text="with multiple parts"),
+        ]
+    )
     state = AgentState(
         id="test-agent-2",
         session_id="sess-1",

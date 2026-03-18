@@ -10,7 +10,11 @@ from functools import partial
 from agiwo.agent.input import ContentPart, UserInput, UserMessage
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
+from server.channels.feishu.commands.base import (
+    CommandContext,
+    CommandResult,
+    CommandSpec,
+)
 from server.channels.feishu.commands.post_builder import (
     bold,
     build_post_content,
@@ -93,33 +97,45 @@ async def _execute_agents(
         content.append(header_parts)
 
         # Details
-        content.append([
-            text_element(f"   状态: {status_label}"),
-        ])
-        content.append([
-            text_element(f"   深度: {state.depth} | 唤醒: {state.wake_count} 次"),
-        ])
+        content.append(
+            [
+                text_element(f"   状态: {status_label}"),
+            ]
+        )
+        content.append(
+            [
+                text_element(f"   深度: {state.depth} | 唤醒: {state.wake_count} 次"),
+            ]
+        )
         if state.session_id:
-            content.append([
-                text_element("   会话ID: "),
-                code(state.session_id),
-            ])
+            content.append(
+                [
+                    text_element("   会话ID: "),
+                    code(state.session_id),
+                ]
+            )
         if state.agent_config_id:
-            content.append([
-                text_element("   配置ID: "),
-                code(state.agent_config_id),
-            ])
+            content.append(
+                [
+                    text_element("   配置ID: "),
+                    code(state.agent_config_id),
+                ]
+            )
         if state.parent_id:
-            content.append([
-                text_element("   父Agent: "),
-                code(state.parent_id),
-            ])
+            content.append(
+                [
+                    text_element("   父Agent: "),
+                    code(state.parent_id),
+                ]
+            )
         if state.task is not None:
             task_preview = _user_input_to_preview(state.task, max_len=50)
-            content.append([
-                text_element("   任务: "),
-                text_element(task_preview, ["italic"]),
-            ])
+            content.append(
+                [
+                    text_element("   任务: "),
+                    text_element(task_preview, ["italic"]),
+                ]
+            )
 
         # Separator between items
         if i < len(states):
@@ -127,9 +143,7 @@ async def _execute_agents(
 
     # Tips
     content.append(new_line())
-    content.append([
-        text_element("💡 提示: 使用 /detail <state_id> 查看详情")
-    ])
+    content.append([text_element("💡 提示: 使用 /detail <state_id> 查看详情")])
 
     post_content = build_post_content("Agent 列表", content)
     return CommandResult(post_content=post_content)
@@ -161,45 +175,61 @@ async def _execute_detail(
 
     # Basic info section
     content.append([bold("🔹 基本信息")])
-    content.append([
-        text_element("  ID: "),
-        code(state.id),
-    ])
-    content.append([
-        text_element("  状态: "),
-        text_element(f"{status_emoji} {status_label}"),
-    ])
-    content.append([
-        text_element("  持久化: "),
-        text_element("是 📌" if state.is_persistent else "否"),
-    ])
-    content.append([
-        text_element("  深度: "),
-        text_element(str(state.depth)),
-    ])
-    content.append([
-        text_element("  唤醒次数: "),
-        text_element(str(state.wake_count)),
-    ])
+    content.append(
+        [
+            text_element("  ID: "),
+            code(state.id),
+        ]
+    )
+    content.append(
+        [
+            text_element("  状态: "),
+            text_element(f"{status_emoji} {status_label}"),
+        ]
+    )
+    content.append(
+        [
+            text_element("  持久化: "),
+            text_element("是 📌" if state.is_persistent else "否"),
+        ]
+    )
+    content.append(
+        [
+            text_element("  深度: "),
+            text_element(str(state.depth)),
+        ]
+    )
+    content.append(
+        [
+            text_element("  唤醒次数: "),
+            text_element(str(state.wake_count)),
+        ]
+    )
 
     content.append(new_line())
     content.append([bold("🔹 关联信息")])
 
     if state.session_id:
-        content.append([
-            text_element("  会话ID: "),
-            code(state.session_id),
-        ])
+        content.append(
+            [
+                text_element("  会话ID: "),
+                code(state.session_id),
+            ]
+        )
     if state.agent_config_id:
-        content.append([
-            text_element("  配置ID: "),
-            code(state.agent_config_id),
-        ])
+        content.append(
+            [
+                text_element("  配置ID: "),
+                code(state.agent_config_id),
+            ]
+        )
     if state.parent_id:
-        content.append([
-            text_element("  父Agent: "),
-            code(state.parent_id),
-        ])
+        content.append(
+            [
+                text_element("  父Agent: "),
+                code(state.parent_id),
+            ]
+        )
 
     content.append(new_line())
     content.append([bold("🔹 任务")])
@@ -225,10 +255,12 @@ async def _execute_detail(
         content.append([text_element(f"  类型: {wake_type}")])
         if state.wake_condition.completed_ids:
             completed = ", ".join(state.wake_condition.completed_ids)
-            content.append([
-                text_element("  已完成: "),
-                code(completed),
-            ])
+            content.append(
+                [
+                    text_element("  已完成: "),
+                    code(completed),
+                ]
+            )
 
     content.append(new_line())
     content.append([text_element("💡 提示: /steer <state_id> <消息> 发送引导消息")])

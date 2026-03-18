@@ -166,9 +166,7 @@ class BaseChannelService(ABC):
                     else:
                         await self._deliver_message(batch.context, chunk)
                 return
-            await self._deliver_reply(
-                batch.context, "执行完成，但未产出可展示内容。"
-            )
+            await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
 
     # -- Abstract hooks (channel-specific) -----------------------------------
 
@@ -190,7 +188,9 @@ class BaseChannelService(ABC):
 
     # -- Shared helpers ------------------------------------------------------
 
-    def _split_text_into_chunks(self, text: str, max_len: int = _MAX_CHUNK_LEN) -> list[str]:
+    def _split_text_into_chunks(
+        self, text: str, max_len: int = _MAX_CHUNK_LEN
+    ) -> list[str]:
         """将长文本分块，保留完整信息而不是截断。"""
         if len(text) <= max_len:
             return [text]

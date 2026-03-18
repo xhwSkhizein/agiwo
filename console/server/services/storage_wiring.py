@@ -39,12 +39,18 @@ def _build_storage_config(
         return config_class(storage_type="memory")
     if storage_type == "mongodb":
         if mongo_builder is None:
-            raise ValueError(f"{config_class.__name__} does not support mongodb storage")
+            raise ValueError(
+                f"{config_class.__name__} does not support mongodb storage"
+            )
         return config_class(storage_type="mongodb", config=mongo_builder())
-    raise ValueError(f"{config_class.__name__} does not support storage type: {storage_type}")
+    raise ValueError(
+        f"{config_class.__name__} does not support storage type: {storage_type}"
+    )
 
 
-def build_run_step_storage_config(console_config: ConsoleConfig) -> RunStepStorageConfig:
+def build_run_step_storage_config(
+    console_config: ConsoleConfig,
+) -> RunStepStorageConfig:
     return _build_storage_config(
         RunStepStorageConfig,
         console_config.run_step_storage_type,
@@ -83,7 +89,7 @@ def build_agent_state_storage_config(
             reason="AgentStateStorageConfig does not support mongodb, falling back to memory",
         )
         storage_type = "memory"
-    
+
     return _build_storage_config(
         AgentStateStorageConfig,
         storage_type,

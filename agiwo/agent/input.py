@@ -81,9 +81,11 @@ class UserMessage:
     def from_dict(cls, data: dict[str, Any]) -> "UserMessage":
         return cls(
             content=[ContentPart.from_dict(part) for part in data.get("content") or []],
-            context=ChannelContext.from_dict(data["context"])
-            if data.get("context")
-            else None,
+            context=(
+                ChannelContext.from_dict(data["context"])
+                if data.get("context")
+                else None
+            ),
         )
 
 

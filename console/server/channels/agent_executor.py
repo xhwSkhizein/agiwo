@@ -15,7 +15,12 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 
 from agiwo.agent import Agent, UserInput
-from agiwo.agent.runtime import AgentStreamItem, RunCompletedEvent, RunFailedEvent, RunOutput
+from agiwo.agent.runtime import (
+    AgentStreamItem,
+    RunCompletedEvent,
+    RunFailedEvent,
+    RunOutput,
+)
 from agiwo.scheduler.models import AgentState, AgentStateStatus
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger

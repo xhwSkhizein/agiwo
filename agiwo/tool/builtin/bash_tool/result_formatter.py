@@ -36,12 +36,8 @@ class BashResultFormatter:
         payload = {
             "ok": result.exit_code == 0,
             "command": command,
-            "stdout": truncate_output(
-                result.stdout, self._max_output_length, "stdout"
-            ),
-            "stderr": truncate_output(
-                result.stderr, self._max_output_length, "stderr"
-            ),
+            "stdout": truncate_output(result.stdout, self._max_output_length, "stdout"),
+            "stderr": truncate_output(result.stderr, self._max_output_length, "stderr"),
             "exit_code": result.exit_code,
         }
         payload.update(extra)

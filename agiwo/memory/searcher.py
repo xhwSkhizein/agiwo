@@ -277,11 +277,11 @@ class HybridSearcher:
                     if v["vector_score"] > 0 and v["bm25_score"] > 0
                 ]
             ),
-            top_merged=sorted(
-                merged.items(), key=lambda x: x[1]["score"], reverse=True
-            )[:3]
-            if merged
-            else [],
+            top_merged=(
+                sorted(merged.items(), key=lambda x: x[1]["score"], reverse=True)[:3]
+                if merged
+                else []
+            ),
         )
 
         if self._temporal_decay_enabled:
