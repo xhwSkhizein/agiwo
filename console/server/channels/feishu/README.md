@@ -436,7 +436,7 @@ classDiagram
     }
 
     FeishuChannelStoreBackend <|.. InMemoryFeishuChannelStore
-    FeichuChannelStoreBackend <|.. SqliteFeishuChannelStore
+    FeishuChannelStoreBackend <|.. SqliteFeishuChannelStore
 ```
 
 **数据表** (SQLite):
