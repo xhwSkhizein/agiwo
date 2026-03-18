@@ -150,15 +150,21 @@ class TestSpawnAgentTool:
             agent_name="",
         )
         tool = SpawnAgentTool(control)
-        result = await tool.execute_for_agent({"task": "Task", "tool_call_id": "tc-1"}, ctx)
+        result = await tool.execute_for_agent(
+            {"task": "Task", "tool_call_id": "tc-1"}, ctx
+        )
         assert not result.result.is_success
 
     @pytest.mark.asyncio
     async def test_spawn_generates_unique_ids(self, store, control, context):
         await _register_parent(store)
         tool = SpawnAgentTool(control)
-        r1 = await tool.execute_for_agent({"task": "A", "tool_call_id": "tc-1"}, context)
-        r2 = await tool.execute_for_agent({"task": "B", "tool_call_id": "tc-2"}, context)
+        r1 = await tool.execute_for_agent(
+            {"task": "A", "tool_call_id": "tc-1"}, context
+        )
+        r2 = await tool.execute_for_agent(
+            {"task": "B", "tool_call_id": "tc-2"}, context
+        )
         assert r1.result.output["child_id"] != r2.result.output["child_id"]
 
     @pytest.mark.asyncio
@@ -182,7 +188,9 @@ class TestSpawnAgentTool:
         assert "Spawn rejected" in result.result.content
 
     @pytest.mark.asyncio
-    async def test_spawn_rejected_max_children(self, store, coordinator, runner, context):
+    async def test_spawn_rejected_max_children(
+        self, store, coordinator, runner, context
+    ):
         limits = TaskLimits(max_children_per_agent=2)
         guard = TaskGuard(limits, store)
         control = SchedulerEngine(
@@ -194,9 +202,15 @@ class TestSpawnAgentTool:
         )
         await _register_parent(store)
         tool = SpawnAgentTool(control)
-        await tool.execute_for_agent({"task": "A", "child_id": "c1", "tool_call_id": "tc-1"}, context)
-        await tool.execute_for_agent({"task": "B", "child_id": "c2", "tool_call_id": "tc-2"}, context)
-        result = await tool.execute_for_agent({"task": "C", "child_id": "c3", "tool_call_id": "tc-3"}, context)
+        await tool.execute_for_agent(
+            {"task": "A", "child_id": "c1", "tool_call_id": "tc-1"}, context
+        )
+        await tool.execute_for_agent(
+            {"task": "B", "child_id": "c2", "tool_call_id": "tc-2"}, context
+        )
+        result = await tool.execute_for_agent(
+            {"task": "C", "child_id": "c3", "tool_call_id": "tc-3"}, context
+        )
         assert not result.result.is_success
         assert "Spawn rejected" in result.result.content
 
@@ -394,7 +408,9 @@ class TestQuerySpawnedAgentTool:
         await store.save_state(state)
 
         tool = QuerySpawnedAgentTool(control)
-        result = await tool.execute_for_agent({"agent_id": "child-2", "tool_call_id": "tc-1"}, context)
+        result = await tool.execute_for_agent(
+            {"agent_id": "child-2", "tool_call_id": "tc-1"}, context
+        )
         assert result.result.is_success
         assert "Waiting 8h" in result.result.content
 
@@ -423,7 +439,9 @@ class TestCancelAgentTool:
     @pytest.mark.asyncio
     async def test_cancel_nonexistent_agent(self, control, context):
         tool = CancelAgentTool(control)
-        result = await tool.execute_for_agent({"agent_id": "ghost", "tool_call_id": "tc-1"}, context)
+        result = await tool.execute_for_agent(
+            {"agent_id": "ghost", "tool_call_id": "tc-1"}, context
+        )
         assert not result.result.is_success
         assert "not found" in result.result.content
 
@@ -438,7 +456,9 @@ class TestCancelAgentTool:
         )
         await store.save_state(other_state)
         tool = CancelAgentTool(control)
-        result = await tool.execute_for_agent({"agent_id": "other", "tool_call_id": "tc-1"}, context)
+        result = await tool.execute_for_agent(
+            {"agent_id": "other", "tool_call_id": "tc-1"}, context
+        )
         assert not result.result.is_success
         assert "Permission denied" in result.result.content
 
@@ -453,14 +473,20 @@ class TestCancelAgentTool:
         )
         await store.save_state(child)
         tool = CancelAgentTool(control)
-        result = await tool.execute_for_agent({"agent_id": "child-run", "force": False, "tool_call_id": "tc-1"}, context)
+        result = await tool.execute_for_agent(
+            {"agent_id": "child-run", "force": False, "tool_call_id": "tc-1"}, context
+        )
         # Should warn and not cancel
         assert result.result.output.get("requires_force") is True
 
     @pytest.mark.asyncio
-    async def test_cancel_running_without_force_includes_running_bash_processes(self, store, coordinator, control, context):
+    async def test_cancel_running_without_force_includes_running_bash_processes(
+        self, store, coordinator, control, context
+    ):
         class MockBashSandbox:
-            async def list_processes_by_agent(self, agent_id: str, state: str = "running"):
+            async def list_processes_by_agent(
+                self, agent_id: str, state: str = "running"
+            ):
                 if agent_id != "child-run" or state != "running":
                     return []
                 return [
@@ -514,9 +540,13 @@ class TestCancelAgentTool:
         await store.save_state(child)
         control._tree_ops.cancel_subtree = AsyncMock()  # type: ignore[method-assign]
         tool = CancelAgentTool(control)
-        result = await tool.execute_for_agent({"agent_id": "child-force", "force": True, "tool_call_id": "tc-1"}, context)
+        result = await tool.execute_for_agent(
+            {"agent_id": "child-force", "force": True, "tool_call_id": "tc-1"}, context
+        )
         assert result.result.is_success
-        control._tree_ops.cancel_subtree.assert_awaited_once_with("child-force", "Cancelled by parent agent")
+        control._tree_ops.cancel_subtree.assert_awaited_once_with(
+            "child-force", "Cancelled by parent agent"
+        )
 
     @pytest.mark.asyncio
     async def test_cancel_already_completed(self, store, control, context):
@@ -529,7 +559,9 @@ class TestCancelAgentTool:
         )
         await store.save_state(child)
         tool = CancelAgentTool(control)
-        result = await tool.execute_for_agent({"agent_id": "child-done", "tool_call_id": "tc-1"}, context)
+        result = await tool.execute_for_agent(
+            {"agent_id": "child-done", "tool_call_id": "tc-1"}, context
+        )
         assert "terminal state" in result.result.content
 
 
@@ -544,11 +576,20 @@ class TestListAgentsTool:
     @pytest.mark.asyncio
     async def test_list_children(self, store, control, context):
         c1 = AgentState(
-            id="c1", session_id="sess-1", status=AgentStateStatus.RUNNING, task="task A", parent_id="orch"
+            id="c1",
+            session_id="sess-1",
+            status=AgentStateStatus.RUNNING,
+            task="task A",
+            parent_id="orch",
         )
         c2 = AgentState(
-            id="c2", session_id="sess-1", status=AgentStateStatus.WAITING, task="task B", parent_id="orch",
-            explain="Sleeping until morning", result_summary="partial result"
+            id="c2",
+            session_id="sess-1",
+            status=AgentStateStatus.WAITING,
+            task="task B",
+            parent_id="orch",
+            explain="Sleeping until morning",
+            result_summary="partial result",
         )
         await store.save_state(c1)
         await store.save_state(c2)

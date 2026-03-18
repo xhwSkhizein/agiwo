@@ -37,7 +37,10 @@ def serialize_user_input(user_input: UserInput) -> str:
         return user_input
     if isinstance(user_input, list):
         return json.dumps(
-            {"__type": "content_parts", "parts": [part.to_dict() for part in user_input]}
+            {
+                "__type": "content_parts",
+                "parts": [part.to_dict() for part in user_input],
+            }
         )
     return json.dumps(user_input.to_dict())
 
@@ -96,7 +99,9 @@ def _render_local_resource(part: ContentPart) -> str:
     name = (part.metadata or {}).get("name", "")
     size = (part.metadata or {}).get("size", 0)
     mime_type = part.mime_type or ""
-    meta_parts = [value for value in [mime_type, _format_file_size(size) if size else ""] if value]
+    meta_parts = [
+        value for value in [mime_type, _format_file_size(size) if size else ""] if value
+    ]
     meta_str = f" ({', '.join(meta_parts)})" if meta_parts else ""
     type_labels = {
         ContentType.IMAGE: "图片",

@@ -7,7 +7,11 @@ from datetime import datetime
 from typing import Any
 
 from agiwo.agent.input import ChannelContext, MessageContent, UserInput, UserMessage
-from agiwo.agent.input_codec import extract_text, normalize_to_message, to_message_content
+from agiwo.agent.input_codec import (
+    extract_text,
+    normalize_to_message,
+    to_message_content,
+)
 from agiwo.agent.runtime.core import AgentContext, MessageRole
 from agiwo.utils.serialization import serialize_optional_datetime
 
@@ -130,7 +134,9 @@ class StepRecord:
     ) -> "StepRecord":
         context_attrs = _build_step_context_attrs(ctx, overrides)
         if user_input is not None:
-            derived_content = to_message_content(normalize_to_message(user_input).content)
+            derived_content = to_message_content(
+                normalize_to_message(user_input).content
+            )
             return cls(
                 sequence=sequence,
                 role=MessageRole.USER,

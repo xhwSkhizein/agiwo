@@ -12,7 +12,9 @@ from agiwo.agent.runtime import StepRecord, steps_to_messages
 def _render_channel_context(ctx: ChannelContext) -> str:
     lines = [f"source: {ctx.source}"]
     for key, value in ctx.metadata.items():
-        if key in ("recent_dm_messages", "recent_group_messages") and isinstance(value, list):
+        if key in ("recent_dm_messages", "recent_group_messages") and isinstance(
+            value, list
+        ):
             if value:
                 lines.append(f"{key}:")
                 for msg in value:
@@ -111,7 +113,9 @@ class MessageAssembler:
         SIMILARITY_THRESHOLD = 0.8
 
         existing_texts: list[str] = [
-            msg.get("content", "") for msg in messages[:-1] if isinstance(msg.get("content"), str)
+            msg.get("content", "")
+            for msg in messages[:-1]
+            if isinstance(msg.get("content"), str)
         ]
 
         def _is_similar_to_history(content: str) -> bool:

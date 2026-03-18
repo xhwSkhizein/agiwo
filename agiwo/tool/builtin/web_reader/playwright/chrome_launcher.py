@@ -187,7 +187,7 @@ class ChromeLauncher:
             self.browser_process = process
             return process
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"[BrowserLauncher] Failed to launch browser: {e}")
             raise
 

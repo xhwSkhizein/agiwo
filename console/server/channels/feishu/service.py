@@ -25,7 +25,10 @@ from server.channels.feishu.connection import FeishuConnection
 from server.channels.feishu.delivery_service import FeishuDeliveryService
 from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
 from server.channels.feishu.inbound_handler import FeishuInboundHandler
-from server.channels.feishu.message_builder import FeishuAttachmentResolver, FeishuUserMessageBuilder
+from server.channels.feishu.message_builder import (
+    FeishuAttachmentResolver,
+    FeishuUserMessageBuilder,
+)
 from server.channels.feishu.message_parser import (
     FeishuInboundEnvelope,
     FeishuMessageParser,

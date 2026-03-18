@@ -16,21 +16,132 @@ from agiwo.utils.logging import get_logger
 logger = get_logger(__name__)
 
 STOP_WORDS_ZH = {
-    "的", "了", "是", "在", "和", "与", "或", "也", "都", "很", "就", "不",
-    "有", "这", "那", "我", "你", "他", "她", "它", "们", "个", "为", "以",
-    "及", "等", "被", "把", "让", "给", "从", "到", "对", "于", "而", "但",
+    "的",
+    "了",
+    "是",
+    "在",
+    "和",
+    "与",
+    "或",
+    "也",
+    "都",
+    "很",
+    "就",
+    "不",
+    "有",
+    "这",
+    "那",
+    "我",
+    "你",
+    "他",
+    "她",
+    "它",
+    "们",
+    "个",
+    "为",
+    "以",
+    "及",
+    "等",
+    "被",
+    "把",
+    "让",
+    "给",
+    "从",
+    "到",
+    "对",
+    "于",
+    "而",
+    "但",
 }
 STOP_WORDS_EN = {
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "must", "shall", "can", "need", "dare",
-    "in", "on", "at", "to", "for", "of", "with", "by", "from", "up",
-    "about", "into", "over", "after", "and", "or", "but", "if", "then",
-    "this", "that", "these", "those", "it", "its", "i", "you", "he",
-    "she", "we", "they", "what", "which", "who", "whom", "how", "when",
-    "where", "why", "all", "each", "every", "both", "few", "more", "most",
-    "other", "some", "such", "no", "nor", "not", "only", "own", "same",
-    "so", "than", "too", "very", "just", "as",
+    "the",
+    "a",
+    "an",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "must",
+    "shall",
+    "can",
+    "need",
+    "dare",
+    "in",
+    "on",
+    "at",
+    "to",
+    "for",
+    "of",
+    "with",
+    "by",
+    "from",
+    "up",
+    "about",
+    "into",
+    "over",
+    "after",
+    "and",
+    "or",
+    "but",
+    "if",
+    "then",
+    "this",
+    "that",
+    "these",
+    "those",
+    "it",
+    "its",
+    "i",
+    "you",
+    "he",
+    "she",
+    "we",
+    "they",
+    "what",
+    "which",
+    "who",
+    "whom",
+    "how",
+    "when",
+    "where",
+    "why",
+    "all",
+    "each",
+    "every",
+    "both",
+    "few",
+    "more",
+    "most",
+    "other",
+    "some",
+    "such",
+    "no",
+    "nor",
+    "not",
+    "only",
+    "own",
+    "same",
+    "so",
+    "than",
+    "too",
+    "very",
+    "just",
+    "as",
 }
 STOP_WORDS = STOP_WORDS_ZH | STOP_WORDS_EN
 
@@ -71,7 +182,9 @@ class HybridSearcher:
         self._vec_available = vec_available
         self._top_k = top_k if top_k is not None else settings.memory_top_k
         self._vector_weight = (
-            vector_weight if vector_weight is not None else settings.memory_vector_weight
+            vector_weight
+            if vector_weight is not None
+            else settings.memory_vector_weight
         )
         self._bm25_weight = (
             bm25_weight if bm25_weight is not None else settings.memory_bm25_weight
@@ -98,7 +211,9 @@ class HybridSearcher:
         top_k = top_k or self._top_k
         fetch_limit = top_k * 5
 
-        logger.info("hybrid_search_start", query=query, top_k=top_k, fetch_limit=fetch_limit)
+        logger.info(
+            "hybrid_search_start", query=query, top_k=top_k, fetch_limit=fetch_limit
+        )
         logger.debug(
             "search_config",
             vector_weight=self._vector_weight,
@@ -124,7 +239,9 @@ class HybridSearcher:
             logger.warning("vector_search_skipped", reason="no_embedder")
 
         bm25_start = datetime.now()
-        bm25_results = self._bm25_search(query, fetch_limit, use_expansion=not self._embedder)
+        bm25_results = self._bm25_search(
+            query, fetch_limit, use_expansion=not self._embedder
+        )
         bm25_duration_ms = (datetime.now() - bm25_start).total_seconds() * 1000
         logger.info(
             "bm25_search_complete",
@@ -140,15 +257,29 @@ class HybridSearcher:
             query=query,
             merged_count=len(merged),
             vector_only=len(
-                [k for k, v in merged.items() if v["vector_score"] > 0 and v["bm25_score"] == 0]
+                [
+                    k
+                    for k, v in merged.items()
+                    if v["vector_score"] > 0 and v["bm25_score"] == 0
+                ]
             ),
             bm25_only=len(
-                [k for k, v in merged.items() if v["bm25_score"] > 0 and v["vector_score"] == 0]
+                [
+                    k
+                    for k, v in merged.items()
+                    if v["bm25_score"] > 0 and v["vector_score"] == 0
+                ]
             ),
             both=len(
-                [k for k, v in merged.items() if v["vector_score"] > 0 and v["bm25_score"] > 0]
+                [
+                    k
+                    for k, v in merged.items()
+                    if v["vector_score"] > 0 and v["bm25_score"] > 0
+                ]
             ),
-            top_merged=sorted(merged.items(), key=lambda x: x[1]["score"], reverse=True)[:3]
+            top_merged=sorted(
+                merged.items(), key=lambda x: x[1]["score"], reverse=True
+            )[:3]
             if merged
             else [],
         )
@@ -157,7 +288,9 @@ class HybridSearcher:
             merged = self._apply_temporal_decay(merged)
             logger.debug("temporal_decay_applied")
 
-        sorted_results = sorted(merged.items(), key=lambda x: x[1]["score"], reverse=True)
+        sorted_results = sorted(
+            merged.items(), key=lambda x: x[1]["score"], reverse=True
+        )
         sorted_results = sorted_results[: top_k * 2]
 
         results = self._build_results(sorted_results)
@@ -327,8 +460,7 @@ class HybridSearcher:
                 "vector_score": vector_score,
                 "bm25_score": bm25_score,
                 "score": (
-                    self._vector_weight * vector_score
-                    + self._bm25_weight * bm25_score
+                    self._vector_weight * vector_score + self._bm25_weight * bm25_score
                 ),
             }
 

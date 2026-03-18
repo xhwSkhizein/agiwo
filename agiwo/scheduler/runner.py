@@ -419,13 +419,17 @@ class SchedulerRunner:
             target,
             task=user_input,
             pending_input=None,
-            wake_condition=None if spec.clear_wake_condition or state.is_waiting() or state.is_queued_root() else ...,
+            wake_condition=None
+            if spec.clear_wake_condition or state.is_waiting() or state.is_queued_root()
+            else ...,
             wake_count=wake_count,
         )
 
     async def _load_pending_input(self, state: AgentState) -> UserInput:
         refreshed = await self._store.get_state(state.id)
-        pending_input = refreshed.pending_input if refreshed is not None else state.pending_input
+        pending_input = (
+            refreshed.pending_input if refreshed is not None else state.pending_input
+        )
         if pending_input is None:
             raise RuntimeError(f"Queued input for state '{state.id}' is missing")
         return pending_input
@@ -476,7 +480,9 @@ class SchedulerRunner:
                     timeout_at=original_wc.timeout_at,
                 )
                 refreshed_for_wait = await self._store.get_state(state.id)
-                target_for_wait = refreshed_for_wait if refreshed_for_wait is not None else state
+                target_for_wait = (
+                    refreshed_for_wait if refreshed_for_wait is not None else state
+                )
                 await self._state_ops.mark_waiting(
                     target_for_wait,
                     wake_condition=new_wc,
@@ -491,7 +497,9 @@ class SchedulerRunner:
 
         if is_persistent:
             refreshed_for_idle = await self._store.get_state(state.id)
-            target_for_idle = refreshed_for_idle if refreshed_for_idle is not None else state
+            target_for_idle = (
+                refreshed_for_idle if refreshed_for_idle is not None else state
+            )
             await self._state_ops.mark_idle(
                 target_for_idle,
                 result_summary=text,
@@ -499,7 +507,9 @@ class SchedulerRunner:
             return
 
         refreshed_for_complete = await self._store.get_state(state.id)
-        target_for_complete = refreshed_for_complete if refreshed_for_complete is not None else state
+        target_for_complete = (
+            refreshed_for_complete if refreshed_for_complete is not None else state
+        )
         await self._state_ops.mark_completed(
             target_for_complete,
             result_summary=text,

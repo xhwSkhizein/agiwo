@@ -67,7 +67,9 @@ class TestCommandSafetyValidator:
             )
         )
 
-        decision = await validator.validate("python -m pytest tests/tool/test_bash_tool.py")
+        decision = await validator.validate(
+            "python -m pytest tests/tool/test_bash_tool.py"
+        )
 
         assert decision.allowed is True
         assert decision.stage == "allowlist"

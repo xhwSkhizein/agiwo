@@ -5,7 +5,12 @@ In-memory trace storage implementation.
 from collections import deque
 from typing import Any
 
-from agiwo.observability.base import BaseTraceStorage, TraceQuery, _coerce_query, _matches_query
+from agiwo.observability.base import (
+    BaseTraceStorage,
+    TraceQuery,
+    _coerce_query,
+    _matches_query,
+)
 from agiwo.observability.trace import Trace
 
 
@@ -34,9 +39,7 @@ class InMemoryTraceStorage(BaseTraceStorage):
     ) -> list[Trace]:
         coerced = _coerce_query(query)
         results = [
-            trace
-            for trace in reversed(self._traces)
-            if _matches_query(trace, coerced)
+            trace for trace in reversed(self._traces) if _matches_query(trace, coerced)
         ]
         start = coerced.offset
         end = start + coerced.limit

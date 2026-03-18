@@ -11,7 +11,9 @@ from agiwo.tool.builtin.bash_tool.tool import BashTool, BashToolConfig
 def ensure_bash_tool_pair(tools: list[BaseTool]) -> list[BaseTool]:
     """Ensure bash execution and bash process management tools share one sandbox."""
     resolved_tools = list(tools)
-    bash_tool = next((tool for tool in resolved_tools if tool.get_name() == "bash"), None)
+    bash_tool = next(
+        (tool for tool in resolved_tools if tool.get_name() == "bash"), None
+    )
     bash_process_tool = next(
         (tool for tool in resolved_tools if tool.get_name() == "bash_process"),
         None,

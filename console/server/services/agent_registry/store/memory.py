@@ -27,7 +27,7 @@ class InMemoryAgentRegistryStore:
             key=_record_sort_key,
             reverse=True,
         )
-        return records[offset:offset + limit]
+        return records[offset : offset + limit]
 
     async def get_agent(self, agent_id: str) -> AgentConfigRecord | None:
         return self._records.get(agent_id)

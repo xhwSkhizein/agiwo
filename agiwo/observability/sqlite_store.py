@@ -150,7 +150,6 @@ class SQLiteTraceStorage(BaseTraceStorage):
                 error=str(e),
             )
 
-
     async def get_trace(self, trace_id: str) -> Trace | None:
         if self._connection is None:
             await self.initialize()

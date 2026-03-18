@@ -140,6 +140,7 @@ class TraceListItem(BaseModel):
 
 # ── Agent Config ────────────────────────────────────────────────────────
 
+
 class AgentConfigPayload(BaseModel):
     name: str
     description: str = ""

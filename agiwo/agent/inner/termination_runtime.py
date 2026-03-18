@@ -119,8 +119,7 @@ class ExecutionTerminationRuntime:
             return
 
         prompt_template = (
-            self._options.termination_summary_prompt
-            or DEFAULT_TERMINATION_USER_PROMPT
+            self._options.termination_summary_prompt or DEFAULT_TERMINATION_USER_PROMPT
         )
         termination_reason_str = _format_termination_reason(state.termination_reason)
         user_prompt = (

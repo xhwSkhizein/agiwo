@@ -204,10 +204,12 @@ class TestSQLiteUserInputStorage:
 
             with sqlite3.connect(db_path) as conn:
                 columns = {
-                    row[1] for row in conn.execute("PRAGMA table_info(steps)").fetchall()
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(steps)").fetchall()
                 }
             assert "user_input" in columns
             assert "content_for_user" in columns
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -54,8 +54,14 @@ class AgentExecutor:
 
         status = current_state.status if current_state is not None else None
 
-        if status in (AgentStateStatus.RUNNING, AgentStateStatus.WAITING, AgentStateStatus.QUEUED):
-            await self._steer(session, user_input, urgent=status == AgentStateStatus.WAITING)
+        if status in (
+            AgentStateStatus.RUNNING,
+            AgentStateStatus.WAITING,
+            AgentStateStatus.QUEUED,
+        ):
+            await self._steer(
+                session, user_input, urgent=status == AgentStateStatus.WAITING
+            )
             return
 
         if status == AgentStateStatus.PENDING:
@@ -202,8 +208,5 @@ def _extract_text(item: AgentStreamItem) -> str | None:
     if isinstance(item, RunFailedEvent):
         if item.depth == 0:
             return item.error
-        return (
-            f"<notice>agent_id={item.agent_id}, status=failed</notice>\n"
-            f"{item.error}"
-        )
+        return f"<notice>agent_id={item.agent_id}, status=failed</notice>\n{item.error}"
     return None

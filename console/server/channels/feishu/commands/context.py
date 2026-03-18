@@ -12,7 +12,11 @@ from agiwo.llm.limits import (
 )
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
+from server.channels.feishu.commands.base import (
+    CommandContext,
+    CommandResult,
+    CommandSpec,
+)
 from server.channels.feishu.commands.status_text import format_scheduler_status
 from server.channels.session.models import Session
 from server.channels.runtime_agent_pool import RuntimeAgentPool

@@ -143,7 +143,9 @@ POTENTIAL_RISK_RULES: list[SecurityRule] = [
     ),
     SecurityRule(
         description="Writing directly into system directories",
-        pattern=re.compile(r"(?:>|>>)\s*/(?:etc|boot|usr|bin|sbin|root)\b", re.IGNORECASE),
+        pattern=re.compile(
+            r"(?:>|>>)\s*/(?:etc|boot|usr|bin|sbin|root)\b", re.IGNORECASE
+        ),
     ),
     SecurityRule(
         description="Dangerous recursive permission change",
@@ -194,7 +196,10 @@ class CommandSafetyValidator:
         self.policy = policy or CommandSafetyPolicy()
         self._safe_commands = {
             item.strip()
-            for item in (*DEFAULT_SAFE_COMMAND_ALLOWLIST, *self.policy.safe_command_allowlist)
+            for item in (
+                *DEFAULT_SAFE_COMMAND_ALLOWLIST,
+                *self.policy.safe_command_allowlist,
+            )
             if item.strip()
         }
         self._safe_command_patterns = tuple(
@@ -253,7 +258,9 @@ class CommandSafetyValidator:
                 matched_rules=matched_descriptions,
             )
 
-        request = CommandRiskEvaluationRequest(command=command, matched_rules=matched_descriptions)
+        request = CommandRiskEvaluationRequest(
+            command=command, matched_rules=matched_descriptions
+        )
         raw_evaluation = self.risk_evaluator(request)
         if inspect.isawaitable(raw_evaluation):
             raw_evaluation = await raw_evaluation
@@ -347,7 +354,9 @@ class CommandSafetyValidator:
         if isinstance(raw, CommandRiskEvaluation):
             return raw
 
-        risk_level = CommandSafetyValidator._normalize_risk_level(raw.get("risk_level") or raw.get("level"))
+        risk_level = CommandSafetyValidator._normalize_risk_level(
+            raw.get("risk_level") or raw.get("level")
+        )
         summary_raw = raw.get("summary") or raw.get("reason") or "No summary provided"
         summary = str(summary_raw)
 
@@ -360,7 +369,9 @@ class CommandSafetyValidator:
             possible_risks = []
 
         recommended_raw = raw.get("recommended_action")
-        recommended_action = str(recommended_raw) if recommended_raw is not None else None
+        recommended_action = (
+            str(recommended_raw) if recommended_raw is not None else None
+        )
 
         return CommandRiskEvaluation(
             risk_level=risk_level,

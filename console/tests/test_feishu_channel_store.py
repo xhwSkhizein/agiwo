@@ -137,7 +137,10 @@ async def test_feishu_channel_store_applies_session_mutation_atomically(
             await store.get_chat_context(mutation.chat_context.scope_id)
             == mutation.chat_context
         )
-        assert await store.get_session(mutation.current_session.id) == mutation.current_session
+        assert (
+            await store.get_session(mutation.current_session.id)
+            == mutation.current_session
+        )
     finally:
         await store.close()
 
@@ -191,7 +194,9 @@ async def test_feishu_channel_store_keeps_indexes_in_sync_on_upsert(
 
         moved_session = await store.get_session("sess-1")
         old_context_sessions = await store.list_sessions_by_chat_context(context_v2.id)
-        new_context_sessions = await store.list_sessions_by_chat_context(other_context.id)
+        new_context_sessions = await store.list_sessions_by_chat_context(
+            other_context.id
+        )
 
         assert moved_session == session_v2
         assert old_context_sessions == []
@@ -230,7 +235,9 @@ async def test_sqlite_feishu_channel_store_persists_across_reconnects(
     await second_store.connect()
     try:
         assert await second_store.claim_event("feishu-main", "event-1") is False
-        assert await second_store.get_chat_context(chat_context.scope_id) == chat_context
+        assert (
+            await second_store.get_chat_context(chat_context.scope_id) == chat_context
+        )
         assert await second_store.get_session_with_context(session.id) is not None
     finally:
         await second_store.close()

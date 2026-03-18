@@ -64,7 +64,9 @@ async def list_agent_states(
         try:
             status_enum = AgentStateStatus(status)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {status}") from exc
+            raise HTTPException(
+                status_code=400, detail=f"Invalid status: {status}"
+            ) from exc
     states = await storage.list_states(
         statuses=(status_enum,) if status_enum is not None else None,
         limit=limit,
@@ -157,7 +159,9 @@ async def steer_agent(
     """Send a steering message to an agent (root only)."""
     ok = await scheduler.steer(state_id, body.message, urgent=body.urgent)
     if not ok:
-        raise HTTPException(status_code=404, detail="Agent not found or steering unavailable")
+        raise HTTPException(
+            status_code=404, detail="Agent not found or steering unavailable"
+        )
     return {"ok": True}
 
 
@@ -199,7 +203,9 @@ async def resume_agent(
     return {"ok": True}
 
 
-@router.get("/states/{state_id}/pending-events", response_model=list[PendingEventResponse])
+@router.get(
+    "/states/{state_id}/pending-events", response_model=list[PendingEventResponse]
+)
 async def list_pending_events(
     state_id: str,
     scheduler: SchedulerDep,
@@ -229,7 +235,9 @@ async def create_persistent_agent(
 
     config = await runtime.agent_registry.get_agent(config_id)
     if config is None:
-        raise HTTPException(status_code=404, detail=f"Agent config '{config_id}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Agent config '{config_id}' not found"
+        )
 
     agent = await build_agent(config, runtime.config, runtime.agent_registry)
     state_id = await scheduler.submit(

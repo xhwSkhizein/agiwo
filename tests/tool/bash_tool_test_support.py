@@ -55,13 +55,17 @@ class MockSandbox:
         )
 
         if command.startswith("echo "):
-            output = command[5:].strip().strip('"\'')
+            output = command[5:].strip().strip("\"'")
             return CommandResult(exit_code=0, stdout=output + "\n", stderr="")
         if command.startswith("exit "):
             code = int(command[5:])
-            return CommandResult(exit_code=code, stdout="", stderr=f"error: exit {code}")
+            return CommandResult(
+                exit_code=code, stdout="", stderr=f"error: exit {code}"
+            )
         if "tail -n" in command or "grep" in command:
-            return CommandResult(exit_code=0, stdout="log line 1\nlog line 2\n", stderr="")
+            return CommandResult(
+                exit_code=0, stdout="log line 1\nlog line 2\n", stderr=""
+            )
         return CommandResult(exit_code=0, stdout="success\n", stderr="")
 
     async def start_process(

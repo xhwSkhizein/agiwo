@@ -125,7 +125,9 @@ class WakeMessageBuilder:
             elif child.status == AgentStateStatus.FAILED:
                 failed[child_id] = child.result_summary or "Unknown failure"
             else:
-                succeeded[child_id] = child.result_summary or f"status={child.status.value}"
+                succeeded[child_id] = (
+                    child.result_summary or f"status={child.status.value}"
+                )
         return succeeded, failed
 
 

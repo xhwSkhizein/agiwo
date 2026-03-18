@@ -7,7 +7,12 @@ from agiwo.agent.inner.session_runtime import AgentSessionRuntime
 from agiwo.agent.tool_auth import ConsentWaiter, ToolAuthorizationRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.storage.session import InMemorySessionStorage
-from agiwo.tool.authz import ConsentDecision, InMemoryConsentStore, PermissionPolicy, ToolPermissionProfile
+from agiwo.tool.authz import (
+    ConsentDecision,
+    InMemoryConsentStore,
+    PermissionPolicy,
+    ToolPermissionProfile,
+)
 
 
 class RecordingNotifier:

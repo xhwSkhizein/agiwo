@@ -43,11 +43,7 @@ class TaskGuard:
             session_id=parent_state.session_id,
             limit=1000,
         )
-        active_children = [
-            c
-            for c in children
-            if c.status in ACTIVE_AGENT_STATUSES
-        ]
+        active_children = [c for c in children if c.status in ACTIVE_AGENT_STATUSES]
         if len(active_children) >= self._limits.max_children_per_agent:
             reason = (
                 f"Max children per agent ({self._limits.max_children_per_agent}) reached. "

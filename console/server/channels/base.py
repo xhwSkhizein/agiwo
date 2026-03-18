@@ -123,9 +123,7 @@ class BaseChannelService(ABC):
                 await self._deliver_message(batch.context, text)
 
         if is_first_output:
-            await self._deliver_reply(
-                batch.context, "执行完成，但未产出可展示内容。"
-            )
+            await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
 
     # -- Abstract hooks (channel-specific) -----------------------------------
 

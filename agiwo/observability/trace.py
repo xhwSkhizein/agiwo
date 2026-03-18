@@ -215,10 +215,18 @@ class Trace(BaseModel):
             if span.metrics:
                 self.total_tokens += int(span.metrics.get("tokens.total", 0) or 0)
                 self.total_input_tokens += int(span.metrics.get("tokens.input", 0) or 0)
-                self.total_output_tokens += int(span.metrics.get("tokens.output", 0) or 0)
-                self.total_cache_read_tokens += int(span.metrics.get("tokens.cache_read", 0) or 0)
-                self.total_cache_creation_tokens += int(span.metrics.get("tokens.cache_creation", 0) or 0)
-                self.total_token_cost += float(span.metrics.get("token_cost", 0.0) or 0.0)
+                self.total_output_tokens += int(
+                    span.metrics.get("tokens.output", 0) or 0
+                )
+                self.total_cache_read_tokens += int(
+                    span.metrics.get("tokens.cache_read", 0) or 0
+                )
+                self.total_cache_creation_tokens += int(
+                    span.metrics.get("tokens.cache_creation", 0) or 0
+                )
+                self.total_token_cost += float(
+                    span.metrics.get("token_cost", 0.0) or 0.0
+                )
         elif span.kind == SpanKind.TOOL_CALL:
             self.total_tool_calls += 1
 

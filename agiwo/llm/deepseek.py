@@ -10,53 +10,52 @@ from agiwo.llm.openai import OpenAIModel
 
 # DSML function_calls pattern
 DSML_FUNCTION_CALLS_PATTERN = re.compile(
-    r'<｜DSML｜function_calls>\s*'
-    r'(<｜DSML｜invoke[^>]*>.*?</｜DSML｜invoke>)\s*'
-    r'</｜DSML｜function_calls>',
-    re.DOTALL
+    r"<｜DSML｜function_calls>\s*"
+    r"(<｜DSML｜invoke[^>]*>.*?</｜DSML｜invoke>)\s*"
+    r"</｜DSML｜function_calls>",
+    re.DOTALL,
 )
 
 DSML_INVOKE_PATTERN = re.compile(
     r'<｜DSML｜invoke\s+name="([^"]+)">'
-    r'(.*?)</｜DSML｜invoke>',
-    re.DOTALL
+    r"(.*?)</｜DSML｜invoke>",
+    re.DOTALL,
 )
 
 DSML_PARAMETER_PATTERN = re.compile(
-    r'<｜DSML｜parameter\s+name="([^"]+)"\s+[^>]*>(.*?)</｜DSML｜parameter>',
-    re.DOTALL
+    r'<｜DSML｜parameter\s+name="([^"]+)"\s+[^>]*>(.*?)</｜DSML｜parameter>', re.DOTALL
 )
 
 
 def parse_dsml_function_calls(content: str) -> list[dict] | None:
     """
     Parse DSML function_calls format from content.
-    
+
     Example input:
         <｜DSML｜function_calls>
         <｜DSML｜invoke name="bash">
         <｜DSML｜parameter name="command" string="true">ls -la</｜DSML｜parameter>
         </｜DSML｜invoke>
         </｜DSML｜function_calls>
-    
+
     Returns list of tool_calls in OpenAI format, or None if no DSML found.
     """
-    if '<｜DSML｜function_calls>' not in content:
+    if "<｜DSML｜function_calls>" not in content:
         return None
-    
+
     match = DSML_FUNCTION_CALLS_PATTERN.search(content)
     if not match:
         return None
-    
+
     tool_calls = []
     invoke_blocks = DSML_INVOKE_PATTERN.findall(match.group(0))
-    
+
     for idx, (func_name, invoke_content) in enumerate(invoke_blocks):
         # Parse parameters
         arguments: dict[str, str] = {}
         for param_name, param_value in DSML_PARAMETER_PATTERN.findall(invoke_content):
             arguments[param_name] = param_value.strip()
-        
+
         tool_call = {
             "index": idx,
             "id": f"call_{uuid.uuid4().hex[:24]}",
@@ -67,7 +66,7 @@ def parse_dsml_function_calls(content: str) -> list[dict] | None:
             },
         }
         tool_calls.append(tool_call)
-    
+
     return tool_calls if tool_calls else None
 
 
@@ -97,11 +96,7 @@ class DeepseekModel(OpenAIModel):
         return None
 
     def _resolve_base_url(self) -> str | None:
-        return (
-            self.base_url
-            or settings.deepseek_base_url
-            or "https://api.deepseek.com"
-        )
+        return self.base_url or settings.deepseek_base_url or "https://api.deepseek.com"
 
     def _preprocess_messages_for_thinking_mode(
         self, messages: list[dict]
@@ -124,9 +119,7 @@ class DeepseekModel(OpenAIModel):
 
         # Check if this is a thinking mode model
         model_name = getattr(self, "model_name", None) or self.name
-        is_thinking_mode = (
-            "reasoner" in model_name.lower()
-        )
+        is_thinking_mode = "reasoner" in model_name.lower()
 
         # Check if last message is a user message (new conversation turn)
         last_message = messages[-1]

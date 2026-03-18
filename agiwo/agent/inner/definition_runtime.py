@@ -73,7 +73,9 @@ def _build_sdk_tools(
     if skill_manager is not None:
         skill_tool = skill_manager.get_skill_tool()
         sdk_tools.append(skill_tool)
-        logger.debug("skill_tool_added", agent_id=agent_id, tool_name=skill_tool.get_name())
+        logger.debug(
+            "skill_tool_added", agent_id=agent_id, tool_name=skill_tool.get_name()
+        )
     return sdk_tools
 
 
@@ -270,8 +272,7 @@ class AgentDefinitionRuntime:
         if not instruction:
             return base_prompt
         return (
-            f"{base_prompt}\n\n"
-            f"<task-instruction>\n{instruction}\n</task-instruction>"
+            f"{base_prompt}\n\n<task-instruction>\n{instruction}\n</task-instruction>"
         )
 
     def _refresh_prompt_runtime(self) -> None:

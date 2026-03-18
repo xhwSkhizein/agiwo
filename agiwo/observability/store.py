@@ -98,7 +98,6 @@ class MongoTraceStorage(BaseTraceStorage):
                     error=str(e),
                 )
 
-
     async def get_trace(self, trace_id: str) -> Trace | None:
         if self._collection is not None:
             try:

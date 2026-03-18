@@ -1,14 +1,13 @@
 """Tests for embedding module."""
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from agiwo.embedding import (
     EmbeddingError,
     EmbeddingFactory,
-    EmbeddingModel,
     LocalEmbedding,
     OpenAIEmbedding,
 )
@@ -18,10 +17,13 @@ class TestOpenAIEmbedding:
     """Tests for OpenAIEmbedding."""
 
     def test_init_with_env_vars(self):
-        with patch.dict(os.environ, {
-            "OPENAI_API_KEY": "test-key",
-            "OPENAI_BASE_URL": "https://test.api.com/v1",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-key",
+                "OPENAI_BASE_URL": "https://test.api.com/v1",
+            },
+        ):
             model = OpenAIEmbedding()
             assert model.api_key == "test-key"
             assert model.base_url == "https://test.api.com/v1"
@@ -59,10 +61,7 @@ class TestOpenAIEmbedding:
     @pytest.mark.asyncio
     async def test_embed_single(self):
         model = OpenAIEmbedding(api_key="key")
-        mock_response = {
-            "data": [{"index": 0, "embedding": [0.1, 0.2, 0.3]}]
-        }
-        
+
         with patch.object(model, "_embed_batch", new_callable=AsyncMock) as mock:
             mock.return_value = [[0.1, 0.2, 0.3]]
             result = await model.embed_single("test")
@@ -73,9 +72,9 @@ class TestLocalEmbedding:
     """Tests for LocalEmbedding."""
 
     def test_init_with_env_var(self):
-        with patch.dict(os.environ, {
-            "AGIWO_LOCAL_EMBEDDING_MODEL_PATH": "/path/to/model.gguf"
-        }):
+        with patch.dict(
+            os.environ, {"AGIWO_LOCAL_EMBEDDING_MODEL_PATH": "/path/to/model.gguf"}
+        ):
             model = LocalEmbedding()
             assert model.model_path == "/path/to/model.gguf"
 
@@ -166,9 +165,13 @@ class TestEmbeddingFactory:
                 EmbeddingFactory.create(provider="local")
 
     def test_create_auto_with_openai_key(self):
-        with patch.dict(os.environ, {
-            "OPENAI_API_KEY": "test-key",
-        }, clear=True):
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-key",
+            },
+            clear=True,
+        ):
             os.environ.pop("AGIWO_LOCAL_EMBEDDING_MODEL_PATH", None)
             result = EmbeddingFactory.create(provider="auto")
             assert isinstance(result, OpenAIEmbedding)

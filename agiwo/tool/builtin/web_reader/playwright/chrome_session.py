@@ -68,7 +68,9 @@ class ChromeSessionManager:
                         "Please ensure Chrome is started with remote debugging: "
                         f"chrome --remote-debugging-port={self.cdp_browser.debug_port}"
                     )
-                raise SessionInvalidException(f"Failed to connect to Chrome: {e}") from e
+                raise SessionInvalidException(
+                    f"Failed to connect to Chrome: {e}"
+                ) from e
 
     async def launch_browser(
         self,

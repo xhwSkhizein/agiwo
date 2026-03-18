@@ -7,14 +7,14 @@ from agiwo.llm.deepseek import DeepseekModel, parse_dsml_function_calls
 
 def test_parse_dsml_function_calls_single_tool():
     """Test parsing DSML function_calls format with single tool."""
-    content = '''<｜DSML｜function_calls>
+    content = """<｜DSML｜function_calls>
 <｜DSML｜invoke name="bash">
 <｜DSML｜parameter name="command" string="true">ls -la /Users/hongv/workspace/</｜DSML｜parameter>
 </｜DSML｜invoke>
-</｜DSML｜function_calls>'''
-    
+</｜DSML｜function_calls>"""
+
     result = parse_dsml_function_calls(content)
-    
+
     assert result is not None
     assert len(result) == 1
     assert result[0]["index"] == 0
@@ -27,17 +27,17 @@ def test_parse_dsml_function_calls_single_tool():
 
 def test_parse_dsml_function_calls_multiple_tools():
     """Test parsing DSML function_calls format with multiple tools."""
-    content = '''<｜DSML｜function_calls>
+    content = """<｜DSML｜function_calls>
 <｜DSML｜invoke name="bash">
 <｜DSML｜parameter name="command" string="true">ls -la</｜DSML｜parameter>
 </｜DSML｜invoke>
 <｜DSML｜invoke name="current_time">
 <｜DSML｜parameter name="timezone" string="true">UTC</｜DSML｜parameter>
 </｜DSML｜invoke>
-</｜DSML｜function_calls>'''
-    
+</｜DSML｜function_calls>"""
+
     result = parse_dsml_function_calls(content)
-    
+
     assert result is not None
     assert len(result) == 2
     assert result[0]["function"]["name"] == "bash"
@@ -51,22 +51,24 @@ def test_parse_dsml_function_calls_multiple_tools():
 def test_parse_dsml_function_calls_no_dsml():
     """Test parsing content without DSML format returns None."""
     content = "This is just a regular response without any function calls."
-    
+
     result = parse_dsml_function_calls(content)
-    
+
     assert result is None
 
 
 def test_parse_dsml_function_calls_empty():
     """Test parsing empty content returns None."""
     result = parse_dsml_function_calls("")
-    
+
     assert result is None
 
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.deepseek.settings")
-async def test_deepseek_model_arun_stream_with_dsml_function_calls(mock_settings, mock_openai_client):
+async def test_deepseek_model_arun_stream_with_dsml_function_calls(
+    mock_settings, mock_openai_client
+):
     """Test that DSML function_calls in content are parsed into tool_calls."""
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
@@ -81,11 +83,11 @@ async def test_deepseek_model_arun_stream_with_dsml_function_calls(mock_settings
     )
     model.client = mock_openai_client
 
-    dsml_content = '''<｜DSML｜function_calls>
+    dsml_content = """<｜DSML｜function_calls>
 <｜DSML｜invoke name="bash">
 <｜DSML｜parameter name="command" string="true">ls -la</｜DSML｜parameter>
 </｜DSML｜invoke>
-</｜DSML｜function_calls>'''
+</｜DSML｜function_calls>"""
 
     mock_chunk = MagicMock()
     mock_chunk.usage = None
@@ -98,12 +100,17 @@ async def test_deepseek_model_arun_stream_with_dsml_function_calls(mock_settings
 
     async def async_iter(self):
         yield mock_chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)
 
-    tools = [{"type": "function", "function": {"name": "bash", "description": "Execute bash command"}}]
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "bash", "description": "Execute bash command"},
+        }
+    ]
     messages = [{"role": "user", "content": "List files"}]
     chunks = []
     async for chunk in model.arun_stream(messages, tools=tools):
@@ -119,7 +126,9 @@ async def test_deepseek_model_arun_stream_with_dsml_function_calls(mock_settings
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.deepseek.settings")
-async def test_deepseek_model_arun_stream_with_normal_tool_calls(mock_settings, mock_openai_client):
+async def test_deepseek_model_arun_stream_with_normal_tool_calls(
+    mock_settings, mock_openai_client
+):
     """Test that normal tool_calls are not affected by DSML parsing."""
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
@@ -140,7 +149,14 @@ async def test_deepseek_model_arun_stream_with_normal_tool_calls(mock_settings, 
         MagicMock(
             delta=MagicMock(
                 content=None,
-                tool_calls=[MagicMock(index=0, id="call_123", type="function", function=MagicMock(name="bash", arguments='{"command":"ls"}'))],
+                tool_calls=[
+                    MagicMock(
+                        index=0,
+                        id="call_123",
+                        type="function",
+                        function=MagicMock(name="bash", arguments='{"command":"ls"}'),
+                    )
+                ],
             ),
             finish_reason="tool_calls",
         )
@@ -148,12 +164,17 @@ async def test_deepseek_model_arun_stream_with_normal_tool_calls(mock_settings, 
 
     async def async_iter(self):
         yield mock_chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)
 
-    tools = [{"type": "function", "function": {"name": "bash", "description": "Execute bash command"}}]
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "bash", "description": "Execute bash command"},
+        }
+    ]
     messages = [{"role": "user", "content": "List files"}]
     chunks = []
     async for chunk in model.arun_stream(messages, tools=tools):
@@ -197,7 +218,7 @@ async def test_deepseek_model_arun_stream_basic(mock_settings, mock_openai_clien
 
     async def async_iter(self):
         yield mock_chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)
@@ -214,7 +235,9 @@ async def test_deepseek_model_arun_stream_basic(mock_settings, mock_openai_clien
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.deepseek.settings")
-async def test_deepseek_model_preprocess_messages_new_turn(mock_settings, mock_openai_client):
+async def test_deepseek_model_preprocess_messages_new_turn(
+    mock_settings, mock_openai_client
+):
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
         id="deepseek-reasoner",
@@ -247,7 +270,9 @@ async def test_deepseek_model_preprocess_messages_new_turn(mock_settings, mock_o
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.deepseek.settings")
-async def test_deepseek_model_preprocess_messages_thinking_mode(mock_settings, mock_openai_client):
+async def test_deepseek_model_preprocess_messages_thinking_mode(
+    mock_settings, mock_openai_client
+):
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
         id="deepseek-reasoner",
@@ -306,7 +331,7 @@ async def test_deepseek_model_with_reasoning_content(mock_settings, mock_openai_
 
     async def async_iter(self):
         yield mock_chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)

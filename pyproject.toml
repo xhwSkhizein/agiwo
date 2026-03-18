@@ -10,28 +10,44 @@ dependencies = [
     "structlog>=24.0.0",
     "tenacity>=8.0.0",
     "openai>=1.0.0",
-    "anthropic>=0.34.0",
     "python-dotenv>=1.0.0",
     "orjson>=3.11.6",
-    "motor>=3.7.1",
-    "opentelemetry-distro>=0.60b1",
-    "opentelemetry-exporter-otlp>=1.39.1",
     "aiosqlite>=0.22.1",
     "jinja2>=3.1.6",
     "pyyaml>=6.0.3",
     "tiktoken>=0.7.0",
     "httpx>=0.27.0",
-    "boto3>=1.42.59",
     "aiofiles>=25.1.0",
+]
+
+[project.optional-dependencies]
+anthropic = [
+    "anthropic>=0.34.0",
+]
+bedrock = [
+    "boto3>=1.42.59",
+]
+web = [
     "curl-cffi>=0.14.0",
-    "lark-oapi>=1.5.3",
     "bs4>=0.0.2",
     "trafilatura>=2.0.0",
     "playwright>=1.58.0",
 ]
-
-[project.optional-dependencies]
+feishu = [
+    "lark-oapi>=1.5.3",
+]
+mongo = [
+    "motor>=3.7.1",
+]
+observability = [
+    "opentelemetry-distro>=0.60b1",
+    "opentelemetry-exporter-otlp>=1.39.1",
+]
+all = [
+    "agiwo[anthropic,bedrock,web,feishu,mongo,observability]",
+]
 dev = [
+    "agiwo[all]",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-mock>=3.14.0",
@@ -54,15 +70,8 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 
-[tool.uv]
-dev-dependencies = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-mock>=3.14.0",
-    "httpx>=0.27.0",
-    "ruff>=0.15.5",
-    "import-linter>=2.4.0",
-]
+[dependency-groups]
+dev = ["agiwo[dev]"]
 
 [tool.ruff]
 target-version = "py311"

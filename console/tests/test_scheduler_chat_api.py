@@ -258,13 +258,13 @@ class TestSchedulerChatEndpoint:
             assert timeout == 600
             del abort_signal
             yield StepDeltaEvent(
-                    session_id="session-1",
-                    run_id="run-1",
-                    agent_id="agent-1",
-                    parent_run_id=None,
-                    depth=0,
-                    step_id="step-1",
-                    delta=StepDelta(content="hello"),
+                session_id="session-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                parent_run_id=None,
+                depth=0,
+                step_id="step-1",
+                delta=StepDelta(content="hello"),
             )
             yield RunCompletedEvent(
                 session_id="session-1",
@@ -274,6 +274,7 @@ class TestSchedulerChatEndpoint:
                 depth=0,
                 response="done",
             )
+
         monkeypatch.setattr(
             scheduler,
             "stream",

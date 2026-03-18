@@ -153,9 +153,9 @@ class FakeMongoCursor:
             raise StopAsyncIteration from exc
 
     def _sliced_documents(self) -> list[dict[str, Any]]:
-        documents = self._documents[self._offset:]
+        documents = self._documents[self._offset :]
         if self._limit is not None:
-            documents = documents[:self._limit]
+            documents = documents[: self._limit]
         return documents
 
 

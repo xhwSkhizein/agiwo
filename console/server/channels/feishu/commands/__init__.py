@@ -32,7 +32,10 @@ def build_feishu_command_registry(
 ) -> CommandRegistry:
     specs: list[CommandSpec] = [
         *build_session_command_specs(
-            session_service, executor, session_manager, scheduler,
+            session_service,
+            executor,
+            session_manager,
+            scheduler,
         ),
         *build_context_command_specs(agent_pool, scheduler),
         *build_scheduler_command_specs(

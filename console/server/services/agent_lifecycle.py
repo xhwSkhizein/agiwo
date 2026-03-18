@@ -63,7 +63,9 @@ def build_model(config: AgentConfigRecord) -> Model:
     )
 
 
-def build_agent_options(config: AgentConfigRecord, console_config: ConsoleConfig) -> AgentOptions:
+def build_agent_options(
+    config: AgentConfigRecord, console_config: ConsoleConfig
+) -> AgentOptions:
     """Build AgentOptions with storage config matching the console storage backend."""
     opts = AgentOptionsInput.model_validate(config.options or {})
 

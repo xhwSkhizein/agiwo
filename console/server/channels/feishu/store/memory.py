@@ -1,6 +1,10 @@
 """In-memory Feishu channel metadata store."""
 
-from server.channels.session.models import ChannelChatContext, Session, SessionWithContext
+from server.channels.session.models import (
+    ChannelChatContext,
+    Session,
+    SessionWithContext,
+)
 from server.channels.session.binding import SessionMutationPlan
 
 
@@ -73,7 +77,9 @@ class InMemoryFeishuChannelStore:
         await self.upsert_chat_context(mutation.chat_context)
         await self.upsert_session(mutation.current_session)
 
-    async def list_sessions_by_user(self, user_open_id: str) -> list[SessionWithContext]:
+    async def list_sessions_by_user(
+        self, user_open_id: str
+    ) -> list[SessionWithContext]:
         items: list[SessionWithContext] = []
         for session in self._session_map.values():
             chat_context = await self.get_chat_context_by_id(session.chat_context_id)
@@ -83,7 +89,9 @@ class InMemoryFeishuChannelStore:
         items.sort(key=lambda item: item.session.updated_at, reverse=True)
         return items
 
-    async def list_sessions_by_chat_context(self, chat_context_id: str) -> list[Session]:
+    async def list_sessions_by_chat_context(
+        self, chat_context_id: str
+    ) -> list[Session]:
         session_ids = self._session_ids_by_context.get(chat_context_id, set())
         sessions = [
             self._session_map[session_id]

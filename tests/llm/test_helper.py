@@ -1,4 +1,3 @@
-import pytest
 from agiwo.llm.event_normalizer import (
     AnthropicStreamEvent,
     AnthropicStreamTranslator,

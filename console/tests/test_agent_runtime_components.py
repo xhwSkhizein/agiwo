@@ -70,7 +70,9 @@ class FakeChannelChatSessionStore:
         await self.upsert_chat_context(mutation.chat_context)
         await self.upsert_session(mutation.current_session)
 
-    async def list_sessions_by_user(self, user_open_id: str) -> list[SessionWithContext]:
+    async def list_sessions_by_user(
+        self, user_open_id: str
+    ) -> list[SessionWithContext]:
         items: list[SessionWithContext] = []
         for session in self.sessions.values():
             chat_context = await self.get_chat_context_by_id(session.chat_context_id)
@@ -79,7 +81,9 @@ class FakeChannelChatSessionStore:
             items.append(SessionWithContext(session=session, chat_context=chat_context))
         return items
 
-    async def list_sessions_by_chat_context(self, chat_context_id: str) -> list[Session]:
+    async def list_sessions_by_chat_context(
+        self, chat_context_id: str
+    ) -> list[Session]:
         return [
             session
             for session in self.sessions.values()
@@ -330,7 +334,10 @@ async def test_agent_executor_steers_running_state_and_returns_empty_stream() ->
         updated_at=datetime.now(timezone.utc),
     )
 
-    outputs = [item async for item in executor.execute(FakeAgent("runtime-1"), session, "hello")]
+    outputs = [
+        item
+        async for item in executor.execute(FakeAgent("runtime-1"), session, "hello")
+    ]
 
     assert outputs == []
     scheduler.steer.assert_awaited_once_with("runtime-1", "hello", urgent=False)

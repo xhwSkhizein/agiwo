@@ -7,9 +7,16 @@ from server.app import _build_default_agent_config
 from server.config import ConsoleConfig
 from server.domain.agent_configs import AgentOptionsInput
 from server.schemas import AgentConfigPayload, AgentConfigReplace
-from server.services.agent_lifecycle import build_agent_options, build_default_agent_options, build_model
+from server.services.agent_lifecycle import (
+    build_agent_options,
+    build_default_agent_options,
+    build_model,
+)
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.domain.tool_references import InvalidToolReferenceError, parse_tool_references
+from server.domain.tool_references import (
+    InvalidToolReferenceError,
+    parse_tool_references,
+)
 from server.tools import AgentToolRef, BuiltinToolRef, build_tools
 
 
@@ -42,7 +49,9 @@ def test_console_config_rejects_plain_api_key_in_default_model_params(
         ConsoleConfig()
 
 
-def test_build_agent_options_uses_global_skills_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_build_agent_options_uses_global_skills_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(agent_options_module.settings, "is_skills_enabled", False)
 
     config = AgentConfigRecord(
@@ -200,7 +209,9 @@ def test_build_model_does_not_fallback_to_openai_credentials_for_compatible_prov
         build_model(config)
 
 
-def test_agent_config_create_requires_explicit_connection_for_compatible_provider() -> None:
+def test_agent_config_create_requires_explicit_connection_for_compatible_provider() -> (
+    None
+):
     with pytest.raises(ValidationError, match="base_url"):
         AgentConfigPayload.model_validate(
             {

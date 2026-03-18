@@ -225,7 +225,9 @@ class AnthropicStreamTranslator:
             self._update_usage_info(event.usage)
             if event.usage:
                 stream_chunk.usage = normalize_usage_metrics(self._usage_info)
-            stream_chunk.finish_reason = normalize_anthropic_stop_reason(event.stop_reason)
+            stream_chunk.finish_reason = normalize_anthropic_stop_reason(
+                event.stop_reason
+            )
         elif event.type == "message_stop":
             stream_chunk.finish_reason = "stop"
 

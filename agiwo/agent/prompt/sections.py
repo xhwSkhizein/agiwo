@@ -59,9 +59,7 @@ def render_soul(snapshot: PromptSnapshot) -> str:
     content = snapshot.documents.soul_text
     if not content:
         return ""
-    return (
-        f"---\n\n{content}\nSOUL.md path: {snapshot.workspace.soul_path}\n"
-    ).strip()
+    return (f"---\n\n{content}\nSOUL.md path: {snapshot.workspace.soul_path}\n").strip()
 
 
 def render_base(snapshot: PromptSnapshot) -> str:

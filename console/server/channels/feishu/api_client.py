@@ -147,7 +147,9 @@ class FeishuApiClient:
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json; charset=utf-8",
         }
-        return await self._request(method, path, headers=headers, params=params, json_body=json_body)
+        return await self._request(
+            method, path, headers=headers, params=params, json_body=json_body
+        )
 
     async def _get_tenant_access_token(self) -> str:
         now = time.time()
@@ -197,7 +199,9 @@ class FeishuApiClient:
         if code != 0:
             msg = payload.get("msg", "unknown_error")
             request_id = payload.get("request_id", "")
-            raise RuntimeError(f"feishu_api_error code={code} msg={msg} request_id={request_id}")
+            raise RuntimeError(
+                f"feishu_api_error code={code} msg={msg} request_id={request_id}"
+            )
 
         response.raise_for_status()
 

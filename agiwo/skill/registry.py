@@ -163,7 +163,7 @@ class SkillRegistry:
         """
         try:
             content = skill_path.read_text(encoding="utf-8")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             raise SkillParseError(f"Failed to read {skill_path}: {e}") from e
 
         # Extract YAML frontmatter
@@ -175,7 +175,7 @@ class SkillRegistry:
 
         try:
             frontmatter = yaml.safe_load(frontmatter_str)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             raise SkillParseError(f"Invalid YAML in {skill_path}: {e}") from e
 
         if not isinstance(frontmatter, dict):

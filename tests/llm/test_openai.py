@@ -1,7 +1,7 @@
+from types import SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from agiwo.llm.openai import OpenAIModel
-from agiwo.llm.base import StreamChunk
 
 
 @pytest.fixture
@@ -37,7 +37,7 @@ async def test_openai_model_arun_stream_basic(mock_settings, mock_openai_client)
 
     async def async_iter(self):
         yield mock_chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)
@@ -68,7 +68,6 @@ async def test_openai_model_arun_stream_with_usage(mock_settings, mock_openai_cl
     )
     model.client = mock_openai_client
 
-    from types import SimpleNamespace
     mock_usage = SimpleNamespace()
     mock_usage.prompt_tokens = 10
     mock_usage.completion_tokens = 5
@@ -85,7 +84,7 @@ async def test_openai_model_arun_stream_with_usage(mock_settings, mock_openai_cl
 
     async def async_iter(self):
         yield mock_chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)
@@ -138,7 +137,7 @@ async def test_openai_model_arun_stream_with_tools(mock_settings, mock_openai_cl
 
     async def async_iter(self):
         yield mock_chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)
@@ -169,7 +168,9 @@ async def test_openai_model_arun_stream_with_tools(mock_settings, mock_openai_cl
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.openai.settings")
-async def test_openai_model_arun_stream_multiple_chunks(mock_settings, mock_openai_client):
+async def test_openai_model_arun_stream_multiple_chunks(
+    mock_settings, mock_openai_client
+):
     mock_settings.openai_api_key = None
     model = OpenAIModel(
         id="gpt-4",
@@ -204,7 +205,7 @@ async def test_openai_model_arun_stream_multiple_chunks(mock_settings, mock_open
     async def async_iter(self):
         for chunk in mock_chunks:
             yield chunk
-    
+
     mock_stream = AsyncMock()
     mock_stream.__aiter__ = async_iter
     mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)

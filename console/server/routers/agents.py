@@ -17,7 +17,9 @@ router = APIRouter(prefix="/api/agents", tags=["agents"])
 @router.get("/tools/available")
 async def list_available_tools(
     runtime: ConsoleRuntimeDep,
-    exclude: str | None = QueryParam(default=None, description="Agent ID to exclude from agent tools"),
+    exclude: str | None = QueryParam(
+        default=None, description="Agent ID to exclude from agent tools"
+    ),
 ) -> list[dict[str, str]]:
     """Return all available tools (builtin + agent-as-tool) that can be assigned to agents."""
     return await _list_available_tools(
@@ -72,7 +74,9 @@ async def create_agent(
     try:
         created = await runtime.agent_registry.create_agent(record)
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=jsonable_encoder(exc.errors())) from exc
+        raise HTTPException(
+            status_code=422, detail=jsonable_encoder(exc.errors())
+        ) from exc
     return _record_to_response(created)
 
 
@@ -93,9 +97,13 @@ async def update_agent(
 ) -> AgentConfigResponse:
     """Replace an existing agent configuration."""
     try:
-        record = await runtime.agent_registry.replace_agent(agent_id, _body_to_record(body))
+        record = await runtime.agent_registry.replace_agent(
+            agent_id, _body_to_record(body)
+        )
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=jsonable_encoder(exc.errors())) from exc
+        raise HTTPException(
+            status_code=422, detail=jsonable_encoder(exc.errors())
+        ) from exc
     if record is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     return _record_to_response(record)

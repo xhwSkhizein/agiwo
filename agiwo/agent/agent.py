@@ -222,8 +222,8 @@ class Agent:
             agent_name=self.name,
             resource_owner=self._resource_owner,
             step_observers=tuple(self._step_observers),
-            resolve_definition=lambda: self._definition_runtime.snapshot_root_definition(
-                model=self._model
+            resolve_definition=lambda: (
+                self._definition_runtime.snapshot_root_definition(model=self._model)
             ),
             session_id=session_id,
             user_id=user_id,

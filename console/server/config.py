@@ -18,10 +18,11 @@ from agiwo.config.settings import ModelProvider
 class ConsoleConfig(BaseSettings):
     """
     Console-specific configuration.
-    
+
     Storage paths are inherited from SDK's AgiwoSettings.
     Console only defines its own unique settings (server, CORS, Feishu, etc.).
     """
+
     model_config = SettingsConfigDict(
         env_prefix="AGIWO_CONSOLE_",
         case_sensitive=False,

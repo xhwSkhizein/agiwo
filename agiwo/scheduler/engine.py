@@ -245,7 +245,9 @@ class SchedulerEngine(SchedulerControl):
             if not saw_root_terminal:
                 state = await self._store.get_state(root_state_id)
                 if state is not None and state.status == AgentStateStatus.FAILED:
-                    raise RuntimeError(state.result_summary or "scheduler stream failed")
+                    raise RuntimeError(
+                        state.result_summary or "scheduler stream failed"
+                    )
         finally:
             self._coordinator.close_stream_channel(root_state_id)
 
@@ -388,7 +390,9 @@ class SchedulerEngine(SchedulerControl):
         if rejection is not None:
             raise ValueError(f"Spawn rejected: {rejection}")
 
-        child_id = request.custom_child_id or f"{request.parent_agent_id}_{uuid4().hex[:5]}"
+        child_id = (
+            request.custom_child_id or f"{request.parent_agent_id}_{uuid4().hex[:5]}"
+        )
         state = AgentState(
             id=child_id,
             session_id=request.session_id,
@@ -498,7 +502,8 @@ class SchedulerEngine(SchedulerControl):
                 wait_for=wait_for,
                 wait_mode=request.wait_mode,
                 completed_ids=await self._collect_completed_child_ids(wait_for),
-                timeout_at=now + timedelta(
+                timeout_at=now
+                + timedelta(
                     seconds=request.timeout or self._guard.limits.default_wait_timeout
                 ),
             )

@@ -38,4 +38,3 @@ def resolve_text_encoding(
             error=str(error),
         )
         return _FallbackEncoding()
-

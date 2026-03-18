@@ -21,8 +21,7 @@ class RunStoragePort(Protocol):
         session_id: str | None = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> list[Run]:
-        ...
+    ) -> list[Run]: ...
 
 
 # ── Core accumulator ────────────────────────────────────────────────────────

@@ -80,7 +80,12 @@ class TestMemoryIndexStore:
 
     @pytest.mark.asyncio
     async def test_sync_empty_directory(self, temp_workspace):
-        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
+        store = MemoryIndexStore(
+            temp_workspace,
+            embedding_provider="disabled",
+            chunk_tokens=100,
+            chunk_overlap_tokens=20,
+        )
         await store.sync_files()
         results = await store.search("test")
         assert results == []
@@ -93,7 +98,12 @@ class TestMemoryIndexStore:
             "# Project Notes\n\nDecided to use SQLite for storage.\n"
         )
 
-        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
+        store = MemoryIndexStore(
+            temp_workspace,
+            embedding_provider="disabled",
+            chunk_tokens=100,
+            chunk_overlap_tokens=20,
+        )
         await store.sync_files()
 
         results = await store.search("SQLite storage")
@@ -107,7 +117,12 @@ class TestMemoryIndexStore:
         file1 = memory_dir / "notes.md"
         file1.write_text("Initial content about Python.")
 
-        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
+        store = MemoryIndexStore(
+            temp_workspace,
+            embedding_provider="disabled",
+            chunk_tokens=100,
+            chunk_overlap_tokens=20,
+        )
         await store.sync_files()
 
         results1 = await store.search("Python")
@@ -131,7 +146,12 @@ class TestMemoryIndexStore:
         file1 = memory_dir / "temp.md"
         file1.write_text("Temporary content about Redis.")
 
-        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
+        store = MemoryIndexStore(
+            temp_workspace,
+            embedding_provider="disabled",
+            chunk_tokens=100,
+            chunk_overlap_tokens=20,
+        )
         await store.sync_files()
 
         results1 = await store.search("Redis")
@@ -153,7 +173,12 @@ class TestMemoryIndexStore:
             "We chose PostgreSQL over MySQL for better JSON support.\n"
         )
 
-        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
+        store = MemoryIndexStore(
+            temp_workspace,
+            embedding_provider="disabled",
+            chunk_tokens=100,
+            chunk_overlap_tokens=20,
+        )
         await store.sync_files()
 
         results = await store.search("PostgreSQL JSON")
@@ -169,7 +194,12 @@ class TestMemoryIndexStore:
         content = "\n".join([f"Line {i}" for i in range(1, 11)])
         (memory_dir / "lines.md").write_text(content)
 
-        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
+        store = MemoryIndexStore(
+            temp_workspace,
+            embedding_provider="disabled",
+            chunk_tokens=100,
+            chunk_overlap_tokens=20,
+        )
         await store.sync_files()
 
         results = await store.search("Line")
@@ -185,7 +215,12 @@ class TestMemoryIndexStore:
         (memory_dir / "file1.md").write_text("Content about apples and oranges.")
         (memory_dir / "file2.md").write_text("Content about bananas and grapes.")
 
-        store = MemoryIndexStore(temp_workspace, embedding_provider="disabled", chunk_tokens=100, chunk_overlap_tokens=20)
+        store = MemoryIndexStore(
+            temp_workspace,
+            embedding_provider="disabled",
+            chunk_tokens=100,
+            chunk_overlap_tokens=20,
+        )
         await store.sync_files()
 
         results1 = await store.search("apples")

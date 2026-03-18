@@ -163,7 +163,7 @@ class BaseTool(ABC):
     @abstractmethod
     def get_description(self) -> str:
         """Return the tool description used for prompting."""
-    
+
     def get_short_description(self) -> str:
         return self.get_description()
 

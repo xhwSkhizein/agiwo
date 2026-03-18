@@ -88,11 +88,15 @@ def normalize_paths(paths: list[str | Path]) -> list[Path]:
 def collect_changed_paths() -> list[Path]:
     raw_paths: list[str] = []
     if git_has_head():
-        tracked = git_output(["git", "diff", "--name-only", "--diff-filter=ACMR", "HEAD", "--"])
+        tracked = git_output(
+            ["git", "diff", "--name-only", "--diff-filter=ACMR", "HEAD", "--"]
+        )
         if tracked is not None:
             raw_paths.extend(tracked)
     else:
-        tracked = git_output(["git", "ls-files", "--cached", "--others", "--exclude-standard", "--"])
+        tracked = git_output(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--"]
+        )
         if tracked is not None:
             raw_paths.extend(tracked)
 

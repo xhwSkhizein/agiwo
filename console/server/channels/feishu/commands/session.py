@@ -8,7 +8,11 @@ from functools import partial
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.channels.agent_executor import AgentExecutor
-from server.channels.feishu.commands.base import CommandContext, CommandResult, CommandSpec
+from server.channels.feishu.commands.base import (
+    CommandContext,
+    CommandResult,
+    CommandSpec,
+)
 from server.channels.feishu.commands.status_text import format_scheduler_status
 from server.channels.session import SessionContextService, SessionManager
 from server.channels.session.binding import (
@@ -30,7 +34,10 @@ def build_session_command_specs(
             name="new",
             description="创建新会话，重置当前对话上下文",
             execute=partial(
-                _execute_new_session, session_service, executor, session_manager,
+                _execute_new_session,
+                session_service,
+                executor,
+                session_manager,
             ),
         ),
         CommandSpec(
@@ -42,7 +49,10 @@ def build_session_command_specs(
             name="switch",
             description="切换当前会话 — /switch <session_id>",
             execute=partial(
-                _execute_switch_session, session_service, executor, session_manager,
+                _execute_switch_session,
+                session_service,
+                executor,
+                session_manager,
             ),
         ),
     ]

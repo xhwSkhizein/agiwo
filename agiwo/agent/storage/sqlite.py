@@ -43,7 +43,9 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     async def connect(self) -> None:
         """Initialize database connection and create tables using shared pool."""
-        self._connection = await self._runtime.ensure_connection(self._initialize_schema)
+        self._connection = await self._runtime.ensure_connection(
+            self._initialize_schema
+        )
 
     async def close(self) -> None:
         """Close database connection."""
@@ -238,7 +240,9 @@ class SQLiteRunStepStorage(RunStepStorage):
             if self._connection is None:
                 raise RuntimeError("Database connection not established")
             await self._connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
-            await self._connection.execute("DELETE FROM steps WHERE run_id = ?", (run_id,))
+            await self._connection.execute(
+                "DELETE FROM steps WHERE run_id = ?", (run_id,)
+            )
 
             await self._connection.commit()
         except Exception as e:

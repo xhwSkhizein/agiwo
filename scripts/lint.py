@@ -26,7 +26,11 @@ def _run_ruff(paths: list[Path]) -> None:
 
 
 def _run_repo_guard(paths: list[Path]) -> None:
-    command = [sys.executable, str(ROOT / "scripts/repo_guard.py"), *[path.as_posix() for path in paths]]
+    command = [
+        sys.executable,
+        str(ROOT / "scripts/repo_guard.py"),
+        *[path.as_posix() for path in paths],
+    ]
     run_command(command)
 
 

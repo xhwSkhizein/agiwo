@@ -6,7 +6,11 @@ import os
 import aiosqlite
 
 from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
-from server.channels.session.models import ChannelChatContext, Session, SessionWithContext
+from server.channels.session.models import (
+    ChannelChatContext,
+    Session,
+    SessionWithContext,
+)
 from server.channels.session.binding import SessionMutationPlan
 
 _SESSION_WITH_CONTEXT_SELECT = """
@@ -212,7 +216,9 @@ class SqliteFeishuChannelStore:
             raise
         await conn.commit()
 
-    async def list_sessions_by_user(self, user_open_id: str) -> list[SessionWithContext]:
+    async def list_sessions_by_user(
+        self, user_open_id: str
+    ) -> list[SessionWithContext]:
         conn = await self._require_conn()
         async with conn.execute(
             f"""
@@ -225,7 +231,9 @@ class SqliteFeishuChannelStore:
             rows = await cursor.fetchall()
         return [_joined_row_to_session_with_context(row) for row in rows]
 
-    async def list_sessions_by_chat_context(self, chat_context_id: str) -> list[Session]:
+    async def list_sessions_by_chat_context(
+        self, chat_context_id: str
+    ) -> list[Session]:
         conn = await self._require_conn()
         async with conn.execute(
             """

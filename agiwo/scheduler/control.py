@@ -91,6 +91,7 @@ class SchedulerControl(Protocol):
         self, timestamp: datetime, *, now: datetime | None = None
     ) -> int: ...
 
+
 __all__ = [
     "CancelChildRequest",
     "CancelChildResult",

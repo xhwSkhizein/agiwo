@@ -124,7 +124,9 @@ class BedrockAnthropicModel(Model):
 
             for event in response["body"]:
                 chunk = json.loads(event["chunk"]["bytes"].decode())
-                stream_chunk = translator.process(normalize_bedrock_anthropic_event(chunk))
+                stream_chunk = translator.process(
+                    normalize_bedrock_anthropic_event(chunk)
+                )
                 if stream_chunk is not None:
                     yield stream_chunk
 
@@ -133,7 +135,9 @@ class BedrockAnthropicModel(Model):
                 "bedrock_request_failed",
                 model=self.id,
                 error=str(e),
-                error_code=e.response["Error"]["Code"] if hasattr(e, "response") else None,
+                error_code=e.response["Error"]["Code"]
+                if hasattr(e, "response")
+                else None,
                 exc_info=True,
             )
             raise

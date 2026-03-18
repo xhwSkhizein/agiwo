@@ -25,9 +25,7 @@ class WebReaderApiConfig:
     model_provider: str = field(
         default_factory=lambda: settings.get_tool_model_provider()
     )
-    model_name: str = field(
-        default_factory=lambda: settings.get_tool_model_name()
-    )
+    model_name: str = field(default_factory=lambda: settings.get_tool_model_name())
     model_base_url: str | None = field(
         default_factory=lambda: settings.get_tool_model_base_url()
     )
@@ -37,9 +35,7 @@ class WebReaderApiConfig:
     model_temperature: float = field(
         default_factory=lambda: settings.get_tool_model_temperature()
     )
-    model_top_p: float = field(
-        default_factory=lambda: settings.get_tool_model_top_p()
-    )
+    model_top_p: float = field(default_factory=lambda: settings.get_tool_model_top_p())
     model_max_tokens: int = field(
         default_factory=lambda: settings.get_tool_model_max_tokens()
     )

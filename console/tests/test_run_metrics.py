@@ -105,7 +105,9 @@ async def test_summarize_runs_paginated_aggregates_all_pages() -> None:
 
 
 @pytest.mark.asyncio
-async def test_summarize_runs_paginated_returns_empty_summary_for_missing_session() -> None:
+async def test_summarize_runs_paginated_returns_empty_summary_for_missing_session() -> (
+    None
+):
     storage = FakeRunStorage([])
 
     summary = await summarize_runs_paginated(storage, session_id="missing", page_size=2)

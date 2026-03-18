@@ -49,7 +49,9 @@ class CitationStoreConfig:
     )
     sqlite_db_path: str = field(default_factory=_default_sqlite_db_path)
     mongo_uri: str | None = field(default_factory=lambda: settings.mongo_uri)
-    mongo_db_name: str = field(default_factory=lambda: settings.mongo_db_name or "agiwo")
+    mongo_db_name: str = field(
+        default_factory=lambda: settings.mongo_db_name or "agiwo"
+    )
     collection_name: str = "citation_sources"
 
 

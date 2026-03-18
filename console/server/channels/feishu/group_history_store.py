@@ -68,7 +68,7 @@ class FeishuGroupHistoryStore:
                 continue
             lines.append(f"{item.sender_name}: {item.text}")
 
-        return lines[-self._max_items:]
+        return lines[-self._max_items :]
 
     def _trim_history(self, history: deque[_GroupRecentMessage]) -> None:
         cutoff_ms = self._cutoff_ms()
