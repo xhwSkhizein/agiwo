@@ -12,7 +12,7 @@ source = { editable = "../" }
 dependencies = [
     { name = "aiofiles" },
     { name = "aiosqlite" },
-    { name = "httpx" },
+    { name = "httpx", extra = ["socks"] },
     { name = "jinja2" },
     { name = "openai" },
     { name = "orjson" },
@@ -49,8 +49,8 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.59" },
     { name = "bs4", marker = "extra == 'web'", specifier = ">=0.0.2" },
     { name = "curl-cffi", marker = "extra == 'web'", specifier = ">=0.14.0" },
-    { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
+    { name = "httpx", extras = ["socks"], specifier = ">=0.27.0" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.4.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "lark-oapi", marker = "extra == 'feishu'", specifier = ">=1.5.3" },
