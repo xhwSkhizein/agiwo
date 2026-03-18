@@ -21,21 +21,6 @@ Agiwo has two parts:
 
 The project favors explicit runtime wiring over hidden global state. Agent execution, tool execution, scheduler orchestration, and persistence are all separate layers.
 
-### Why Agiwo?
-
-| | Agiwo | LangChain | OpenAI Agents SDK |
-|---|---|---|---|
-| Streaming-first | ✅ All paths share pipeline | ❌ Wraps sync API | ✅ |
-| Multi-agent scheduler | ✅ Spawn/steer/cancel/sleep | ❌ (needs LangGraph) | ❌ |
-| Agent-as-tool composition | ✅ `as_tool(agent)` | ✅ (but heavy) | ✅ |
-| Hook system | ✅ 10 lifecycle hooks | ❌ | ❌ |
-| Tool caching | ✅ Session-scoped | ❌ | ❌ |
-| Memory retrieval | ✅ BM25 + vector hybrid | ✅ | ❌ |
-| Console web UI | ✅ Next.js | ❌ | ❌ |
-| Feishu integration | ✅ | ❌ | ❌ |
-| Zero global state | ✅ | ❌ | ✅ |
-| Token cost tracking | ✅ Per-step | ❌ | ✅ |
-
 ## Current Capabilities
 
 - Streaming-first agent execution: `run()` and `run_stream()` share the same execution pipeline.

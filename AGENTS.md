@@ -192,16 +192,7 @@ uv run pytest tests/ -v
 
 ### Recent Changes
 
-- **2026-03-17**：scheduler 已收口为单流模型：公开流式 API 统一为 `Scheduler.stream(...) -> AsyncIterator[AgentStreamItem]`，`submit_task` 改名为 `enqueue_input`；scheduler 内部唯一 live observation path 为 `AgentExecutionHandle.stream()`；`SchedulerOutput`、额外 scheduler terminal stream events、step-observer 同步链路，以及 `recent_steps / last_activity_at / health check` 已移除。
-- **2026-03-17**：`agiwo/agent` 已进一步收口：`runtime_state.py` 已删除，definition owner 收口到 `agent.inner.definition_runtime.AgentDefinitionRuntime`，resource owner 收口到 `AgentResourceOwner`，root execution 生命周期由 `ActiveRootExecution` 统一跟踪，stream 消费清理统一走 `agent.streaming`；`AgentExecutor` 已收回为执行循环 owner，tool batch、termination policy、steering 注入与 bootstrap 分别下沉到独立内部 helper。
-- **2026-03-16**：`Agent` 已收口为 `template/facade + ExecutionHandle` 模型：公开原语改为 `start(...) -> AgentExecutionHandle`，`Agent.steer()` 与 `derive_child()` 已移除；嵌套 child 改为纯数据 `ChildAgentSpec`，执行开始时再解析成 `ResolvedExecutionDefinition`；`trace_id` owner 上移到 `AgentSessionRuntime`；资源生命周期收口到 `AgentResourceOwner`；scheduler/console 内部执行 seam 已改为 handle。
-- **2026-03-15**：scheduler 通过 `agent.scheduler_port` 依赖稳定编排 seam，不再直接依赖 `Agent` 实现细节；trace storage 构造权已移到 `observability.factory`；scheduler store 编解码已收口到 `scheduler.store.codec`；builtin tools 改为显式 `ensure_builtin_tools_loaded()`；`skill.prompt_catalog` 与 `web_reader` 包内子模块用于收窄内部职责。
-- **2026-03-15**：Tool runtime 已分成纯 `BaseTool + ToolContext` 与 agent-side `AgentRuntimeTool`；`AgentTool` 已收口到 `agent.runtime_tools/`，agent trace adapter 已收口到 `agent.trace/`；workspace/memory/prompt/skill 路径规则已拆到独立 owner；compaction 执行逻辑已下沉到 `agent.inner.compaction/`，`tool.permission` 被替换为 `tool.authz/ + agent.tool_auth/`。
-- **2026-03-12**：`agiwo/agent/schema.py` 已删除；公开导出统一收口到 `agiwo.agent`，输入/运行时/compact/memory 模型继续按职责落在独立模块。
-- **2026-03-12**：Scheduler 已按 `facade + engine + runner + coordinator + control + store` 收口；`tool_port.py`、`tool_support.py`、`services/tick_engine.py` 已移除，scheduler tools 统一依赖 `SchedulerControl`。
-- **2026-03-11**：Console 边界继续收敛到 `session_binding`、`ChannelChatSessionStore.apply_session_mutation()`、`FeishuInboundEnvelope`、`ToolReference`、`ConsoleToolCatalog`。
-- **2026-03-10**：低噪音 lint（`ruff + repo_guard + import-linter`）已经成为 AI 改码后的默认工作流。
-- **2026-03-06**：Model/Tool 配置统一为 `provider + model_name + base_url + api_key_env_name`；builtin web tools 自构建依赖；共享存储 runtime/pool helper 已被多处复用。
+See [CHANGELOG.md](./CHANGELOG.md) for the full change history.
 
 ### Common Changes
 
