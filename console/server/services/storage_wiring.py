@@ -82,15 +82,14 @@ def build_trace_storage_config(console_config: ConsoleConfig) -> TraceStorageCon
 def build_agent_state_storage_config(
     console_config: ConsoleConfig,
 ) -> AgentStateStorageConfig:
-    storage_type = console_config.metadata_storage_type
-    # AgentStateStorageConfig does not support mongodb; fall back to memory
-    if storage_type == "mongodb":
-        return AgentStateStorageConfig(storage_type="memory")
-
     return _build_storage_config(
         AgentStateStorageConfig,
-        storage_type,
+        console_config.metadata_storage_type,
         sqlite_builder=lambda: {"db_path": console_config.sqlite_db_path},
+        mongo_builder=lambda: {
+            "uri": console_config.mongodb_uri,
+            "db_name": console_config.mongodb_db_name,
+        },
     )
 
 
