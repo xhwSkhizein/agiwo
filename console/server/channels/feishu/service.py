@@ -8,9 +8,15 @@ runtime, and scheduler logic live in the base channel infrastructure.
 
 import asyncio
 import shutil
-from typing import Any
+from typing import Any, Literal
 
 from agiwo.agent import UserMessage
+from agiwo.agent.runtime import (
+    AgentStreamItem,
+    RunCompletedEvent,
+    RunFailedEvent,
+    StepCompletedEvent,
+)
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
@@ -62,6 +68,7 @@ class FeishuChannelService(BaseChannelService):
         )
 
         self._inbound_handler._session_mgr = self._session_mgr
+        self._verbose_mode: Literal["full", "lite", "off"] = config.feishu_verbose_mode
         self._closed = False
 
     async def initialize(self) -> None:
@@ -130,3 +137,64 @@ class FeishuChannelService(BaseChannelService):
                 "AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME。"
             )
         return f"执行失败: {str(error)}"
+
+    # -- Verbose mode hooks ----------------------------------------------------
+
+    def _format_stream_item(self, item: AgentStreamItem) -> str | None:
+        if self._verbose_mode == "off":
+            return None
+        if self._verbose_mode == "lite":
+            return self._format_lite(item)
+        return self._format_full(item)
+
+    def _format_steer_confirmation(self) -> str | None:
+        if self._verbose_mode == "off":
+            return None
+        return "消息已收到，任务正在处理中。"
+
+    @staticmethod
+    def _format_lite(item: AgentStreamItem) -> str | None:
+        if isinstance(item, RunCompletedEvent) and item.depth == 0:
+            return item.response
+        if isinstance(item, RunFailedEvent) and item.depth == 0:
+            return item.error
+        return None
+
+    @staticmethod
+    def _format_full(item: AgentStreamItem) -> str | None:
+        if isinstance(item, RunCompletedEvent):
+            if not item.response:
+                return None
+            if item.depth == 0:
+                return item.response
+            return f"[子Agent: {item.agent_id}] 完成:\n{item.response}"
+        if isinstance(item, RunFailedEvent):
+            if item.depth == 0:
+                return item.error
+            return f"[子Agent: {item.agent_id}] 失败:\n{item.error}"
+        if isinstance(item, StepCompletedEvent):
+            return _format_step_for_full_mode(item)
+        return None
+
+
+def _format_step_for_full_mode(event: StepCompletedEvent) -> str | None:
+    """Format a StepCompletedEvent for full verbose output."""
+    step = event.step
+    prefix = f"[子Agent: {event.agent_id}] " if event.depth > 0 else ""
+
+    if step.is_tool_step():
+        tool_name = step.name or "tool"
+        content = step.content_for_user or step.get_display_text()
+        if not content:
+            return None
+        return f"{prefix}🛠 {tool_name}:\n{content}"
+
+    if step.is_assistant_step():
+        if step.tool_calls:
+            return None
+        content = step.get_display_text()
+        if not content:
+            return None
+        return f"{prefix}{content}" if prefix else None
+
+    return None

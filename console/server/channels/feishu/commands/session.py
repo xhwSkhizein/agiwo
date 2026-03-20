@@ -7,7 +7,6 @@ from functools import partial
 
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.agent_executor import AgentExecutor
 from server.channels.feishu.commands.base import (
     CommandContext,
     CommandResult,
@@ -33,7 +32,6 @@ from server.channels.session.models import Session
 
 def build_session_command_specs(
     session_service: SessionContextService,
-    executor: AgentExecutor,
     session_manager: SessionManager,
     scheduler: Scheduler,
 ) -> list[CommandSpec]:
@@ -44,7 +42,6 @@ def build_session_command_specs(
             execute=partial(
                 _execute_new_session,
                 session_service,
-                executor,
                 session_manager,
             ),
         ),
@@ -59,7 +56,6 @@ def build_session_command_specs(
             execute=partial(
                 _execute_switch_session,
                 session_service,
-                executor,
                 session_manager,
             ),
         ),
@@ -68,25 +64,16 @@ def build_session_command_specs(
 
 async def _execute_new_session(
     session_service: SessionContextService,
-    executor: AgentExecutor,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
     del args
 
-    current_session = ctx.current_session
-    if current_session is None and not ctx.base_agent_id:
+    if ctx.current_session is None and not ctx.base_agent_id:
         return CommandResult(
             text="默认 Agent 不存在，无法创建会话。请先检查默认 Agent 配置。"
         )
-
-    cleanup_error: str | None = None
-    if current_session is not None:
-        try:
-            await executor.cancel_if_active(current_session, "用户执行 /new 重置会话")
-        except Exception as exc:  # noqa: BLE001
-            cleanup_error = str(exc)
 
     created = await session_service.create_new_session(
         chat_context_scope_id=ctx.chat_context_scope_id,
@@ -98,19 +85,13 @@ async def _execute_new_session(
         created_by="COMMAND_NEW",
     )
     session_manager.reset_chat_context(ctx.chat_context_scope_id)
-    if cleanup_error is not None:
-        return CommandResult(
-            text=(
-                f"新会话已创建: {created.session.id}\n"
-                f"警告: 旧会话清理失败: {cleanup_error}"
-            )
-        )
-    return CommandResult(text=f"新会话已创建: {created.session.id}")
+    return CommandResult(
+        text=f"新会话已创建: {created.session.id}，之前的任务将在后台继续运行。"
+    )
 
 
 async def _execute_switch_session(
     session_service: SessionContextService,
-    executor: AgentExecutor,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
@@ -134,23 +115,10 @@ async def _execute_switch_session(
     ) as exc:
         return CommandResult(text=_switch_session_error_text(exc, target_session_id))
 
-    cleanup_error: str | None = None
-    previous = switched.previous_session
-    if previous is not None and previous.id != switched.current_session.id:
-        try:
-            await executor.cancel_if_active(previous, "用户执行 /switch 切换会话")
-        except Exception as exc:  # noqa: BLE001
-            cleanup_error = str(exc)
-
     session_manager.reset_chat_context(ctx.chat_context_scope_id)
-    if cleanup_error is not None:
-        return CommandResult(
-            text=(
-                f"已切换到会话: {switched.current_session.id}\n"
-                f"警告: 旧会话清理失败: {cleanup_error}"
-            )
-        )
-    return CommandResult(text=f"已切换到会话: {switched.current_session.id}")
+    return CommandResult(
+        text=f"已切换到会话: {switched.current_session.id}，之前的任务将在后台继续运行。"
+    )
 
 
 async def _execute_list_sessions(

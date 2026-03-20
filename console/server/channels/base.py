@@ -9,9 +9,10 @@ behaviour (message delivery, prompt rendering, error mapping).
 from abc import ABC, abstractmethod
 
 from agiwo.agent import UserMessage, extract_text
+from agiwo.agent.runtime import AgentStreamItem, RunCompletedEvent, RunFailedEvent
 from agiwo.utils.logging import get_logger
 
-from server.channels.agent_executor import AgentExecutor
+from server.channels.agent_executor import AgentExecutor, SteerAccepted
 from server.channels.deferred_reply import DeferredReplyManager
 from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.channels.session import SessionContextService, SessionManager
@@ -64,7 +65,6 @@ class BaseChannelService(ABC):
         self._executor = executor
         self._deferred_replies = DeferredReplyManager(
             executor=executor,
-            session_service=session_service,
             deliver_chunked=self._deliver_message,
         )
         self._session_mgr = SessionManager(
@@ -144,7 +144,18 @@ class BaseChannelService(ABC):
 
         is_first_output = True
         async for output in self._executor.execute(agent, session, batch.user_message):
-            chunks = self._split_text_into_chunks(output)
+            if isinstance(output, SteerAccepted):
+                confirmation = self._format_steer_confirmation()
+                if confirmation:
+                    await self._deliver_reply(batch.context, confirmation)
+                    is_first_output = False
+                self._deferred_replies.arm(session=session, context=batch.context)
+                return
+
+            text = self._format_stream_item(output)
+            if text is None:
+                continue
+            chunks = self._split_text_into_chunks(text)
             for i, chunk in enumerate(chunks):
                 if is_first_output and i == 0:
                     await self._deliver_reply(batch.context, chunk)
@@ -185,6 +196,27 @@ class BaseChannelService(ABC):
 
     @abstractmethod
     def _to_user_facing_error(self, error: Exception) -> str: ...
+
+    # -- Overridable hooks (defaults for basic channels) -----------------------
+
+    def _format_stream_item(self, item: AgentStreamItem) -> str | None:
+        """Convert a stream event to user-facing text. Return None to skip.
+
+        Default: extract text from root RunCompleted/RunFailed only.
+        Subclasses override for verbose mode control.
+        """
+        if isinstance(item, RunCompletedEvent):
+            return item.response if item.depth == 0 else None
+        if isinstance(item, RunFailedEvent):
+            return item.error if item.depth == 0 else None
+        return None
+
+    def _format_steer_confirmation(self) -> str | None:
+        """Text to send when user input is steered into a running agent.
+
+        Default: a short acknowledgement. Return None to send nothing.
+        """
+        return "消息已收到，任务正在处理中。"
 
     # -- Shared helpers ------------------------------------------------------
 

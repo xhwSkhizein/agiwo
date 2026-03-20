@@ -8,7 +8,7 @@ import pytest
 from agiwo.agent.runtime import RunOutput, TerminationReason
 from agiwo.scheduler.models import AgentStateStatus
 
-from server.channels.agent_executor import AgentExecutor
+from server.channels.agent_executor import AgentExecutor, SteerAccepted
 from server.channels.base import BaseChannelService
 from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.channels.session import SessionContextService
@@ -388,7 +388,9 @@ async def test_agent_executor_steers_running_state_and_returns_empty_stream() ->
         async for item in executor.execute(FakeAgent("runtime-1"), session, "hello")
     ]
 
-    assert outputs == []
+    assert len(outputs) == 1
+    assert isinstance(outputs[0], SteerAccepted)
+    assert outputs[0].state_id == "runtime-1"
     scheduler.steer.assert_awaited_once_with("runtime-1", "hello", urgent=False)
     scheduler.stream.assert_not_called()
     assert store.sessions["sess-1"] is session
