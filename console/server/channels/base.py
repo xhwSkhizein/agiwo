@@ -236,7 +236,9 @@ class BaseChannelService(ABC):
             and current_session.scheduler_state_id == state_id
         )
 
-    async def _prepare_batch_runtime(self, batch: BatchPayload) -> tuple[Session, Agent]:
+    async def _prepare_batch_runtime(
+        self, batch: BatchPayload
+    ) -> tuple[Session, Agent]:
         resolution = await self._session_service.get_or_create_current_session(
             batch.context,
         )

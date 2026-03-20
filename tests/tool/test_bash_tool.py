@@ -52,7 +52,9 @@ class TestBashToolBasic:
         assert result.output["exit_code"] == 1
         assert result.is_success is False
 
-    async def test_direct_execute_denies_hard_block_command(self, bash_tool, mock_context):
+    async def test_direct_execute_denies_hard_block_command(
+        self, bash_tool, mock_context
+    ):
         result = await bash_tool.execute(
             {"command": "rm -rf /", "tool_call_id": "tc_003b"},
             mock_context,

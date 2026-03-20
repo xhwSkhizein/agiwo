@@ -260,6 +260,7 @@ async def test_delivery_service_falls_back_to_create_message_for_group_reply() -
         '<at user_id="user-1">发起人</at> done',
     )
 
+
 @pytest.mark.asyncio
 async def test_inbound_handler_executes_commands_before_ack_or_enqueue() -> None:
     parser = SimpleNamespace(

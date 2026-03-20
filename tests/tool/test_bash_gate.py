@@ -46,7 +46,9 @@ async def test_bash_tool_gate_denies_hard_block_command() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bash_tool_direct_execute_allows_non_destructive_command_without_gate_flag() -> None:
+async def test_bash_tool_direct_execute_allows_non_destructive_command_without_gate_flag() -> (
+    None
+):
     sandbox = MockSandbox()
     tool = BashTool(BashToolConfig(sandbox=sandbox, cwd="/workspace"))
 

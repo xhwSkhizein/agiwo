@@ -463,7 +463,9 @@ async def test_base_channel_service_delivers_deferred_reply_for_active_state() -
         pass  # Continue to assertions
 
     try:
-        assert [text for _, text in service.reply_calls] == ["消息已收到，正在继续处理。"]
+        assert [text for _, text in service.reply_calls] == [
+            "消息已收到，正在继续处理。"
+        ]
         assert [text for _, text in service.message_calls] == ["final deferred answer"]
     finally:
         await service.close_base()
