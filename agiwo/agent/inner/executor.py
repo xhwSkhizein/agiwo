@@ -63,7 +63,12 @@ class AgentExecutor:
 
         self.llm_handler = LLMStreamHandler(model)
         auth_runtime = (
-            ToolAuthorizationRuntime(policy=self.options.permission_policy)
+            ToolAuthorizationRuntime(
+                policy=self.options.permission_policy,
+                consent_store=self.options.consent_store,
+                waiter=self.options.consent_waiter,
+                notifier=self.options.consent_notifier,
+            )
             if self.options.permission_policy is not None
             else ToolAuthorizationRuntime()
         )

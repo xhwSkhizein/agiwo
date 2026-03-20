@@ -32,6 +32,7 @@ from server.routers import (
     chat,
     scheduler,
     feishu,
+    consent,
 )
 from agiwo.utils.logging import get_logger
 
@@ -151,6 +152,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(scheduler.router)
     app.include_router(feishu.router)
+    app.include_router(consent.router)
 
     @app.get("/api/health")
     async def health():

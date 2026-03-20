@@ -76,6 +76,9 @@ class AgentOptions(BaseModel):
     run_step_storage: RunStepStorageConfig = Field(default_factory=RunStepStorageConfig)
     trace_storage: TraceStorageConfig = Field(default_factory=TraceStorageConfig)
     permission_policy: PermissionPolicy | None = None
+    consent_store: Any = None  # ConsentStore protocol
+    consent_waiter: Any = None  # ConsentWaiter instance
+    consent_notifier: Any = None  # ToolConsentNotifier protocol
 
     def get_effective_root_path(self) -> str:
         if self.config_root:
