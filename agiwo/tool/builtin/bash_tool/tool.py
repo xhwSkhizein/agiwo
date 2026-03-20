@@ -3,12 +3,13 @@
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.base import BaseTool, ToolGateDecision, ToolResult
 from agiwo.tool.builtin.bash_tool.parameter_parser import (
     BashParameterParser,
     ParseError,
 )
 from agiwo.tool.builtin.bash_tool.result_formatter import BashResultFormatter
+from agiwo.tool.builtin.bash_tool.security import CommandSafetyValidator
 from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.tool.builtin.bash_tool.types import (
@@ -68,6 +69,7 @@ class BashTool(BaseTool):
         self.config = config
         self._parser = BashParameterParser()
         self._formatter = BashResultFormatter("bash", config.max_output_length)
+        self._safety_validator = CommandSafetyValidator()
 
     @property
     def name(self) -> str:
@@ -80,7 +82,7 @@ class BashTool(BaseTool):
             "Set `background=true` to start a background job. "
             "Use the separate `bash_process` tool to inspect, stop, or feed background jobs. "
             "Set `pty=true` for interactive CLI commands that require a TTY. "
-            "Built-in safety guard blocks destructive commands."
+            "Built-in safety guard blocks destructive commands, and risky commands may require confirmation."
         )
         if self.config.extra_instructions:
             lines += " " + self.config.extra_instructions
@@ -131,6 +133,18 @@ class BashTool(BaseTool):
     def is_concurrency_safe(self) -> bool:
         return True
 
+    async def gate(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+    ) -> ToolGateDecision:
+        del context
+        command = str(parameters.get("command", "")).strip()
+        if not command:
+            return ToolGateDecision.allow()
+        decision = await self._safety_validator.validate(command)
+        return ToolGateDecision(action=decision.action, reason=decision.reason)
+
     async def execute(
         self,
         parameters: dict[str, Any],
@@ -142,6 +156,11 @@ class BashTool(BaseTool):
         request = self._resolve_request(parameters)
         if isinstance(request, ToolResult):
             return request
+
+        if not context.metadata.get("_tool_gate_checked"):
+            safety_decision = await self._safety_validator.validate(request.command)
+            if safety_decision.action == "deny":
+                return self._formatter.error(parameters, safety_decision.reason)
 
         try:
             return await self._execute_shell(

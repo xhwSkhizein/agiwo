@@ -38,14 +38,8 @@ class AgentRunner:
     ) -> tuple[AgentExecutionHandle, ActiveRootExecution]:
         resolved_session_id = session_id or str(uuid4())
         resolved_abort_signal = abort_signal or AbortSignal()
-        
-        # Extract user_id from UserMessage.context.metadata if not explicitly provided
         resolved_user_id = user_id
-        if resolved_user_id is None:
-            normalized_message = normalize_to_message(user_input)
-            if normalized_message.context and normalized_message.context.metadata:
-                resolved_user_id = normalized_message.context.metadata.get("trigger_user_id")
-        
+
         trace_runtime = self._start_trace_runtime(
             resource_owner=resource_owner,
             agent_id=agent_id,

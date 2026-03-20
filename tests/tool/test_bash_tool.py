@@ -1,6 +1,7 @@
 """Focused tests for BashTool command execution behavior."""
 
 from agiwo.tool.base import ToolResult
+from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.bash_tool.tool import BashTool, BashToolConfig
 from agiwo.tool.builtin.bash_tool.types import (
     AfterBashCallOutput,
@@ -12,6 +13,14 @@ pytest_plugins = ("tests.tool.bash_tool_test_support",)
 
 
 class TestBashToolBasic:
+    async def test_gate_allows_non_destructive_command(self, bash_tool):
+        decision = await bash_tool.gate(
+            {"command": "sudo echo hello"},
+            ToolContext(session_id="session-1"),
+        )
+
+        assert decision.action == "allow"
+
     async def test_execute_returns_tool_result(self, bash_tool, mock_context):
         result = await bash_tool.execute(
             {"command": "echo hello", "tool_call_id": "tc_001"},
@@ -42,6 +51,15 @@ class TestBashToolBasic:
         assert result.output["ok"] is False
         assert result.output["exit_code"] == 1
         assert result.is_success is False
+
+    async def test_direct_execute_denies_hard_block_command(self, bash_tool, mock_context):
+        result = await bash_tool.execute(
+            {"command": "rm -rf /", "tool_call_id": "tc_003b"},
+            mock_context,
+        )
+
+        assert result.output["ok"] is False
+        assert "hard safety rule" in result.output["stderr"]
 
     async def test_timeout_validation_error(self, bash_tool, mock_context):
         result = await bash_tool.execute(

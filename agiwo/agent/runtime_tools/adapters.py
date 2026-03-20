@@ -1,8 +1,19 @@
 from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.runtime_tools.contracts import AgentRuntimeTool, RuntimeToolOutcome
-from agiwo.tool.base import BaseTool, ToolDefinition
+from agiwo.tool.base import BaseTool, ToolDefinition, ToolGateDecision
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
+
+
+def _build_tool_context(context: AgentRunContext) -> ToolContext:
+    return ToolContext(
+        session_id=context.session_id,
+        agent_id=context.agent_id,
+        agent_name=context.agent_name,
+        user_id=context.user_id,
+        timeout_at=context.timeout_at,
+        metadata=dict(context.metadata),
+    )
 
 
 class BaseToolAdapter:
@@ -25,23 +36,22 @@ class BaseToolAdapter:
     def is_concurrency_safe(self) -> bool:
         return self._tool.is_concurrency_safe()
 
+    async def gate_for_agent(
+        self,
+        parameters: dict[str, object],
+        context: AgentRunContext,
+    ) -> ToolGateDecision:
+        return await self._tool.gate(parameters, context=_build_tool_context(context))
+
     async def execute_for_agent(
         self,
         parameters: dict[str, object],
         context: AgentRunContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
-        tool_context = ToolContext(
-            session_id=context.session_id,
-            agent_id=context.agent_id,
-            agent_name=context.agent_name,
-            user_id=context.user_id,
-            timeout_at=context.timeout_at,
-            metadata=dict(context.metadata),
-        )
         result = await self._tool.execute(
             parameters,
-            context=tool_context,
+            context=_build_tool_context(context),
             abort_signal=abort_signal,
         )
         return RuntimeToolOutcome(result=result)

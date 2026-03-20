@@ -2,7 +2,7 @@
 Event-driven agent execution bridge for channel sessions.
 
 Handles the full lifecycle of submitting user input to the scheduler
-and streaming text output back to the channel with timeout protection.
+and streaming typed agent events back to the channel with timeout protection.
 
 State resolution logic:
     None / COMPLETED / FAILED  →  submit new persistent agent
@@ -12,15 +12,12 @@ State resolution logic:
 """
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal
 
 from agiwo.agent import Agent, UserInput
-from agiwo.agent.runtime import (
-    AgentStreamItem,
-    RunCompletedEvent,
-    RunFailedEvent,
-    RunOutput,
-)
+from agiwo.agent.runtime import AgentStreamItem, RunOutput
 from agiwo.scheduler.models import AgentState, AgentStateStatus
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
@@ -31,8 +28,16 @@ from server.channels.session.models import ChannelChatSessionStore, Session
 logger = get_logger(__name__)
 
 
+@dataclass(frozen=True)
+class DispatchResult:
+    """Result of routing a channel message into the scheduler."""
+
+    action: Literal["submitted", "enqueued", "steered"]
+    stream: AsyncIterator[AgentStreamItem] | None = None
+
+
 class AgentExecutor:
-    """Submit user input to the scheduler and yield text output."""
+    """Submit user input to the scheduler and return dispatch metadata."""
 
     def __init__(
         self,
@@ -50,8 +55,8 @@ class AgentExecutor:
         agent: Agent,
         session: Session,
         user_input: UserInput,
-    ) -> AsyncIterator[str]:
-        """Resolve scheduler state, submit/enqueue/steer, and yield text."""
+    ) -> DispatchResult:
+        """Resolve scheduler state, submit/enqueue/steer, and return dispatch info."""
         state_id = session.scheduler_state_id
         current_state = None
         if state_id:
@@ -64,15 +69,25 @@ class AgentExecutor:
             AgentStateStatus.WAITING,
             AgentStateStatus.QUEUED,
         ):
-            await self._steer(
+            steered = await self._steer(
                 session, user_input, urgent=status == AgentStateStatus.WAITING
             )
-            return
+            if steered:
+                return DispatchResult(action="steered")
+            refreshed = await self._scheduler.get_state(session.scheduler_state_id)
+            refreshed_status = refreshed.status if refreshed is not None else None
+            if refreshed_status in (
+                AgentStateStatus.RUNNING,
+                AgentStateStatus.WAITING,
+                AgentStateStatus.QUEUED,
+            ):
+                raise RuntimeError(
+                    f"Failed to steer active scheduler state '{session.scheduler_state_id}'"
+                )
+            return await self.execute(agent, session, user_input)
 
         if status == AgentStateStatus.PENDING:
-            async for text in self._handle_pending(agent, session, user_input):
-                yield text
-            return
+            return await self._handle_pending(agent, session, user_input)
 
         use_enqueue = (
             current_state is not None
@@ -82,11 +97,8 @@ class AgentExecutor:
         )
 
         if use_enqueue:
-            async for text in self._enqueue_and_stream(agent, session, user_input):
-                yield text
-        else:
-            async for text in self._submit_and_stream(agent, session, user_input):
-                yield text
+            return await self._enqueue_and_stream(agent, session, user_input)
+        return await self._submit_and_stream(agent, session, user_input)
 
     async def cancel_if_active(self, session: Session, reason: str) -> None:
         """Cancel the scheduler state for a session if it is still active."""
@@ -115,7 +127,7 @@ class AgentExecutor:
         user_input: UserInput,
         *,
         urgent: bool,
-    ) -> None:
+    ) -> bool:
         steered = await self._scheduler.steer(
             session.scheduler_state_id,
             user_input,
@@ -126,13 +138,14 @@ class AgentExecutor:
         else:
             logger.warning("steer_failed", state_id=session.scheduler_state_id)
         await self._touch_session(session)
+        return steered
 
     async def _submit_and_stream(
         self,
         agent: Agent,
         session: Session,
         user_input: UserInput,
-    ) -> AsyncIterator[str]:
+    ) -> DispatchResult:
         assign_scheduler_state(session, agent.id)
         await self._touch_session(session)
 
@@ -143,15 +156,14 @@ class AgentExecutor:
             persistent=True,
             timeout=self._timeout,
         )
-        async for text in self._consume_stream(stream):
-            yield text
+        return DispatchResult(action="submitted", stream=stream)
 
     async def _enqueue_and_stream(
         self,
         agent: Agent,
         session: Session,
         user_input: UserInput,
-    ) -> AsyncIterator[str]:
+    ) -> DispatchResult:
         await self._touch_session(session)
 
         stream = self._scheduler.stream(
@@ -160,15 +172,14 @@ class AgentExecutor:
             state_id=session.scheduler_state_id,
             timeout=self._timeout,
         )
-        async for text in self._consume_stream(stream):
-            yield text
+        return DispatchResult(action="enqueued", stream=stream)
 
     async def _handle_pending(
         self,
         agent: Agent,
         session: Session,
         user_input: UserInput,
-    ) -> AsyncIterator[str]:
+    ) -> DispatchResult:
         logger.info(
             "waiting_for_pending_before_submit",
             state_id=session.scheduler_state_id,
@@ -186,42 +197,9 @@ class AgentExecutor:
             and refreshed.status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
         )
         if can_enqueue:
-            async for text in self._enqueue_and_stream(agent, session, user_input):
-                yield text
-        else:
-            async for text in self._submit_and_stream(agent, session, user_input):
-                yield text
-
-    # -- Private: stream helpers -----------------------------------------------
-
-    async def _consume_stream(
-        self,
-        event_stream: AsyncIterator[AgentStreamItem],
-    ) -> AsyncIterator[str]:
-        """Consume scheduler events and extract text output."""
-        async for item in event_stream:
-            text = _extract_text(item)
-            if text is not None:
-                yield text
+            return await self._enqueue_and_stream(agent, session, user_input)
+        return await self._submit_and_stream(agent, session, user_input)
 
     async def _touch_session(self, session: Session) -> None:
         session.updated_at = datetime.now(timezone.utc)
         await self._store.upsert_session(session)
-
-
-def _extract_text(item: AgentStreamItem) -> str | None:
-    """Extract user-facing text from an agent stream event."""
-    if isinstance(item, RunCompletedEvent):
-        if not item.response:
-            return None
-        if item.depth == 0:
-            return item.response
-        return (
-            f"<notice>agent_id={item.agent_id}, status=completed</notice>\n"
-            f"{item.response}"
-        )
-    if isinstance(item, RunFailedEvent):
-        if item.depth == 0:
-            return item.error
-        return f"<notice>agent_id={item.agent_id}, status=failed</notice>\n{item.error}"
-    return None

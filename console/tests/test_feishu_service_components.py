@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agiwo.agent import ContentPart, ContentType
-
 from server.channels.feishu.commands.base import CommandResult
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.connection import FeishuConnection
@@ -260,7 +259,6 @@ async def test_delivery_service_falls_back_to_create_message_for_group_reply() -
         "chat-1",
         '<at user_id="user-1">发起人</at> done',
     )
-
 
 @pytest.mark.asyncio
 async def test_inbound_handler_executes_commands_before_ack_or_enqueue() -> None:

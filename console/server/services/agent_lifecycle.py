@@ -20,8 +20,6 @@ from agiwo.scheduler.scheduler import Scheduler
 from server.config import ConsoleConfig
 from server.domain.agent_configs import AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.bash_permission_builder import build_bash_permission_policy
-from server.services.consent_manager import get_consent_manager
 from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
@@ -70,22 +68,10 @@ def build_agent_options(
 ) -> AgentOptions:
     """Build AgentOptions with storage config matching the console storage backend."""
     opts = AgentOptionsInput.model_validate(config.options or {})
-
-    agent_options = opts.to_agent_options(
+    return opts.to_agent_options(
         run_step_storage=build_run_step_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),
     )
-
-    # Integrate bash permission policy with consent support
-    consent_manager = get_consent_manager()
-    agent_options.permission_policy = build_bash_permission_policy(
-        mode="risky_require_consent"
-    )
-    agent_options.consent_store = consent_manager.store
-    agent_options.consent_waiter = consent_manager.waiter
-    # consent_notifier will be set dynamically by channels (Feishu/Web)
-
-    return agent_options
 
 
 async def build_agent(

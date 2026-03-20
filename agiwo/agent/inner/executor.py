@@ -15,7 +15,6 @@ from agiwo.agent.inner.run_state import RunState
 from agiwo.agent.inner.steering import apply_steering_messages
 from agiwo.agent.inner.termination_runtime import ExecutionTerminationRuntime
 from agiwo.agent.inner.tool_runtime import ResolvedToolCall, ToolRuntime
-from agiwo.agent.tool_auth import ToolAuthorizationRuntime
 from agiwo.agent.memory_types import MemoryRecord
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.runtime import (
@@ -62,17 +61,7 @@ class AgentExecutor:
         )
 
         self.llm_handler = LLMStreamHandler(model)
-        auth_runtime = (
-            ToolAuthorizationRuntime(
-                policy=self.options.permission_policy,
-                consent_store=self.options.consent_store,
-                waiter=self.options.consent_waiter,
-                notifier=self.options.consent_notifier,
-            )
-            if self.options.permission_policy is not None
-            else ToolAuthorizationRuntime()
-        )
-        self.tool_runtime = ToolRuntime(tools=tools, auth_runtime=auth_runtime)
+        self.tool_runtime = ToolRuntime(tools=tools)
         self.termination_runtime = ExecutionTerminationRuntime(
             options=self.options,
             max_input_tokens_per_call=self.max_input_tokens_per_call,
