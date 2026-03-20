@@ -1,6 +1,4 @@
-"""
-Feishu channel APIs.
-"""
+"""Feishu channel APIs."""
 
 from typing import Any
 

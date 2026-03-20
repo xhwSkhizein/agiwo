@@ -7,15 +7,22 @@ behaviour (message delivery, prompt rendering, error mapping).
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 
-from agiwo.agent import UserMessage, extract_text
+from agiwo.agent import Agent, UserMessage, extract_text
+from agiwo.agent.runtime import AgentStreamItem, RunCompletedEvent, RunFailedEvent
 from agiwo.utils.logging import get_logger
 
 from server.channels.agent_executor import AgentExecutor
 from server.channels.deferred_reply import DeferredReplyManager
 from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.channels.session import SessionContextService, SessionManager
-from server.channels.session.models import BatchContext, BatchPayload, InboundMessage
+from server.channels.session.models import (
+    BatchContext,
+    BatchPayload,
+    InboundMessage,
+    Session,
+)
 
 logger = get_logger(__name__)
 
@@ -132,41 +139,18 @@ class BaseChannelService(ABC):
             await self._deliver_reply(batch.context, failure_text)
 
     async def _execute_batch(self, batch: BatchPayload) -> None:
-        resolution = await self._session_service.get_or_create_current_session(
-            batch.context,
-        )
-        if resolution.retired_runtime_agent_id is not None:
-            await self._agent_pool.close_runtime_agent(
-                resolution.retired_runtime_agent_id,
-            )
-        session = resolution.session
-        agent = await self._agent_pool.get_or_create_runtime_agent(session)
-
-        is_first_output = True
-        async for output in self._executor.execute(agent, session, batch.user_message):
-            chunks = self._split_text_into_chunks(output)
-            for i, chunk in enumerate(chunks):
-                if is_first_output and i == 0:
-                    await self._deliver_reply(batch.context, chunk)
-                    is_first_output = False
-                else:
-                    await self._deliver_message(batch.context, chunk)
-
-        state = await self._executor.get_state(session.scheduler_state_id)
-        if state is not None and state.is_active():
-            self._deferred_replies.arm(session=session, context=batch.context)
+        session, agent = await self._prepare_batch_runtime(batch)
+        dispatch = await self._executor.execute(agent, session, batch.user_message)
+        if dispatch.action == "steered":
+            await self._handle_steered_dispatch(batch, session)
             return
 
-        if is_first_output:
-            if state is not None and state.result_summary:
-                chunks = self._split_text_into_chunks(state.result_summary)
-                for i, chunk in enumerate(chunks):
-                    if i == 0:
-                        await self._deliver_reply(batch.context, chunk)
-                    else:
-                        await self._deliver_message(batch.context, chunk)
-                return
-            await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
+        had_output = await self._consume_dispatch_stream(
+            batch,
+            session,
+            dispatch.stream,
+        )
+        await self._finalize_dispatch(batch, session, had_output)
 
     # -- Abstract hooks (channel-specific) -----------------------------------
 
@@ -185,6 +169,15 @@ class BaseChannelService(ABC):
 
     @abstractmethod
     def _to_user_facing_error(self, error: Exception) -> str: ...
+
+    async def _handle_stream_item(
+        self,
+        batch: BatchPayload,
+        session: Session,
+        item: AgentStreamItem,
+    ) -> bool:
+        del batch, session, item
+        return False
 
     # -- Shared helpers ------------------------------------------------------
 
@@ -222,3 +215,159 @@ class BaseChannelService(ABC):
         if len(text) <= max_len:
             return text
         return text[:max_len] + "...[truncated]"
+
+    async def _can_deliver_session(
+        self,
+        context: BatchContext,
+        *,
+        session_id: str,
+        state_id: str,
+    ) -> bool:
+        (
+            _chat_context,
+            current_session,
+        ) = await self._session_service.get_chat_context_and_current_session(
+            context.chat_context_scope_id
+        )
+        if current_session is None:
+            return False
+        return (
+            current_session.id == session_id
+            and current_session.scheduler_state_id == state_id
+        )
+
+    async def _prepare_batch_runtime(
+        self, batch: BatchPayload
+    ) -> tuple[Session, Agent]:
+        resolution = await self._session_service.get_or_create_current_session(
+            batch.context,
+        )
+        if resolution.retired_runtime_agent_id is not None:
+            await self._agent_pool.close_runtime_agent(
+                resolution.retired_runtime_agent_id,
+            )
+        session = resolution.session
+        agent = await self._agent_pool.get_or_create_runtime_agent(session)
+        return session, agent
+
+    async def _handle_steered_dispatch(
+        self,
+        batch: BatchPayload,
+        session: Session,
+    ) -> None:
+        if await self._can_deliver_target(batch.context, session):
+            await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
+        await self._arm_deferred_reply_if_active(batch, session)
+
+    async def _consume_dispatch_stream(
+        self,
+        batch: BatchPayload,
+        session: Session,
+        stream: AsyncIterator[AgentStreamItem] | None,
+    ) -> bool:
+        if stream is None:
+            return False
+
+        had_output = False
+        async for item in stream:
+            if not await self._can_deliver_target(batch.context, session):
+                continue
+            if await self._handle_stream_item(batch, session, item):
+                continue
+            text = _extract_stream_text(item)
+            if text is None:
+                continue
+            had_output = await self._deliver_stream_text(
+                batch.context,
+                text,
+                had_output=had_output,
+            )
+        return had_output
+
+    async def _finalize_dispatch(
+        self,
+        batch: BatchPayload,
+        session: Session,
+        had_output: bool,
+    ) -> None:
+        state = await self._executor.get_state(session.scheduler_state_id)
+        if await self._arm_deferred_reply_if_active(
+            batch,
+            session,
+            state=state,
+        ):
+            return
+        if not await self._can_deliver_target(batch.context, session):
+            return
+        if had_output:
+            return
+        if state is not None and state.result_summary:
+            await self._deliver_stream_text(
+                batch.context,
+                state.result_summary,
+                had_output=False,
+            )
+            return
+        await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
+
+    async def _arm_deferred_reply_if_active(
+        self,
+        batch: BatchPayload,
+        session: Session,
+        *,
+        state=None,
+    ) -> bool:
+        resolved_state = state
+        if resolved_state is None:
+            resolved_state = await self._executor.get_state(session.scheduler_state_id)
+        if resolved_state is None or not resolved_state.is_active():
+            return False
+        if not await self._can_deliver_target(batch.context, session):
+            return False
+        self._deferred_replies.arm(session=session, context=batch.context)
+        return True
+
+    async def _deliver_stream_text(
+        self,
+        context: BatchContext,
+        text: str,
+        *,
+        had_output: bool,
+    ) -> bool:
+        chunks = self._split_text_into_chunks(text)
+        for index, chunk in enumerate(chunks):
+            if not had_output and index == 0:
+                await self._deliver_reply(context, chunk)
+                had_output = True
+                continue
+            await self._deliver_message(context, chunk)
+            had_output = True
+        return had_output
+
+    async def _can_deliver_target(
+        self,
+        context: BatchContext,
+        session: Session,
+    ) -> bool:
+        return await self._can_deliver_session(
+            context,
+            session_id=session.id,
+            state_id=session.scheduler_state_id,
+        )
+
+
+def _extract_stream_text(item: AgentStreamItem) -> str | None:
+    if isinstance(item, RunCompletedEvent):
+        if not item.response:
+            return None
+        if item.depth == 0:
+            return item.response
+        return (
+            f"<notice>agent_id={item.agent_id}, status=completed</notice>\n"
+            f"{item.response}"
+        )
+    if isinstance(item, RunFailedEvent):
+        if item.depth == 0:
+            return item.error
+        return f"<notice>agent_id={item.agent_id}, status=failed</notice>\n{item.error}"
+    return None

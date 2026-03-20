@@ -200,6 +200,7 @@ class FeishuUserMessageBuilder:
             "chat_type": context.chat_type,
             "chat_id": context.chat_id,
             "trigger_user": latest.sender_name,
+            "trigger_user_id": context.trigger_user_id,
             "batch_message_count": len(messages),
         }
 

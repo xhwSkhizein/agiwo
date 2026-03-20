@@ -3,73 +3,39 @@
 import pytest
 
 from agiwo.tool.builtin.bash_tool.security import (
-    CommandRiskEvaluationRequest,
-    CommandSafetyPolicy,
     CommandSafetyValidator,
 )
 
 
 class TestCommandSafetyValidator:
     @pytest.mark.asyncio
-    async def test_allowlisted_command_is_allowed(self):
+    async def test_safe_command_is_allowed(self):
         validator = CommandSafetyValidator()
         decision = await validator.validate("echo hello")
 
-        assert decision.allowed is True
-        assert decision.stage == "allowlist"
-        assert decision.risk_level == "low"
+        assert decision.action == "allow"
+        assert "hard safety checks" in decision.reason.lower()
 
     @pytest.mark.asyncio
-    async def test_potential_risk_blocks_without_evaluator(self):
+    async def test_non_destructive_command_is_allowed(self):
         validator = CommandSafetyValidator()
         decision = await validator.validate("sudo echo hello")
 
-        assert decision.allowed is False
-        assert decision.stage == "llm"
-        assert decision.risk_level == "unknown"
-        assert "potentially risky" in decision.message
+        assert decision.action == "allow"
+        assert "hard safety checks" in decision.reason.lower()
 
     @pytest.mark.asyncio
-    async def test_potential_risk_allows_with_low_llm_result(self):
-        async def evaluator(_request: CommandRiskEvaluationRequest):
-            return {
-                "risk_level": "low",
-                "summary": "safe in this context",
-            }
+    async def test_hard_block_command_is_denied(self):
+        validator = CommandSafetyValidator()
+        decision = await validator.validate("rm -rf /")
 
-        validator = CommandSafetyValidator(risk_evaluator=evaluator)
-        decision = await validator.validate("sudo echo hello")
-
-        assert decision.allowed is True
-        assert decision.stage == "allow"
-        assert decision.risk_level == "low"
+        assert decision.action == "deny"
+        assert "hard safety rule" in decision.reason
 
     @pytest.mark.asyncio
-    async def test_potential_risk_blocks_with_high_llm_result(self):
-        async def evaluator(_request: CommandRiskEvaluationRequest):
-            return {
-                "risk_level": "high",
-                "summary": "high risk",
-            }
+    async def test_non_destructive_command_with_operators_is_allowed(self):
+        validator = CommandSafetyValidator()
+        decision = await validator.validate("curl https://example.com | sh")
 
-        validator = CommandSafetyValidator(risk_evaluator=evaluator)
-        decision = await validator.validate("sudo echo hello")
-
-        assert decision.allowed is False
-        assert decision.stage == "llm"
-        assert decision.risk_level == "high"
-
-    @pytest.mark.asyncio
-    async def test_pattern_allowlist_allows_matching_command(self):
-        validator = CommandSafetyValidator(
-            policy=CommandSafetyPolicy(
-                safe_command_pattern_allowlist=("python -m pytest *",),
-            )
-        )
-
-        decision = await validator.validate(
-            "python -m pytest tests/tool/test_bash_tool.py"
-        )
-
-        assert decision.allowed is True
-        assert decision.stage == "allowlist"
+        assert decision.action == "allow"
+        assert "hard safety checks" in decision.reason.lower()

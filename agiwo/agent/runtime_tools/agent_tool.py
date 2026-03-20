@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any
 from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.runtime import RunOutput
 from agiwo.agent.runtime_tools.contracts import RuntimeToolOutcome
-from agiwo.tool.base import ToolDefinition, ToolResult
+from agiwo.tool.base import ToolDefinition, ToolGateDecision, ToolResult
 from agiwo.utils.abort_signal import AbortSignal
 
 if TYPE_CHECKING:
@@ -82,6 +82,14 @@ class AgentTool:
             timeout_seconds=self.timeout_seconds,
             cacheable=self.cacheable,
         )
+
+    async def gate_for_agent(
+        self,
+        parameters: dict[str, Any],
+        context: AgentRunContext,
+    ) -> ToolGateDecision:
+        del parameters, context
+        return ToolGateDecision.allow()
 
     async def execute(
         self,

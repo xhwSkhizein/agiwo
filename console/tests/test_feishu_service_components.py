@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from agiwo.agent import ContentPart, ContentType
-
 from server.channels.feishu.commands.base import CommandResult
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.connection import FeishuConnection

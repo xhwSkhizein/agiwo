@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import time
-from typing import Any
+from typing import Any, Literal
 
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
@@ -18,6 +18,22 @@ class ToolDefinition:
     timeout_seconds: int = 30
     # Whether tool results can be cached within a session
     cacheable: bool = False
+
+
+@dataclass(frozen=True)
+class ToolGateDecision:
+    """Minimal preflight decision returned before tool execution."""
+
+    action: Literal["allow", "deny"]
+    reason: str = ""
+
+    @classmethod
+    def allow(cls, reason: str = "") -> "ToolGateDecision":
+        return cls(action="allow", reason=reason)
+
+    @classmethod
+    def deny(cls, reason: str) -> "ToolGateDecision":
+        return cls(action="deny", reason=reason)
 
 
 @dataclass
@@ -174,6 +190,15 @@ class BaseTool(ABC):
     @abstractmethod
     def is_concurrency_safe(self) -> bool:
         """Whether the tool can be executed concurrently."""
+
+    async def gate(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+    ) -> ToolGateDecision:
+        """Preflight hook for safety checks before execution."""
+        del parameters, context
+        return ToolGateDecision.allow()
 
     @abstractmethod
     async def execute(

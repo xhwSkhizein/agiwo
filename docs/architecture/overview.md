@@ -46,7 +46,6 @@ The core execution engine:
 | `inner/` | **Internal** — execution loop, tool runtime, prompt builder, compaction |
 | `storage/` | Run/step/session persistence |
 | `trace/` | Agent-to-trace adapter |
-| `tool_auth/` | Tool authorization runtime |
 | `runtime_tools/` | Agent-as-tool adapter, runtime tool contracts |
 | `prompt/` | System prompt construction |
 | `streaming/` | Stream consumption helpers |

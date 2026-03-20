@@ -16,9 +16,9 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `agiwo/agent/` | Agent 对外入口与运行时领域模型。包含 `runtime_tools/` 宿主工具适配层、`trace/` agent trace adapter、`inner/` 执行内部实现、`prompt/` prompt runtime、`tool_auth/` 工具授权运行时、`storage/` Run/Session 持久化。包根 `agiwo.agent` 是公开 API，纯配置模型落在 `config.py`，其余 canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
+| `agiwo/agent/` | Agent 对外入口与运行时领域模型。包含 `runtime_tools/` 宿主工具适配层、`trace/` agent trace adapter、`inner/` 执行内部实现、`prompt/` prompt runtime、`storage/` Run/Session 持久化。包根 `agiwo.agent` 是公开 API，纯配置模型落在 `config.py`，其余 canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
-| `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、工具侧授权领域模型（`authz/`）、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
+| `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
 | `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade，`engine.py` 负责公开编排 API 并组装内部 owner；共享状态迁移收口到 `state_ops.py`，tick phases 收口到 `tick_ops.py`，tree cancel/shutdown 收口到 `tree_ops.py`，tool-facing control helpers 收口到 `control_ops.py`，`runner.py` 负责单次 agent cycle 执行，`wake_messages.py` 负责唤醒消息构造，`coordinator.py` 只管进程内协作状态，`control.py` 定义 tools 依赖的窄接口，`store/` 只负责持久化。 |
 | `agiwo/observability/` | Trace/Span 模型、查询接口与 trace storage 实现；agent 事件到 Trace 的适配层已收口到 `agiwo/agent/trace/`。 |
 | `agiwo/embedding/` | Embedding 抽象与 factory，包含本地/OpenAI 风格实现。 |
@@ -78,7 +78,7 @@
 
 ### Tool
 
-- `BaseTool` 定义稳定契约：名称、描述、参数 schema、并发安全性、`execute(..., context: ToolContext) -> ToolResult`。
+- `BaseTool` 定义稳定契约：名称、描述、参数 schema、并发安全性、可选 `gate(..., context: ToolContext) -> ToolGateDecision` 预检，以及 `execute(..., context: ToolContext) -> ToolResult`。
 - agent 运行时内部统一通过 `AgentRuntimeTool` 执行工具；scheduler 控制型 tools 走 runtime tool 契约，不再把终止控制塞进 `ToolResult`。
 - `AgentTool` / `as_tool()` 属于 `agiwo.agent.runtime_tools`，是 agent runtime adapter，不属于 `agiwo.tool/` core。
 - 生产代码统一通过 `ToolResult.success()/failed()/aborted()/denied()` 构造结果。

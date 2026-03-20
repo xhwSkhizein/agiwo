@@ -28,7 +28,12 @@ async def _stream_chat_events(
     session_id: str,
 ) -> AsyncIterator[dict[str, str]]:
     abort_signal = AbortSignal()
-    handle = agent.start(message, session_id=session_id, abort_signal=abort_signal)
+    handle = agent.start(
+        message,
+        session_id=session_id,
+        abort_signal=abort_signal,
+    )
+
     async for event in consume_execution_stream(
         handle,
         cancel_reason="SSE connection closed",

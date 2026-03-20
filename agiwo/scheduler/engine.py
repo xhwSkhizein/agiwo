@@ -159,7 +159,7 @@ class SchedulerEngine(SchedulerControl):
                 agent,
                 user_input,
                 resolved_session_id,
-                state,
+                state=state,
             )
         )
         self._coordinator.track_active_task(task)
