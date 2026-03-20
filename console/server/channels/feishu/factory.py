@@ -158,7 +158,6 @@ class FeishuServiceFactory:
         command_registry = build_feishu_command_registry(
             session_service=session_service,
             agent_pool=agent_pool,
-            executor=executor,
             session_manager=session_manager,
             scheduler=scheduler,
             agent_registry=agent_registry,

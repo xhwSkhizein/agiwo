@@ -119,17 +119,14 @@ class DeferredReplyManager:
                 )
                 return
 
-            # Resolve final text the same as _execute_batch
             text = result.response or result.error
             if not text:
-                # Get state to check result_summary
                 state = await self._executor.get_state(state_id)
                 if state is not None and state.result_summary:
                     text = state.result_summary
                 else:
                     text = "执行完成，但未产出可展示内容。"
 
-            # Use channel's chunking-aware delivery
             await self._deliver_chunked(pending.context, text)
             logger.info(
                 "deferred_reply_delivered",

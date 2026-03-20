@@ -7,7 +7,6 @@ from functools import partial
 
 from agiwo.scheduler.scheduler import Scheduler
 
-from server.channels.agent_executor import AgentExecutor
 from server.channels.feishu.commands.base import (
     CommandContext,
     CommandResult,
@@ -33,7 +32,6 @@ from server.channels.session.models import Session
 
 def build_session_command_specs(
     session_service: SessionContextService,
-    executor: AgentExecutor,
     session_manager: SessionManager,
     scheduler: Scheduler,
 ) -> list[CommandSpec]:
@@ -44,7 +42,6 @@ def build_session_command_specs(
             execute=partial(
                 _execute_new_session,
                 session_service,
-                executor,
                 session_manager,
             ),
         ),
@@ -59,7 +56,6 @@ def build_session_command_specs(
             execute=partial(
                 _execute_switch_session,
                 session_service,
-                executor,
                 session_manager,
             ),
         ),
@@ -68,16 +64,13 @@ def build_session_command_specs(
 
 async def _execute_new_session(
     session_service: SessionContextService,
-    executor: AgentExecutor,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
     del args
-    del executor
 
-    current_session = ctx.current_session
-    if current_session is None and not ctx.base_agent_id:
+    if ctx.current_session is None and not ctx.base_agent_id:
         return CommandResult(
             text="默认 Agent 不存在，无法创建会话。请先检查默认 Agent 配置。"
         )
@@ -92,18 +85,18 @@ async def _execute_new_session(
         created_by="COMMAND_NEW",
     )
     session_manager.reset_chat_context(ctx.chat_context_scope_id)
-    return CommandResult(text=f"新会话已创建: {created.session.id}")
+    return CommandResult(
+        text=f"新会话已创建: {created.session.id}，之前的任务将在后台继续运行。"
+    )
 
 
 async def _execute_switch_session(
     session_service: SessionContextService,
-    executor: AgentExecutor,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
     target_session_id = args.strip()
-    del executor
     if not target_session_id:
         return CommandResult(text="用法: /switch <session_id>")
 
@@ -123,7 +116,9 @@ async def _execute_switch_session(
         return CommandResult(text=_switch_session_error_text(exc, target_session_id))
 
     session_manager.reset_chat_context(ctx.chat_context_scope_id)
-    return CommandResult(text=f"已切换到会话: {switched.current_session.id}")
+    return CommandResult(
+        text=f"已切换到会话: {switched.current_session.id}，之前的任务将在后台继续运行。"
+    )
 
 
 async def _execute_list_sessions(

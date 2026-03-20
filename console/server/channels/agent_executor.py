@@ -37,7 +37,20 @@ class DispatchResult:
 
 
 class AgentExecutor:
-    """Submit user input to the scheduler and return dispatch metadata."""
+    """Route channel input into the scheduler and return typed dispatch metadata.
+
+    ``execute()`` does not stream events directly. It resolves the current
+    scheduler state and returns a ``DispatchResult`` describing which action was
+    taken:
+
+    - ``submitted``: a new persistent root was created and ``stream`` contains
+      the resulting ``AgentStreamItem`` async iterator.
+    - ``enqueued``: input was appended to an existing persistent root and
+      ``stream`` contains the resulting ``AgentStreamItem`` async iterator.
+    - ``steered``: input was injected into an active root and no stream is
+      returned; channel callers should treat this as an acknowledgement-only
+      path and rely on deferred delivery for later output.
+    """
 
     def __init__(
         self,

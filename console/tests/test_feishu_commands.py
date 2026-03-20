@@ -88,7 +88,6 @@ def test_build_feishu_command_registry_includes_expected_commands() -> None:
     registry = build_feishu_command_registry(
         session_service=SimpleNamespace(),
         agent_pool=SimpleNamespace(),
-        executor=SimpleNamespace(),
         session_manager=SimpleNamespace(),
         scheduler=SimpleNamespace(),
         agent_registry=SimpleNamespace(),
@@ -118,13 +117,11 @@ async def test_switch_command_maps_known_errors_from_session_service() -> None:
         create_new_session=AsyncMock(),
         list_user_sessions=AsyncMock(),
     )
-    executor = SimpleNamespace(cancel_if_active=AsyncMock())
     registry = build_feishu_command_registry(
         session_service=session_service,
         agent_pool=SimpleNamespace(
             runtime_agents={}, get_or_create_runtime_agent=AsyncMock()
         ),
-        executor=executor,
         session_manager=session_manager,
         scheduler=SimpleNamespace(),
         agent_registry=SimpleNamespace(),
@@ -142,7 +139,6 @@ async def test_switch_command_maps_known_errors_from_session_service() -> None:
 
     assert result.text == "会话不存在: sess-2"
     session_manager.reset_chat_context.assert_not_called()
-    executor.cancel_if_active.assert_not_called()
 
 
 # ========== UserInput conversion tests ==========
