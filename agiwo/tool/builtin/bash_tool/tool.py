@@ -10,7 +10,6 @@ from agiwo.tool.builtin.bash_tool.parameter_parser import (
 )
 from agiwo.tool.builtin.bash_tool.result_formatter import BashResultFormatter
 from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
-from agiwo.tool.builtin.bash_tool.security import CommandSafetyValidator
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.tool.builtin.bash_tool.types import (
     AfterBashCallInput,
@@ -37,7 +36,6 @@ class BashToolConfig:
     on_after_bash_call: (
         Callable[[AfterBashCallInput], AfterBashCallOutput | None] | None
     ) = None
-    command_safety_validator: CommandSafetyValidator | None = None
     max_output_length: int = 30000
 
 
@@ -66,10 +64,7 @@ class BashTool(BaseTool):
             config = BashToolConfig(
                 sandbox=get_shared_local_sandbox(),
                 cwd=".",
-                command_safety_validator=CommandSafetyValidator(),
             )
-        elif config.command_safety_validator is None:
-            config.command_safety_validator = CommandSafetyValidator()
         self.config = config
         self._parser = BashParameterParser()
         self._formatter = BashResultFormatter("bash", config.max_output_length)
@@ -187,17 +182,6 @@ class BashTool(BaseTool):
             )
         if stdin is not None and not use_pty:
             return self._formatter.error(parameters, "stdin requires pty=true")
-
-        safety = self.config.command_safety_validator
-        if safety is not None:
-            safety_decision = await safety.validate(foreground_command)
-            if not safety_decision.allowed:
-                return self._formatter.error(
-                    parameters,
-                    safety_decision.message,
-                    exit_code=126,
-                    security=safety_decision.to_dict(),
-                )
 
         if background:
             agent_id = context.agent_id

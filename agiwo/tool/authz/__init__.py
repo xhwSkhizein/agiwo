@@ -1,6 +1,7 @@
 from agiwo.tool.authz.policy import (
     PermissionDecision,
     PermissionPolicy,
+    ToolArgEvaluator,
     ToolPermissionProfile,
 )
 from agiwo.tool.authz.store import (
@@ -17,5 +18,6 @@ __all__ = [
     "InMemoryConsentStore",
     "PermissionDecision",
     "PermissionPolicy",
+    "ToolArgEvaluator",
     "ToolPermissionProfile",
 ]

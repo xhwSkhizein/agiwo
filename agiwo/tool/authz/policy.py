@@ -1,6 +1,11 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Awaitable, Callable, Literal
+
+ToolArgEvaluator = Callable[
+    [str, dict[str, Any], str | None],
+    Awaitable["PermissionDecision"],
+]
 
 
 @dataclass(frozen=True)
@@ -21,8 +26,10 @@ class PermissionPolicy:
     def __init__(
         self,
         tool_profiles: dict[str, ToolPermissionProfile] | None = None,
+        tool_arg_evaluators: dict[str, ToolArgEvaluator] | None = None,
     ) -> None:
         self._tool_profiles = tool_profiles or {}
+        self._tool_arg_evaluators = tool_arg_evaluators or {}
 
     async def evaluate(
         self,
@@ -31,6 +38,10 @@ class PermissionPolicy:
         tool_args: dict[str, Any],
         user_id: str | None,
     ) -> PermissionDecision:
+        evaluator = self._tool_arg_evaluators.get(tool_name)
+        if evaluator is not None:
+            return await evaluator(tool_name, tool_args, user_id)
+
         profile = self._tool_profiles.get(tool_name)
         if profile is None:
             return PermissionDecision(

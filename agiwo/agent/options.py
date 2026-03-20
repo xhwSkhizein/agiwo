@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from agiwo.config.settings import settings
+from agiwo.tool.authz.policy import PermissionPolicy
 
 
 @dataclass
@@ -74,6 +75,7 @@ class AgentOptions(BaseModel):
     compact_prompt: str = ""
     run_step_storage: RunStepStorageConfig = Field(default_factory=RunStepStorageConfig)
     trace_storage: TraceStorageConfig = Field(default_factory=TraceStorageConfig)
+    permission_policy: PermissionPolicy | None = None
 
     def get_effective_root_path(self) -> str:
         if self.config_root:

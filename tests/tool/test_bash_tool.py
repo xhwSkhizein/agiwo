@@ -1,7 +1,6 @@
 """Focused tests for BashTool command execution behavior."""
 
 from agiwo.tool.base import ToolResult
-from agiwo.tool.builtin.bash_tool.security import CommandSafetyValidator
 from agiwo.tool.builtin.bash_tool.tool import BashTool, BashToolConfig
 from agiwo.tool.builtin.bash_tool.types import (
     AfterBashCallOutput,
@@ -129,56 +128,6 @@ class TestBashToolBackgroundJobs:
         assert bash_tool.config.sandbox.started_process_calls[-1]["mode"] == "pty"
 
 
-class TestBashToolSafetyValidator:
-    async def test_safety_validator_blocks_dangerous(
-        self, bash_tool_with_validator, mock_context
-    ):
-        result = await bash_tool_with_validator.execute(
-            {"command": "echo dangerous marker", "tool_call_id": "tc_021"},
-            mock_context,
-        )
-
-        assert result.output["ok"] is False
-        assert result.output["exit_code"] == 126
-        assert "dangerous" in result.output["stderr"]
-
-    async def test_safety_validator_allows_safe(
-        self, bash_tool_with_validator, mock_context
-    ):
-        result = await bash_tool_with_validator.execute(
-            {"command": "echo hello", "tool_call_id": "tc_022"},
-            mock_context,
-        )
-
-        assert result.output["ok"] is True
-
-
-class TestBashToolDefaultSafety:
-    async def test_default_construction_includes_safety_validator(self):
-        tool = BashTool()
-        assert isinstance(tool.config.command_safety_validator, CommandSafetyValidator)
-
-    async def test_default_safety_blocks_risky_command_without_execution(
-        self, mock_sandbox, mock_context
-    ):
-        tool = BashTool(
-            BashToolConfig(
-                sandbox=mock_sandbox,
-                cwd="/workspace",
-            )
-        )
-
-        result = await tool.execute(
-            {"command": "sudo echo hello", "tool_call_id": "tc_022b"},
-            mock_context,
-        )
-
-        assert result.output["ok"] is False
-        assert result.output["exit_code"] == 126
-        assert "potentially risky" in result.output["stderr"]
-        assert mock_sandbox.executed_commands == []
-
-
 class TestBashToolInvalidCommands:
     async def test_trailing_ampersand_is_rejected(self, bash_tool, mock_context):
         result = await bash_tool.execute(
@@ -267,7 +216,6 @@ class TestBashToolDefaultConstruction:
         assert tool.config is not None
         assert tool.config.sandbox is not None
         assert tool.config.cwd == "."
-        assert isinstance(tool.config.command_safety_validator, CommandSafetyValidator)
 
     async def test_bash_tool_no_args_execution(self, mock_context):
         tool = BashTool()

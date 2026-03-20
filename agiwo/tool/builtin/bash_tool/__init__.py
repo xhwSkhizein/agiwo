@@ -1,6 +1,10 @@
 """Public exports and pairing helpers for bash tools."""
 
 from agiwo.tool.base import BaseTool
+from agiwo.tool.builtin.bash_tool.policy_adapter import (
+    BashCommandPolicyAdapter,
+    BashPermissionMode,
+)
 from agiwo.tool.builtin.bash_tool.process_tool import (
     BashProcessTool,
     BashProcessToolConfig,
@@ -43,6 +47,8 @@ def ensure_bash_tool_pair(tools: list[BaseTool]) -> list[BaseTool]:
 
 
 __all__ = [
+    "BashCommandPolicyAdapter",
+    "BashPermissionMode",
     "BashProcessTool",
     "BashProcessToolConfig",
     "BashTool",

@@ -1,15 +1,12 @@
 """Shared test support for bash tool and bash process tool."""
 
 import time
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
 
 from agiwo.tool.builtin.bash_tool.process_tool import (
     BashProcessTool,
     BashProcessToolConfig,
 )
-from agiwo.tool.builtin.bash_tool.security import CommandSafetyDecision
 from agiwo.tool.builtin.bash_tool.tool import BashTool, BashToolConfig
 from agiwo.tool.builtin.bash_tool.types import (
     CommandResult,
@@ -217,31 +214,3 @@ def bash_process_tool(mock_sandbox):
     )
 
 
-@pytest.fixture
-def bash_tool_with_validator(mock_sandbox):
-    validator = MagicMock()
-
-    async def mock_validate(command: str):
-        if "dangerous" in command:
-            return CommandSafetyDecision(
-                allowed=False,
-                message="Command contains dangerous keyword",
-                risk_level="high",
-                stage="blacklist",
-            )
-        return CommandSafetyDecision(
-            allowed=True,
-            message="OK",
-            risk_level="low",
-            stage="allow",
-        )
-
-    validator.validate = AsyncMock(side_effect=mock_validate)
-
-    return BashTool(
-        BashToolConfig(
-            sandbox=mock_sandbox,
-            cwd="/workspace",
-            command_safety_validator=validator,
-        )
-    )
