@@ -9,10 +9,10 @@ logger = get_logger(__name__)
 
 def inject_consent_notifier(agent: Agent, notifier: ToolConsentNotifier) -> None:
     """Dynamically inject consent notifier into agent's authorization runtime.
-    
+
     This is necessary because notifier needs runtime context (chat_id, session_id)
     which is only available when agent execution starts, not at agent build time.
-    
+
     Args:
         agent: Agent instance to inject notifier into
         notifier: Channel-specific consent notifier implementation
@@ -36,7 +36,7 @@ def inject_consent_notifier(agent: Agent, notifier: ToolConsentNotifier) -> None
                                 notifier_type=type(notifier).__name__,
                             )
                             return
-        
+
         logger.warning(
             "consent_notifier_injection_failed",
             agent_id=agent.id,

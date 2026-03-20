@@ -212,5 +212,3 @@ def bash_process_tool(mock_sandbox):
             sandbox=mock_sandbox,
         )
     )
-
-

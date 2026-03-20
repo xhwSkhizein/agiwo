@@ -135,8 +135,8 @@ class _DeferredExecutor:
         self._state = state
         self._result = result
 
-    async def execute(self, agent, session, user_input):
-        del agent, session, user_input
+    async def execute(self, agent, session, user_input, *, user_id=None):
+        del agent, session, user_input, user_id
         if False:
             yield ""
 

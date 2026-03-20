@@ -20,7 +20,9 @@ class WebChatToolConsentNotifier(ToolConsentNotifier):
         agent_id: str,
         parent_run_id: str | None,
         depth: int,
-        publish_callback: Callable[[ConsentRequiredEvent | ConsentDeniedEvent], Awaitable[None]],
+        publish_callback: Callable[
+            [ConsentRequiredEvent | ConsentDeniedEvent], Awaitable[None]
+        ],
     ) -> None:
         self._session_id = session_id
         self._agent_id = agent_id

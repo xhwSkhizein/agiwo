@@ -22,7 +22,6 @@ from server.domain.agent_configs import AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.bash_permission_builder import build_bash_permission_policy
 from server.services.consent_manager import get_consent_manager
-from server.services.streaming_consent_notifier import StreamingConsentNotifier
 from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
@@ -76,7 +75,7 @@ def build_agent_options(
         run_step_storage=build_run_step_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),
     )
-    
+
     # Integrate bash permission policy with consent support
     consent_manager = get_consent_manager()
     agent_options.permission_policy = build_bash_permission_policy(
@@ -85,7 +84,7 @@ def build_agent_options(
     agent_options.consent_store = consent_manager.store
     agent_options.consent_waiter = consent_manager.waiter
     # consent_notifier will be set dynamically by channels (Feishu/Web)
-    
+
     return agent_options
 
 

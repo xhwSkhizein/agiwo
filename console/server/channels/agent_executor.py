@@ -50,6 +50,8 @@ class AgentExecutor:
         agent: Agent,
         session: Session,
         user_input: UserInput,
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[str]:
         """Resolve scheduler state, submit/enqueue/steer, and yield text."""
         state_id = session.scheduler_state_id
@@ -70,7 +72,7 @@ class AgentExecutor:
             return
 
         if status == AgentStateStatus.PENDING:
-            async for text in self._handle_pending(agent, session, user_input):
+            async for text in self._handle_pending(agent, session, user_input, user_id=user_id):
                 yield text
             return
 
@@ -82,10 +84,10 @@ class AgentExecutor:
         )
 
         if use_enqueue:
-            async for text in self._enqueue_and_stream(agent, session, user_input):
+            async for text in self._enqueue_and_stream(agent, session, user_input, user_id=user_id):
                 yield text
         else:
-            async for text in self._submit_and_stream(agent, session, user_input):
+            async for text in self._submit_and_stream(agent, session, user_input, user_id=user_id):
                 yield text
 
     async def cancel_if_active(self, session: Session, reason: str) -> None:
@@ -132,6 +134,8 @@ class AgentExecutor:
         agent: Agent,
         session: Session,
         user_input: UserInput,
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[str]:
         assign_scheduler_state(session, agent.id)
         await self._touch_session(session)
@@ -140,6 +144,7 @@ class AgentExecutor:
             user_input,
             agent=agent,
             session_id=session.id,
+            user_id=user_id,
             persistent=True,
             timeout=self._timeout,
         )
@@ -151,6 +156,8 @@ class AgentExecutor:
         agent: Agent,
         session: Session,
         user_input: UserInput,
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[str]:
         await self._touch_session(session)
 
@@ -158,6 +165,7 @@ class AgentExecutor:
             user_input,
             agent=agent,
             state_id=session.scheduler_state_id,
+            user_id=user_id,
             timeout=self._timeout,
         )
         async for text in self._consume_stream(stream):
@@ -168,6 +176,8 @@ class AgentExecutor:
         agent: Agent,
         session: Session,
         user_input: UserInput,
+        *,
+        user_id: str | None = None,
     ) -> AsyncIterator[str]:
         logger.info(
             "waiting_for_pending_before_submit",
@@ -186,10 +196,10 @@ class AgentExecutor:
             and refreshed.status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
         )
         if can_enqueue:
-            async for text in self._enqueue_and_stream(agent, session, user_input):
+            async for text in self._enqueue_and_stream(agent, session, user_input, user_id=user_id):
                 yield text
         else:
-            async for text in self._submit_and_stream(agent, session, user_input):
+            async for text in self._submit_and_stream(agent, session, user_input, user_id=user_id):
                 yield text
 
     # -- Private: stream helpers -----------------------------------------------

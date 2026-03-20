@@ -37,6 +37,7 @@ class SchedulerAgentPort(Protocol):
         user_input: UserInput,
         *,
         session_id: str | None = None,
+        user_id: str | None = None,
         abort_signal: AbortSignal | None = None,
     ) -> AgentExecutionHandlePort: ...
 
@@ -77,11 +78,13 @@ class AgentSchedulerPort:
         user_input: UserInput,
         *,
         session_id: str | None = None,
+        user_id: str | None = None,
         abort_signal: AbortSignal | None = None,
     ) -> AgentExecutionHandlePort:
         return self._agent.start(
             user_input,
             session_id=session_id,
+            user_id=user_id,
             abort_signal=abort_signal,
         )
 

@@ -10,6 +10,7 @@ from agiwo.tool.builtin.bash_tool.security import (
     CommandSafetyPolicy,
     CommandSafetyValidator,
 )
+from agiwo.tool.authz.policy import PermissionPolicy
 
 
 def _build_adapter(
@@ -45,13 +46,13 @@ class TestAutoAllowMode:
     @pytest.mark.asyncio
     async def test_critical_command_denied(self):
         adapter = _build_adapter("auto_allow")
-        decision = await adapter.evaluate(
-            "bash", {"command": "rm -rf /"}, "user-1"
-        )
+        decision = await adapter.evaluate("bash", {"command": "rm -rf /"}, "user-1")
 
         assert decision.decision == "denied"
         assert "critical" not in decision.decision
-        assert "blocked" in decision.reason.lower() or "block" in decision.reason.lower()
+        assert (
+            "blocked" in decision.reason.lower() or "block" in decision.reason.lower()
+        )
 
     @pytest.mark.asyncio
     async def test_empty_command_passes_through(self):
@@ -88,9 +89,7 @@ class TestRiskyRequireConsentMode:
     @pytest.mark.asyncio
     async def test_critical_command_denied(self):
         adapter = _build_adapter("risky_require_consent")
-        decision = await adapter.evaluate(
-            "bash", {"command": "rm -rf /"}, "user-1"
-        )
+        decision = await adapter.evaluate("bash", {"command": "rm -rf /"}, "user-1")
 
         assert decision.decision == "denied"
 
@@ -145,9 +144,7 @@ class TestAlwaysRequireConsentMode:
     @pytest.mark.asyncio
     async def test_critical_command_denied(self):
         adapter = _build_adapter("always_require_consent")
-        decision = await adapter.evaluate(
-            "bash", {"command": "rm -rf /"}, "user-1"
-        )
+        decision = await adapter.evaluate("bash", {"command": "rm -rf /"}, "user-1")
 
         assert decision.decision == "denied"
 
@@ -166,9 +163,7 @@ class TestAlwaysRequireConsentMode:
     @pytest.mark.asyncio
     async def test_git_safe_subcommand_allowed(self):
         adapter = _build_adapter("always_require_consent")
-        decision = await adapter.evaluate(
-            "bash", {"command": "git status"}, "user-1"
-        )
+        decision = await adapter.evaluate("bash", {"command": "git status"}, "user-1")
 
         assert decision.decision == "allowed"
 
@@ -178,8 +173,6 @@ class TestPolicyIntegration:
 
     @pytest.mark.asyncio
     async def test_adapter_works_as_tool_arg_evaluator(self):
-        from agiwo.tool.authz.policy import PermissionPolicy
-
         adapter = _build_adapter(
             "risky_require_consent",
             policy=CommandSafetyPolicy(block_when_evaluator_missing=False),
@@ -211,7 +204,6 @@ class TestPolicyIntegration:
 
     @pytest.mark.asyncio
     async def test_non_bash_tools_unaffected_by_bash_evaluator(self):
-        from agiwo.tool.authz.policy import PermissionPolicy
 
         adapter = _build_adapter("always_require_consent")
         policy = PermissionPolicy(

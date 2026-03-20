@@ -15,13 +15,13 @@ def build_bash_permission_policy(
     mode: BashPermissionMode = "risky_require_consent",
 ) -> PermissionPolicy:
     """Build a PermissionPolicy with bash command-level authorization.
-    
+
     Args:
         mode: Permission mode for bash commands
             - "auto_allow": only critical commands denied, no consent needed
             - "risky_require_consent": risky commands require user consent (default)
             - "always_require_consent": all non-allowlisted commands require consent
-    
+
     Returns:
         PermissionPolicy configured with bash command adapter
     """
@@ -31,9 +31,9 @@ def build_bash_permission_policy(
             llm_block_threshold="high",
         )
     )
-    
+
     adapter = BashCommandPolicyAdapter(validator=validator, mode=mode)
-    
+
     return PermissionPolicy(
         tool_arg_evaluators={"bash": adapter.evaluate},
     )

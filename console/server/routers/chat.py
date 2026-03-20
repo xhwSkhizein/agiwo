@@ -31,7 +31,7 @@ async def _stream_chat_events(
 ) -> AsyncIterator[dict[str, str]]:
     abort_signal = AbortSignal()
     handle = agent.start(message, session_id=session_id, abort_signal=abort_signal)
-    
+
     # Inject web chat consent notifier with session runtime publish callback
     # Only inject if session_runtime is accessible (not in test mocks)
     if hasattr(handle, "_session_runtime"):
@@ -43,7 +43,7 @@ async def _stream_chat_events(
             publish_callback=handle._session_runtime.publish,
         )
         inject_consent_notifier(agent, web_consent_notifier)
-    
+
     async for event in consume_execution_stream(
         handle,
         cancel_reason="SSE connection closed",

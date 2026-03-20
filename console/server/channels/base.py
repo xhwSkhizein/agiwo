@@ -143,7 +143,9 @@ class BaseChannelService(ABC):
         agent = await self._agent_pool.get_or_create_runtime_agent(session)
 
         is_first_output = True
-        async for output in self._executor.execute(agent, session, batch.user_message):
+        async for output in self._executor.execute(
+            agent, session, batch.user_message, user_id=batch.context.trigger_user_id
+        ):
             chunks = self._split_text_into_chunks(output)
             for i, chunk in enumerate(chunks):
                 if is_first_output and i == 0:
