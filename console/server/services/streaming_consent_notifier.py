@@ -1,4 +1,4 @@
-"""Streaming consent notifier — sends consent requests via agent stream."""
+"""Streaming consent notifier — logs consent requests for Console monitoring."""
 
 from agiwo.agent.tool_auth.notifier import ToolConsentNotifier
 from agiwo.utils.logging import get_logger
@@ -7,7 +7,7 @@ logger = get_logger(__name__)
 
 
 class StreamingConsentNotifier(ToolConsentNotifier):
-    """Send consent requests as stream events (logged for now, can be extended)."""
+    """Log consent requests - Console layer monitors logs and pushes to streams."""
 
     async def notify_required(
         self,
@@ -19,7 +19,7 @@ class StreamingConsentNotifier(ToolConsentNotifier):
         reason: str,
         suggested_patterns: list[str] | None,
     ) -> None:
-        """Log consent request (stream integration can be added later)."""
+        """Log consent request with structured data."""
         logger.warning(
             "tool_consent_required",
             tool_call_id=tool_call_id,
@@ -27,6 +27,7 @@ class StreamingConsentNotifier(ToolConsentNotifier):
             run_id=run_id,
             args_preview=args_preview[:200],
             reason=reason,
+            suggested_patterns=suggested_patterns,
             message=(
                 f"Tool '{tool_name}' requires user consent. "
                 f"Call POST /api/consent/resolve with tool_call_id='{tool_call_id}' "

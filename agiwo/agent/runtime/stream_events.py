@@ -57,18 +57,40 @@ class RunFailedEvent(AgentStreamItemBase):
     type: Literal["run_failed"] = "run_failed"
 
 
+@dataclass(kw_only=True)
+class ConsentRequiredEvent(AgentStreamItemBase):
+    tool_call_id: str
+    tool_name: str
+    args_preview: str
+    reason: str
+    suggested_patterns: list[str] | None = None
+    type: Literal["consent_required"] = "consent_required"
+
+
+@dataclass(kw_only=True)
+class ConsentDeniedEvent(AgentStreamItemBase):
+    tool_call_id: str
+    tool_name: str
+    reason: str
+    type: Literal["consent_denied"] = "consent_denied"
+
+
 AgentStreamItem: TypeAlias = (
     RunStartedEvent
     | StepDeltaEvent
     | StepCompletedEvent
     | RunCompletedEvent
     | RunFailedEvent
+    | ConsentRequiredEvent
+    | ConsentDeniedEvent
 )
 
 
 __all__ = [
     "AgentStreamItem",
     "AgentStreamItemBase",
+    "ConsentDeniedEvent",
+    "ConsentRequiredEvent",
     "RunCompletedEvent",
     "RunFailedEvent",
     "RunStartedEvent",

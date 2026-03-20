@@ -84,7 +84,7 @@ def build_agent_options(
     )
     agent_options.consent_store = consent_manager.store
     agent_options.consent_waiter = consent_manager.waiter
-    agent_options.consent_notifier = StreamingConsentNotifier()
+    # consent_notifier will be set dynamically by channels (Feishu/Web)
     
     return agent_options
 
