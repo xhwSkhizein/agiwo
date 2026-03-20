@@ -352,7 +352,9 @@ async def test_runtime_agent_pool_defers_refresh_while_state_running(
 
 
 @pytest.mark.asyncio
-async def test_agent_executor_steers_running_state_and_returns_steered_dispatch() -> None:
+async def test_agent_executor_steers_running_state_and_returns_steered_dispatch() -> (
+    None
+):
     store = FakeChannelChatSessionStore()
     fake_state = SimpleNamespace(
         status=AgentStateStatus.RUNNING,

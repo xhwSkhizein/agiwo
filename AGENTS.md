@@ -157,6 +157,11 @@
 - Python 代码改动后默认执行：`uv run python scripts/lint.py changed`
 - 脏工作区下只检查改动文件：`uv run python scripts/lint.py files <path1> <path2> ...`
 - 只跑 import contract：`uv run python scripts/lint.py imports`
+- 提交前必须至少跑一遍与 CI 一致的 lint 四步，不要只依赖 `scripts/lint.py changed`：
+  1. `uv run ruff check --ignore C901 --ignore PLR0911 --ignore PLR0912 agiwo/ console/server/ tests/ console/tests/ scripts/`
+  2. `uv run ruff format --check agiwo/ console/server/ tests/ console/tests/ scripts/`
+  3. `uv run python scripts/lint.py imports`
+  4. `uv run python scripts/repo_guard.py`
 - 当前阻塞层是：`ruff + repo_guard.py + import-linter`
 - 代码格式/import 排序/全量类型检查目前不是默认阻塞门槛
 - 新增 `# noqa` / `# type: ignore` 前先修代码；必须压制时精确到规则
@@ -175,6 +180,12 @@ uv run python scripts/lint.py changed
 
 # 脏工作区下只检查本次改动
 uv run python scripts/lint.py files path/to/file.py path/to/other.py
+
+# 提交前跑一遍与 CI 对齐的 lint
+uv run ruff check --ignore C901 --ignore PLR0911 --ignore PLR0912 agiwo/ console/server/ tests/ console/tests/ scripts/
+uv run ruff format --check agiwo/ console/server/ tests/ console/tests/ scripts/
+uv run python scripts/lint.py imports
+uv run python scripts/repo_guard.py
 
 # 只跑 import contract
 uv run python scripts/lint.py imports
