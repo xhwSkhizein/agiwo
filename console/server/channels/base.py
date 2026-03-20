@@ -142,10 +142,11 @@ class BaseChannelService(ABC):
         session = resolution.session
         agent = await self._agent_pool.get_or_create_runtime_agent(session)
 
+        # Allow subclasses to inject channel-specific consent notifier
+        await self._inject_consent_notifier(agent, batch)
+
         is_first_output = True
-        async for output in self._executor.execute(
-            agent, session, batch.user_message, user_id=batch.context.trigger_user_id
-        ):
+        async for output in self._executor.execute(agent, session, batch.user_message):
             chunks = self._split_text_into_chunks(output)
             for i, chunk in enumerate(chunks):
                 if is_first_output and i == 0:
@@ -187,6 +188,12 @@ class BaseChannelService(ABC):
 
     @abstractmethod
     def _to_user_facing_error(self, error: Exception) -> str: ...
+
+    async def _inject_consent_notifier(
+        self, agent: object, batch: BatchPayload
+    ) -> None:
+        """Hook for channel-specific consent notifier injection. Override in subclasses."""
+        pass
 
     # -- Shared helpers ------------------------------------------------------
 

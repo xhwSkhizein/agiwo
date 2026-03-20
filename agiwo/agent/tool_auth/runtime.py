@@ -61,14 +61,7 @@ class ToolAuthorizationRuntime:
                 reason=policy_decision.reason,
             )
 
-        if context.user_id is None:
-            return await self._deny(
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                run_id=context.run_id,
-                reason="User consent required but user_id is missing",
-            )
-
+        # Check cached consent first (works even without user_id for anonymous scenarios)
         cached_outcome = await self._check_cached_consent(
             user_id=context.user_id,
             tool_call_id=tool_call_id,
@@ -124,13 +117,13 @@ class ToolAuthorizationRuntime:
     async def _check_cached_consent(
         self,
         *,
-        user_id: str,
+        user_id: str | None,
         tool_call_id: str,
         tool_name: str,
         tool_args: dict[str, Any],
         run_id: str,
     ) -> AuthorizationOutcome | None:
-        if self._consent_store is None:
+        if self._consent_store is None or user_id is None:
             return None
 
         cached_decision = await self._consent_store.check_consent(
@@ -153,7 +146,7 @@ class ToolAuthorizationRuntime:
     async def _await_user_consent(
         self,
         *,
-        user_id: str,
+        user_id: str | None,
         tool_call_id: str,
         tool_name: str,
         run_id: str,
@@ -161,7 +154,7 @@ class ToolAuthorizationRuntime:
         suggested_patterns: list[str] | None,
         expires_at_hint,
     ) -> AuthorizationOutcome:
-        if self._waiter is None:
+        if self._waiter is None or user_id is None:
             return await self._deny(
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,

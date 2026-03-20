@@ -20,11 +20,15 @@ from server.channels.exceptions import (
     DefaultAgentNameNotFoundError,
     PreviousTaskRunningError,
 )
+from server.channels.feishu.consent_notifier import FeishuToolConsentNotifier
+from server.channels.feishu.delivery_service import FeishuDeliveryService
 from server.channels.feishu.factory import FeishuServiceFactory
+from server.channels.feishu.inbound_handler import FeishuInboundHandler
 from server.channels.feishu.message_parser import FeishuInboundEnvelope
-from server.channels.session.models import BatchContext, InboundMessage
+from server.channels.session.models import BatchContext, BatchPayload, InboundMessage
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
+from server.services.consent_notifier_injection import inject_consent_notifier
 
 logger = get_logger(__name__)
 
@@ -118,6 +122,16 @@ class FeishuChannelService(BaseChannelService):
 
     async def _deliver_message(self, context: BatchContext, text: str) -> None:
         await self._delivery_service.deliver_message(context, text)
+
+    async def _inject_consent_notifier(
+        self, agent: object, batch: BatchPayload
+    ) -> None:
+        """Inject Feishu consent notifier with chat_id from batch context."""
+        feishu_notifier = FeishuToolConsentNotifier(
+            api=self._api,
+            chat_id=batch.context.chat_id,
+        )
+        inject_consent_notifier(agent, feishu_notifier)
 
     def _to_user_facing_error(self, error: Exception) -> str:
         if isinstance(error, PreviousTaskRunningError):

@@ -129,8 +129,6 @@ class SchedulerRunner:
         user_input: UserInput,
         session_id: str,
         state: AgentState,
-        *,
-        user_id: str | None = None,
     ) -> None:
         """Run the root agent submitted by the caller."""
         await self._execute_agent_run(
@@ -139,7 +137,6 @@ class SchedulerRunner:
             agent=agent,
             user_input=user_input,
             session_id=session_id,
-            user_id=user_id,
             error_log="root_agent_failed",
             error_extra={
                 "agent_id": agent.id,
@@ -263,7 +260,6 @@ class SchedulerRunner:
         agent: SchedulerAgentPort,
         user_input: UserInput,
         session_id: str,
-        user_id: str | None = None,
         error_log: str,
         error_extra: dict,
         override_spec: AgentRunSpec | None = None,
@@ -286,7 +282,6 @@ class SchedulerRunner:
                     agent=agent,
                     user_input=user_input,
                     session_id=session_id,
-                    user_id=user_id,
                     abort_signal=abort_signal,
                 )
                 await self._handle_agent_output(state, output)
@@ -317,13 +312,11 @@ class SchedulerRunner:
         agent: SchedulerAgentPort,
         user_input: UserInput,
         session_id: str,
-        user_id: str | None = None,
         abort_signal: AbortSignal | None,
     ) -> RunOutput:
         handle = agent.start(
             user_input,
             session_id=session_id,
-            user_id=user_id,
             abort_signal=abort_signal,
         )
         self._coordinator.set_execution_handle(state.id, handle)

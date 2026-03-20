@@ -125,7 +125,6 @@ class SchedulerEngine(SchedulerControl):
         user_input: UserInput,
         *,
         session_id: str | None = None,
-        user_id: str | None = None,
         abort_signal: AbortSignal | None = None,
         persistent: bool = False,
         agent_config_id: str | None = None,
@@ -160,7 +159,6 @@ class SchedulerEngine(SchedulerControl):
                 agent,
                 user_input,
                 resolved_session_id,
-                user_id=user_id,
                 state=state,
             )
         )
@@ -204,7 +202,6 @@ class SchedulerEngine(SchedulerControl):
         agent: SchedulerAgentPort | None = None,
         state_id: str | None = None,
         session_id: str | None = None,
-        user_id: str | None = None,
         abort_signal: AbortSignal | None = None,
         persistent: bool = False,
         agent_config_id: str | None = None,
@@ -230,7 +227,6 @@ class SchedulerEngine(SchedulerControl):
                     agent,
                     user_input,
                     session_id=session_id,
-                    user_id=user_id,
                     abort_signal=abort_signal,
                     persistent=persistent,
                     agent_config_id=agent_config_id,
