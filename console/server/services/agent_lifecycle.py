@@ -68,7 +68,6 @@ def build_agent_options(
 ) -> AgentOptions:
     """Build AgentOptions with storage config matching the console storage backend."""
     opts = AgentOptionsInput.model_validate(config.options or {})
-
     return opts.to_agent_options(
         run_step_storage=build_run_step_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),

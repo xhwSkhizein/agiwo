@@ -1,33 +1,57 @@
-import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.inner.session_runtime import AgentSessionRuntime
-from agiwo.agent.tool_auth import ConsentWaiter, ToolAuthorizationRuntime
+from agiwo.agent.inner.tool_runtime import ResolvedToolCall, ToolRuntime
+from agiwo.agent.runtime_tools.agent_tool import AgentTool
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.storage.session import InMemorySessionStorage
-from agiwo.tool.authz import (
-    ConsentDecision,
-    InMemoryConsentStore,
-    PermissionPolicy,
-    ToolPermissionProfile,
-)
+from agiwo.tool.base import BaseTool, ToolGateDecision, ToolResult
+from agiwo.tool.context import ToolContext
 
 
-class RecordingNotifier:
-    def __init__(self) -> None:
-        self.required_calls: list[dict] = []
-        self.denied_calls: list[dict] = []
+class EchoTool(BaseTool):
+    def get_name(self) -> str:
+        return "echo"
 
-    async def notify_required(self, **kwargs) -> None:
-        self.required_calls.append(kwargs)
+    def get_description(self) -> str:
+        return "echo"
 
-    async def notify_denied(self, **kwargs) -> None:
-        self.denied_calls.append(kwargs)
+    def get_parameters(self) -> dict[str, object]:
+        return {"type": "object"}
+
+    def is_concurrency_safe(self) -> bool:
+        return True
+
+    async def execute(
+        self,
+        parameters: dict[str, object],
+        context: ToolContext,
+        abort_signal=None,
+    ) -> ToolResult:
+        del context, abort_signal
+        return ToolResult.success(
+            tool_name=self.get_name(),
+            tool_call_id=str(parameters.get("tool_call_id", "")),
+            input_args=parameters,
+            content="ok",
+            output={"ok": True},
+        )
 
 
-def build_context(*, user_id: str | None = "user-1") -> AgentRunContext:
+class DenyTool(EchoTool):
+    async def gate(
+        self,
+        parameters: dict[str, object],
+        context: ToolContext,
+    ) -> ToolGateDecision:
+        del parameters, context
+        return ToolGateDecision.deny("Blocked")
+
+
+def build_context() -> AgentRunContext:
     session_runtime = AgentSessionRuntime(
         session_id="session-1",
         run_step_storage=InMemoryRunStepStorage(),
@@ -38,128 +62,61 @@ def build_context(*, user_id: str | None = "user-1") -> AgentRunContext:
         run_id="run-1",
         agent_id="agent-1",
         agent_name="agent-1",
-        user_id=user_id,
     )
 
 
 @pytest.mark.asyncio
-async def test_authorize_allows_when_policy_missing() -> None:
-    runtime = ToolAuthorizationRuntime()
+async def test_base_tool_defaults_to_allow_gate() -> None:
+    tool = EchoTool()
 
-    outcome = await runtime.authorize(
-        tool_call_id="call-1",
-        tool_name="bash",
-        tool_args={"command": "ls"},
+    decision = await tool.gate({}, ToolContext(session_id="session-1"))
+
+    assert decision.action == "allow"
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_defaults_to_allow_gate() -> None:
+    tool = AgentTool(SimpleNamespace(id="child", name="child", description="child"))
+
+    decision = await tool.gate_for_agent({}, build_context())
+
+    assert decision.action == "allow"
+
+
+@pytest.mark.asyncio
+async def test_tool_runtime_allows_default_gate() -> None:
+    tool = EchoTool()
+    runtime = ToolRuntime([tool])
+
+    outcome = await runtime.execute_resolved(
+        ResolvedToolCall(
+            raw_call={},
+            call_id="call-1",
+            tool_name="echo",
+            tool=runtime.tools_map["echo"],
+            args={"tool_call_id": "call-1"},
+        ),
         context=build_context(),
     )
 
-    assert outcome.allowed is True
-    assert outcome.reason == "Authorization disabled"
+    assert outcome.result.is_success is True
+    assert outcome.result.content == "ok"
 
 
 @pytest.mark.asyncio
-async def test_authorize_denies_when_policy_denies() -> None:
-    notifier = RecordingNotifier()
-    runtime = ToolAuthorizationRuntime(
-        policy=PermissionPolicy(
-            tool_profiles={"bash": ToolPermissionProfile(mode="deny")}
-        ),
-        notifier=notifier,
-    )
+async def test_tool_runtime_denies_immediately_when_gate_denies() -> None:
+    runtime = ToolRuntime([DenyTool()])
 
-    outcome = await runtime.authorize(
-        tool_call_id="call-1",
-        tool_name="bash",
-        tool_args={"command": "rm -rf /"},
+    outcome = await runtime.execute_resolved(
+        ResolvedToolCall(
+            raw_call={},
+            call_id="call-1",
+            tool_name="echo",
+            tool=runtime.tools_map["echo"],
+            args={"tool_call_id": "call-1"},
+        ),
         context=build_context(),
     )
 
-    assert outcome.allowed is False
-    assert outcome.reason == "Tool denied by permission profile"
-    assert len(notifier.denied_calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_authorize_uses_cached_consent() -> None:
-    store = InMemoryConsentStore()
-    await store.save_consent(
-        user_id="user-1",
-        tool_name="bash",
-        patterns=["bash(command=ls)"],
-    )
-    runtime = ToolAuthorizationRuntime(
-        policy=PermissionPolicy(
-            tool_profiles={"bash": ToolPermissionProfile(mode="require_consent")}
-        ),
-        consent_store=store,
-    )
-
-    outcome = await runtime.authorize(
-        tool_call_id="call-1",
-        tool_name="bash",
-        tool_args={"command": "ls"},
-        context=build_context(),
-    )
-
-    assert outcome.allowed is True
-    assert outcome.from_cache is True
-    assert outcome.reason == "Allowed by cached user consent"
-
-
-@pytest.mark.asyncio
-async def test_authorize_times_out_when_consent_not_resolved() -> None:
-    notifier = RecordingNotifier()
-    runtime = ToolAuthorizationRuntime(
-        policy=PermissionPolicy(
-            tool_profiles={"bash": ToolPermissionProfile(mode="require_consent")}
-        ),
-        waiter=ConsentWaiter(default_timeout=0.01),
-        notifier=notifier,
-    )
-
-    outcome = await runtime.authorize(
-        tool_call_id="call-1",
-        tool_name="bash",
-        tool_args={"command": "ls"},
-        context=build_context(),
-        timeout=0.01,
-    )
-
-    assert outcome.allowed is False
-    assert outcome.reason == "User consent timed out"
-    assert len(notifier.required_calls) == 1
-    assert len(notifier.denied_calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_authorize_saves_user_consent_after_approval() -> None:
-    waiter = ConsentWaiter(default_timeout=1.0)
-    store = InMemoryConsentStore()
-    runtime = ToolAuthorizationRuntime(
-        policy=PermissionPolicy(
-            tool_profiles={"bash": ToolPermissionProfile(mode="require_consent")}
-        ),
-        consent_store=store,
-        waiter=waiter,
-    )
-
-    task = asyncio.create_task(
-        runtime.authorize(
-            tool_call_id="call-1",
-            tool_name="bash",
-            tool_args={"command": "ls"},
-            context=build_context(),
-        )
-    )
-    await asyncio.sleep(0)
-    await waiter.resolve(
-        "call-1",
-        ConsentDecision(decision="allow", patterns=["bash(command=ls)"]),
-    )
-
-    outcome = await task
-    cached = await store.check_consent("user-1", "bash", {"command": "ls"})
-
-    assert outcome.allowed is True
-    assert outcome.reason == "Allowed by user consent"
-    assert cached == "allowed"
+    assert outcome.result.is_success is False
+    assert "Blocked" in (outcome.result.error or "")

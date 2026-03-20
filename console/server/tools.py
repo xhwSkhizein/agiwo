@@ -8,12 +8,6 @@ from agiwo.agent.agent import Agent
 from agiwo.agent import AgentTool
 from agiwo.agent.runtime_tools import RuntimeToolLike
 from agiwo.tool.base import BaseTool
-from agiwo.tool.builtin.bash_tool.security import (
-    CommandSafetyPolicy,
-    CommandSafetyValidator,
-)
-from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
-from agiwo.tool.builtin.bash_tool.tool import BashToolConfig
 from agiwo.tool.builtin.registry import BUILTIN_TOOLS
 from agiwo.tool.storage.citation import CitationStoreConfig
 
@@ -141,14 +135,6 @@ def _build_builtin_tool(
     spec = BUILTIN_TOOL_SPECS.get(ref.name)
     if spec is not None and spec.needs_citation_store:
         kwargs["citation_store_config"] = build_context.citation_store_config
-    if ref.name == "bash":
-        kwargs["config"] = BashToolConfig(
-            sandbox=get_shared_local_sandbox(),
-            cwd=".",
-            command_safety_validator=CommandSafetyValidator(
-                policy=CommandSafetyPolicy(block_when_evaluator_missing=False),
-            ),
-        )
     return tool_cls(**kwargs)
 
 

@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agiwo.agent.runtime import RunOutput, TerminationReason
+from agiwo.agent.runtime import RunCompletedEvent, RunOutput, TerminationReason
 from agiwo.scheduler.models import AgentStateStatus
 
-from server.channels.agent_executor import AgentExecutor, SteerAccepted
+from server.channels.agent_executor import AgentExecutor, DispatchResult
 from server.channels.base import BaseChannelService
 from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.channels.session import SessionContextService
@@ -137,8 +137,7 @@ class _DeferredExecutor:
 
     async def execute(self, agent, session, user_input):
         del agent, session, user_input
-        if False:
-            yield ""
+        return DispatchResult(action="steered")
 
     async def get_state(self, state_id: str | None):
         del state_id
@@ -383,14 +382,10 @@ async def test_agent_executor_steers_running_state_and_returns_empty_stream() ->
         updated_at=datetime.now(timezone.utc),
     )
 
-    outputs = [
-        item
-        async for item in executor.execute(FakeAgent("runtime-1"), session, "hello")
-    ]
+    dispatch = await executor.execute(FakeAgent("runtime-1"), session, "hello")
 
-    assert len(outputs) == 1
-    assert isinstance(outputs[0], SteerAccepted)
-    assert outputs[0].state_id == "runtime-1"
+    assert dispatch.action == "steered"
+    assert dispatch.stream is None
     scheduler.steer.assert_awaited_once_with("runtime-1", "hello", urgent=False)
     scheduler.stream.assert_not_called()
     assert store.sessions["sess-1"] is session
@@ -468,7 +463,96 @@ async def test_base_channel_service_delivers_deferred_reply_for_active_state() -
         pass  # Continue to assertions
 
     try:
-        assert service.reply_calls == []
+        assert [text for _, text in service.reply_calls] == [
+            "消息已收到，正在继续处理。"
+        ]
         assert [text for _, text in service.message_calls] == ["final deferred answer"]
+    finally:
+        await service.close_base()
+
+
+@pytest.mark.asyncio
+async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
+    now = datetime.now(timezone.utc)
+    current_session = Session(
+        id="sess-current",
+        chat_context_id="ctx-1",
+        base_agent_id="base-agent",
+        runtime_agent_id="runtime-current",
+        scheduler_state_id="runtime-current",
+        created_by="AUTO",
+        created_at=now,
+        updated_at=now,
+    )
+    stale_session = Session(
+        id="sess-stale",
+        chat_context_id="ctx-1",
+        base_agent_id="base-agent",
+        runtime_agent_id="runtime-stale",
+        scheduler_state_id="runtime-stale",
+        created_by="AUTO",
+        created_at=now,
+        updated_at=now,
+    )
+
+    async def _stream():
+        yield RunCompletedEvent(
+            session_id=stale_session.id,
+            run_id="run-1",
+            agent_id="agent-1",
+            parent_run_id=None,
+            depth=0,
+            response="stale output",
+        )
+
+    executor = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=DispatchResult(action="submitted", stream=_stream())
+        ),
+        get_state=AsyncMock(
+            return_value=SimpleNamespace(is_active=lambda: False, result_summary=None)
+        ),
+        wait_for=AsyncMock(),
+    )
+    session_service = SimpleNamespace(
+        get_or_create_current_session=AsyncMock(
+            return_value=SimpleNamespace(
+                session=stale_session,
+                retired_runtime_agent_id=None,
+            )
+        ),
+        get_chat_context_and_current_session=AsyncMock(
+            return_value=(SimpleNamespace(id="ctx-1"), current_session)
+        ),
+    )
+    agent_pool = SimpleNamespace(
+        get_or_create_runtime_agent=AsyncMock(return_value=FakeAgent("runtime-stale")),
+        close=AsyncMock(),
+    )
+    service = _TestChannelService(
+        session_service=session_service,
+        agent_pool=agent_pool,
+        executor=executor,
+    )
+    batch_context = BatchContext(
+        chat_context_scope_id="scope-1",
+        channel_instance_id="feishu-main",
+        chat_id="chat-1",
+        chat_type="p2p",
+        trigger_user_id="user-1",
+        trigger_message_id="msg-1",
+        base_agent_id="agent-1",
+    )
+
+    try:
+        await service._execute_batch(
+            BatchPayload(
+                context=batch_context,
+                messages=[],
+                user_message="hello",
+            )
+        )
+        assert service.reply_calls == []
+        assert service.message_calls == []
     finally:
         await service.close_base()

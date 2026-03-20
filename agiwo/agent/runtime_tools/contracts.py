@@ -3,7 +3,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.runtime import TerminationReason
-from agiwo.tool.base import ToolDefinition, ToolResult
+from agiwo.tool.base import ToolDefinition, ToolGateDecision, ToolResult
 from agiwo.utils.abort_signal import AbortSignal
 
 
@@ -33,6 +33,13 @@ class AgentRuntimeTool(Protocol):
 
     def is_concurrency_safe(self) -> bool:
         """Whether the tool can be executed concurrently."""
+
+    async def gate_for_agent(
+        self,
+        parameters: dict[str, Any],
+        context: AgentRunContext,
+    ) -> ToolGateDecision:
+        """Run preflight permission/confirmation checks inside agent runtime."""
 
     async def execute_for_agent(
         self,

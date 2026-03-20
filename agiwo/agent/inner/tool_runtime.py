@@ -10,9 +10,8 @@ from agiwo.agent.runtime_tools import (
     RuntimeToolOutcome,
     adapt_runtime_tool,
 )
-from agiwo.agent.tool_auth import ToolAuthorizationRuntime
 from agiwo.llm.message_converter import parse_json_tool_args
-from agiwo.tool.base import ToolResult
+from agiwo.tool.base import ToolGateDecision, ToolResult
 from agiwo.tool.cache import ToolResultCache
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
@@ -25,7 +24,6 @@ class ToolRuntimeOptions:
     timeout_seconds: int = 30
     cache_max_items: int = 1000
     cache_ttl_seconds: int = 3600
-    auth_timeout_seconds: float = 300.0
 
 
 @dataclass(frozen=True)
@@ -50,14 +48,12 @@ class ToolRuntime:
         tools: list[RuntimeToolLike],
         cache: ToolResultCache | None = None,
         options: ToolRuntimeOptions | None = None,
-        auth_runtime: ToolAuthorizationRuntime | None = None,
     ) -> None:
         runtime_tools = [adapt_runtime_tool(tool) for tool in tools]
         self.tools = runtime_tools
         self.tools_map = {tool.get_name(): tool for tool in runtime_tools}
         self.cache = cache
         self.options = options or ToolRuntimeOptions()
-        self.auth_runtime = auth_runtime or ToolAuthorizationRuntime()
 
     def resolve_tool_call(
         self,
@@ -211,18 +207,12 @@ class ToolRuntime:
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         start_time = time.time()
-        auth = await self.auth_runtime.authorize(
-            tool_call_id=resolved.call_id,
-            tool_name=resolved.tool_name,
-            tool_args=resolved.args,
-            context=context,
-            timeout=self.options.auth_timeout_seconds,
-        )
-        if not auth.allowed:
+        gate_decision = await self._gate_tool_call(resolved, context)
+        if gate_decision.action == "deny":
             return RuntimeToolOutcome(
                 result=ToolResult.denied(
                     tool_name=resolved.tool_name,
-                    reason=auth.reason,
+                    reason=gate_decision.reason,
                     tool_call_id=resolved.call_id,
                     input_args=resolved.args,
                     start_time=start_time,
@@ -230,10 +220,16 @@ class ToolRuntime:
             )
 
         timeout_seconds = resolved.tool.timeout_seconds or self.options.timeout_seconds
-        execution_context = context
+        execution_context = replace(
+            context,
+            metadata={
+                **context.metadata,
+                "_tool_gate_checked": True,
+            },
+        )
         if timeout_seconds:
             execution_context = replace(
-                context,
+                execution_context,
                 timeout_at=time.time() + timeout_seconds,
             )
 
@@ -317,6 +313,16 @@ class ToolRuntime:
                     start_time=start_time,
                 )
             )
+
+    async def _gate_tool_call(
+        self,
+        resolved: ResolvedToolCall,
+        context: AgentRunContext,
+    ) -> ToolGateDecision:
+        gate_for_agent = getattr(resolved.tool, "gate_for_agent", None)
+        if gate_for_agent is None:
+            return ToolGateDecision.allow()
+        return await gate_for_agent(resolved.args, context)
 
 
 def _get_function_payload(tool_call: dict[str, Any]) -> dict[str, Any]:

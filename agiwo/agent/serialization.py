@@ -157,15 +157,13 @@ def _serialize_stream_item_base(item: AgentStreamItemBase) -> dict[str, Any]:
 def serialize_stream_item_payload(item: AgentStreamItem) -> dict[str, Any]:
     payload = _serialize_stream_item_base(item)
     if isinstance(item, RunStartedEvent):
-        return payload
-    if isinstance(item, StepDeltaEvent):
+        pass
+    elif isinstance(item, StepDeltaEvent):
         payload["step_id"] = item.step_id
         payload["delta"] = serialize_step_delta_payload(item.delta)
-        return payload
-    if isinstance(item, StepCompletedEvent):
+    elif isinstance(item, StepCompletedEvent):
         payload["step"] = serialize_step_record_payload(item.step)
-        return payload
-    if isinstance(item, RunCompletedEvent):
+    elif isinstance(item, RunCompletedEvent):
         payload["response"] = item.response
         payload["metrics"] = serialize_run_metrics_payload(item.metrics)
         payload["termination_reason"] = (
@@ -173,11 +171,11 @@ def serialize_stream_item_payload(item: AgentStreamItem) -> dict[str, Any]:
             if item.termination_reason is not None
             else None
         )
-        return payload
-    if isinstance(item, RunFailedEvent):
+    elif isinstance(item, RunFailedEvent):
         payload["error"] = item.error
-        return payload
-    raise TypeError(f"Unsupported stream item type: {type(item)!r}")
+    else:
+        raise TypeError(f"Unsupported stream item type: {type(item)!r}")
+    return payload
 
 
 __all__ = [
