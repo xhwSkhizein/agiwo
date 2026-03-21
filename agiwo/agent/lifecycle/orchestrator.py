@@ -116,7 +116,14 @@ class ExecutionOrchestrator:
         resolve_definition: Callable[[], Awaitable[ResolvedExecutionDefinition]],
         abort_signal: AbortSignal,
     ) -> RunOutput:
-        definition = await resolve_definition()
+        try:
+            definition = await resolve_definition()
+        except Exception:
+            await self._close_session_if_needed(
+                session_runtime=context.session_runtime,
+                close_session_on_complete=True,
+            )
+            raise
         return await self._execute(
             user_input,
             context=context,
@@ -148,8 +155,19 @@ class ExecutionOrchestrator:
                 abort_signal=abort_signal,
             )
         finally:
-            if close_session_on_complete:
-                await context.session_runtime.close()
+            await self._close_session_if_needed(
+                session_runtime=context.session_runtime,
+                close_session_on_complete=close_session_on_complete,
+            )
+
+    @staticmethod
+    async def _close_session_if_needed(
+        *,
+        session_runtime: AgentSessionRuntime,
+        close_session_on_complete: bool,
+    ) -> None:
+        if close_session_on_complete:
+            await session_runtime.close()
 
     @staticmethod
     def _start_trace_runtime(

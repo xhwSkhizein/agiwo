@@ -1,9 +1,7 @@
 # Agent 层整合方案：对比与原则
 
 > 状态说明（2026-03）：这套 merged 方案已经在代码中落地。当前目录和边界请以 `agiwo/agent/lifecycle/`、`agiwo/agent/engine/`、`AGENTS.md` 和 `agiwo/agent/README.md` 为准。
-
 > 范围：`agiwo/agent/**`
->
 > 目标：整合 `docs/refactor/agent-layer/` 与 `docs/refactor/agent-layer-by-opus/` 两套方案，在保持行为不变的前提下，得到一版更清晰、更克制、代码量更少的目标设计。
 
 ## 1. 为什么需要第三版方案

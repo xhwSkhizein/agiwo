@@ -208,11 +208,20 @@ class RunState:
     pending_tool_calls: list[dict] | None = None
     response_content: str | None = None
     termination_reason: TerminationReason | None = None
-    metrics: RunMetricsAccumulator = field(default_factory=RunMetricsAccumulator)
-    compact: CompactState = field(default_factory=CompactState)
+    total_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    token_cost: float = 0.0
+    steps_count: int = 0
+    tool_calls_count: int = 0
+    assistant_steps_count: int = 0
+    last_compact_metadata: CompactMetadata | None = None
+    compact_start_seq: int = 0
 ```
 
-保留一个主对象，但把 metrics / compact 这些高频子状态内聚进去，避免继续膨胀。
+保留一个主对象，并保持当前实现的扁平 metrics/compact 字段布局，避免文档与代码脱节。
 
 #### `engine/engine.py`
 

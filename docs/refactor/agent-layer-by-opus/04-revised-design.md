@@ -1,7 +1,6 @@
 # Agent Layer — Revised Design (Post-Review)
 
 > 状态说明（2026-03）：本文记录的是重构过程中的修正版提案。最终实现已经完成，落点是 `agiwo/agent/lifecycle/` + `agiwo/agent/engine/`，并移除了 `inner/`。
-
 > 基于 GPT review 和对当前代码的二次审读，修订原方案。  
 > 核心修正：**优先解决真实耦合点，而不是为了压文件数去合并已有明确职责的 owner**。
 
@@ -15,7 +14,7 @@
 
 **修正**：重新审读代码后，Runner 和 Executor 确实有不同的生命周期语义：
 
-```
+```text
 Runner.start_root()  [同步]
   → 创建 SessionRuntime、AgentRunContext、asyncio.Task、AgentExecutionHandle
   → 必须同步返回 handle 给调用者
@@ -125,7 +124,7 @@ state.messages = modified                             # L236
 
 当前流程：
 
-```
+```text
 Runner._execute_workflow():
   recorder = RunRecorder(context, hooks, observers)  # 无 state
   recorder.start_run(run)

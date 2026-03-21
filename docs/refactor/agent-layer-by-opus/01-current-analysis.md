@@ -1,7 +1,6 @@
 # Agent Layer — Current Architecture Analysis
 
 > Status (2026-03): this document describes the pre-refactor `inner/` architecture and is now historical context only. The implemented structure has moved to `agiwo/agent/lifecycle/` + `agiwo/agent/engine/`.
-
 > Scope: `agiwo/agent/` 及其所有子包的深度审计  
 > Date: 2025-01  
 > Author: Cascade (AI pair-programmer)
@@ -10,7 +9,7 @@
 
 ## 1. Package Overview
 
-```
+```text
 agiwo/agent/                    # 63 Python files, ~5800 LoC
 ├── __init__.py                 # Public API re-exports (102)
 ├── agent.py                    # Agent facade (281)
@@ -142,7 +141,7 @@ sequenceDiagram
 
 从 `Agent.start()` 到实际 LLM 调用经过 **5 层间接调用**：
 
-```
+```text
 Agent.start()
   → AgentRunner.start_root()
     → AgentRunner._execute_root()
@@ -259,7 +258,7 @@ Runner 做 "before/after" 包装，Executor 做 "during" 循环。问题在于 R
 
 ### 4.3 Child Agent 规格类型过多
 
-```
+```text
 ChildAgentSpec      (execution.py)    — 用户可见的 child override 规格
   ↓
 ChildDefinitionInputs (definition_runtime.py) — 内部 snapshot 输入，和 ChildAgentSpec 几乎一样
@@ -314,7 +313,7 @@ SQLite (515 LoC) 和 MongoDB (420 LoC) 实现在模式上高度相似：
 
 ### 4.7 Input 类型系统过于复杂
 
-```
+```text
 UserInput = str | list[ContentPart] | UserMessage
                     ↕
 ContentPart: text/image/file/audio (Pydantic models)

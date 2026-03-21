@@ -172,6 +172,10 @@ def _format_termination_reason(reason: TerminationReason | str) -> str:
         TerminationReason.MAX_RUN_COST.value: "reaching maximum token cost budget for this run",
         TerminationReason.CANCELLED.value: "user cancellation",
         TerminationReason.TOOL_LIMIT.value: "reaching the tool call limit",
+        TerminationReason.ERROR.value: "internal error",
+        TerminationReason.ERROR_WITH_CONTEXT.value: "error with context",
+        TerminationReason.COMPLETED.value: "completed successfully",
+        TerminationReason.SLEEPING.value: "sleeping/waiting",
     }
     return reason_mapping.get(reason_val, reason_val)
 

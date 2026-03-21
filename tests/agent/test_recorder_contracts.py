@@ -12,15 +12,18 @@ from tests.utils.agent_context import build_agent_context
 
 async def _collect_events(context, expected_count: int):
     events = []
+    subscribed = asyncio.Event()
 
     async def _consume():
-        async for event in context.session_runtime.subscribe():
+        stream = context.session_runtime.subscribe()
+        subscribed.set()
+        async for event in stream:
             events.append(event)
             if len(events) >= expected_count:
                 break
 
     task = asyncio.create_task(_consume())
-    await asyncio.sleep(0)
+    await subscribed.wait()
     return events, task
 
 

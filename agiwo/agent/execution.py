@@ -85,7 +85,9 @@ class AgentExecutionHandle(AgentExecutionHandlePort):
 
 
 __all__ = [
+    "AbortSignalPort",
     "AgentExecutionHandle",
     "AgentExecutionHandlePort",
+    "AgentExecutionSessionPort",
     "ChildAgentSpec",
 ]

@@ -141,7 +141,7 @@ class RunState:
 
     def _track_assistant(self, step: StepRecord) -> None:
         self.assistant_steps_count += 1
-        if step.content:
+        if step.content is not None:
             self.set_response_content(step.content)
         if step.tool_calls:
             self.tool_calls_count += len(step.tool_calls)

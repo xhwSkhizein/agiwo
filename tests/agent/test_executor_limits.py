@@ -4,14 +4,13 @@ import time
 
 import pytest
 
-from agiwo.agent import AgentHooks, TerminationReason
+from agiwo.agent import TerminationReason
 from agiwo.agent.engine.context import AgentRunContext
-from agiwo.agent.engine.engine import ExecutionEngine
-from agiwo.agent.lifecycle.definition import ResolvedExecutionDefinition
 from agiwo.agent.options import AgentOptions
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.tool.base import BaseTool, ToolResult
 from tests.utils.agent_context import build_agent_context
+from tests.utils.execution_engine import _build_executor
 
 
 class MockModel(Model):
@@ -78,30 +77,6 @@ def _make_context() -> AgentRunContext:
         run_id="run-limit",
         agent_id="agent-limit",
         agent_name="test-agent",
-    )
-
-
-def _build_executor(
-    *,
-    model: Model,
-    tools: list[BaseTool],
-    context: AgentRunContext,
-    options: AgentOptions | None = None,
-) -> ExecutionEngine:
-    definition = ResolvedExecutionDefinition(
-        agent_id=context.agent_id,
-        agent_name=context.agent_name,
-        description="test-agent",
-        model=model,
-        hooks=AgentHooks(),
-        options=options or AgentOptions(),
-        tools=tuple(tools),
-        system_prompt="You are a test assistant.",
-    )
-    return ExecutionEngine(
-        definition=definition,
-        step_observers=(),
-        root_path="/tmp",
     )
 
 

@@ -273,10 +273,12 @@ class AgentDefinitionRuntime:
             for tool in self._effective_tools()
             if tool.get_name() not in spec.exclude_tool_names
         )
-        base_prompt = self._append_instruction(
-            spec.system_prompt_override or self._config.system_prompt,
-            spec.instruction,
+        prompt_override = (
+            spec.system_prompt_override
+            if spec.system_prompt_override is not None
+            else self._config.system_prompt
         )
+        base_prompt = self._append_instruction(prompt_override, spec.instruction)
         return options, tools, base_prompt, copy.deepcopy(self._hooks)
 
     @staticmethod

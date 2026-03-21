@@ -32,7 +32,7 @@ ALLOWED_AGENT_INTERNAL_IMPORT_PREFIXES = (
     Path("tests"),
     Path("console/tests"),
 )
-ALLOWED_RUN_STATE_MUTATION_PREFIXES = (Path("agiwo/agent/engine"),)
+ALLOWED_RUN_STATE_MUTATION_PREFIXES = (Path("agiwo/agent/engine/state.py"),)
 ALLOWED_DEAD_PERMISSION_API_PREFIXES = (
     Path("tests"),
     Path("console/tests"),
@@ -973,7 +973,7 @@ def _detect_assign_errors(
                         "AGW040",
                         (
                             "RunState structural fields may only be mutated inside "
-                            "agiwo/agent/engine; use RunState methods instead of "
+                            "agiwo/agent/engine/state.py; use RunState methods instead of "
                             "assigning state.messages/state.termination_reason/etc."
                         ),
                     )

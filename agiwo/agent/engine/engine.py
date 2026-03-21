@@ -209,7 +209,7 @@ class ExecutionEngine:
             before_run_hook_result = await self.hooks.on_before_run(user_input, context)
 
         memories: list[MemoryRecord] = []
-        if self.hooks.on_memory_retrieve is not None and user_input:
+        if self.hooks.on_memory_retrieve is not None and user_input is not None:
             memories = await self.hooks.on_memory_retrieve(user_input, context)
         return before_run_hook_result, memories
 
@@ -473,7 +473,7 @@ class ExecutionEngine:
     ) -> None:
         if self.hooks.on_after_run:
             await self.hooks.on_after_run(result, context)
-        if self.hooks.on_memory_write and result.response:
+        if self.hooks.on_memory_write and result.response is not None:
             await self.hooks.on_memory_write(user_input, result, context)
 
     @staticmethod

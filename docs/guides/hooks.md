@@ -32,7 +32,8 @@ async def on_before_run(user_input, context) -> str | None:
 
 async def on_after_run(result, context) -> None:
     """Called after a run completes."""
-    print(f"Run {context.run_id} ended: {result.response[:100]}")
+    preview = (result.response or "")[:100]
+    print(f"Run {context.run_id} ended: {preview}")
 ```
 
 ### Tool Execution
@@ -131,6 +132,7 @@ async def cost_on_after_llm(step):
 ### Rate Limiting
 
 ```python
+import asyncio
 import time
 
 last_call = 0
