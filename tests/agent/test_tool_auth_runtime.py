@@ -2,9 +2,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agiwo.agent.inner.context import AgentRunContext
-from agiwo.agent.inner.session_runtime import AgentSessionRuntime
-from agiwo.agent.inner.tool_runtime import ResolvedToolCall, ToolRuntime
+from agiwo.agent.engine.context import AgentRunContext
+from agiwo.agent.lifecycle.session import AgentSessionRuntime
+from agiwo.agent.engine.tool_runtime import ResolvedToolCall, ToolRuntime
 from agiwo.agent.runtime_tools.agent_tool import AgentTool
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.storage.session import InMemorySessionStorage

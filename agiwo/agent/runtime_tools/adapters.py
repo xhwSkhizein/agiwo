@@ -1,11 +1,14 @@
-from agiwo.agent.inner.context import AgentRunContext
-from agiwo.agent.runtime_tools.contracts import AgentRuntimeTool, RuntimeToolOutcome
+from agiwo.agent.runtime_tools.contracts import (
+    AgentRuntimeContext,
+    AgentRuntimeTool,
+    RuntimeToolOutcome,
+)
 from agiwo.tool.base import BaseTool, ToolDefinition, ToolGateDecision
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
 
 
-def _build_tool_context(context: AgentRunContext) -> ToolContext:
+def _build_tool_context(context: AgentRuntimeContext) -> ToolContext:
     return ToolContext(
         session_id=context.session_id,
         agent_id=context.agent_id,
@@ -39,14 +42,14 @@ class BaseToolAdapter:
     async def gate_for_agent(
         self,
         parameters: dict[str, object],
-        context: AgentRunContext,
+        context: AgentRuntimeContext,
     ) -> ToolGateDecision:
         return await self._tool.gate(parameters, context=_build_tool_context(context))
 
     async def execute_for_agent(
         self,
         parameters: dict[str, object],
-        context: AgentRunContext,
+        context: AgentRuntimeContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         result = await self._tool.execute(

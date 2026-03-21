@@ -6,7 +6,7 @@ import pytest
 from datetime import datetime
 
 from agiwo.agent import CompactMetadata, CompactResult
-from agiwo.agent.inner.compaction.prompt import (
+from agiwo.agent.engine.compaction.prompt import (
     DEFAULT_ASSISTANT_RESPONSE,
     DEFAULT_COMPACT_PROMPT,
 )

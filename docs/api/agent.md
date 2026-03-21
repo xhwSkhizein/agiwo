@@ -143,9 +143,9 @@ class AgentExecutionHandle:
     session_id: str
 
     async def wait(self) -> RunOutput
-    async def stream(self) -> AsyncIterator[AgentStreamItem]
-    async def steer(self, user_input: str | UserInput) -> bool
-    async def cancel(self) -> bool
+    def stream(self) -> AsyncIterator[AgentStreamItem]
+    async def steer(self, message: str) -> bool
+    def cancel(self, reason: str | None = None) -> None
 ```
 
 ## `RunOutput`
@@ -153,21 +153,22 @@ class AgentExecutionHandle:
 ```python
 @dataclass
 class RunOutput:
-    response: str                    # Final text response
-    tool_results: list[ToolResult]   # All tool results from the run
-    usage: dict[str, Any]            # Token usage stats
-    run_id: str                      # Unique run identifier
-    session_id: str                  # Session identifier
+    session_id: str | None
+    run_id: str | None
+    response: str | None
+    metrics: RunMetrics | None
+    termination_reason: TerminationReason | None
+    error: str | None
 ```
 
 ## `AgentStreamItem`
 
 ```python
-@dataclass
-class AgentStreamItem:
-    delta: StreamDelta | None        # Content delta
-    run_id: str                      # Run identifier
-    session_id: str                  # Session identifier
-    step: int                        # Step number
-    type: str                        # Event type
+AgentStreamItem = (
+    RunStartedEvent
+    | StepDeltaEvent
+    | StepCompletedEvent
+    | RunCompletedEvent
+    | RunFailedEvent
+)
 ```

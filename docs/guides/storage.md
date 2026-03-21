@@ -157,6 +157,6 @@ model = OpenAIModel(
 
 # After run:
 result = await agent.run("Hello")
-print(result.usage)  # Token counts
+print(result.metrics)  # Token counts and cost
 # Cost is recorded in run/step storage
 ```

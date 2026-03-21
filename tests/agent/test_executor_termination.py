@@ -1,13 +1,13 @@
-"""Tests for runtime termination propagation in AgentExecutor."""
+"""Tests for runtime termination propagation in ExecutionEngine."""
 
 import time
 
 import pytest
 
 from agiwo.agent import AgentHooks, TerminationReason
-from agiwo.agent.inner.context import AgentRunContext
-from agiwo.agent.inner.executor import AgentExecutor
-from agiwo.agent.inner.run_recorder import RunRecorder
+from agiwo.agent.engine.context import AgentRunContext
+from agiwo.agent.engine.engine import ExecutionEngine
+from agiwo.agent.lifecycle.definition import ResolvedExecutionDefinition
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.runtime_tools import RuntimeToolOutcome
 from agiwo.llm.base import Model, StreamChunk
@@ -139,21 +139,22 @@ def _build_executor(
     tools: list[object],
     context: AgentRunContext,
     options: AgentOptions | None = None,
-) -> tuple[AgentExecutor, RunRecorder]:
-    recorder = RunRecorder(
-        context=context,
-        hooks=AgentHooks(),
-        step_observers=[],
-    )
-    executor = AgentExecutor(
+) -> ExecutionEngine:
+    definition = ResolvedExecutionDefinition(
+        agent_id=context.agent_id,
+        agent_name=context.agent_name,
+        description="test-agent",
         model=model,
-        tools=tools,
-        options=options,
         hooks=AgentHooks(),
-        run_recorder=recorder,
+        options=options or AgentOptions(),
+        tools=tuple(tools),
+        system_prompt="You are a test assistant.",
+    )
+    return ExecutionEngine(
+        definition=definition,
+        step_observers=(),
         root_path="/tmp",
     )
-    return executor, recorder
 
 
 class TestExecutorTermination:
@@ -178,19 +179,13 @@ class TestExecutorTermination:
         model = MockModel([chunks_with_tool_call])
 
         context = _make_context()
-        executor, recorder = _build_executor(
+        executor = _build_executor(
             model=model,
             tools=[tool],
             context=context,
             options=AgentOptions(max_steps=10),
         )
-
-        user_step = await recorder.create_user_step(user_input="test")
-        output = await executor.execute(
-            system_prompt="You are a test assistant.",
-            user_step=user_step,
-            context=context,
-        )
+        output = await executor.execute("test", context=context)
 
         assert output.termination_reason == TerminationReason.SLEEPING
         # Model should have been called only once (no second LLM call after termination)
@@ -220,19 +215,13 @@ class TestExecutorTermination:
         model = MockModel([chunks_with_tool_call, chunks_completion])
 
         context = _make_context()
-        executor, recorder = _build_executor(
+        executor = _build_executor(
             model=model,
             tools=[tool],
             context=context,
             options=AgentOptions(max_steps=10),
         )
-
-        user_step = await recorder.create_user_step(user_input="test")
-        output = await executor.execute(
-            system_prompt="You are a test assistant.",
-            user_step=user_step,
-            context=context,
-        )
+        output = await executor.execute("test", context=context)
 
         assert output.termination_reason == TerminationReason.COMPLETED
         assert model._call_count == 2  # tool call + completion

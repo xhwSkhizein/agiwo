@@ -1,5 +1,7 @@
 # Agent Layer — Current Architecture Analysis
 
+> Status (2026-03): this document describes the pre-refactor `inner/` architecture and is now historical context only. The implemented structure has moved to `agiwo/agent/lifecycle/` + `agiwo/agent/engine/`.
+
 > Scope: `agiwo/agent/` 及其所有子包的深度审计  
 > Date: 2025-01  
 > Author: Cascade (AI pair-programmer)

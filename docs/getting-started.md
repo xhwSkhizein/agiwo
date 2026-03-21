@@ -91,7 +91,7 @@ For real-time output, use `run_stream()`:
 
 ```python
 async for event in agent.run_stream("Explain recursion in one sentence."):
-    if event.delta and event.delta.content:
+    if event.type == "step_delta" and event.delta.content:
         print(event.delta.content, end="", flush=True)
 ```
 

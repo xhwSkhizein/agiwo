@@ -1,5 +1,7 @@
 # Agent 层重构设计方案（行为不变、结构升级）
 
+> 状态说明（2026-03）：这是早期目标设计稿，不再代表当前代码的目录布局。当前已实现结构请看 `docs/refactor/agent-layer-merged/` 与 `agiwo/agent/{lifecycle,engine}/`。
+
 ## 1. 目标架构：保持外部 API，重写内部执行骨架
 
 ```mermaid

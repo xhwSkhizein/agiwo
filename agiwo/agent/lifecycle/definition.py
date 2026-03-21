@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from agiwo.agent.config import AgentConfig
 from agiwo.agent.execution import ChildAgentSpec
 from agiwo.agent.hooks import AgentHooks
-from agiwo.agent.inner.definition import AgentCloneSpec, ResolvedExecutionDefinition
+from agiwo.agent.memory_hooks import DefaultMemoryHook
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.prompt import AgentPromptRuntime
 from agiwo.agent.runtime_tools import RuntimeToolLike
@@ -18,9 +18,31 @@ from agiwo.tool.builtin.registry import DEFAULT_TOOLS
 from agiwo.utils.logging import get_logger
 from agiwo.workspace import build_agent_workspace
 
-from ..memory_hooks import DefaultMemoryHook
-
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedExecutionDefinition:
+    """Immutable execution snapshot consumed by the orchestrator/engine."""
+
+    agent_id: str
+    agent_name: str
+    description: str
+    model: Model
+    hooks: AgentHooks
+    options: AgentOptions
+    tools: tuple[RuntimeToolLike, ...]
+    system_prompt: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentCloneSpec:
+    """Pure inputs for cloning a scheduler child Agent template."""
+
+    agent_id: str
+    config: AgentConfig
+    hooks: AgentHooks
+    tools: tuple[RuntimeToolLike, ...]
 
 
 def _create_skill_manager(options: AgentOptions, agent_name: str) -> SkillManager:
@@ -99,14 +121,6 @@ def _build_prompt_runtime(
         tools=list(tools),
         skill_manager=skill_manager,
     )
-
-
-@dataclass(frozen=True, slots=True)
-class ChildDefinitionInputs:
-    options: AgentOptions
-    tools: tuple[RuntimeToolLike, ...]
-    base_prompt: str
-    hooks: AgentHooks
 
 
 class AgentDefinitionRuntime:
@@ -202,22 +216,22 @@ class AgentDefinitionRuntime:
         model: Model,
         spec: ChildAgentSpec,
     ) -> ResolvedExecutionDefinition:
-        inputs = self._build_child_inputs(spec)
+        options, tools, base_prompt, hooks = self._materialize_child(spec)
         prompt_runtime = self._create_prompt_runtime(
-            base_prompt=inputs.base_prompt,
+            base_prompt=base_prompt,
             agent_id=spec.agent_id,
             agent_name=spec.agent_name,
-            tools=list(inputs.tools),
-            options=inputs.options,
+            tools=list(tools),
+            options=options,
         )
         return ResolvedExecutionDefinition(
             agent_id=spec.agent_id,
             agent_name=spec.agent_name,
             description=spec.description,
             model=model,
-            hooks=inputs.hooks,
-            options=inputs.options,
-            tools=inputs.tools,
+            hooks=hooks,
+            options=options,
+            tools=tools,
             system_prompt=await prompt_runtime.get_system_prompt(),
         )
 
@@ -237,18 +251,21 @@ class AgentDefinitionRuntime:
             system_prompt_override=system_prompt_override,
             exclude_tool_names=frozenset(exclude_tool_names or ()),
         )
-        inputs = self._build_child_inputs(spec)
+        options, tools, base_prompt, hooks = self._materialize_child(spec)
         child_config = copy.deepcopy(self._config)
-        child_config.system_prompt = inputs.base_prompt
-        child_config.options = inputs.options
+        child_config.system_prompt = base_prompt
+        child_config.options = options
         return AgentCloneSpec(
             agent_id=child_id,
             config=child_config,
-            hooks=inputs.hooks,
-            tools=inputs.tools,
+            hooks=hooks,
+            tools=tools,
         )
 
-    def _build_child_inputs(self, spec: ChildAgentSpec) -> ChildDefinitionInputs:
+    def _materialize_child(
+        self,
+        spec: ChildAgentSpec,
+    ) -> tuple[AgentOptions, tuple[RuntimeToolLike, ...], str, AgentHooks]:
         options = self._config.options.model_copy(deep=True)
         options.enable_termination_summary = True
         tools = tuple(
@@ -260,12 +277,7 @@ class AgentDefinitionRuntime:
             spec.system_prompt_override or self._config.system_prompt,
             spec.instruction,
         )
-        return ChildDefinitionInputs(
-            options=options,
-            tools=tools,
-            base_prompt=base_prompt,
-            hooks=copy.deepcopy(self._hooks),
-        )
+        return options, tools, base_prompt, copy.deepcopy(self._hooks)
 
     @staticmethod
     def _append_instruction(base_prompt: str, instruction: str | None) -> str:
@@ -310,4 +322,8 @@ class AgentDefinitionRuntime:
         )
 
 
-__all__ = ["AgentDefinitionRuntime"]
+__all__ = [
+    "AgentCloneSpec",
+    "AgentDefinitionRuntime",
+    "ResolvedExecutionDefinition",
+]

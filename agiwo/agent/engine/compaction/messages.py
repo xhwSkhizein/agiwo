@@ -1,6 +1,6 @@
 from typing import Any
 
-from agiwo.agent.inner.compaction.prompt import DEFAULT_ASSISTANT_RESPONSE
+from agiwo.agent.engine.compaction.prompt import DEFAULT_ASSISTANT_RESPONSE
 from agiwo.config.settings import settings
 
 

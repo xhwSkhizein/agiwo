@@ -1,5 +1,7 @@
 # Agent Layer — Trade-Off Analysis
 
+> 状态说明（2026-03）：本文分析的是 `by-opus` 方案内部的权衡，保留作为历史讨论材料。最终实现采用的是 `merged` 方案中的落点：保留 `ExecutionOrchestrator + ExecutionEngine` 双层，并维持 `RunRecorder` 单 owner。
+
 > 每一个重构决策都有代价。本文对 `02-architecture-design.md` 中的每个主要变更进行 Trade-Off 分析。
 
 ---

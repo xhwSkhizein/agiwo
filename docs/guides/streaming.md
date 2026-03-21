@@ -8,30 +8,21 @@ The simplest way to get real-time output:
 
 ```python
 async for event in agent.run_stream("Tell me about Python"):
-    if event.delta and event.delta.content:
+    if event.type == "step_delta" and event.delta.content:
         print(event.delta.content, end="", flush=True)
 ```
 
 ## Event Structure
 
-Each event is an `AgentStreamItem` containing:
+`AgentStreamItem` is a tagged union of:
 
-| Field | Description |
-|-------|-------------|
-| `delta` | Content delta (text, tool calls, reasoning) |
-| `run_id` | Unique run identifier |
-| `session_id` | Session identifier |
-| `step` | Current step number |
-| `type` | Event type |
-
-### Delta Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `content` | `str \| None` | Text content chunk |
-| `reasoning_content` | `str \| None` | Thinking/reasoning content |
-| `tool_calls` | `list[dict] \| None` | Tool call information |
-| `finish_reason` | `str \| None` | Why this step ended |
+| Event Type | Payload |
+|------------|---------|
+| `run_started` | run/session metadata |
+| `step_delta` | incremental assistant deltas via `event.delta` |
+| `step_completed` | committed `StepRecord` via `event.step` |
+| `run_completed` | final response, metrics, termination reason |
+| `run_failed` | final error |
 
 ## Handle-based Streaming
 
@@ -41,12 +32,12 @@ For more control, use `start()` to get a handle:
 handle = agent.start("Write a poem about code")
 
 async for event in handle.stream():
-    if event.delta and event.delta.content:
+    if event.type == "step_delta" and event.delta.content:
         sys.stdout.write(event.delta.content)
         sys.stdout.flush()
 
     # Check for tool calls
-    if event.delta and event.delta.tool_calls:
+    if event.type == "step_delta" and event.delta.tool_calls:
         print(f"\n[Using tool: {event.delta.tool_calls}]")
 
 # Or get the final result
@@ -60,7 +51,7 @@ The Scheduler exposes the same streaming interface:
 ```python
 async with Scheduler() as scheduler:
     async for event in scheduler.stream("Research topic X", agent=agent):
-        if event.delta and event.delta.content:
+        if event.type == "step_delta" and event.delta.content:
             print(event.delta.content, end="", flush=True)
 ```
 
@@ -98,7 +89,7 @@ Agent.run_stream()
   └─► Agent.start() → AgentExecutionHandle
        └─► consume_execution_stream()
             └─► handle.stream()
-                 └─► AgentRunner → AgentExecutor
+                 └─► ExecutionOrchestrator → ExecutionEngine
                       └─► LLM Model.arun_stream()
                            └─► StreamChunk (provider-specific)
                                 └─► AgentStreamItem (normalized)

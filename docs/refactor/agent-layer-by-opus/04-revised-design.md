@@ -1,5 +1,7 @@
 # Agent Layer — Revised Design (Post-Review)
 
+> 状态说明（2026-03）：本文记录的是重构过程中的修正版提案。最终实现已经完成，落点是 `agiwo/agent/lifecycle/` + `agiwo/agent/engine/`，并移除了 `inner/`。
+
 > 基于 GPT review 和对当前代码的二次审读，修订原方案。  
 > 核心修正：**优先解决真实耦合点，而不是为了压文件数去合并已有明确职责的 owner**。
 

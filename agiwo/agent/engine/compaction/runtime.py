@@ -1,15 +1,15 @@
-"""Internal compaction runtime used by AgentExecutor."""
+"""Internal compaction runtime used by ExecutionEngine."""
 
 from datetime import datetime
 
 from agiwo.agent.compact_types import CompactMetadata, CompactResult
-from agiwo.agent.inner.compaction.messages import build_compacted_messages
-from agiwo.agent.inner.compaction.parser import parse_compact_response
-from agiwo.agent.inner.compaction.prompt import DEFAULT_COMPACT_PROMPT
-from agiwo.agent.inner.compaction.transcript import save_transcript
-from agiwo.agent.inner.llm_handler import LLMStreamHandler
-from agiwo.agent.inner.run_recorder import RunRecorder
-from agiwo.agent.inner.run_state import RunState
+from agiwo.agent.engine.compaction.messages import build_compacted_messages
+from agiwo.agent.engine.compaction.parser import parse_compact_response
+from agiwo.agent.engine.compaction.prompt import DEFAULT_COMPACT_PROMPT
+from agiwo.agent.engine.compaction.transcript import save_transcript
+from agiwo.agent.engine.llm_handler import LLMStreamHandler
+from agiwo.agent.engine.recorder import RunRecorder
+from agiwo.agent.engine.state import RunState
 from agiwo.agent.storage.session import SessionStorage
 from agiwo.config.settings import settings
 from agiwo.utils.abort_signal import AbortSignal
@@ -177,8 +177,7 @@ class CompactionRuntime:
             compact_tokens=(step.metrics.total_tokens if step.metrics else 0),
         )
 
-        state.last_compact_metadata = metadata
-        state.compact_start_seq = end_seq + 1
+        state.apply_compaction(compacted_messages, metadata)
 
         await self.session_storage.save_compact_metadata(
             state.context.session_id,

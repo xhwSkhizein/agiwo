@@ -1,5 +1,7 @@
 # Agent Layer — Refactored Architecture Design
 
+> 状态说明（2026-03）：这是 `by-opus` 方案的目标稿，保留用于回顾设计取舍。最终实现没有采纳本文中的 `Runner + Executor` 合并、`recording/` 目录和 `EventBus` 方案；请以 `docs/refactor/agent-layer-merged/` 与当前代码为准。
+
 > 基于 `01-current-analysis.md` 的洞察，本文提出重构后的 Agent 层架构。  
 > 核心目标：**更少的层次、更清晰的职责边界、更少的代码量**，同时保持功能完全不变。
 

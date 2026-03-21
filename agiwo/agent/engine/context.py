@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from agiwo.agent.inner.session_runtime import AgentSessionRuntime
+from agiwo.agent.lifecycle.session import AgentSessionRuntime
 
 
 @dataclass(slots=True)

@@ -8,14 +8,13 @@ Hooks let you observe and intercept agent lifecycle events. They're optional cal
 from agiwo.agent.hooks import AgentHooks
 
 hooks = AgentHooks(
-    on_run_start=my_run_start_hook,
-    on_run_end=my_run_end_hook,
-    on_tool_start=my_tool_start_hook,
-    on_tool_end=my_tool_end_hook,
-    on_llm_start=my_llm_start_hook,
-    on_llm_end=my_llm_end_hook,
-    on_step_start=my_step_start_hook,
-    on_step_end=my_step_end_hook,
+    on_before_run=my_before_run_hook,
+    on_after_run=my_after_run_hook,
+    on_before_tool_call=my_before_tool_call_hook,
+    on_after_tool_call=my_after_tool_call_hook,
+    on_before_llm_call=my_before_llm_call_hook,
+    on_after_llm_call=my_after_llm_call_hook,
+    on_step=my_on_step_hook,
     on_memory_write=my_memory_write_hook,
     on_memory_retrieve=my_memory_retrieve_hook,
 )
@@ -26,23 +25,25 @@ hooks = AgentHooks(
 ### Run Lifecycle
 
 ```python
-async def on_run_start(context) -> None:
-    """Called when a run begins."""
-    print(f"Run {context.run_id} started")
+async def on_before_run(user_input, context) -> str | None:
+    """Called before a run starts."""
+    print(f"Run {context.run_id} starting")
+    return None
 
-async def on_run_end(context, result) -> None:
-    """Called when a run completes (success or failure)."""
+async def on_after_run(result, context) -> None:
+    """Called after a run completes."""
     print(f"Run {context.run_id} ended: {result.response[:100]}")
 ```
 
 ### Tool Execution
 
 ```python
-async def on_tool_start(context, tool_name, parameters) -> None:
+async def on_before_tool_call(tool_call_id, tool_name, parameters) -> dict | None:
     """Called before a tool executes."""
     print(f"Tool {tool_name} starting with {parameters}")
+    return None
 
-async def on_tool_end(context, result) -> None:
+async def on_after_tool_call(tool_call_id, tool_name, parameters, result) -> None:
     """Called after a tool completes."""
     print(f"Tool {result.tool_name} finished in {result.duration:.2f}s")
 ```
@@ -50,37 +51,35 @@ async def on_tool_end(context, result) -> None:
 ### LLM Calls
 
 ```python
-async def on_llm_start(context, messages) -> None:
+async def on_before_llm_call(messages) -> list[dict] | None:
     """Called before an LLM request."""
     print(f"LLM call with {len(messages)} messages")
+    return None
 
-async def on_llm_end(context, response) -> None:
-    """Called after an LLM response."""
-    print(f"LLM responded")
+async def on_after_llm_call(step) -> None:
+    """Called after an assistant step is committed."""
+    print(f"Assistant step finished: {step.id}")
 ```
 
 ### Steps
 
 ```python
-async def on_step_start(context, step) -> None:
-    """Called at the start of each reasoning step."""
-    print(f"Step {step} starting")
-
-async def on_step_end(context, step, record) -> None:
-    """Called at the end of each reasoning step."""
-    print(f"Step {step} completed")
+async def on_step(step) -> None:
+    """Called when any step (user/assistant/tool) is committed."""
+    print(f"Committed {step.role.value} step {step.sequence}")
 ```
 
 ### Memory
 
 ```python
-async def on_memory_write(context, path, content) -> None:
-    """Called when memory is written to a file."""
-    print(f"Memory written to {path}")
+async def on_memory_write(user_input, result, context) -> None:
+    """Called after a successful run to persist external memory."""
+    print(f"Persisting memory for run {context.run_id}")
 
-async def on_memory_retrieve(context, query, results) -> None:
-    """Called when memory retrieval completes."""
-    print(f"Memory search for '{query}' returned {len(results)} results")
+async def on_memory_retrieve(user_input, context) -> list:
+    """Called before execution to fetch memories."""
+    print(f"Retrieving memories for run {context.run_id}")
+    return []
 ```
 
 ## Using Hooks
@@ -106,10 +105,12 @@ agent.hooks = new_hooks
 ### Logging and Tracing
 
 ```python
-async def tracing_on_tool_end(context, result):
+async def tracing_on_after_tool_call(tool_call_id, tool_name, parameters, result):
     logger.info(
         "tool_executed",
-        tool=result.tool_name,
+        tool_call_id=tool_call_id,
+        tool=tool_name,
+        parameters=parameters,
         duration=result.duration,
         success=result.is_success,
     )
@@ -120,10 +121,10 @@ async def tracing_on_tool_end(context, result):
 ```python
 total_tokens = 0
 
-async def cost_on_llm_end(context, response):
+async def cost_on_after_llm(step):
     global total_tokens
-    if response.usage:
-        total_tokens += response.usage.get("total_tokens", 0)
+    if step.metrics and step.metrics.total_tokens:
+        total_tokens += step.metrics.total_tokens
         print(f"Total tokens so far: {total_tokens}")
 ```
 
@@ -134,7 +135,7 @@ import time
 
 last_call = 0
 
-async def rate_limit_on_llm_start(context, messages):
+async def rate_limit_on_before_llm(messages):
     global last_call
     elapsed = time.time() - last_call
     if elapsed < 1.0:
@@ -145,16 +146,16 @@ async def rate_limit_on_llm_start(context, messages):
 ### Debugging
 
 ```python
-async def debug_on_step_end(context, step, record):
-    print(f"=== Step {step} ===")
-    print(f"LLM response: {record.llm_response[:200]}")
-    print(f"Tool calls: {record.tool_calls}")
+async def debug_on_step(step):
+    print(f"=== Step {step.sequence} ({step.role.value}) ===")
+    print(f"Content: {step.content}")
+    print(f"Tool calls: {step.tool_calls}")
     print()
 ```
 
 ## Notes
 
 - All hooks are async functions
-- Hooks run sequentially in registration order
-- A hook exception does not abort the run (it's logged and swallowed)
+- Each lifecycle point has a single callback slot on `AgentHooks`
+- Hook exceptions propagate and will fail the run unless you handle them yourself
 - Hook context provides run_id, session_id, agent_id, and other runtime metadata

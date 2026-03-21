@@ -1,18 +1,30 @@
 import time
 
-from agiwo.agent.inner.llm_handler import LLMStreamHandler
-from agiwo.agent.inner.run_recorder import RunRecorder
-from agiwo.agent.inner.run_state import RunState
-from agiwo.agent.inner.summarizer import (
-    DEFAULT_TERMINATION_USER_PROMPT,
-    _format_termination_reason,
-)
+from agiwo.agent.engine.llm_handler import LLMStreamHandler
+from agiwo.agent.engine.recorder import RunRecorder
+from agiwo.agent.engine.state import RunState
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.runtime import LLMCallContext, StepRecord, TerminationReason
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+DEFAULT_TERMINATION_USER_PROMPT = """**IMPORTANT: Execution Limit Reached**
+
+The execution has been interrupted due to %s. This is NOT a normal completion.
+
+Please provide a summary report that includes:
+1. **Original Request**: What was the user asking for
+2. **Work Completed**: What has been accomplished so far (be specific, cite actual results)
+3. **Pending Work**: What remains incomplete or was interrupted
+4. **Key Findings & Refs**: Any important results, data, or conclusions discovered with references
+
+**Requirements**:
+- Base your summary ONLY on the actual work done and results obtained - do not fabricate or assume
+- If you must make any assumptions, clearly mark them as such
+- Clearly indicate this is an INCOMPLETE/INTERRUPTED execution report
+- Use the same language as the original request"""
 
 
 class ExecutionTerminationRuntime:
@@ -150,4 +162,18 @@ class ExecutionTerminationRuntime:
         )
 
 
-__all__ = ["ExecutionTerminationRuntime"]
+def _format_termination_reason(reason: TerminationReason | str) -> str:
+    reason_val = reason.value if isinstance(reason, TerminationReason) else reason
+    reason_mapping = {
+        TerminationReason.MAX_STEPS.value: "reaching the maximum number of execution steps",
+        TerminationReason.TIMEOUT.value: "execution timeout",
+        TerminationReason.MAX_OUTPUT_TOKENS.value: "reaching model output token limit for one LLM call",
+        TerminationReason.MAX_INPUT_TOKENS_PER_CALL.value: "reaching model input token limit for one LLM call",
+        TerminationReason.MAX_RUN_COST.value: "reaching maximum token cost budget for this run",
+        TerminationReason.CANCELLED.value: "user cancellation",
+        TerminationReason.TOOL_LIMIT.value: "reaching the tool call limit",
+    }
+    return reason_mapping.get(reason_val, reason_val)
+
+
+__all__ = ["DEFAULT_TERMINATION_USER_PROMPT", "ExecutionTerminationRuntime"]

@@ -3,7 +3,7 @@
 import pytest
 from agiwo.agent import Agent, AgentConfig
 from agiwo.tool.base import BaseTool, ToolResult
-from agiwo.agent.inner.context import AgentRunContext
+from agiwo.agent.engine.context import AgentRunContext
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.tool.builtin.registry import DEFAULT_TOOLS
 from agiwo.llm.base import StreamChunk
