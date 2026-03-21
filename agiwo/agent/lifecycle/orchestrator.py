@@ -1,26 +1,23 @@
 import asyncio
-import time
 from collections.abc import Awaitable, Callable, Sequence
 from uuid import uuid4
 
+from agiwo.agent.engine.context import AgentRunContext
+from agiwo.agent.engine.engine import ExecutionEngine
 from agiwo.agent.execution import AgentExecutionHandle
-from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.input import UserInput
-from agiwo.agent.input_codec import extract_text, normalize_to_message
-from agiwo.agent.inner.context import AgentRunContext
-from agiwo.agent.inner.definition import ResolvedExecutionDefinition
-from agiwo.agent.inner.executor import AgentExecutor
-from agiwo.agent.inner.resource_owner import ActiveRootExecution, AgentResourceOwner
-from agiwo.agent.inner.run_recorder import RunRecorder
-from agiwo.agent.inner.session_runtime import AgentSessionRuntime
-from agiwo.agent.runtime import Run, RunOutput, RunStatus
+from agiwo.agent.input_codec import extract_text
+from agiwo.agent.lifecycle.definition import ResolvedExecutionDefinition
+from agiwo.agent.lifecycle.resource_owner import ActiveRootExecution, AgentResourceOwner
+from agiwo.agent.lifecycle.session import AgentSessionRuntime
+from agiwo.agent.runtime import RunOutput
 from agiwo.agent.scheduler_port import StepObserver
 from agiwo.agent.trace import AgentTraceCollector
 from agiwo.utils.abort_signal import AbortSignal
 
 
-class AgentRunner:
-    """Single owner for root/child run orchestration."""
+class ExecutionOrchestrator:
+    """Own root/child session wiring and live execution lifecycle."""
 
     def start_root(
         self,
@@ -38,13 +35,11 @@ class AgentRunner:
     ) -> tuple[AgentExecutionHandle, ActiveRootExecution]:
         resolved_session_id = session_id or str(uuid4())
         resolved_abort_signal = abort_signal or AbortSignal()
-        resolved_user_id = user_id
-
         trace_runtime = self._start_trace_runtime(
             resource_owner=resource_owner,
             agent_id=agent_id,
             session_id=resolved_session_id,
-            user_id=resolved_user_id,
+            user_id=user_id,
             user_input=user_input,
         )
         session_runtime = AgentSessionRuntime(
@@ -59,14 +54,14 @@ class AgentRunner:
             session_runtime=session_runtime,
             agent_id=agent_id,
             agent_name=agent_name,
-            user_id=resolved_user_id,
+            user_id=user_id,
             metadata=metadata,
         )
         task = asyncio.create_task(
             self._execute_root(
                 user_input,
                 context=context,
-                step_observers=step_observers,
+                step_observers=tuple(step_observers),
                 resolve_definition=resolve_definition,
                 abort_signal=resolved_abort_signal,
             )
@@ -103,11 +98,11 @@ class AgentRunner:
         if metadata_updates:
             context.metadata.update(metadata_updates)
         child_abort_signal = abort_signal or parent_context.session_runtime.abort_signal
-        return await self._execute_workflow(
+        return await self._execute(
             user_input,
             context=context,
             definition=definition,
-            step_observers=step_observers,
+            step_observers=tuple(step_observers),
             close_session_on_complete=False,
             abort_signal=child_abort_signal,
         )
@@ -117,12 +112,19 @@ class AgentRunner:
         user_input: UserInput,
         *,
         context: AgentRunContext,
-        step_observers: Sequence[StepObserver],
+        step_observers: tuple[StepObserver, ...],
         resolve_definition: Callable[[], Awaitable[ResolvedExecutionDefinition]],
         abort_signal: AbortSignal,
     ) -> RunOutput:
-        definition = await resolve_definition()
-        return await self._execute_workflow(
+        try:
+            definition = await resolve_definition()
+        except Exception:
+            await self._close_session_if_needed(
+                session_runtime=context.session_runtime,
+                close_session_on_complete=True,
+            )
+            raise
+        return await self._execute(
             user_input,
             context=context,
             definition=definition,
@@ -131,91 +133,41 @@ class AgentRunner:
             abort_signal=abort_signal,
         )
 
-    async def _execute_workflow(
+    async def _execute(
         self,
         user_input: UserInput,
         *,
         context: AgentRunContext,
         definition: ResolvedExecutionDefinition,
-        step_observers: Sequence[StepObserver],
+        step_observers: tuple[StepObserver, ...],
         close_session_on_complete: bool,
         abort_signal: AbortSignal,
     ) -> RunOutput:
-        recorder = RunRecorder(
-            context=context,
-            hooks=definition.hooks,
+        engine = ExecutionEngine(
+            definition=definition,
             step_observers=step_observers,
+            root_path=definition.options.get_effective_root_path(),
         )
-        run = self._create_run(user_input, context)
-        await recorder.start_run(run)
         try:
-            before_run_hook_result = await self._run_before_run_hook(
-                hooks=definition.hooks,
-                user_input=user_input,
+            return await engine.execute(
+                user_input,
                 context=context,
-            )
-            memories = await self._retrieve_memories(
-                hooks=definition.hooks,
-                user_input=user_input,
-                context=context,
-            )
-            user_step = await recorder.create_user_step(user_input=user_input)
-            await recorder.commit_step(user_step, append_message=False)
-
-            user_message = normalize_to_message(user_input)
-            executor = AgentExecutor(
-                model=definition.model,
-                tools=list(definition.tools),
-                options=definition.options,
-                hooks=definition.hooks,
-                run_recorder=recorder,
-                root_path=definition.options.get_effective_root_path(),
-            )
-            result = await executor.execute(
-                system_prompt=definition.system_prompt,
-                user_step=user_step,
-                context=context,
-                memories=memories,
-                before_run_hook_result=before_run_hook_result,
-                channel_context=user_message.context,
                 abort_signal=abort_signal,
             )
-
-            if definition.hooks.on_after_run:
-                await definition.hooks.on_after_run(result, context)
-            if definition.hooks.on_memory_write and result.response:
-                await definition.hooks.on_memory_write(user_input, result, context)
-
-            await recorder.complete_run(result)
-            return result
-        except Exception as error:
-            await recorder.fail_run(error)
-            raise
         finally:
-            if close_session_on_complete:
-                await context.session_runtime.close()
+            await self._close_session_if_needed(
+                session_runtime=context.session_runtime,
+                close_session_on_complete=close_session_on_complete,
+            )
 
     @staticmethod
-    async def _run_before_run_hook(
+    async def _close_session_if_needed(
         *,
-        hooks: AgentHooks,
-        user_input: UserInput,
-        context: AgentRunContext,
-    ):
-        if hooks.on_before_run is None:
-            return None
-        return await hooks.on_before_run(user_input, context)
-
-    @staticmethod
-    async def _retrieve_memories(
-        *,
-        hooks: AgentHooks,
-        user_input: UserInput,
-        context: AgentRunContext,
-    ) -> list:
-        if hooks.on_memory_retrieve is None or not user_input:
-            return []
-        return await hooks.on_memory_retrieve(user_input, context)
+        session_runtime: AgentSessionRuntime,
+        close_session_on_complete: bool,
+    ) -> None:
+        if close_session_on_complete:
+            await session_runtime.close()
 
     @staticmethod
     def _start_trace_runtime(
@@ -237,18 +189,5 @@ class AgentRunner:
         )
         return collector
 
-    @staticmethod
-    def _create_run(user_input: UserInput, context: AgentRunContext) -> Run:
-        run = Run(
-            id=context.run_id,
-            agent_id=context.agent_id,
-            session_id=context.session_id,
-            user_input=user_input,
-            status=RunStatus.RUNNING,
-            parent_run_id=context.parent_run_id,
-        )
-        run.metrics.start_at = time.time()
-        return run
 
-
-__all__ = ["AgentRunner"]
+__all__ = ["ExecutionOrchestrator"]

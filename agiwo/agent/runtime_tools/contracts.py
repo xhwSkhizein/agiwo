@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from agiwo.agent.inner.context import AgentRunContext
 from agiwo.agent.runtime import TerminationReason
 from agiwo.tool.base import ToolDefinition, ToolGateDecision, ToolResult
 from agiwo.utils.abort_signal import AbortSignal
@@ -9,10 +8,21 @@ from agiwo.utils.abort_signal import AbortSignal
 
 @dataclass(frozen=True)
 class RuntimeToolOutcome:
-    """Runtime-level outcome for tool execution inside AgentExecutor."""
+    """Runtime-level outcome for tool execution inside ExecutionEngine."""
 
     result: ToolResult
     termination_reason: TerminationReason | None = None
+
+
+@runtime_checkable
+class AgentRuntimeContext(Protocol):
+    session_id: str
+    agent_id: str
+    agent_name: str
+    user_id: str | None
+    depth: int
+    timeout_at: float | None
+    metadata: dict[str, Any]
 
 
 @runtime_checkable
@@ -37,14 +47,14 @@ class AgentRuntimeTool(Protocol):
     async def gate_for_agent(
         self,
         parameters: dict[str, Any],
-        context: AgentRunContext,
+        context: AgentRuntimeContext,
     ) -> ToolGateDecision:
         """Run preflight permission/confirmation checks inside agent runtime."""
 
     async def execute_for_agent(
         self,
         parameters: dict[str, Any],
-        context: AgentRunContext,
+        context: AgentRuntimeContext,
         abort_signal: AbortSignal | None = None,
     ) -> RuntimeToolOutcome:
         """Execute tool inside an agent runtime."""

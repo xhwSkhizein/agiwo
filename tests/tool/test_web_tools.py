@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import SecretStr
 
-from agiwo.agent.inner.context import AgentRunContext
+from agiwo.agent.engine.context import AgentRunContext
 from agiwo.config.settings import settings
 from agiwo.llm.base import StreamChunk
 from agiwo.tool.builtin.config import WebReaderApiConfig

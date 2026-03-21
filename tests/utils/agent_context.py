@@ -1,7 +1,7 @@
 from typing import Any
 
-from agiwo.agent.inner.context import AgentRunContext
-from agiwo.agent.inner.session_runtime import AgentSessionRuntime
+from agiwo.agent.engine.context import AgentRunContext
+from agiwo.agent.lifecycle.session import AgentSessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage, RunStepStorage
 from agiwo.agent.storage.session import InMemorySessionStorage, SessionStorage
 

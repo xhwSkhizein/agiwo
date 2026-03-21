@@ -1,12 +1,9 @@
 from asyncio import Task
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from agiwo.agent.runtime import AgentStreamItem, RunOutput
-
-if TYPE_CHECKING:
-    from agiwo.agent.inner.session_runtime import AgentSessionRuntime
 
 
 @dataclass(frozen=True)
@@ -36,6 +33,20 @@ class AgentExecutionHandlePort(Protocol):
     def cancel(self, reason: str | None = None) -> None: ...
 
 
+@runtime_checkable
+class AbortSignalPort(Protocol):
+    def abort(self, reason: str) -> None: ...
+
+
+@runtime_checkable
+class AgentExecutionSessionPort(Protocol):
+    abort_signal: AbortSignalPort
+
+    def subscribe(self) -> AsyncIterator[AgentStreamItem]: ...
+
+    async def enqueue_steer(self, message: str) -> bool: ...
+
+
 class AgentExecutionHandle(AgentExecutionHandlePort):
     """One live root execution owned by an AgentSessionRuntime."""
 
@@ -44,7 +55,7 @@ class AgentExecutionHandle(AgentExecutionHandlePort):
         *,
         run_id: str,
         session_id: str,
-        session_runtime: "AgentSessionRuntime",
+        session_runtime: AgentExecutionSessionPort,
         task: Task[RunOutput],
     ) -> None:
         self._run_id = run_id
@@ -74,7 +85,9 @@ class AgentExecutionHandle(AgentExecutionHandlePort):
 
 
 __all__ = [
+    "AbortSignalPort",
     "AgentExecutionHandle",
     "AgentExecutionHandlePort",
+    "AgentExecutionSessionPort",
     "ChildAgentSpec",
 ]

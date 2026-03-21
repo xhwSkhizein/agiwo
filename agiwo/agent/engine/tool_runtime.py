@@ -3,7 +3,7 @@ from dataclasses import dataclass, replace
 import time
 from typing import Any
 
-from agiwo.agent.inner.context import AgentRunContext
+from agiwo.agent.engine.context import AgentRunContext
 from agiwo.agent.runtime_tools import (
     AgentRuntimeTool,
     RuntimeToolLike,

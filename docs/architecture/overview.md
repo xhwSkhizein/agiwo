@@ -41,16 +41,16 @@ The core execution engine:
 | `execution.py` | `AgentExecutionHandle` — per-run control surface |
 | `hooks.py` | `AgentHooks` — lifecycle callbacks |
 | `input.py` | `UserInput` — input normalization |
-| `runtime.py` | `AgentStreamItem`, `RunOutput` — output types |
-| `assembly.py` | Build internal runtime components from config |
-| `inner/` | **Internal** — execution loop, tool runtime, prompt builder, compaction |
+| `runtime/` | `AgentStreamItem`, `RunOutput`, `StepRecord`, `RunMetrics` — runtime domain types |
+| `lifecycle/` | **Internal** — definition/resource/session/orchestrator owners |
+| `engine/` | **Internal** — single-run state, recorder, llm/tool/termination/compaction |
 | `storage/` | Run/step/session persistence |
 | `trace/` | Agent-to-trace adapter |
 | `runtime_tools/` | Agent-as-tool adapter, runtime tool contracts |
 | `prompt/` | System prompt construction |
-| `streaming/` | Stream consumption helpers |
+| `streaming.py` | Stream consumption helpers |
 
-**Do not import from `agiwo.agent.inner` outside the `agiwo.agent` package.**
+**Do not import from `agiwo.agent.lifecycle` or `agiwo.agent.engine` outside the `agiwo.agent` package.**
 
 ### `agiwo/llm/` — Model Providers
 
@@ -135,26 +135,28 @@ Agent.run("Hello")
 AgentExecutionHandle (start)
   │
   ▼
-AgentRunner.run_root()
+ExecutionOrchestrator.start_root()
   │
   ├── Build system prompt (AgentDefinitionRuntime.prompt_runtime)
   │     └── Inject memories, skills, environment
   │
-  ├── AgentExecutor (inner loop)
+  ├── ExecutionEngine (single-run pipeline)
   │     │
-  │     ├─ 1. Assemble messages
+  │     ├─ 1. Prepare state + load session history
   │     │
-  │     ├─ 2. LLM call → Model.arun_stream()
+  │     ├─ 2. Run before_run hooks + memory retrieval
+  │     │
+  │     ├─ 3. LLM call → Model.arun_stream()
   │     │     └── StreamChunk → AgentStreamItem
   │     │
-  │     ├─ 3. Parse response
+  │     ├─ 4. Parse response
   │     │     ├── Text → done?
   │     │     └── Tool calls → execute
   │     │
-  │     ├─ 4. Execute tools (concurrent-safe batched)
+  │     ├─ 5. Execute tools (concurrent-safe batched)
   │     │     └── BaseTool.execute() → ToolResult
   │     │
-  │     └─ 5. Loop to step 2 (or terminate)
+  │     └─ 6. Compact / terminate / finalize
   │
   ├── RunRecorder
   │     ├── Write step records

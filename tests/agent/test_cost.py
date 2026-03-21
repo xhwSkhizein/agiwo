@@ -1,5 +1,5 @@
 from agiwo.agent import StepMetrics, StepRecord
-from agiwo.agent.inner.llm_handler import LLMStreamHandler
+from agiwo.agent.engine.llm_handler import LLMStreamHandler
 from agiwo.llm.base import Model
 from tests.utils.agent_context import build_agent_context
 

@@ -7,14 +7,14 @@ import secrets
 from typing import AsyncIterator
 from typing import TYPE_CHECKING
 
-from agiwo.agent.assembly import (
+from agiwo.agent.lifecycle.assembly import (
     build_agent_definition_runtime,
     build_agent_resource_owner,
 )
 from agiwo.agent.config import AgentConfig
 from agiwo.agent.execution import AgentExecutionHandle, ChildAgentSpec
 from agiwo.agent.hooks import AgentHooks
-from agiwo.agent.inner.runner import AgentRunner
+from agiwo.agent.lifecycle.orchestrator import ExecutionOrchestrator
 from agiwo.agent.input import UserInput
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.runtime import AgentStreamItem, RunOutput
@@ -30,7 +30,7 @@ from agiwo.tool.builtin.bash_tool import ensure_bash_tool_pair
 from agiwo.utils.abort_signal import AbortSignal
 
 if TYPE_CHECKING:
-    from agiwo.agent.inner.context import AgentRunContext
+    from agiwo.agent.engine.context import AgentRunContext
 
 
 def _generate_default_id(name: str) -> str:
@@ -72,7 +72,7 @@ class Agent:
             config=self._config,
         )
         self._step_observers: list[StepObserver] = []
-        self._runner = AgentRunner()
+        self._orchestrator = ExecutionOrchestrator()
 
     @property
     def config(self) -> AgentConfig:
@@ -175,7 +175,7 @@ class Agent:
         combined_metadata = dict(spec.metadata_overrides)
         if metadata_updates:
             combined_metadata.update(metadata_updates)
-        return await self._runner.run_child(
+        return await self._orchestrator.run_child(
             user_input,
             definition=definition,
             parent_context=parent_context,
@@ -216,7 +216,7 @@ class Agent:
         abort_signal: AbortSignal | None = None,
     ) -> AgentExecutionHandle:
         self._resource_owner.ensure_open()
-        handle, active_execution = self._runner.start_root(
+        handle, active_execution = self._orchestrator.start_root(
             user_input,
             agent_id=self.id,
             agent_name=self.name,

@@ -2,8 +2,8 @@ from collections.abc import Sequence
 from datetime import datetime, timezone
 
 from agiwo.agent.hooks import AgentHooks
-from agiwo.agent.inner.context import AgentRunContext
-from agiwo.agent.inner.run_state import RunState
+from agiwo.agent.engine.context import AgentRunContext
+from agiwo.agent.engine.state import RunState
 from agiwo.agent.runtime import (
     LLMCallContext,
     Run,
@@ -38,16 +38,6 @@ class RunRecorder:
         self._step_observers = list(step_observers)
         self._state = state
         self._run: Run | None = None
-
-    def attach_state(self, state: RunState) -> "RunRecorder":
-        recorder = RunRecorder(
-            context=self.context,
-            hooks=self.hooks,
-            step_observers=self._step_observers,
-            state=state,
-        )
-        recorder._run = self._run
-        return recorder
 
     async def next_sequence(self) -> int:
         return await self.context.next_sequence()
@@ -131,8 +121,9 @@ class RunRecorder:
         *,
         llm: LLMCallContext | None = None,
         append_message: bool = True,
+        track_state: bool = True,
     ) -> StepRecord:
-        if self._state is not None:
+        if self._state is not None and track_state:
             self._state.track_step(step, append_message=append_message)
         await self.context.session_runtime.run_step_storage.save_step(step)
         if self.context.session_runtime.trace_runtime is not None:

@@ -320,9 +320,9 @@ Score: 0.72
 
 ---
 
-## 7. SystemPromptBuilder 集成
+## 7. Prompt Runtime 集成
 
-位置：`agiwo/agent/inner/system_prompt_builder.py`
+位置：`agiwo/agent/prompt/runtime.py` + `agiwo/agent/prompt/sections.py`
 
 在 `_build_environment_section()` 中注入 Memory Recall 指令：
 

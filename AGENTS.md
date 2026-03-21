@@ -16,7 +16,7 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `agiwo/agent/` | Agent 对外入口与运行时领域模型。包含 `runtime_tools/` 宿主工具适配层、`trace/` agent trace adapter、`inner/` 执行内部实现、`prompt/` prompt runtime、`storage/` Run/Session 持久化。包根 `agiwo.agent` 是公开 API，纯配置模型落在 `config.py`，其余 canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
+| `agiwo/agent/` | Agent 对外入口与运行时领域模型。顶层 `agiwo.agent` 只暴露 public API；内部按 `lifecycle/`（definition/resource/session/orchestrator）与 `engine/`（context/state/recorder/llm/tool/termination/compaction）分层。其余子包包括 `runtime_tools/` 宿主工具适配层、`trace/` agent trace adapter、`prompt/` prompt runtime、`storage/` Run/Session 持久化。纯配置模型落在 `config.py`，其余 canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
 | `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade，`engine.py` 负责公开编排 API 并组装内部 owner；共享状态迁移收口到 `state_ops.py`，tick phases 收口到 `tick_ops.py`，tree cancel/shutdown 收口到 `tree_ops.py`，tool-facing control helpers 收口到 `control_ops.py`，`runner.py` 负责单次 agent cycle 执行，`wake_messages.py` 负责唤醒消息构造，`coordinator.py` 只管进程内协作状态，`control.py` 定义 tools 依赖的窄接口，`store/` 只负责持久化。 |
@@ -61,7 +61,7 @@
 - 对外执行原语是 `start(...) -> AgentExecutionHandle`；`run(...)` / `run_stream(...)` 只是便利封装。嵌套 child 定义统一通过 `derive_child_spec(...) -> ChildAgentSpec` 生成；`ChildAgentSpec` 只保留覆写数据，不携带 live runtime。
 - `run(...)` 只支持 root run；嵌套 agent 执行是内部协议，由 `runtime_tools/AgentTool` 通过 `Agent.run_child(...)` 进入，不再暴露公开 `context` 参数。
 - `AgentExecutionHandle` 是一次活执行实例，持有 `run_id/session_id`、`stream()/wait()/steer()/cancel()`；`steer()` 不再属于 `Agent` 模板对象。
-- `Agent` 内部分离 definition-scoped owner（`AgentDefinitionRuntime` 负责 hooks / sdk tools / prompt runtime / skill manager / root-child-scheduler child 派生）与 resource-scoped owner（`AgentResourceOwner` 持有 run-step storage / session storage / trace storage / active root executions）；核心执行循环在 `agiwo/agent/inner/`。
+- `Agent` 内部分离 definition-scoped owner（`AgentDefinitionRuntime` 负责 hooks / sdk tools / prompt runtime / skill manager / root-child-scheduler child 派生）与 resource-scoped owner（`AgentResourceOwner` 持有 run-step storage / session storage / trace storage / active root executions）；运行时主链固定为 `ExecutionOrchestrator -> ExecutionEngine -> RunRecorder`。
 - `AgentSessionRuntime` 是 session 级共享 owner，持有 sequence owner、trace_id、abort signal、steering queue 和 stream subscribers。
 - `AgentHooks` 是可选 async 回调的 dataclass；当前 hook 覆盖 run、tool、LLM、step、memory write/retrieve。
 - `StepRecord` 使用工厂方法创建，不要直接构造。
@@ -146,7 +146,7 @@
 
 - builtin tools 应自行按配置构建 model/HTTP/storage 依赖，除非它本质上是在包装宿主运行时对象。
 - LLM 创建统一走共享 factory / config policy。
-- 不要在 agent 包外越权依赖 `agiwo.agent.inner`。
+- 不要在 `agiwo.agent` 包外越权依赖 `agiwo.agent.lifecycle` 或 `agiwo.agent.engine`；更不要重新引入 `agiwo.agent.inner`。
 - 不要在 scheduler tools 里依赖 `SchedulerEngine` / `SchedulerCoordinator` / `AgentStateStorage` / `TaskGuard`；一律只依赖 `SchedulerControl`。
 - 不要把 store mutation、递归 cancel/shutdown、tick dispatch 重新塞回 `Scheduler` facade。
 - 不要在 SDK core 里同时维护 text-only 和 typed 两套 scheduler stream API；如需文本适配，只能放在消费侧边缘。
@@ -218,7 +218,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full change history.
 #### 添加新 Hook
 
 1. 在 `agiwo/agent/hooks.py` 增加 hook 类型与字段。
-2. 在 `agiwo/agent/agent.py` 或 `agiwo/agent/inner/executor.py` 接线。
+2. 在 `agiwo/agent/agent.py`、`agiwo/agent/lifecycle/orchestrator.py` 或 `agiwo/agent/engine/engine.py` 接线。
 
 #### 添加新 Builtin Tool
 
@@ -228,7 +228,8 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full change history.
 
 ### Notes
 
-- `agent/inner/` 是内部实现，不要从 `agiwo/__init__.py` 暴露，也不要在包外直接依赖。
+- `agiwo/agent/inner/` 已删除；内部实现只允许落在 `agiwo/agent/lifecycle/` 和 `agiwo/agent/engine/`。
+- `RunState` 的结构性字段只能在 `agiwo/agent/engine/` 内部通过方法驱动变更；不要在包外直接赋值 `state.messages` / `state.termination_reason` / `state.pending_tool_calls` 等字段。
 - `TYPE_CHECKING` 只用于确实无法通过重构解决的类型环依赖。
 - Tool runtime 缓存是 session 级缓存，只有 `tool.cacheable = True` 才生效。
 - Anthropic 有独立实现路径；只有显式 `anthropic-compatible` 场景才按兼容协议处理。

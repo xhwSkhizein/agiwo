@@ -10,8 +10,8 @@ from uuid import uuid4
 import pytest
 
 from agiwo.agent import Agent, AgentConfig, AgentHooks
-from agiwo.agent.inner.run_recorder import RunRecorder
-from agiwo.agent.inner.run_state import RunState
+from agiwo.agent.engine.recorder import RunRecorder
+from agiwo.agent.engine.state import RunState
 from agiwo.agent.options import AgentOptions, TraceStorageConfig
 from agiwo.agent.runtime import MessageRole, Run, RunStatus, StepMetrics
 from agiwo.agent.storage.base import InMemoryRunStepStorage, RunStepStorage
@@ -166,7 +166,8 @@ async def test_run_recorder_tracks_state_before_hooks_and_observers() -> None:
         context=context,
         hooks=AgentHooks(on_step=on_step),
         step_observers=[observer],
-    ).attach_state(state)
+        state=state,
+    )
 
     user_step = await recorder.create_user_step(user_input="hello")
     await recorder.commit_step(user_step, append_message=False)

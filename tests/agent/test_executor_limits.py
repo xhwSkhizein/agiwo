@@ -1,17 +1,16 @@
-"""Tests for execution limit semantics in AgentExecutor."""
+"""Tests for execution limit semantics in ExecutionEngine."""
 
 import time
 
 import pytest
 
-from agiwo.agent import AgentHooks, TerminationReason
-from agiwo.agent.inner.context import AgentRunContext
-from agiwo.agent.inner.executor import AgentExecutor
-from agiwo.agent.inner.run_recorder import RunRecorder
+from agiwo.agent import TerminationReason
+from agiwo.agent.engine.context import AgentRunContext
 from agiwo.agent.options import AgentOptions
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.tool.base import BaseTool, ToolResult
 from tests.utils.agent_context import build_agent_context
+from tests.utils.execution_engine import _build_executor
 
 
 class MockModel(Model):
@@ -81,29 +80,6 @@ def _make_context() -> AgentRunContext:
     )
 
 
-def _build_executor(
-    *,
-    model: Model,
-    tools: list[BaseTool],
-    context: AgentRunContext,
-    options: AgentOptions | None = None,
-) -> tuple[AgentExecutor, RunRecorder]:
-    recorder = RunRecorder(
-        context=context,
-        hooks=AgentHooks(),
-        step_observers=[],
-    )
-    executor = AgentExecutor(
-        model=model,
-        tools=tools,
-        options=options,
-        hooks=AgentHooks(),
-        run_recorder=recorder,
-        root_path="/tmp",
-    )
-    return executor, recorder
-
-
 def _usage(input_tokens: int, output_tokens: int) -> dict[str, int]:
     return {
         "input_tokens": input_tokens,
@@ -125,20 +101,13 @@ async def test_max_input_tokens_per_call_limit_hits_after_llm_call():
         ]
     )
     ctx = _make_context()
-    executor, recorder = _build_executor(
+    executor = _build_executor(
         model=model,
         tools=[],
         context=ctx,
         options=AgentOptions(max_input_tokens_per_call=1),
     )
-    user_step = await recorder.create_user_step(
-        user_input="this should exceed one token"
-    )
-    output = await executor.execute(
-        system_prompt="You are a test assistant.",
-        user_step=user_step,
-        context=ctx,
-    )
+    output = await executor.execute("this should exceed one token", context=ctx)
 
     assert output.termination_reason == TerminationReason.MAX_INPUT_TOKENS_PER_CALL
     assert model._call_count == 1
@@ -156,18 +125,13 @@ async def test_input_limit_counts_tool_schema_tokens():
     )
     tool = BigSchemaTool()
     ctx = _make_context()
-    executor, recorder = _build_executor(
+    executor = _build_executor(
         model=model,
         tools=[tool],
         context=ctx,
         options=AgentOptions(max_input_tokens_per_call=100),
     )
-    user_step = await recorder.create_user_step(user_input="x")
-    output = await executor.execute(
-        system_prompt="You are a test assistant.",
-        user_step=user_step,
-        context=ctx,
-    )
+    output = await executor.execute("x", context=ctx)
 
     assert output.termination_reason == TerminationReason.MAX_INPUT_TOKENS_PER_CALL
     assert model._call_count == 1
@@ -185,17 +149,12 @@ async def test_model_output_limit_finish_reason_stops_without_summary():
         ]
     )
     ctx = _make_context()
-    executor, recorder = _build_executor(
+    executor = _build_executor(
         model=model,
         tools=[],
         context=ctx,
     )
-    user_step = await recorder.create_user_step(user_input="run")
-    output = await executor.execute(
-        system_prompt="You are a test assistant.",
-        user_step=user_step,
-        context=ctx,
-    )
+    output = await executor.execute("run", context=ctx)
 
     assert output.termination_reason == TerminationReason.MAX_OUTPUT_TOKENS
     assert model._call_count == 1
@@ -229,18 +188,13 @@ async def test_max_run_cost_limit_checks_before_tool_execution():
         cache_hit_price=0.0,
     )
     ctx = _make_context()
-    executor, recorder = _build_executor(
+    executor = _build_executor(
         model=model,
         tools=[tool],
         context=ctx,
         options=AgentOptions(max_run_cost=0.00005),
     )
-    user_step = await recorder.create_user_step(user_input="run")
-    output = await executor.execute(
-        system_prompt="You are a test assistant.",
-        user_step=user_step,
-        context=ctx,
-    )
+    output = await executor.execute("run", context=ctx)
 
     assert output.termination_reason == TerminationReason.MAX_RUN_COST
     assert model._call_count == 2
@@ -265,18 +219,13 @@ async def test_max_run_cost_limit_uses_tiktoken_fallback_when_usage_missing():
         cache_hit_price=0.0,
     )
     ctx = _make_context()
-    executor, recorder = _build_executor(
+    executor = _build_executor(
         model=model,
         tools=[],
         context=ctx,
         options=AgentOptions(max_run_cost=0.000001),
     )
-    user_step = await recorder.create_user_step(user_input="run")
-    output = await executor.execute(
-        system_prompt="You are a test assistant.",
-        user_step=user_step,
-        context=ctx,
-    )
+    output = await executor.execute("run", context=ctx)
 
     assert output.termination_reason == TerminationReason.MAX_RUN_COST
     assert output.metrics is not None
@@ -286,7 +235,7 @@ async def test_max_run_cost_limit_uses_tiktoken_fallback_when_usage_missing():
 def test_default_max_input_tokens_per_call_uses_model_context_window():
     model = MockModel([[]], max_context_window=20000, max_output_tokens=1000)
     context = _make_context()
-    executor, _ = _build_executor(model=model, tools=[], context=context)
+    executor = _build_executor(model=model, tools=[], context=context)
 
     assert executor.max_input_tokens_per_call == 19000
 
@@ -314,18 +263,13 @@ async def test_summary_still_runs_when_max_run_cost_is_zero():
         output_price=1.0,
     )
     ctx = _make_context()
-    executor, recorder = _build_executor(
+    executor = _build_executor(
         model=model,
         tools=[],
         context=ctx,
         options=AgentOptions(max_steps=0, max_run_cost=0.0),
     )
-    user_step = await recorder.create_user_step(user_input="run")
-    output = await executor.execute(
-        system_prompt="You are a test assistant.",
-        user_step=user_step,
-        context=ctx,
-    )
+    output = await executor.execute("run", context=ctx)
 
     assert output.termination_reason == TerminationReason.MAX_STEPS
     assert model._call_count == 1
@@ -351,18 +295,13 @@ async def test_max_run_cost_still_generates_summary():
         cache_hit_price=0.0,
     )
     ctx = _make_context()
-    executor, recorder = _build_executor(
+    executor = _build_executor(
         model=model,
         tools=[],
         context=ctx,
         options=AgentOptions(max_run_cost=0.00005),
     )
-    user_step = await recorder.create_user_step(user_input="run")
-    output = await executor.execute(
-        system_prompt="You are a test assistant.",
-        user_step=user_step,
-        context=ctx,
-    )
+    output = await executor.execute("run", context=ctx)
 
     assert output.termination_reason == TerminationReason.MAX_RUN_COST
     assert model._call_count == 2

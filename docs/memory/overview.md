@@ -21,7 +21,7 @@
 │                                                          │
 │  SystemPromptBuilder ──► inject <inject-memories> tag   │
 │                                                          │
-│  AgentExecutor ──────► MemoryRetrievalTool.execute()    │
+│  ExecutionEngine ────► MemoryRetrievalTool.execute()    │
 │                                   │                      │
 └───────────────────────────────────┼──────────────────────┘
                                     │

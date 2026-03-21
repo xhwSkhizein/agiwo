@@ -75,7 +75,7 @@ result = await scheduler.wait_for(state_id)
 
 ```python
 async for event in scheduler.stream("Do something", agent=agent):
-    if event.delta and event.delta.content:
+    if event.type == "step_delta" and event.delta.content:
         print(event.delta.content, end="", flush=True)
 ```
 

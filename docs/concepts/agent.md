@@ -33,8 +33,8 @@ Key options you can configure:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `max_iterations` | `10` | Maximum tool-calling iterations per run |
-| `enable_termination_summary` | `False` | Generate a summary when the run ends |
+| `max_steps` | `50` | Maximum assistant turns per run |
+| `enable_termination_summary` | `True` | Generate a summary when the run stops on important limits/errors |
 | `relevant_memory_max_token` | `2048` | Token budget for auto-injected memories |
 
 ## Execution Methods
@@ -44,17 +44,17 @@ Key options you can configure:
 ```python
 result = await agent.run("What is 2 + 2?")
 print(result.response)          # The final text response
-print(result.tool_results)      # List of ToolResult objects
-print(result.usage)             # Token usage stats
+print(result.metrics)           # RunMetrics(total_tokens, token_cost, steps_count, ...)
+print(result.termination_reason)
 ```
 
 ### `run_stream()` — Streaming execution
 
 ```python
 async for event in agent.run_stream("Tell me a story"):
-    if event.delta and event.delta.content:
+    if event.type == "step_delta" and event.delta.content:
         print(event.delta.content, end="", flush=True)
-    if event.delta and event.delta.tool_calls:
+    if event.type == "step_delta" and event.delta.tool_calls:
         print(f"\n[Tool call: {event.delta.tool_calls}]")
 ```
 
@@ -76,7 +76,7 @@ result = await handle.wait()
 await handle.steer("Focus on the technical details")
 
 # Or cancel
-await handle.cancel()
+handle.cancel("No longer needed")
 ```
 
 ## Agent Properties
@@ -130,9 +130,11 @@ The Agent class is a thin facade over several internal components:
 Agent (facade)
 ├── AgentDefinitionRuntime   — tools, hooks, prompt, skills (lives with Agent instance)
 ├── AgentResourceOwner       — storage, active executions (resource lifecycle)
-├── AgentRunner              — execution loop (stateless)
+├── ExecutionOrchestrator    — root/child session wiring and handle lifecycle
+├── ExecutionEngine          — single-run execution pipeline
+├── RunRecorder              — run/step lifecycle write owner
 └── AgentExecutionHandle     — per-run control surface
 ```
 
-- `inner/` directory contains the execution pipeline internals — do not import from outside the `agiwo.agent` package.
+- Internal implementation now lives under `lifecycle/` and `engine/`; do not import them outside the `agiwo.agent` package.
 - Definition-scoped objects (tools, hooks) are separated from resource-scoped objects (storage, active runs).

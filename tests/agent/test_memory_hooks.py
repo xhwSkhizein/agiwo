@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agiwo.agent import Agent, AgentConfig, AgentHooks, MemoryRecord
-from agiwo.agent.inner.context import AgentRunContext
+from agiwo.agent.engine.context import AgentRunContext
 from agiwo.agent.memory_hooks import DefaultMemoryHook, create_default_memory_hooks
 from agiwo.llm.base import Model
 

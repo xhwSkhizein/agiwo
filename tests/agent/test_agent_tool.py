@@ -4,7 +4,7 @@ import pytest
 
 from agiwo.agent import AgentTool
 from agiwo.agent.execution import ChildAgentSpec
-from agiwo.agent.inner.context import AgentRunContext
+from agiwo.agent.engine.context import AgentRunContext
 from agiwo.agent.runtime import RunOutput
 from tests.utils.agent_context import build_agent_context
 

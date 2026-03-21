@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 from agiwo.agent.options import AgentOptions
 from agiwo.agent.compact_types import CompactMetadata
-from agiwo.agent.inner.context import AgentRunContext
+from agiwo.agent.engine.context import AgentRunContext
 from agiwo.agent.runtime import (
     StepRecord,
     step_to_message,
@@ -46,6 +46,44 @@ class RunState:
     @property
     def elapsed(self) -> float:
         return time.time() - self.start_time
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.termination_reason is not None
+
+    def advance_step(self) -> None:
+        self.current_step += 1
+
+    def terminate(self, reason: TerminationReason) -> None:
+        self.termination_reason = reason
+
+    def set_messages(self, messages: list[dict]) -> None:
+        self.messages = list(messages)
+
+    def set_pending_tool_calls(self, tool_calls: list[dict] | None) -> None:
+        self.pending_tool_calls = list(tool_calls) if tool_calls else None
+
+    def clear_pending_tool_calls(self) -> None:
+        self.pending_tool_calls = None
+
+    def set_response_content(self, content: str | None) -> None:
+        self.response_content = content
+
+    def apply_compaction(
+        self,
+        compacted_messages: list[dict],
+        metadata: CompactMetadata,
+    ) -> None:
+        self.messages = list(compacted_messages)
+        self.last_compact_metadata = metadata
+        self.compact_start_seq = metadata.end_seq + 1
+
+    def record_failure_context(self) -> None:
+        self.termination_reason = (
+            TerminationReason.ERROR_WITH_CONTEXT
+            if self.assistant_steps_count > 0
+            else TerminationReason.ERROR
+        )
 
     def track_step(self, step: StepRecord, *, append_message: bool = True) -> None:
         """Track metrics and optionally append to messages."""
@@ -103,11 +141,11 @@ class RunState:
 
     def _track_assistant(self, step: StepRecord) -> None:
         self.assistant_steps_count += 1
-        if step.content:
-            self.response_content = step.content
+        if step.content is not None:
+            self.set_response_content(step.content)
         if step.tool_calls:
             self.tool_calls_count += len(step.tool_calls)
-            self.pending_tool_calls = step.tool_calls
+            self.set_pending_tool_calls(step.tool_calls)
 
     def _track_tool(self) -> None:
-        self.pending_tool_calls = None
+        self.clear_pending_tool_calls()

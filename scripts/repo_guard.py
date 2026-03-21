@@ -27,11 +27,12 @@ ALLOWED_MANUAL_USER_INPUT_DECODING = {
     Path("tests"),
     Path("console/tests"),
 }
-ALLOWED_AGENT_INNER_IMPORT_PREFIXES = (
+ALLOWED_AGENT_INTERNAL_IMPORT_PREFIXES = (
     Path("agiwo/agent"),
     Path("tests"),
     Path("console/tests"),
 )
+ALLOWED_RUN_STATE_MUTATION_PREFIXES = (Path("agiwo/agent/engine/state.py"),)
 ALLOWED_DEAD_PERMISSION_API_PREFIXES = (
     Path("tests"),
     Path("console/tests"),
@@ -115,6 +116,10 @@ FILE_GROWTH_BUDGETS = (
     (re.compile(r"^agiwo/config/settings\.py$"), 390),
     (re.compile(r"^agiwo/observability/collector\.py$"), 600),
     (re.compile(r"^agiwo/agent/agent\.py$"), 560),
+    (re.compile(r"^agiwo/agent/engine/engine\.py$"), 560),
+    (re.compile(r"^agiwo/agent/engine/recorder\.py$"), 260),
+    (re.compile(r"^agiwo/agent/lifecycle/orchestrator\.py$"), 220),
+    (re.compile(r"^agiwo/agent/lifecycle/definition\.py$"), 360),
     (re.compile(r"^agiwo/scheduler/coordinator\.py$"), 180),
     (re.compile(r"^agiwo/scheduler/runner\.py$"), 720),
     (re.compile(r"^agiwo/scheduler/engine\.py$"), 900),
@@ -157,6 +162,15 @@ SESSION_CONTEXT_ERROR_CODES = {
     "session_not_found",
     "session_not_in_current_chat_context",
 }
+RUN_STATE_MUTATION_FIELD_NAMES = {
+    "current_step",
+    "termination_reason",
+    "messages",
+    "pending_tool_calls",
+    "response_content",
+    "last_compact_metadata",
+    "compact_start_seq",
+}
 FEISHU_ENVELOPE_ENTRYPOINTS = {
     Path("console/server/channels/feishu/message_parser.py"): {
         "parse_inbound_message",
@@ -198,11 +212,16 @@ def _is_allowed_prefix(path: Path, prefixes: tuple[Path, ...] | set[Path]) -> bo
     return False
 
 
-def _imports_agent_inner(module_name: str | None) -> bool:
+def _imports_agent_internal(module_name: str | None) -> bool:
     if module_name is None:
         return False
-    return module_name == "agiwo.agent.inner" or module_name.startswith(
-        "agiwo.agent.inner."
+    return (
+        module_name == "agiwo.agent.inner"
+        or module_name.startswith("agiwo.agent.inner.")
+        or module_name == "agiwo.agent.engine"
+        or module_name.startswith("agiwo.agent.engine.")
+        or module_name == "agiwo.agent.lifecycle"
+        or module_name.startswith("agiwo.agent.lifecycle.")
     )
 
 
@@ -256,6 +275,14 @@ def _allows_session_identity_assignment(path: Path) -> bool:
 
 def _is_session_identity_assignment_target(node: ast.AST) -> bool:
     return isinstance(node, ast.Attribute) and node.attr in SESSION_IDENTITY_FIELD_NAMES
+
+
+def _is_run_state_mutation_target(node: ast.AST) -> bool:
+    if not isinstance(node, ast.Attribute):
+        return False
+    if node.attr not in RUN_STATE_MUTATION_FIELD_NAMES:
+        return False
+    return isinstance(node.value, ast.Name) and node.value.id in {"state", "run_state"}
 
 
 def _is_os_getenv_call(node: ast.Call) -> bool:
@@ -775,8 +802,8 @@ def _detect_import_name_errors(
             "services/channels must use server.domain or core serializers instead."
         )
         errors.append(_make_error(path, line, code, message))
-    if _imports_agent_inner(module_name) and not _is_allowed_prefix(
-        path, ALLOWED_AGENT_INNER_IMPORT_PREFIXES
+    if _imports_agent_internal(module_name) and not _is_allowed_prefix(
+        path, ALLOWED_AGENT_INTERNAL_IMPORT_PREFIXES
     ):
         errors.append(
             _make_error(
@@ -784,7 +811,8 @@ def _detect_import_name_errors(
                 line,
                 "AGW003",
                 (
-                    "Do not import agiwo.agent.inner outside the agent package; "
+                    "Do not import agiwo.agent internal packages "
+                    "(inner/engine/lifecycle) outside agiwo.agent/tests; "
                     "depend on public agent APIs instead."
                 ),
             )
@@ -909,32 +937,50 @@ def _detect_annassign_errors(path: Path, node: ast.AnnAssign) -> list[GuardError
 def _detect_assign_errors(
     path: Path, node: ast.Assign | ast.AugAssign
 ) -> list[GuardError]:
-    if not path.as_posix().startswith(
-        "console/server/channels/"
-    ) or _allows_session_identity_assignment(path):
-        return []
-
     targets: list[ast.AST]
     if isinstance(node, ast.Assign):
         targets = node.targets
     else:
         targets = [node.target]
 
-    for target in targets:
-        if _is_session_identity_assignment_target(target):
-            return [
-                _make_error(
-                    path,
-                    node.lineno,
-                    "AGW019",
-                    (
-                        "Do not mutate session/chat identity fields outside "
-                        "session_binding.py; route updates through explicit "
-                        "SessionBinding/SessionIdentity transitions."
-                    ),
+    errors: list[GuardError] = []
+    if path.as_posix().startswith(
+        "console/server/channels/"
+    ) and not _allows_session_identity_assignment(path):
+        for target in targets:
+            if _is_session_identity_assignment_target(target):
+                errors.append(
+                    _make_error(
+                        path,
+                        node.lineno,
+                        "AGW019",
+                        (
+                            "Do not mutate session/chat identity fields outside "
+                            "session_binding.py; route updates through explicit "
+                            "SessionBinding/SessionIdentity transitions."
+                        ),
+                    )
                 )
-            ]
-    return []
+                break
+
+    if not _is_allowed_prefix(path, ALLOWED_RUN_STATE_MUTATION_PREFIXES):
+        for target in targets:
+            if _is_run_state_mutation_target(target):
+                errors.append(
+                    _make_error(
+                        path,
+                        node.lineno,
+                        "AGW040",
+                        (
+                            "RunState structural fields may only be mutated inside "
+                            "agiwo/agent/engine/state.py; use RunState methods instead of "
+                            "assigning state.messages/state.termination_reason/etc."
+                        ),
+                    )
+                )
+                break
+
+    return errors
 
 
 def _detect_import_from_errors(path: Path, node: ast.ImportFrom) -> list[GuardError]:
@@ -1301,6 +1347,44 @@ def _detect_agent_lifecycle_tool_text_errors(
     return errors
 
 
+def _detect_agent_runtime_text_errors(path: Path, content: str) -> list[GuardError]:
+    if not (
+        path.as_posix().startswith("agiwo/")
+        or path.as_posix().startswith("tests/")
+        or path.as_posix().startswith("console/")
+    ):
+        return []
+    errors: list[GuardError] = []
+    line = _find_first_match_line(content, r"\battach_state\s*\(")
+    if line is not None:
+        errors.append(
+            _make_error(
+                path,
+                line,
+                "AGW041",
+                (
+                    "Do not reintroduce RunRecorder.attach_state(); construct the "
+                    "recorder with RunState in a single execution phase."
+                ),
+            )
+        )
+
+    line = _find_first_match_line(content, r"\bexecution_bootstrap\b")
+    if line is not None:
+        errors.append(
+            _make_error(
+                path,
+                line,
+                "AGW042",
+                (
+                    "Do not reintroduce execution_bootstrap; keep state "
+                    "preparation inside agiwo.agent.engine.engine."
+                ),
+            )
+        )
+    return errors
+
+
 def _detect_agents_router_tool_text_errors(
     path: Path,
     content: str,
@@ -1343,6 +1427,7 @@ def _detect_text_guard_errors(path: Path, content: str) -> list[GuardError]:
     errors.extend(_detect_feishu_parser_text_errors(path, content))
     errors.extend(_detect_session_domain_text_errors(path, content))
     errors.extend(_detect_feishu_sdk_text_errors(path, content))
+    errors.extend(_detect_agent_runtime_text_errors(path, content))
     errors.extend(_detect_console_tool_catalog_text_errors(path, content))
     return errors
 

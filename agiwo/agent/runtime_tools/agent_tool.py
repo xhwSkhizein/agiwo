@@ -1,7 +1,7 @@
 import time
 from typing import TYPE_CHECKING, Any
 
-from agiwo.agent.inner.context import AgentRunContext
+from agiwo.agent.engine.context import AgentRunContext
 from agiwo.agent.runtime import RunOutput
 from agiwo.agent.runtime_tools.contracts import RuntimeToolOutcome
 from agiwo.tool.base import ToolDefinition, ToolGateDecision, ToolResult

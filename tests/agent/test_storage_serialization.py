@@ -14,7 +14,7 @@ from agiwo.agent import (
     TerminationReason,
     UserMessage,
 )
-from agiwo.agent.inner.run_payloads import (
+from agiwo.agent.engine.run_payloads import (
     apply_run_metrics_payload,
     build_run_completed_event_data,
 )

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from agiwo.agent.inner.context import AgentRunContext
+from agiwo.agent.engine.context import AgentRunContext
 from agiwo.tool.builtin.bash_tool.process_tool import (
     BashProcessTool,
     BashProcessToolConfig,

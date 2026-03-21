@@ -1,5 +1,6 @@
 # Agent 层重构洞察（保持行为不变）
 
+> 状态说明（2026-03）：本文件记录的是重构前的洞察，供回顾设计动机使用。当前实现已经落到 `agiwo/agent/lifecycle/` + `agiwo/agent/engine/`；请以代码、`AGENTS.md` 和 `docs/refactor/agent-layer-merged/` 为准。
 > 范围：`agiwo/agent/**`（含 public facade、inner runtime、runtime types、prompt/trace/storage glue）。
 > 目标：在不改变用户可见能力与执行语义的前提下，提升可维护性、可读性、可扩展性，并减少总代码体量。
 
