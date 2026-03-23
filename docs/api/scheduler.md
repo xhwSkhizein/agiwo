@@ -5,7 +5,8 @@
 ```python
 class Scheduler:
     def __init__(self, config: SchedulerConfig | None = None) -> None
-
+    async def start(self) -> None
+    async def stop(self) -> None
     async def __aenter__(self) -> Scheduler
     async def __aexit__(self, *args) -> None
 ```
@@ -14,29 +15,23 @@ class Scheduler:
 
 ```python
 async with Scheduler() as scheduler:
-    # Use scheduler
-    pass
-# Automatically stops on exit
+    ...
 ```
 
-Or manually:
+or:
 
 ```python
 scheduler = Scheduler()
 await scheduler.start()
-# ... use scheduler ...
+...
 await scheduler.stop()
 ```
 
-### Properties
+`Scheduler` 不再暴露 `store` property。查询和控制统一走 facade API。
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `store` | `AgentStateStorage` | Underlying state storage (read-only access) |
+## Core Orchestration Methods
 
-### Methods
-
-#### `run()`
+### `run()`
 
 ```python
 async def run(
@@ -51,9 +46,9 @@ async def run(
 ) -> RunOutput
 ```
 
-Submit an agent and wait for completion.
+提交 root 并等待结果。
 
-#### `submit()`
+### `submit()`
 
 ```python
 async def submit(
@@ -68,9 +63,9 @@ async def submit(
 ) -> str
 ```
 
-Submit an agent and return the state ID immediately.
+立即创建并启动 root，返回 `state_id`。
 
-#### `enqueue_input()`
+### `enqueue_input()`
 
 ```python
 async def enqueue_input(
@@ -82,9 +77,33 @@ async def enqueue_input(
 ) -> None
 ```
 
-Add input to a running or idle agent.
+给 persistent root 的下一轮输入赋值。当前只接受 `IDLE` 或 `FAILED` 的 persistent root。
 
-#### `stream()`
+### `route_root_input()`
+
+```python
+async def route_root_input(
+    self,
+    user_input: UserInput,
+    *,
+    agent: Agent,
+    state_id: str | None = None,
+    session_id: str | None = None,
+    abort_signal: AbortSignal | None = None,
+    persistent: bool = True,
+    agent_config_id: str | None = None,
+    timeout: float | None = None,
+    include_child_events: bool = True,
+) -> RouteResult
+```
+
+集成侧高层入口。它会根据当前 root state 自动决定：
+
+- `submitted`
+- `enqueued`
+- `steered`
+
+### `stream()`
 
 ```python
 async def stream(
@@ -102,9 +121,9 @@ async def stream(
 ) -> AsyncIterator[AgentStreamItem]
 ```
 
-Stream events from an agent execution.
+流式消费 root 执行事件。对同一个 root `state_id`，同时只允许一个活跃 subscriber。
 
-#### `wait_for()`
+### `wait_for()`
 
 ```python
 async def wait_for(
@@ -114,17 +133,55 @@ async def wait_for(
 ) -> RunOutput
 ```
 
-Wait for an agent to complete.
+等待 state 收敛到：
 
-#### `get_state()`
+- `IDLE`
+- `COMPLETED`
+- `FAILED`
+
+### `get_state()`
 
 ```python
 async def get_state(self, state_id: str) -> AgentState | None
 ```
 
-Get the current state of an agent.
+### `list_states()`
 
-#### `steer()`
+```python
+async def list_states(
+    self,
+    *,
+    statuses=None,
+    parent_id: str | None = None,
+    session_id: str | None = None,
+    signal_propagated: bool | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[AgentState]
+```
+
+### `list_events()`
+
+```python
+async def list_events(
+    self,
+    *,
+    target_agent_id: str | None = None,
+    session_id: str | None = None,
+) -> list[PendingEvent]
+```
+
+### `get_stats()`
+
+```python
+async def get_stats(self) -> dict[str, int]
+```
+
+返回各状态数量统计。
+
+## Control Methods
+
+### `steer()`
 
 ```python
 async def steer(
@@ -136,66 +193,107 @@ async def steer(
 ) -> bool
 ```
 
-Send steering input to a running agent.
+对 `RUNNING` root 直接转给 live handle；对 `WAITING/QUEUED` root 会落成 `USER_HINT` event。
 
-#### `cancel()`
+### `cancel()`
 
 ```python
 async def cancel(self, state_id: str, reason: str = "Cancelled by user") -> bool
 ```
 
-Cancel a running agent.
+递归取消 state 及其 active subtree。
 
-#### `shutdown()`
+### `shutdown()`
 
 ```python
 async def shutdown(self, state_id: str) -> bool
 ```
 
-Terminate and clean up an agent.
+对 active subtree 发起 shutdown。对 persistent root，`RUNNING/WAITING/IDLE` 会收敛到一次 `_SHUTDOWN_SUMMARY_TASK` 的 queued rerun。
 
-#### `get_registered_agent()`
+### `rebind_agent()`
+
+```python
+async def rebind_agent(self, state_id: str, agent: Agent) -> bool
+```
+
+替换某个 root 的 live runtime agent。当前只接受：
+
+- state 不存在
+- `IDLE`
+- `COMPLETED`
+- `FAILED`
+
+### `get_registered_agent()`
 
 ```python
 def get_registered_agent(self, state_id: str) -> Agent | None
 ```
 
-Get the Agent instance associated with a state ID.
+## Core Models
 
----
-
-## `SchedulerConfig`
+### `SchedulerConfig`
 
 ```python
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SchedulerConfig:
+    state_storage: AgentStateStorageConfig = ...
     check_interval: float = 1.0
-    max_concurrent: int = 10
-    state_storage: str = "memory"  # "memory" or "sqlite"
-    task_limits: dict = field(default_factory=dict)
-    graceful_shutdown_wait_seconds: float = 30.0
+    max_concurrent: int = 20
+    graceful_shutdown_wait_seconds: float = 10.0
+    task_limits: TaskLimits = ...
+    event_debounce_min_count: int = 3
+    event_debounce_max_wait_seconds: float = 10.0
 ```
 
-## `AgentState`
+`state_storage.storage_type` 当前支持：
+
+- `memory`
+- `sqlite`
+- `mongodb`
+
+### `AgentState`
 
 ```python
-@dataclass
+@dataclass(frozen=True, slots=True)
 class AgentState:
-    state_id: str
-    agent_id: str
-    status: AgentStateStatus  # IDLE, RUNNING, WAITING, QUEUED, COMPLETED, FAILED
-    created_at: float
-    last_activity_at: float | None = None
-    # ... other fields
+    id: str
+    session_id: str
+    status: AgentStateStatus
+    task: UserInput
+    parent_id: str | None = None
+    pending_input: UserInput | None = None
+    wake_condition: WakeCondition | None = None
+    result_summary: str | None = None
+    signal_propagated: bool = False
+    agent_config_id: str | None = None
+    is_persistent: bool = False
+    depth: int = 0
+    wake_count: int = 0
+    explain: str | None = None
+    created_at: datetime = ...
+    updated_at: datetime = ...
 ```
 
-### Agent States
+### `RouteResult`
 
-| State | Description |
-|-------|-------------|
-| `IDLE` | Agent is alive and waiting for input |
-| `RUNNING` | Agent is actively executing |
-| `WAITING` | Agent is waiting for a child or event |
-| `QUEUED` | Agent is queued for execution |
-| `COMPLETED` | Agent finished successfully |
-| `FAILED` | Agent terminated with an error |
+```python
+@dataclass(frozen=True, slots=True)
+class RouteResult:
+    action: Literal["submitted", "enqueued", "steered"]
+    state_id: str
+    stream: AsyncIterator[AgentStreamItem] | None = None
+```
+
+### `DispatchAction`
+
+```python
+@dataclass(frozen=True, slots=True)
+class DispatchAction:
+    state: AgentState
+    reason: DispatchReason
+    input_override: UserInput | None = None
+    events: tuple[PendingEvent, ...] = ()
+```
+
+`DispatchAction` 是 scheduler 内部“为什么这轮要跑它”的统一表达。

@@ -189,7 +189,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-For long-running roots, the scheduler API also supports `submit`, `enqueue_input`, `stream`, `wait_for`, `steer`, `cancel`, and `shutdown`.
+For long-running roots, the scheduler API also supports `submit`, `enqueue_input`, `route_root_input`, `stream`, `wait_for`, `steer`, `cancel`, and `shutdown`.
 
 ## Console
 
@@ -253,10 +253,10 @@ Important current rules:
 
 ### SDK
 
-- `agiwo/agent/`: public `Agent` API, runtime types, agent runtime tools, agent trace adapter, prompt runtime, tool auth runtime, run/session storage, and internal executor pipeline in `inner/`
+- `agiwo/agent/`: public `Agent` API, runtime types, agent runtime tools, agent trace adapter, prompt runtime, tool auth runtime, run/session storage, and the internal lifecycle/engine execution pipeline
 - `agiwo/llm/`: model abstractions, providers, config policy, factory, token usage estimation
 - `agiwo/tool/`: tool abstractions, `ToolContext`, builtin tools, authz domain types, process registry, citation storage
-- `agiwo/scheduler/`: orchestration layer, runtime/executor, store, services, runtime tools
+- `agiwo/scheduler/`: orchestration facade, engine, runner, command models, runtime state, tool control, store, runtime tools
 - `agiwo/workspace/`: workspace layout, bootstrap, and workspace document loading
 - `agiwo/memory/`: shared MEMORY indexing/search plus `WorkspaceMemoryService`
 - `agiwo/observability/`: trace models and storage backends; agent trace collection lives under `agiwo/agent/trace/`

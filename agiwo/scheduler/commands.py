@@ -1,11 +1,15 @@
-"""Narrow control surface exposed to scheduler tools."""
+"""Scheduler domain commands and dispatch actions."""
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Literal, Protocol
+from enum import Enum
+from typing import Literal
 
+from agiwo.agent.input import UserInput
+from agiwo.agent.runtime import AgentStreamItem
 from agiwo.scheduler.models import (
     AgentState,
+    PendingEvent,
     TimeUnit,
     WaitMode,
     WakeCondition,
@@ -20,7 +24,24 @@ CancelChildOutcome = Literal[
 ]
 
 
-@dataclass(frozen=True)
+class DispatchReason(str, Enum):
+    ROOT_SUBMIT = "root_submit"
+    ROOT_QUEUED_INPUT = "root_queued_input"
+    CHILD_PENDING = "child_pending"
+    WAKE_READY = "wake_ready"
+    WAKE_EVENTS = "wake_events"
+    WAKE_TIMEOUT = "wake_timeout"
+
+
+@dataclass(frozen=True, slots=True)
+class DispatchAction:
+    state: AgentState
+    reason: DispatchReason
+    input_override: UserInput | None = None
+    events: tuple[PendingEvent, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class SpawnChildRequest:
     parent_agent_id: str
     session_id: str
@@ -30,7 +51,7 @@ class SpawnChildRequest:
     custom_child_id: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SleepRequest:
     agent_id: str
     session_id: str
@@ -43,13 +64,13 @@ class SleepRequest:
     explain: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SleepResult:
     wake_condition: WakeCondition
     summary: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CancelChildRequest:
     target_id: str
     reason: str
@@ -57,45 +78,26 @@ class CancelChildRequest:
     force: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CancelChildResult:
     outcome: CancelChildOutcome
     state: AgentState | None = None
     running_processes: list[dict[str, object]] = field(default_factory=list)
 
 
-class SchedulerControl(Protocol):
-    """Tool-facing scheduler control interface."""
-
-    async def spawn_child(self, request: SpawnChildRequest) -> AgentState: ...
-
-    async def sleep_current_agent(self, request: SleepRequest) -> SleepResult: ...
-
-    async def get_child_state(self, target_id: str) -> AgentState | None: ...
-
-    async def list_child_states(
-        self,
-        *,
-        caller_id: str | None,
-        session_id: str,
-    ) -> list[AgentState]: ...
-
-    async def inspect_child_processes(
-        self,
-        target_id: str,
-    ) -> list[dict[str, object]]: ...
-
-    async def cancel_child(self, request: CancelChildRequest) -> CancelChildResult: ...
-
-    def age_seconds(
-        self, timestamp: datetime, *, now: datetime | None = None
-    ) -> int: ...
+@dataclass(frozen=True, slots=True)
+class RouteResult:
+    action: Literal["submitted", "enqueued", "steered"]
+    state_id: str
+    stream: AsyncIterator[AgentStreamItem] | None = None
 
 
 __all__ = [
     "CancelChildRequest",
     "CancelChildResult",
-    "SchedulerControl",
+    "DispatchAction",
+    "DispatchReason",
+    "RouteResult",
     "SleepRequest",
     "SleepResult",
     "SpawnChildRequest",

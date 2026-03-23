@@ -19,7 +19,7 @@
 | `agiwo/agent/` | Agent 对外入口与运行时领域模型。顶层 `agiwo.agent` 只暴露 public API；内部按 `lifecycle/`（definition/resource/session/orchestrator）与 `engine/`（context/state/recorder/llm/tool/termination/compaction）分层。其余子包包括 `runtime_tools/` 宿主工具适配层、`trace/` agent trace adapter、`prompt/` prompt runtime、`storage/` Run/Session 持久化。纯配置模型落在 `config.py`，其余 canonical 模型分别落在 `input.py`、`runtime.py`、`compact_types.py`、`memory_types.py`。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
-| `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade，`engine.py` 负责公开编排 API 并组装内部 owner；共享状态迁移收口到 `state_ops.py`，tick phases 收口到 `tick_ops.py`，tree cancel/shutdown 收口到 `tree_ops.py`，tool-facing control helpers 收口到 `control_ops.py`，`runner.py` 负责单次 agent cycle 执行，`wake_messages.py` 负责唤醒消息构造，`coordinator.py` 只管进程内协作状态，`control.py` 定义 tools 依赖的窄接口，`store/` 只负责持久化。 |
+| `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade 与 loop lifecycle，`engine.py` 是唯一编排 owner，`runner.py` 负责单次 dispatch action 执行，`commands.py` 承载调度动作与 tool DTO，`runtime_state.py` 承载进程内 live state 与 tick helpers，`tool_control.py` 收口 child/sleep/cancel 的 tool-facing control，`runtime_tools.py` 是注入给 agent 的 scheduler runtime tools，`store/` 只负责持久化。 |
 | `agiwo/observability/` | Trace/Span 模型、查询接口与 trace storage 实现；agent 事件到 Trace 的适配层已收口到 `agiwo/agent/trace/`。 |
 | `agiwo/embedding/` | Embedding 抽象与 factory，包含本地/OpenAI 风格实现。 |
 | `agiwo/skill/` | Skill 的发现、路径规则（`config.py`）、加载、注册、异常定义，以及 `SkillTool` 桥接。 |
@@ -90,16 +90,14 @@
 ### Scheduler
 
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
-- 当前公开编排接口包括：`run`、`submit`、`enqueue_input`、`stream`、`wait_for`、`steer`、`cancel`、`shutdown`。
+- 当前公开编排接口包括：`run`、`submit`、`enqueue_input`、`route_root_input`、`stream`、`wait_for`、`steer`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`。
 - `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 `SchedulerEngine`。
-- `SchedulerEngine` 是公开编排 owner：提交、等待、steer、cancel、shutdown 等入口留在这里；共享状态迁移下沉到 `SchedulerStateOps`，tick 各阶段下沉到 `SchedulerTickOps`，tree cancel/shutdown 下沉到 `SchedulerTreeOps`，tool-facing control helper 下沉到 `SchedulerControlOps`。
-- `SchedulerRunner` 只负责单次执行：运行 root/child/wake cycle、构造 wake message、把 `RunOutput` 翻译成 scheduler outcome；scheduler 内部执行原语已经收口到 `SchedulerAgentPort.start(...) -> AgentExecutionHandlePort`，唯一 live observation path 是 `AgentExecutionHandle.stream()`。
-- `SchedulerCoordinator` 只保存进程内状态：已注册 agent、active execution handle、abort signal、active task、dispatch dedupe、wait event、stream channel；不得依赖 store。
-- `SchedulerControl` 是 scheduler tools 唯一允许依赖的接口；tools 不得直接碰 store / guard / coordinator / runner。
+- `SchedulerEngine` 是唯一编排 owner：公开 API、查询 API、tool-facing control、tick planning (`normalize -> plan -> dispatch`)、tree cancel/shutdown 都收口在这里；进程内 live state 聚合在内部 `_RuntimeState`，不再拆到独立 `coordinator/state_ops/tick_ops/tree_ops` 模块。
+- `SchedulerRunner` 只负责单次执行：接收 `DispatchAction`，运行 root/child/wake cycle、构造 wake message、把 `RunOutput` 翻译成 scheduler outcome；runner 只能通过 `RunnerContext` 访问 store/runtime/notify/nudge/semaphore。
 - `TaskGuard` 是 spawn/wake 的唯一护栏入口。
 - scheduler 状态现在显式区分 `WAITING`、`IDLE`、`QUEUED`；不要再把待命/排队语义塞回一个泛化 `SLEEPING`。
 - 当前唤醒路径包括 `WAITSET`、`TIMER`、`PERIODIC`、`PENDING_EVENTS`。
-- scheduler state storage 当前支持 memory/sqlite，由 `Scheduler` 自己创建和持有；store 边界保持为通用 repo（`save/get/patch/list`），wake/timeout/debounce/signal 规则统一放在 scheduler 侧 selectors/tick/state ops。
+- scheduler state storage 当前支持 memory/sqlite/mongodb，由 `Scheduler` 自己创建和持有；store 边界保持为通用 repo（`save/get/list/delete_events`），wake/timeout/debounce/signal 规则统一放在 `SchedulerEngine`。
 - `Scheduler` 的外部流式协议直接复用 `AgentStreamItem`；不要在 SDK core 再维护第二套 live-output protocol。
 
 ### Storage & Observability
@@ -128,7 +126,7 @@
 - Console 自己持有 API/表单 DTO；不要再把 `Input/Patch` 请求模型塞回 SDK。
 - session 相关代码收口到 `console/server/channels/session/` 包：`models.py`（数据模型与 store protocol）、`binding.py`（domain 操作与异常）、`context_service.py`（session/chat-context 协调）、`manager.py`（消息批处理与防抖）。session identity 字段通过 `binding.py` 协调，经 `ChannelChatSessionStore.apply_session_mutation(...)` 原子写入。
 - 渠道运行时由三个独立子服务组成：`SessionContextService`（session/chat-context 生命周期）、`RuntimeAgentPool`（runtime agent 缓存与 config 指纹刷新）、`AgentExecutor`（scheduler 交互与状态路由）。`BaseChannelService` 直接持有这三者，不再经过 facade。
-- `AgentExecutor.execute()` 对 scheduler 状态做显式路由：None/COMPLETED/FAILED → submit；IDLE/FAILED(persistent) → enqueue；RUNNING/WAITING/QUEUED → steer；PENDING → wait then retry。timeout 为可选参数，默认不设硬超时。
+- `AgentExecutor.execute()` 只委托 `scheduler.route_root_input(...)` 做 root 输入路由，不再在 Console 自己编码 scheduler 状态机。timeout 为可选参数，默认不设硬超时。
 - Feishu store 实现收口到 `console/server/channels/feishu/store/` 包：`__init__.py`（protocol + factory）、`memory.py`（内存实现）、`sqlite.py`（SQLite 实现）。
 - Feishu 模块合并约定：`message_parser.py` 包含 envelope 类型 + sender 解析 + 解析 facade；`message_builder.py` 包含 attachment 解析 + UserMessage 构建；`connection.py` 包含 SDK 适配层 + WebSocket 连接管理。
 - Console 工具的展示、解析、组装都必须经过 `ConsoleToolCatalog`。
@@ -147,7 +145,8 @@
 - builtin tools 应自行按配置构建 model/HTTP/storage 依赖，除非它本质上是在包装宿主运行时对象。
 - LLM 创建统一走共享 factory / config policy。
 - 不要在 `agiwo.agent` 包外越权依赖 `agiwo.agent.lifecycle` 或 `agiwo.agent.engine`；更不要重新引入 `agiwo.agent.inner`。
-- 不要在 scheduler tools 里依赖 `SchedulerEngine` / `SchedulerCoordinator` / `AgentStateStorage` / `TaskGuard`；一律只依赖 `SchedulerControl`。
+- 不要在 Console 或其他集成侧直读 `scheduler.store`；统一走 `Scheduler` facade 的查询 API。
+- scheduler runtime tools 直接依赖 `SchedulerEngine` 的 tool-facing 方法；不要重新引入 `SchedulerControl` protocol。
 - 不要把 store mutation、递归 cancel/shutdown、tick dispatch 重新塞回 `Scheduler` facade。
 - 不要在 SDK core 里同时维护 text-only 和 typed 两套 scheduler stream API；如需文本适配，只能放在消费侧边缘。
 - 当同一语义逻辑出现第 2 次时就要评估抽象；不要继续把热点文件堆成 God Object。

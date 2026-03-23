@@ -1,105 +1,100 @@
-"""SchedulerEngine — the sole owner of scheduler orchestration semantics."""
-
 import asyncio
 import time
-from datetime import datetime, timedelta, timezone
-from typing import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from agiwo.agent.input import UserInput
 from agiwo.agent.input_codec import extract_text
 from agiwo.agent.runtime import AgentStreamItem, RunOutput, TerminationReason
-from agiwo.agent.scheduler_port import SchedulerAgentPort
-from agiwo.scheduler.control import (
+from agiwo.agent.scheduler_port import SchedulerAgentPort, adapt_scheduler_agent
+from agiwo.scheduler.commands import (
     CancelChildRequest,
     CancelChildResult,
-    SchedulerControl,
+    DispatchAction,
+    DispatchReason,
+    RouteResult,
     SleepRequest,
     SleepResult,
     SpawnChildRequest,
 )
-from agiwo.scheduler.coordinator import SchedulerCoordinator
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     ACTIVE_AGENT_STATUSES,
     AgentState,
     AgentStateStatus,
-    ChildAgentConfigOverrides,
     PendingEvent,
     SchedulerConfig,
     SchedulerEventType,
-    WakeCondition,
-    WakeType,
-    to_seconds,
 )
-from agiwo.scheduler.runner import SchedulerRunner
-from agiwo.scheduler.state_ops import SchedulerStateOps
+from agiwo.scheduler.runner import RunnerContext, SchedulerRunner
+from agiwo.scheduler.runtime_state import (
+    RuntimeState,
+    StreamChannelState,
+    build_mailbox_input,
+    group_events,
+    select_debounced_event_targets,
+)
 from agiwo.scheduler.store import AgentStateStorage
-from agiwo.scheduler.store.codec import serialize_child_agent_config_overrides
-from agiwo.scheduler.tick_ops import SchedulerTickOps
-from agiwo.scheduler.tree_ops import SchedulerTreeOps
-from agiwo.tool.process import AgentProcessRegistry
+from agiwo.scheduler.tool_control import SchedulerToolControl
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
+_SHUTDOWN_SUMMARY_TASK = (
+    "System shutdown requested. Please produce a final summary "
+    "report of all work done so far."
+)
 
 
-class SchedulerEngine(SchedulerControl):
-    """Own scheduler state-machine semantics and tool-facing control operations."""
+class SchedulerEngine:
+    """Own scheduler API, state machine, tick planning, and runtime coordination."""
 
     def __init__(
         self,
         *,
         store: AgentStateStorage,
-        coordinator: SchedulerCoordinator,
-        runner: SchedulerRunner,
         config: SchedulerConfig | None = None,
         guard: TaskGuard | None = None,
-        state_ops: SchedulerStateOps | None = None,
-        tree_ops: SchedulerTreeOps | None = None,
-        tick_ops: SchedulerTickOps | None = None,
+        semaphore: asyncio.Semaphore | None = None,
     ) -> None:
         self._store = store
-        self._coordinator = coordinator
-        self._runner = runner
-        resolved_config = config or SchedulerConfig()
-        resolved_state_ops = state_ops or SchedulerStateOps(
-            store=store,
-            coordinator=coordinator,
+        self._config = config or SchedulerConfig()
+        self._guard = guard or TaskGuard(self._config.task_limits, store)
+        self._rt = RuntimeState()
+        self._runner = SchedulerRunner(
+            RunnerContext(
+                store=store,
+                rt=self._rt,
+                notify_state_change=self._notify_state_change,
+                nudge=self.nudge,
+                semaphore=semaphore or asyncio.Semaphore(self._config.max_concurrent),
+            )
         )
-        self._guard = guard or TaskGuard(resolved_config.task_limits, store)
-        resolved_tree_ops = tree_ops or SchedulerTreeOps(
-            store=store,
-            coordinator=coordinator,
-            state_ops=resolved_state_ops,
-        )
-        self._state_ops = resolved_state_ops
-        self._tree_ops = resolved_tree_ops
-        self._tick_ops = tick_ops or SchedulerTickOps(
-            config=resolved_config,
-            store=store,
+        self._tool_control = SchedulerToolControl(
+            store=self._store,
             guard=self._guard,
-            coordinator=coordinator,
-            runner=runner,
-            state_ops=resolved_state_ops,
+            rt=self._rt,
+            save_state=self._save_state,
+            cancel_subtree=self._cancel_subtree,
         )
-        self._scheduling_tools: list = []
-
-    @property
-    def runner(self) -> SchedulerRunner:
-        return self._runner
+        self._scheduling_tools: list[object] = []
 
     def get_registered_agent(self, state_id: str):
-        agent = self._coordinator.get_registered_agent(state_id)
-        if agent is None:
-            return None
-        return agent.unwrap_agent()
+        return None if (agent := self._rt.agents.get(state_id)) is None else agent.unwrap_agent()
 
-    def set_scheduling_tools(self, tools: list) -> None:
-        """Register the scheduler-managed tool set for agent preparation."""
-        self._scheduling_tools = list(tools)
+    def set_scheduling_tools(self, tools: list[object]) -> None: self._scheduling_tools = list(tools)
 
+    async def wait_for_nudge(self, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(self._rt.nudge.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return
+        finally:
+            self._rt.nudge.clear()
+
+    def nudge(self) -> None:
+        self._rt.nudge.set()
     async def run(
         self,
         agent: SchedulerAgentPort,
@@ -137,32 +132,28 @@ class SchedulerEngine(SchedulerControl):
             )
 
         self.prepare_agent(agent)
-
         resolved_session_id = session_id or str(uuid4())
         state = AgentState(
             id=agent.id,
             session_id=resolved_session_id,
             status=AgentStateStatus.RUNNING,
             task=user_input,
-            parent_id=None,
             agent_config_id=agent_config_id,
             is_persistent=persistent,
             depth=0,
         )
-        await self._store.save_state(state)
-
+        await self._save_state(state)
         if abort_signal is not None:
-            self._coordinator.set_abort_signal(state.id, abort_signal)
+            self._rt.abort_signals[state.id] = abort_signal
 
-        task = asyncio.create_task(
-            self._runner.run_root_agent(
-                agent,
-                user_input,
-                resolved_session_id,
+        await self._dispatch_action(
+            DispatchAction(
                 state=state,
+                reason=DispatchReason.ROOT_SUBMIT,
+                input_override=user_input,
             )
         )
-        self._coordinator.track_active_task(task)
+        self.nudge()
         return state.id
 
     async def enqueue_input(
@@ -179,21 +170,123 @@ class SchedulerEngine(SchedulerControl):
             raise RuntimeError(
                 f"Agent '{state_id}' is not persistent. Use submit() instead."
             )
-
         if not state.can_accept_enqueue_input():
             raise RuntimeError(
                 f"Agent '{state_id}' is {state.status.value}. "
                 f"Cannot enqueue input (expected IDLE or FAILED)."
             )
-
         if agent is not None:
             self.prepare_agent(agent)
 
-        await self._state_ops.mark_queued(
-            state,
-            pending_input=user_input,
+        await self._save_state(state.with_queued(pending_input=user_input))
+        self.nudge()
+
+    async def route_root_input(
+        self,
+        user_input: UserInput,
+        *,
+        agent: SchedulerAgentPort,
+        state_id: str | None = None,
+        session_id: str | None = None,
+        abort_signal: AbortSignal | None = None,
+        persistent: bool = True,
+        agent_config_id: str | None = None,
+        timeout: float | None = None,
+        include_child_events: bool = True,
+    ) -> RouteResult:
+        lookup_id = state_id or agent.id
+        deadline = None if timeout is None else time.monotonic() + timeout
+
+        while True:
+            current_state = await self._store.get_state(lookup_id)
+            if current_state is None:
+                return await self._route_with_stream(
+                    root_state_id=agent.id,
+                    action="submitted",
+                    timeout=timeout,
+                    include_child_events=include_child_events,
+                    operation=lambda: self.submit(
+                        agent,
+                        user_input,
+                        session_id=session_id,
+                        abort_signal=abort_signal,
+                        persistent=persistent,
+                        agent_config_id=agent_config_id,
+                    ),
+                )
+
+            if current_state.status != AgentStateStatus.PENDING:
+                break
+
+            current_state = await self._wait_until_not_pending(
+                current_state.id,
+                deadline=deadline,
+            )
+            if current_state is None:
+                return await self._route_with_stream(
+                    root_state_id=agent.id,
+                    action="submitted",
+                    timeout=self._deadline_remaining(deadline),
+                    include_child_events=include_child_events,
+                    operation=lambda: self.submit(
+                        agent,
+                        user_input,
+                        session_id=session_id,
+                        abort_signal=abort_signal,
+                        persistent=persistent,
+                        agent_config_id=agent_config_id,
+                    ),
+                )
+
+        if current_state.status in (
+            AgentStateStatus.RUNNING,
+            AgentStateStatus.WAITING,
+            AgentStateStatus.QUEUED,
+        ):
+            urgent = current_state.status == AgentStateStatus.WAITING
+            steered = await self.steer(current_state.id, user_input, urgent=urgent)
+            if not steered:
+                refreshed = await self._store.get_state(current_state.id)
+                if refreshed is not None and refreshed.status in (
+                    AgentStateStatus.RUNNING,
+                    AgentStateStatus.WAITING,
+                    AgentStateStatus.QUEUED,
+                ):
+                    raise RuntimeError(
+                        f"Failed to steer active scheduler state '{current_state.id}'"
+                    )
+            return RouteResult(action="steered", state_id=current_state.id)
+
+        if current_state.is_root and current_state.is_persistent and current_state.status in (
+            AgentStateStatus.IDLE,
+            AgentStateStatus.FAILED,
+        ):
+            return await self._route_with_stream(
+                root_state_id=current_state.id,
+                action="enqueued",
+                timeout=timeout,
+                include_child_events=include_child_events,
+                operation=lambda: self._enqueue_and_return_state_id(
+                    state_id=current_state.id,
+                    agent=agent,
+                    user_input=user_input,
+                ),
+            )
+
+        return await self._route_with_stream(
+            root_state_id=agent.id,
+            action="submitted",
+            timeout=timeout,
+            include_child_events=include_child_events,
+            operation=lambda: self.submit(
+                agent,
+                user_input,
+                session_id=session_id,
+                abort_signal=abort_signal,
+                persistent=persistent,
+                agent_config_id=agent_config_id,
+            ),
         )
-        logger.info("input_enqueued_to_persistent_agent", state_id=state_id)
 
     async def stream(
         self,
@@ -208,59 +301,54 @@ class SchedulerEngine(SchedulerControl):
         timeout: float | None = None,
         include_child_events: bool = True,
     ) -> AsyncIterator[AgentStreamItem]:
-        root_state_id = state_id or (agent.id if agent is not None else None)
-        if root_state_id is None:
+        if state_id is None and agent is None:
             raise RuntimeError("scheduler.stream requires either agent or state_id")
 
-        self._coordinator.open_stream_channel(
-            root_state_id,
-            include_child_events=include_child_events,
-        )
-        saw_root_terminal = False
-        try:
-            if state_id is None:
-                if agent is None:
-                    raise RuntimeError(
-                        "scheduler.stream requires an agent when state_id is omitted"
-                    )
-                await self.submit(
+        if state_id is None:
+            result = await self._route_with_stream(
+                root_state_id=agent.id,
+                action="submitted",
+                timeout=timeout,
+                include_child_events=include_child_events,
+                operation=lambda: self.submit(
                     agent,
                     user_input,
                     session_id=session_id,
                     abort_signal=abort_signal,
                     persistent=persistent,
                     agent_config_id=agent_config_id,
-                )
-            else:
-                await self.enqueue_input(state_id, user_input, agent=agent)
+                ),
+            )
+        else:
+            result = await self._route_with_stream(
+                root_state_id=state_id,
+                action="enqueued",
+                timeout=timeout,
+                include_child_events=include_child_events,
+                operation=lambda: self._enqueue_and_return_state_id(
+                    state_id=state_id,
+                    agent=agent,
+                    user_input=user_input,
+                ),
+            )
 
-            async for item in self._coordinator.consume_stream_channel(
-                root_state_id,
-                timeout,
-            ):
-                if item.depth == 0 and item.type in {"run_completed", "run_failed"}:
-                    saw_root_terminal = True
-                yield item
-
-            if not saw_root_terminal:
-                state = await self._store.get_state(root_state_id)
-                if state is not None and state.status == AgentStateStatus.FAILED:
-                    raise RuntimeError(
-                        state.result_summary or "scheduler stream failed"
-                    )
-        finally:
-            self._coordinator.close_stream_channel(root_state_id)
+        assert result.stream is not None
+        async for item in result.stream:
+            yield item
 
     async def wait_for(
         self,
         state_id: str,
         timeout: float | None = None,
     ) -> RunOutput:
-        start = time.time()
-        event = self._coordinator.get_or_create_state_event(state_id)
+        start = time.monotonic()
+        event = asyncio.Event()
+        waiters = self._rt.waiters.setdefault(state_id, set())
+        waiters.add(event)
 
         try:
             while True:
+                event.clear()
                 state = await self._store.get_state(state_id)
                 if state is not None:
                     if state.status in (
@@ -279,31 +367,75 @@ class SchedulerEngine(SchedulerControl):
 
                 remaining = None
                 if timeout is not None:
-                    elapsed = time.time() - start
+                    elapsed = time.monotonic() - start
                     if elapsed >= timeout:
                         return RunOutput(termination_reason=TerminationReason.TIMEOUT)
                     remaining = timeout - elapsed
 
-                event.clear()
                 try:
                     await asyncio.wait_for(event.wait(), timeout=remaining)
                 except asyncio.TimeoutError:
                     return RunOutput(termination_reason=TerminationReason.TIMEOUT)
         finally:
-            self._coordinator.pop_state_event(state_id)
+            waiters = self._rt.waiters.get(state_id)
+            if waiters is not None:
+                waiters.discard(event)
+                if not waiters:
+                    self._rt.waiters.pop(state_id, None)
 
     async def get_state(self, state_id: str) -> AgentState | None:
         return await self._store.get_state(state_id)
 
+    async def list_states(
+        self,
+        *,
+        statuses=None,
+        parent_id: str | None = None,
+        session_id: str | None = None,
+        signal_propagated: bool | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AgentState]:
+        return await self._store.list_states(
+            statuses=statuses,
+            parent_id=parent_id,
+            session_id=session_id,
+            signal_propagated=signal_propagated,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def list_events(
+        self,
+        *,
+        target_agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> list[PendingEvent]:
+        return await self._store.list_events(
+            target_agent_id=target_agent_id,
+            session_id=session_id,
+        )
+
+    async def get_stats(self) -> dict[str, int]:
+        states = await self._store.list_states(limit=10000)
+        counts: dict[str, int] = {
+            "pending": 0,
+            "running": 0,
+            "waiting": 0,
+            "idle": 0,
+            "queued": 0,
+            "completed": 0,
+            "failed": 0,
+        }
+        for state in states:
+            counts[state.status.value] += 1
+        return {"total": len(states), **counts}
+
     async def cancel(self, state_id: str, reason: str = "Cancelled by user") -> bool:
         state = await self._store.get_state(state_id)
-        if state is None:
+        if state is None or not state.is_active():
             return False
-        if not state.is_active():
-            return False
-
-        await self._tree_ops.cancel_subtree(state_id, reason)
-        logger.info("scheduler_cancel", state_id=state_id, reason=reason)
+        await self._cancel_subtree(state_id, reason)
         return True
 
     async def steer(
@@ -322,12 +454,11 @@ class SchedulerEngine(SchedulerControl):
             return False
 
         if state.status == AgentStateStatus.RUNNING:
-            handle = self._coordinator.get_execution_handle(state_id)
+            handle = self._rt.execution_handles.get(state_id)
             if handle is None:
                 return False
             if not await handle.steer(message):
                 return False
-            logger.info("steer_queued", state_id=state_id)
             return True
 
         event = PendingEvent(
@@ -336,231 +467,432 @@ class SchedulerEngine(SchedulerControl):
             session_id=state.session_id,
             event_type=SchedulerEventType.USER_HINT,
             payload={"hint": message},
-            source_agent_id=None,
             created_at=datetime.now(timezone.utc),
         )
         await self._store.save_event(event)
-
+        self.nudge()
         if urgent and state.status == AgentStateStatus.WAITING:
-            await self._tick_ops.try_urgent_wake(state)
-
-        logger.info("steer_persisted", state_id=state_id, urgent=urgent)
+            self.nudge()
         return True
 
     async def shutdown(self, state_id: str) -> bool:
         state = await self._store.get_state(state_id)
-        if state is None:
+        if state is None or not state.is_active():
             return False
-        if not state.is_active():
+        await self._shutdown_subtree(state_id)
+        self.nudge()
+        return True
+
+    async def rebind_agent(self, state_id: str, agent: SchedulerAgentPort) -> bool:
+        state = await self._store.get_state(state_id)
+        if state is not None and state.status not in (
+            AgentStateStatus.IDLE,
+            AgentStateStatus.COMPLETED,
+            AgentStateStatus.FAILED,
+        ):
             return False
 
-        await self._tree_ops.shutdown_subtree(state_id)
-        logger.info("scheduler_shutdown", state_id=state_id)
+        previous = self._rt.agents.get(state_id)
+        self.prepare_agent(agent)
+        previous_agent = previous.unwrap_agent() if previous is not None else None
+        next_agent = agent.unwrap_agent()
+        if previous is not None and previous_agent is not next_agent:
+            try:
+                await previous.close()
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduler_rebind_close_failed", state_id=state_id)
         return True
 
     def prepare_agent(
         self,
         agent: SchedulerAgentPort,
-        scheduling_tools: list | None = None,
+        scheduling_tools: list[object] | None = None,
     ) -> None:
-        """Inject scheduling tools into agent and register it in coordinator."""
+        agent = adapt_scheduler_agent(agent)
         tools_to_inject = (
             scheduling_tools if scheduling_tools is not None else self._scheduling_tools
         )
         agent.install_runtime_tools(list(tools_to_inject))
         agent.set_termination_summary_enabled(True)
-        self._coordinator.register_agent(agent)
+        self._rt.agents[agent.id] = agent
 
     async def tick(self) -> None:
-        await self._tick_ops.propagate_signals()
-        await self._tick_ops.enforce_timeouts()
-        await self._tick_ops.process_pending_events()
-        await self._tick_ops.start_pending()
-        await self._tick_ops.start_queued_roots()
-        await self._tick_ops.wake_waiting()
+        await self._propagate_signals()
+        states = await self._store.list_states(limit=10000)
+        events = await self._store.list_events()
+        now = datetime.now(timezone.utc)
+        actions = self._plan_tick(states, events, now=now)
+        for action in actions:
+            await self._dispatch_action(action)
 
-    async def spawn_child(self, request: SpawnChildRequest) -> AgentState:
-        parent_state = await self._store.get_state(request.parent_agent_id)
-        if parent_state is None:
-            raise ValueError(
-                f"Parent agent state '{request.parent_agent_id}' not found"
-            )
-
-        rejection = await self._guard.check_spawn(parent_state)
-        if rejection is not None:
-            raise ValueError(f"Spawn rejected: {rejection}")
-
-        child_id = (
-            request.custom_child_id or f"{request.parent_agent_id}_{uuid4().hex[:5]}"
+    def _plan_tick(
+        self,
+        states: list[AgentState],
+        events: list[PendingEvent],
+        *,
+        now: datetime,
+    ) -> list[DispatchAction]:
+        actions: list[DispatchAction] = []
+        event_groups = group_events(events)
+        debounced_targets = select_debounced_event_targets(
+            events,
+            min_count=self._config.event_debounce_min_count,
+            max_wait_seconds=self._config.event_debounce_max_wait_seconds,
+            now=now,
         )
-        state = AgentState(
-            id=child_id,
-            session_id=request.session_id,
-            status=AgentStateStatus.PENDING,
-            task=request.task,
-            parent_id=request.parent_agent_id,
-            config_overrides=serialize_child_agent_config_overrides(
-                ChildAgentConfigOverrides(
-                    instruction=request.instruction,
-                    system_prompt=request.system_prompt,
+
+        for state in states:
+            if state.status == AgentStateStatus.PENDING:
+                actions.append(
+                    DispatchAction(state=state, reason=DispatchReason.CHILD_PENDING)
                 )
-            ),
-            depth=parent_state.depth + 1,
-        )
-        await self._store.save_state(state)
-        return state
+                continue
 
-    async def sleep_current_agent(self, request: SleepRequest) -> SleepResult:
-        wake_condition = await self._build_sleep_condition(request)
-        state = await self._store.get_state(request.agent_id)
+            if state.is_root and state.status == AgentStateStatus.QUEUED:
+                mailbox = tuple(
+                    event
+                    for event in event_groups.get((state.id, state.session_id), [])
+                    if event.event_type == SchedulerEventType.USER_HINT
+                )
+                actions.append(
+                    DispatchAction(
+                        state=state,
+                        reason=DispatchReason.ROOT_QUEUED_INPUT,
+                        input_override=build_mailbox_input(state.pending_input, mailbox),
+                        events=mailbox,
+                    )
+                )
+                continue
+
+            if state.status != AgentStateStatus.WAITING:
+                continue
+
+            if state.wake_condition is not None:
+                if state.wake_condition.is_timed_out(now):
+                    actions.append(
+                        DispatchAction(state=state, reason=DispatchReason.WAKE_TIMEOUT)
+                    )
+                    continue
+
+                if state.wake_condition.is_satisfied(now):
+                    actions.append(
+                        DispatchAction(state=state, reason=DispatchReason.WAKE_READY)
+                    )
+                    continue
+
+            key = (state.id, state.session_id)
+            if key in debounced_targets:
+                grouped_events = tuple(event_groups.get(key, []))
+                if grouped_events:
+                    actions.append(
+                        DispatchAction(
+                            state=state,
+                            reason=DispatchReason.WAKE_EVENTS,
+                            events=grouped_events,
+                        )
+                    )
+
+        return actions
+
+    async def spawn_child(self, request: SpawnChildRequest) -> AgentState: return await self._tool_control.spawn_child(request)
+    async def sleep_current_agent(self, request: SleepRequest) -> SleepResult: return await self._tool_control.sleep_current_agent(request)
+    async def get_child_state(self, target_id: str) -> AgentState | None: return await self._tool_control.get_child_state(target_id)
+    async def list_child_states(self, *, caller_id: str | None, session_id: str) -> list[AgentState]: return await self._tool_control.list_child_states(caller_id=caller_id, session_id=session_id)
+    async def inspect_child_processes(self, target_id: str) -> list[dict[str, object]]: return await self._tool_control.inspect_child_processes(target_id)
+    async def cancel_child(self, request: CancelChildRequest) -> CancelChildResult: return await self._tool_control.cancel_child(request)
+    def age_seconds(self, timestamp: datetime, *, now: datetime | None = None) -> int: return self._tool_control.age_seconds(timestamp, now=now)
+
+    async def _dispatch_action(self, action: DispatchAction) -> None:
+        state = action.state
+        if state.id in self._rt.dispatched:
+            return
+
+        if action.reason in (
+            DispatchReason.WAKE_READY,
+            DispatchReason.WAKE_EVENTS,
+            DispatchReason.WAKE_TIMEOUT,
+        ):
+            rejection = await self._guard.check_wake(state)
+            if rejection is not None:
+                await self._save_state(state.with_failed(f"Wake rejected: {rejection}"))
+                return
+
+        self._rt.dispatched.add(state.id)
+        task = asyncio.create_task(self._runner.run(action))
+        self._track_active_task(task)
+
+    async def _propagate_signals(self) -> None:
+        candidates = await self._store.list_states(
+            statuses=(AgentStateStatus.COMPLETED, AgentStateStatus.FAILED),
+            signal_propagated=False,
+            limit=1000,
+        )
+        for state in candidates:
+            if not state.is_child or state.signal_propagated:
+                continue
+
+            parent = await self._store.get_state(state.parent_id or "")
+            if parent is not None and parent.wake_condition is not None:
+                completed_ids = list(parent.wake_condition.completed_ids)
+                if state.id not in completed_ids:
+                    completed_ids.append(state.id)
+                    await self._save_state(
+                        parent.with_updates(
+                            wake_condition=parent.wake_condition.with_completed_ids(
+                                completed_ids
+                            )
+                        )
+                    )
+
+            await self._save_state(state.with_signal_propagated())
+
+    async def _cancel_subtree(self, state_id: str, reason: str) -> None:
+        signal = self._rt.abort_signals.get(state_id)
+        if signal is None:
+            signal = AbortSignal()
+            self._rt.abort_signals[state_id] = signal
+        if not signal.is_aborted():
+            signal.abort(reason)
+
+        handle = self._rt.execution_handles.get(state_id)
+        if handle is not None:
+            handle.cancel(reason)
+
+        for child in await self._active_children(state_id):
+            await self._cancel_subtree(child.id, reason)
+
+        state = await self._store.get_state(state_id)
         if state is None:
-            raise ValueError(f"Agent state '{request.agent_id}' not found")
-        await self._state_ops.mark_waiting(
-            state,
-            wake_condition=wake_condition,
-            explain=request.explain,
-        )
-        return SleepResult(
-            wake_condition=wake_condition,
-            summary=self._build_sleep_summary(request, wake_condition),
+            return
+        await self._save_state(state.with_failed(reason))
+        if state.is_root:
+            await self._finish_stream_channel(state.id)
+
+    async def _shutdown_subtree(self, state_id: str) -> None:
+        for child in await self._active_children(state_id):
+            await self._shutdown_subtree(child.id)
+
+        state = await self._store.get_state(state_id)
+        if state is None:
+            return
+
+        self._abort_runtime_state(state_id, "Shutdown requested")
+        if state.status == AgentStateStatus.RUNNING:
+            await self._shutdown_running_state(state)
+            return
+
+        await self._shutdown_passive_state(state)
+
+    async def _active_children(self, state_id: str) -> list[AgentState]:
+        children = await self._store.list_states(parent_id=state_id, limit=1000)
+        return [child for child in children if child.is_active()]
+
+    async def _save_state(self, state: AgentState) -> None:
+        await self._store.save_state(state)
+        self._notify_state_change(state.id)
+        self.nudge()
+
+    async def _wait_until_not_pending(
+        self,
+        state_id: str,
+        *,
+        deadline: float | None,
+    ) -> AgentState | None:
+        event = asyncio.Event()
+        waiters = self._rt.waiters.setdefault(state_id, set())
+        waiters.add(event)
+        try:
+            while True:
+                event.clear()
+                state = await self._store.get_state(state_id)
+                if state is None or state.status != AgentStateStatus.PENDING:
+                    return state
+                try:
+                    await asyncio.wait_for(
+                        event.wait(),
+                        timeout=self._deadline_remaining(deadline),
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise RuntimeError(
+                        f"Timed out waiting for scheduler state '{state_id}' "
+                        "to become routable"
+                    ) from exc
+        finally:
+            waiters = self._rt.waiters.get(state_id)
+            if waiters is not None:
+                waiters.discard(event)
+                if not waiters:
+                    self._rt.waiters.pop(state_id, None)
+
+    def _notify_state_change(self, state_id: str) -> None:
+        for waiter in self._rt.waiters.get(state_id, set()):
+            waiter.set()
+
+    def _track_active_task(self, task: asyncio.Task) -> None:
+        self._rt.active_tasks.add(task)
+        task.add_done_callback(self._rt.active_tasks.discard)
+
+    async def _finish_stream_channel(self, state_id: str) -> None:
+        channel = self._rt.stream_channels.get(state_id)
+        if channel is not None:
+            await channel.queue.put(None)
+
+    def _build_stream(
+        self,
+        state_id: str,
+        *,
+        timeout: float | None,
+        include_child_events: bool,
+    ) -> AsyncIterator[AgentStreamItem]:
+        self._open_stream_channel(
+            state_id,
+            include_child_events=include_child_events,
         )
 
-    async def get_child_state(self, target_id: str) -> AgentState | None:
-        return await self._store.get_state(target_id)
+        async def iterator() -> AsyncIterator[AgentStreamItem]:
+            try:
+                async for item in self._consume_stream_channel(
+                    state_id,
+                    timeout=timeout,
+                ):
+                    yield item
+            finally:
+                await self._raise_stream_failure_if_needed(state_id)
+                self._close_stream_channel(state_id)
 
-    async def list_child_states(
+        return iterator()
+
+    def _open_stream_channel(
+        self,
+        state_id: str,
+        *,
+        include_child_events: bool,
+    ) -> None:
+        if state_id in self._rt.stream_channels:
+            raise RuntimeError(
+                f"stream subscriber already active for root '{state_id}'"
+            )
+        self._rt.stream_channels[state_id] = StreamChannelState(
+            queue=asyncio.Queue(),
+            include_child_events=include_child_events,
+        )
+
+    def _close_stream_channel(self, state_id: str) -> None:
+        self._rt.stream_channels.pop(state_id, None)
+
+    async def _route_with_stream(
         self,
         *,
-        caller_id: str | None,
-        session_id: str,
-    ) -> list[AgentState]:
-        return await self._store.list_states(
-            parent_id=caller_id,
-            session_id=session_id,
-            limit=1000,
+        root_state_id: str,
+        action: str,
+        timeout: float | None,
+        include_child_events: bool,
+        operation: Callable[[], Awaitable[str]],
+    ) -> RouteResult:
+        stream = self._build_stream(
+            root_state_id,
+            timeout=timeout,
+            include_child_events=include_child_events,
         )
+        try:
+            state_id = await operation()
+        except Exception:
+            self._close_stream_channel(root_state_id)
+            raise
+        return RouteResult(action=action, state_id=state_id, stream=stream)
 
-    async def inspect_child_processes(
+    async def _enqueue_and_return_state_id(
         self,
-        target_id: str,
-    ) -> list[dict[str, object]]:
-        agent = self._coordinator.get_registered_agent(target_id)
-        if agent is None:
-            return []
-
-        for tool in agent.tools:
-            if not isinstance(tool, AgentProcessRegistry):
-                continue
-            try:
-                return await tool.list_agent_processes(target_id, state="running")
-            except Exception:  # noqa: BLE001 - tool capability boundary
-                return []
-        return []
-
-    async def cancel_child(self, request: CancelChildRequest) -> CancelChildResult:
-        target_state = await self._store.get_state(request.target_id)
-        if target_state is None:
-            return CancelChildResult(outcome="missing")
-
-        if target_state.parent_id != request.caller_id:
-            raise PermissionError(
-                f"agent '{request.target_id}' is not a direct child of '{request.caller_id}'"
-            )
-
-        if not target_state.is_active():
-            return CancelChildResult(
-                outcome="already_terminal",
-                state=target_state,
-            )
-
-        if not request.force and target_state.status == AgentStateStatus.RUNNING:
-            return CancelChildResult(
-                outcome="requires_force",
-                state=target_state,
-                running_processes=await self.inspect_child_processes(request.target_id),
-            )
-
-        await self._tree_ops.cancel_subtree(request.target_id, request.reason)
-        return CancelChildResult(
-            outcome="cancelled",
-            state=target_state,
-        )
-
-    def age_seconds(self, timestamp: datetime, *, now: datetime | None = None) -> int:
-        current = now or datetime.now(timezone.utc)
-        normalized = (
-            timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=timezone.utc)
-        )
-        return int((current - normalized).total_seconds())
-
-    async def _build_sleep_condition(self, request: SleepRequest) -> WakeCondition:
-        now = datetime.now(timezone.utc)
-        if request.wake_type == WakeType.WAITSET:
-            wait_for = await self._resolve_waitset_targets(request)
-            return WakeCondition(
-                type=request.wake_type,
-                wait_for=wait_for,
-                wait_mode=request.wait_mode,
-                completed_ids=await self._collect_completed_child_ids(wait_for),
-                timeout_at=now
-                + timedelta(
-                    seconds=request.timeout or self._guard.limits.default_wait_timeout
-                ),
-            )
-
-        if request.delay_seconds is None:
-            raise ValueError("delay_seconds is required for timer/periodic wake type")
-
-        wake_condition = WakeCondition(
-            type=request.wake_type,
-            time_value=request.delay_seconds,
-            time_unit=request.time_unit,
-            wakeup_at=now
-            + timedelta(seconds=to_seconds(request.delay_seconds, request.time_unit)),
-        )
-        if request.wake_type == WakeType.PERIODIC and request.timeout is not None:
-            wake_condition.timeout_at = now + timedelta(seconds=request.timeout)
-        return wake_condition
-
-    def _build_sleep_summary(
-        self,
-        request: SleepRequest,
-        wake_condition: WakeCondition,
+        *,
+        state_id: str,
+        agent: SchedulerAgentPort,
+        user_input: UserInput,
     ) -> str:
-        summary = (
-            f"Agent '{request.agent_id}' entering sleep. "
-            f"Wake condition: {request.wake_type.value}"
-        )
-        if request.wake_type == WakeType.WAITSET:
-            summary += (
-                " "
-                f"(waiting_for={len(wake_condition.wait_for)}, "
-                f"mode={wake_condition.wait_mode.value}, "
-                f"already_done={len(wake_condition.completed_ids)})"
-            )
-        elif request.delay_seconds is not None:
-            summary += f" (delay={request.delay_seconds} {request.time_unit.value})"
-        if request.explain:
-            summary += f" | reason: {request.explain}"
-        return summary
+        await self.enqueue_input(state_id, user_input, agent=agent)
+        return state_id
 
-    async def _resolve_waitset_targets(self, request: SleepRequest) -> list[str]:
-        if request.wait_for is not None:
-            return request.wait_for
-        children = await self._store.list_states(
-            parent_id=request.agent_id,
-            session_id=request.session_id,
-            limit=1000,
-        )
-        return [child.id for child in children]
+    def _abort_runtime_state(self, state_id: str, reason: str) -> None:
+        signal = self._rt.abort_signals.get(state_id)
+        if signal is None:
+            signal = AbortSignal()
+            self._rt.abort_signals[state_id] = signal
+        if not signal.is_aborted():
+            signal.abort(reason)
 
-    async def _collect_completed_child_ids(self, child_ids: list[str]) -> list[str]:
-        completed_ids: list[str] = []
-        for child_id in child_ids:
-            child_state = await self._store.get_state(child_id)
-            if child_state is not None and child_state.is_terminal():
-                completed_ids.append(child_id)
-        return completed_ids
+        handle = self._rt.execution_handles.get(state_id)
+        if handle is not None:
+            handle.cancel(reason)
+
+    async def _shutdown_running_state(self, state: AgentState) -> None:
+        if state.is_root and state.is_persistent:
+            self._rt.shutdown_requested.add(state.id)
+            await self._save_state(state.with_queued(pending_input=_SHUTDOWN_SUMMARY_TASK))
+            return
+        await self._save_state(state.with_failed("Shutdown before completion"))
+
+    async def _shutdown_passive_state(self, state: AgentState) -> None:
+        if state.is_root and state.status in (
+            AgentStateStatus.WAITING,
+            AgentStateStatus.IDLE,
+        ):
+            await self._save_state(state.with_queued(pending_input=_SHUTDOWN_SUMMARY_TASK))
+            return
+
+        if state.status in (
+            AgentStateStatus.WAITING,
+            AgentStateStatus.PENDING,
+            AgentStateStatus.QUEUED,
+        ):
+            await self._save_state(state.with_failed("Shutdown before completion"))
+            if state.is_root:
+                await self._finish_stream_channel(state.id)
+
+    async def _consume_stream_channel(
+        self,
+        state_id: str,
+        *,
+        timeout: float | None,
+    ) -> AsyncIterator[AgentStreamItem]:
+        start = time.monotonic()
+        while True:
+            remaining = self._stream_remaining(timeout, start)
+            if timeout is not None and remaining == 0:
+                return
+
+            try:
+                item = await asyncio.wait_for(
+                    self._rt.stream_channels[state_id].queue.get(),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                return
+
+            if item is None:
+                return
+            yield item
+            if item.depth == 0 and item.type in {"run_completed", "run_failed"}:
+                return
+
+    def _stream_remaining(self, timeout: float | None, start: float) -> float | None:
+        if timeout is None:
+            return None
+        elapsed = time.monotonic() - start
+        if elapsed >= timeout:
+            return 0
+        return timeout - elapsed
+
+    def _deadline_remaining(self, deadline: float | None) -> float | None:
+        if deadline is None:
+            return None
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return 0
+        return remaining
+
+    async def _raise_stream_failure_if_needed(self, state_id: str) -> None:
+        state = await self._store.get_state(state_id)
+        if state is not None and state.status == AgentStateStatus.FAILED:
+            raise RuntimeError(state.result_summary or "scheduler stream failed")
 
 
 __all__ = ["SchedulerEngine"]

@@ -8,7 +8,6 @@ import json
 from datetime import datetime, timezone
 
 from agiwo.agent.agent import Agent
-from agiwo.scheduler.models import AgentStateStatus
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
@@ -55,31 +54,41 @@ class RuntimeAgentPool:
             )
             if current_fingerprint == expected_fingerprint:
                 return existing
-
-            state = await self._scheduler.get_state(session.scheduler_state_id)
-            if state is not None and state.status == AgentStateStatus.RUNNING:
-                logger.info(
-                    "runtime_agent_refresh_deferred",
-                    runtime_agent_id=session.runtime_agent_id,
-                    base_agent_id=session.base_agent_id,
-                    reason="state_running",
-                )
-                return existing
-
             logger.info(
                 "runtime_agent_refresh_on_config_change",
                 runtime_agent_id=session.runtime_agent_id,
                 base_agent_id=session.base_agent_id,
             )
-            await self.close_runtime_agent(session.runtime_agent_id)
 
+        previous_runtime_id = session.runtime_agent_id
         agent = await build_agent(
             base_config,
             self._console_config,
             self._agent_registry,
-            id=session.runtime_agent_id or None,
+            id=previous_runtime_id or None,
         )
         self._assign_runtime_identity(session, agent)
+
+        if previous_runtime_id:
+            rebound = await self._scheduler.rebind_agent(
+                session.scheduler_state_id or previous_runtime_id,
+                agent,
+            )
+            if not rebound and existing is not None:
+                logger.info(
+                    "runtime_agent_refresh_deferred",
+                    runtime_agent_id=previous_runtime_id,
+                    base_agent_id=session.base_agent_id,
+                    reason="state_active",
+                )
+                await agent.close()
+                return existing
+
+        retired = self._runtime_agents.pop(previous_runtime_id, None)
+        self._runtime_agent_config_fingerprints.pop(previous_runtime_id, None)
+        if retired is not None and retired is not agent:
+            await retired.close()
+
         session.updated_at = datetime.now(timezone.utc)
         await self._store.upsert_session(session)
 

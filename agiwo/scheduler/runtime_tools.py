@@ -3,14 +3,13 @@
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agiwo.agent import AgentContext
 from agiwo.agent.runtime_tools import RuntimeToolOutcome
 from agiwo.agent.runtime import TerminationReason
-from agiwo.scheduler.control import (
+from agiwo.scheduler.commands import (
     CancelChildRequest,
-    SchedulerControl,
     SleepRequest,
     SpawnChildRequest,
 )
@@ -21,6 +20,9 @@ from agiwo.scheduler.formatting import (
 )
 from agiwo.tool.base import ToolDefinition, ToolResult
 from agiwo.utils.abort_signal import AbortSignal
+
+if TYPE_CHECKING:
+    from agiwo.scheduler.engine import SchedulerEngine
 
 
 class SchedulerRuntimeTool(ABC):
@@ -133,7 +135,7 @@ class SchedulerRuntimeTool(ABC):
 class SpawnAgentTool(SchedulerRuntimeTool):
     """Spawn a child agent to handle a sub-task."""
 
-    def __init__(self, port: SchedulerControl) -> None:
+    def __init__(self, port: "SchedulerEngine") -> None:
         self._port = port
 
     def get_name(self) -> str:
@@ -221,7 +223,7 @@ class SpawnAgentTool(SchedulerRuntimeTool):
 class SleepAndWaitTool(SchedulerRuntimeTool):
     """Put the current agent to sleep until a wake condition is met."""
 
-    def __init__(self, port: SchedulerControl) -> None:
+    def __init__(self, port: "SchedulerEngine") -> None:
         self._port = port
 
     def get_name(self) -> str:
@@ -355,7 +357,7 @@ class SleepAndWaitTool(SchedulerRuntimeTool):
 class QuerySpawnedAgentTool(SchedulerRuntimeTool):
     """Query the status and result of a spawned child agent."""
 
-    def __init__(self, port: SchedulerControl) -> None:
+    def __init__(self, port: "SchedulerEngine") -> None:
         self._port = port
 
     def get_name(self) -> str:
@@ -432,7 +434,7 @@ class QuerySpawnedAgentTool(SchedulerRuntimeTool):
 class CancelAgentTool(SchedulerRuntimeTool):
     """Cancel a child agent, optionally forcing termination even with running processes."""
 
-    def __init__(self, port: SchedulerControl) -> None:
+    def __init__(self, port: "SchedulerEngine") -> None:
         self._port = port
 
     def get_name(self) -> str:
@@ -562,7 +564,7 @@ class CancelAgentTool(SchedulerRuntimeTool):
 class ListAgentsTool(SchedulerRuntimeTool):
     """List all direct child agents of the calling agent with detailed status information."""
 
-    def __init__(self, port: SchedulerControl) -> None:
+    def __init__(self, port: "SchedulerEngine") -> None:
         self._port = port
 
     def get_name(self) -> str:

@@ -1,22 +1,37 @@
 # Scheduler
 
-The `Scheduler` is an orchestration layer built on top of agents. It provides multi-agent coordination, long-running task management, sleep/wake cycles, and steering capabilities.
+`Scheduler` 是 `Agent` 之上的编排层。它不负责 agent 内部推理，而是负责这几件事：
 
-## When to Use the Scheduler
+- root/child agent 的生命周期
+- persistent root 的多轮输入续跑
+- sleep/wake 和 pending event
+- steer / cancel / shutdown
+- 流式输出和等待结果
 
-Use the Scheduler when you need:
+如果只是一次性执行，优先用 `Agent.run()` / `Agent.run_stream()`。只有在你需要“长期存在的 root”或“multi-agent orchestration”时才需要 `Scheduler`。
 
-- **Long-running agents** that persist across multiple interactions
-- **Multi-agent orchestration** with spawn/cancel/steer
-- **Periodic or scheduled tasks** with sleep/wake
-- **Persistent agent state** that survives individual runs
+## Mental Model
 
-For simple one-shot or streaming interactions, use `Agent.run()` / `Agent.run_stream()` directly.
+```mermaid
+flowchart LR
+    Caller["Caller / Console"] --> Facade["Scheduler"]
+    Facade --> Engine["SchedulerEngine"]
+    Engine --> Store["AgentState + PendingEvent"]
+    Engine --> Runtime["RuntimeState"]
+    Engine --> Runner["SchedulerRunner"]
+    Runner --> Agent["Agent.start() / Handle"]
+```
+
+可以把 scheduler 看成两层：
+
+- 持久化层：`AgentState` + `PendingEvent`
+- 执行层：`SchedulerEngine` 决定谁该跑，`SchedulerRunner` 负责把一轮 run 跑完
 
 ## Quick Start
 
 ```python
 import asyncio
+
 from agiwo import Agent, AgentConfig, Scheduler
 from agiwo.llm import OpenAIModel
 
@@ -25,148 +40,155 @@ async def main() -> None:
     agent = Agent(
         AgentConfig(
             name="orchestrator",
-            description="Can delegate and coordinate",
-            system_prompt="Break complex tasks into sub-tasks.",
+            description="Coordinates long-running work",
+            system_prompt="Delegate only truly independent work.",
         ),
-        model=OpenAIModel(id="gpt-4o", name="gpt-4o"),
+        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
     )
 
     async with Scheduler() as scheduler:
-        result = await scheduler.run(
-            agent,
-            "Research two approaches to X and compare them.",
-        )
+        result = await scheduler.run(agent, "Research two approaches and compare them.")
         print(result.response)
 
 
 asyncio.run(main())
 ```
 
-## Core Methods
+## Core Entry Points
 
-### `run()` — Run and wait
-
-Submits an agent and waits for completion:
+### One-shot root
 
 ```python
 result = await scheduler.run(agent, "Do something complex")
 ```
 
-| Parameter | Description |
-|-----------|-------------|
-| `agent` | The Agent instance |
-| `user_input` | Input text or `UserInput` |
-| `session_id` | Optional session ID for continuity |
-| `timeout` | Optional timeout in seconds |
-| `persistent` | If `True`, agent stays alive after completion |
-| `abort_signal` | Cancellation signal |
-
-### `submit()` — Fire and forget
-
-Submits an agent and returns a state ID immediately:
+### Submit and wait later
 
 ```python
-state_id = await scheduler.submit(agent, "Background task")
-# Do other work...
-result = await scheduler.wait_for(state_id)
+state_id = await scheduler.submit(agent, "Background work")
+result = await scheduler.wait_for(state_id, timeout=30)
 ```
 
-### `stream()` — Stream events
+### Persistent root
+
+`enqueue_input()` 只接受 `IDLE` 或 `FAILED` 的 persistent root，不是消息队列。
 
 ```python
-async for event in scheduler.stream("Do something", agent=agent):
-    if event.type == "step_delta" and event.delta.content:
-        print(event.delta.content, end="", flush=True)
+state_id = await scheduler.submit(agent, "First message", persistent=True)
+await scheduler.wait_for(state_id)
+
+await scheduler.enqueue_input(state_id, "Second message")
+await scheduler.wait_for(state_id)
 ```
 
-### `enqueue_input()` — Feed more input
+### Route root input from an integration
 
-Add input to an already-running or idle agent:
+`route_root_input()` 是 Console/Channel 集成用的高层入口。它会根据当前 root state 自动决定 `submit` / `enqueue_input` / `steer`。
 
 ```python
-await scheduler.enqueue_input(state_id, "Now focus on the details")
+result = await scheduler.route_root_input(
+    "Continue the conversation",
+    agent=agent,
+    state_id=existing_state_id,
+    persistent=True,
+)
+print(result.action)   # submitted / enqueued / steered
+print(result.state_id)
 ```
 
-### `steer()` — Guide a running agent
+### Stream output
 
 ```python
-await scheduler.steer(state_id, "Change direction: focus on cost instead")
+async for item in scheduler.stream("Write a summary", agent=agent):
+    if item.type == "step_delta" and item.delta.content:
+        print(item.delta.content, end="", flush=True)
 ```
 
-### `cancel()` — Stop an agent
+## State Model
 
-```python
-await scheduler.cancel(state_id, reason="No longer needed")
+| State | Meaning |
+| --- | --- |
+| `PENDING` | child state 已落库，但这轮还没真正启动 |
+| `RUNNING` | 当前正在执行一轮 agent cycle |
+| `WAITING` | 正在等待 wake condition |
+| `IDLE` | persistent root 本轮完成，正在待命 |
+| `QUEUED` | persistent root 已收到下一条输入，等待下一轮启动 |
+| `COMPLETED` | 非 persistent run 完成 |
+| `FAILED` | 当前 state 失败或被终止 |
+
+### Root lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> RUNNING: submit(root)
+    RUNNING --> WAITING: sleep_and_wait(...)
+    RUNNING --> IDLE: persistent root finished
+    IDLE --> QUEUED: enqueue_input(...)
+    FAILED --> QUEUED: enqueue_input(...)
+    QUEUED --> RUNNING: tick(ROOT_QUEUED_INPUT)
+    WAITING --> RUNNING: tick(WAKE_READY / WAKE_TIMEOUT / WAKE_EVENTS)
+    RUNNING --> COMPLETED: one-shot root
+    RUNNING --> FAILED: error / cancel / shutdown
 ```
 
-### `shutdown()` — Terminate and clean up
+### Why `IDLE`, `QUEUED`, `WAITING` are separate
 
-```python
-await scheduler.shutdown(state_id)
+- `WAITING`：在等真实条件，比如 timer、waitset、debounced events
+- `IDLE`：persistent root 这一轮结束了，但实例还活着
+- `QUEUED`：下一条输入已经到了，只是还没开始下一轮
+
+## Tick Model
+
+后台 loop 会周期性调用 `engine.tick()`，但 `submit()` 是直接启动，不等 tick。
+
+```mermaid
+flowchart TD
+    Loop["Scheduler._loop()"] --> Tick["engine.tick()"]
+    Tick --> Plan["plan DispatchAction"]
+    Plan --> Dispatch["runner.run(action)"]
+    Dispatch --> Loop
 ```
 
-### `get_state()` — Check agent state
+`tick()` 的核心逻辑是：
 
-```python
-state = await scheduler.get_state(state_id)
-print(state.status)  # IDLE, RUNNING, WAITING, QUEUED, COMPLETED, FAILED
-```
-
-## Agent States
-
-| State | Description |
-|-------|-------------|
-| `IDLE` | Agent is alive and waiting for input |
-| `RUNNING` | Agent is actively executing |
-| `WAITING` | Agent is waiting for a child or event |
-| `QUEUED` | Agent is queued for execution |
-| `COMPLETED` | Agent finished successfully |
-| `FAILED` | Agent terminated with an error |
+- 传播 terminal child 到 parent waitset
+- 为 `PENDING` child 产出 `CHILD_PENDING`
+- 为 `QUEUED` root 产出 `ROOT_QUEUED_INPUT`
+- 为 `WAITING` state 产出 `WAKE_READY / WAKE_TIMEOUT / WAKE_EVENTS`
 
 ## Scheduling Tools
 
-When an agent runs under the scheduler, it gets access to additional tools for orchestrating sub-tasks:
+运行在 scheduler 下的 agent 会自动获得这些 runtime tools：
 
-| Tool | Description |
-|------|-------------|
-| `spawn_agent` | Spawn a child agent for a sub-task |
-| `sleep_and_wait` | Sleep until a condition is met |
-| `query_spawned_agent` | Check on a spawned agent's status |
-| `cancel_agent` | Cancel a spawned agent |
-| `list_agents` | List all spawned agents |
+| Tool | Purpose |
+| --- | --- |
+| `spawn_agent` | 派生 child agent |
+| `sleep_and_wait` | 让当前 agent 进入 `WAITING` |
+| `query_spawned_agent` | 查看 child state |
+| `cancel_agent` | 取消 child subtree |
+| `list_agents` | 列出直接 child |
 
-These tools are injected automatically — you don't need to register them.
+这些 tools 由 `Scheduler` 自动注入，不需要手动注册。
 
-## SchedulerConfig
+## Runtime vs Persistence
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `check_interval` | `1.0` | Seconds between scheduler ticks |
-| `max_concurrent` | `10` | Max concurrent agent executions |
-| `state_storage` | `"memory"` | `"memory"` or `"sqlite"` |
-| `task_limits` | `{}` | Task guard limits |
-| `graceful_shutdown_wait_seconds` | `30` | Wait time for active tasks on shutdown |
+这一点最容易帮助你读懂代码：
 
-### Persistent State Storage
-
-For production, use SQLite to persist scheduler state across restarts:
+- `AgentStateStorage` 里保存的是事实快照
+- `RuntimeState` 里保存的是进程内 live object
 
 ```python
-scheduler = Scheduler(SchedulerConfig(state_storage="sqlite"))
+RuntimeState(
+    agents=...,             # live SchedulerAgentPort
+    execution_handles=...,  # live AgentExecutionHandlePort
+    abort_signals=...,
+    waiters=...,
+    stream_channels=...,
+)
 ```
 
-## Architecture
+所以这层代码的主线其实只有三条：
 
-```
-Scheduler (facade)
-├── SchedulerEngine      — Public orchestration API
-├── SchedulerStateOps    — State transitions
-├── SchedulerTickOps     — Tick phases (check wake, timers, etc.)
-├── SchedulerTreeOps     — Tree cancel/shutdown
-├── SchedulerControlOps  — Tool-facing control helpers
-├── SchedulerRunner      — Single agent execution
-├── SchedulerCoordinator — In-process state (agents, handles, tasks)
-└── Store                — Persistence (memory or sqlite)
-```
-
-Dependency direction: `Scheduler → Agent`, never the reverse.
+1. `route_root_input()` 决定 root 输入怎么进入系统
+2. `tick()` 决定哪些 state 该被 dispatch
+3. `runner.run()` 执行一次 dispatch action，并把结果翻译回 state

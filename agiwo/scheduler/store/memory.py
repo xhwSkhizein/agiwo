@@ -1,6 +1,7 @@
 """In-memory scheduler state storage."""
 
 import asyncio
+from copy import deepcopy
 from collections.abc import Collection
 
 from agiwo.scheduler.models import (
@@ -22,10 +23,13 @@ class InMemoryAgentStateStorage(AgentStateStorage):
 
     async def save_state(self, state: AgentState) -> None:
         async with self._lock:
-            self._states[state.id] = state
+            self._states[state.id] = deepcopy(state)
 
     async def get_state(self, state_id: str) -> AgentState | None:
-        return self._states.get(state_id)
+        state = self._states.get(state_id)
+        if state is None:
+            return None
+        return deepcopy(state)
 
     async def list_states(
         self,
@@ -38,7 +42,7 @@ class InMemoryAgentStateStorage(AgentStateStorage):
         offset: int = 0,
     ) -> list[AgentState]:
         status_filter = normalize_statuses(statuses)
-        states = list(self._states.values())
+        states = [deepcopy(state) for state in self._states.values()]
         if status_filter is not None:
             states = [state for state in states if state.status in status_filter]
         if parent_id is not None:
@@ -56,7 +60,7 @@ class InMemoryAgentStateStorage(AgentStateStorage):
 
     async def save_event(self, event: PendingEvent) -> None:
         async with self._lock:
-            self._events[event.id] = event
+            self._events[event.id] = deepcopy(event)
 
     async def list_events(
         self,
@@ -64,7 +68,7 @@ class InMemoryAgentStateStorage(AgentStateStorage):
         target_agent_id: str | None = None,
         session_id: str | None = None,
     ) -> list[PendingEvent]:
-        events = list(self._events.values())
+        events = [deepcopy(event) for event in self._events.values()]
         if target_agent_id is not None:
             events = [
                 event for event in events if event.target_agent_id == target_agent_id

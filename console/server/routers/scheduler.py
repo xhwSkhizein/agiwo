@@ -58,7 +58,6 @@ async def list_agent_states(
     offset: int = Query(default=0, ge=0),
 ) -> list[AgentStateListItem]:
     """List all agent states with optional status filter."""
-    storage = scheduler.store
     status_enum = None
     if status is not None:
         try:
@@ -67,7 +66,7 @@ async def list_agent_states(
             raise HTTPException(
                 status_code=400, detail=f"Invalid status: {status}"
             ) from exc
-    states = await storage.list_states(
+    states = await scheduler.list_states(
         statuses=(status_enum,) if status_enum is not None else None,
         limit=limit,
         offset=offset,
@@ -90,8 +89,7 @@ async def get_agent_state(
     runtime: ConsoleRuntimeDep,
 ) -> AgentStateResponse:
     """Get a single agent state by ID."""
-    storage = scheduler.store
-    state = await storage.get_state(state_id)
+    state = await scheduler.get_state(state_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Agent state not found")
     run_storage = runtime.run_step_storage
@@ -109,8 +107,7 @@ async def get_children(
     runtime: ConsoleRuntimeDep,
 ) -> list[AgentStateListItem]:
     """Get child agent states for a given parent state."""
-    storage = scheduler.store
-    children = await storage.list_states(parent_id=state_id, limit=1000)
+    children = await scheduler.list_states(parent_id=state_id, limit=1000)
     children.sort(key=lambda s: s.created_at, reverse=True)
     run_storage = runtime.run_step_storage
     metrics_by_state = await build_metrics_by_state(children, run_storage)
@@ -126,25 +123,7 @@ async def get_children(
 @router.get("/stats", response_model=SchedulerStatsResponse)
 async def get_stats(scheduler: SchedulerDep) -> SchedulerStatsResponse:
     """Get scheduler statistics — count of states by status."""
-    storage = scheduler.store
-    all_states = await storage.list_states(limit=10000)
-    counts: dict[str, int] = {
-        "pending": 0,
-        "running": 0,
-        "waiting": 0,
-        "idle": 0,
-        "queued": 0,
-        "completed": 0,
-        "failed": 0,
-    }
-    for s in all_states:
-        key = s.status.value
-        if key in counts:
-            counts[key] += 1
-    return SchedulerStatsResponse(
-        total=len(all_states),
-        **counts,
-    )
+    return SchedulerStatsResponse(**await scheduler.get_stats())
 
 
 # ── State Control ────────────────────────────────────────────────────────────
@@ -211,11 +190,10 @@ async def list_pending_events(
     scheduler: SchedulerDep,
 ) -> list[PendingEventResponse]:
     """List pending events for an agent."""
-    storage = scheduler.store
-    state = await storage.get_state(state_id)
+    state = await scheduler.get_state(state_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Agent state not found")
-    events = await storage.list_events(
+    events = await scheduler.list_events(
         target_agent_id=state_id,
         session_id=state.session_id,
     )

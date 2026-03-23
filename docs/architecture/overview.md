@@ -83,15 +83,13 @@ The core execution engine:
 | Module | Responsibility |
 |--------|---------------|
 | `scheduler.py` | Public facade — `Scheduler` class |
-| `engine.py` | `SchedulerEngine` — orchestration API |
-| `runner.py` | Single agent execution cycle |
-| `coordinator.py` | In-process state (agents, handles, tasks) |
-| `control.py` | Interface for scheduler tools |
-| `state_ops.py` | State transitions |
-| `tick_ops.py` | Scheduler tick phases |
-| `tree_ops.py` | Tree cancel/shutdown |
+| `engine.py` | `SchedulerEngine` — orchestration owner, tick planning, query/control API |
+| `runner.py` | `SchedulerRunner` — one dispatch action per run cycle |
+| `commands.py` | Dispatch reasons and scheduler command/result DTOs |
+| `runtime_state.py` | In-process runtime state plus tick helper functions |
+| `tool_control.py` | Tool-facing child/sleep/cancel helpers |
 | `guard.py` | Task spawn/wake guardrails |
-| `store/` | State persistence (memory/sqlite) |
+| `store/` | State persistence (memory/sqlite/mongodb) |
 | `runtime_tools.py` | Scheduler-specific tools (spawn, sleep, etc.) |
 
 ### `agiwo/observability/` — Tracing

@@ -2,12 +2,11 @@
 
 import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from agiwo.agent import TerminationReason
-from agiwo.scheduler.coordinator import SchedulerCoordinator
 from agiwo.scheduler.engine import SchedulerEngine
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
@@ -19,7 +18,6 @@ from agiwo.scheduler.models import (
     WaitMode,
     WakeType,
 )
-from agiwo.scheduler.runner import SchedulerRunner
 from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
     ListAgentsTool,
@@ -47,23 +45,12 @@ def guard(store):
 
 
 @pytest.fixture
-def coordinator():
-    return SchedulerCoordinator()
-
-
-@pytest.fixture
-def runner(store, coordinator):
-    return SchedulerRunner(store, coordinator, asyncio.Semaphore(10))
-
-
-@pytest.fixture
-def control(store, guard, coordinator, runner):
+def control(store, guard):
     return SchedulerEngine(
         config=SchedulerConfig(),
         store=store,
         guard=guard,
-        coordinator=coordinator,
-        runner=runner,
+        semaphore=asyncio.Semaphore(10),
     )
 
 
@@ -142,6 +129,28 @@ class TestSpawnAgentTool:
         assert state.config_overrides["system_prompt"] == "You are a specialist."
 
     @pytest.mark.asyncio
+    async def test_spawn_rejects_custom_child_id_collision(self, store, control, context):
+        await _register_parent(store)
+        existing = AgentState(
+            id="my-child",
+            session_id="sess-1",
+            status=AgentStateStatus.PENDING,
+            task="existing task",
+            parent_id="orch",
+            depth=1,
+        )
+        await store.save_state(existing)
+
+        tool = SpawnAgentTool(control)
+        result = await tool.execute_for_agent(
+            {"task": "Task", "child_id": "my-child", "tool_call_id": "tc-1"},
+            context,
+        )
+
+        assert result.result.is_success is False
+        assert "already exists" in result.result.content
+
+    @pytest.mark.asyncio
     async def test_spawn_fails_without_agent_id(self, store, control):
         ctx = build_agent_context(
             session_id="sess-1",
@@ -168,15 +177,14 @@ class TestSpawnAgentTool:
         assert r1.result.output["child_id"] != r2.result.output["child_id"]
 
     @pytest.mark.asyncio
-    async def test_spawn_rejected_max_depth(self, store, coordinator, runner, context):
+    async def test_spawn_rejected_max_depth(self, store, context):
         limits = TaskLimits(max_depth=2)
         guard = TaskGuard(limits, store)
         control = SchedulerEngine(
             config=SchedulerConfig(),
             store=store,
             guard=guard,
-            coordinator=coordinator,
-            runner=runner,
+            semaphore=asyncio.Semaphore(10),
         )
         await _register_parent(store, depth=2)
         tool = SpawnAgentTool(control)
@@ -189,7 +197,7 @@ class TestSpawnAgentTool:
 
     @pytest.mark.asyncio
     async def test_spawn_rejected_max_children(
-        self, store, coordinator, runner, context
+        self, store, context
     ):
         limits = TaskLimits(max_children_per_agent=2)
         guard = TaskGuard(limits, store)
@@ -197,8 +205,7 @@ class TestSpawnAgentTool:
             config=SchedulerConfig(),
             store=store,
             guard=guard,
-            coordinator=coordinator,
-            runner=runner,
+            semaphore=asyncio.Semaphore(10),
         )
         await _register_parent(store)
         tool = SpawnAgentTool(control)
@@ -481,7 +488,7 @@ class TestCancelAgentTool:
 
     @pytest.mark.asyncio
     async def test_cancel_running_without_force_includes_running_bash_processes(
-        self, store, coordinator, control, context
+        self, store, control, context
     ):
         class MockBashSandbox:
             async def list_processes_by_agent(
@@ -516,7 +523,7 @@ class TestCancelAgentTool:
         mock_agent = MagicMock()
         mock_agent.tools = [bash_process_tool]
         mock_agent.id = "child-run"
-        coordinator.register_agent(mock_agent)
+        control._rt.agents["child-run"] = mock_agent
 
         tool = CancelAgentTool(control)
         result = await tool.execute_for_agent(
@@ -538,15 +545,15 @@ class TestCancelAgentTool:
             parent_id="orch",
         )
         await store.save_state(child)
-        control._tree_ops.cancel_subtree = AsyncMock()  # type: ignore[method-assign]
         tool = CancelAgentTool(control)
         result = await tool.execute_for_agent(
             {"agent_id": "child-force", "force": True, "tool_call_id": "tc-1"}, context
         )
         assert result.result.is_success
-        control._tree_ops.cancel_subtree.assert_awaited_once_with(
-            "child-force", "Cancelled by parent agent"
-        )
+        updated = await store.get_state("child-force")
+        assert updated is not None
+        assert updated.status == AgentStateStatus.FAILED
+        assert updated.result_summary == "Cancelled by parent agent"
 
     @pytest.mark.asyncio
     async def test_cancel_already_completed(self, store, control, context):

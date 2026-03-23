@@ -99,7 +99,7 @@ class TestSchedulerChatCancel:
             task="Done task",
             result_summary="All done.",
         )
-        await scheduler.store.save_state(state)
+        await scheduler._store.save_state(state)
 
         resp = await client.post(
             "/api/scheduler/chat/some-agent/cancel",
@@ -118,7 +118,7 @@ class TestSchedulerChatCancel:
             status=AgentStateStatus.RUNNING,
             task="Long task",
         )
-        await scheduler.store.save_state(state)
+        await scheduler._store.save_state(state)
 
         resp = await client.post(
             "/api/scheduler/chat/some-agent/cancel",
@@ -129,7 +129,7 @@ class TestSchedulerChatCancel:
         assert data["ok"] is True
         assert data["state_id"] == "running-state"
 
-        updated = await scheduler.store.get_state("running-state")
+        updated = await scheduler._store.get_state("running-state")
         assert updated is not None
         assert updated.status == AgentStateStatus.FAILED
 
@@ -144,7 +144,7 @@ class TestSchedulerChatCancel:
             status=AgentStateStatus.WAITING,
             task="Waiting task",
         )
-        await scheduler.store.save_state(state)
+        await scheduler._store.save_state(state)
 
         resp = await client.post(
             "/api/scheduler/chat/some-agent/cancel",
@@ -181,7 +181,7 @@ class TestSchedulerChatCancel:
             result_summary="Done",
         )
         for s in [parent, child1, child2]:
-            await scheduler.store.save_state(s)
+            await scheduler._store.save_state(s)
 
         resp = await client.post(
             "/api/scheduler/chat/some-agent/cancel",
@@ -189,15 +189,15 @@ class TestSchedulerChatCancel:
         )
         assert resp.status_code == 200
 
-        parent_state = await scheduler.store.get_state("parent-cancel")
+        parent_state = await scheduler._store.get_state("parent-cancel")
         assert parent_state is not None
         assert parent_state.status == AgentStateStatus.FAILED
 
-        child1_state = await scheduler.store.get_state("child-cancel-1")
+        child1_state = await scheduler._store.get_state("child-cancel-1")
         assert child1_state is not None
         assert child1_state.status == AgentStateStatus.FAILED
 
-        child2_state = await scheduler.store.get_state("child-cancel-2")
+        child2_state = await scheduler._store.get_state("child-cancel-2")
         assert child2_state is not None
         assert child2_state.status == AgentStateStatus.COMPLETED
 

@@ -70,6 +70,9 @@ async with Scheduler() as scheduler:
         persistent=True,  # Stays alive after completion
     )
 
+    # Wait until the first round settles to IDLE
+    await scheduler.wait_for(orchestrator_id)
+
     # Feed more input later
     await scheduler.enqueue_input(orchestrator_id, "Now analyze the cost implications")
 
@@ -81,7 +84,7 @@ async with Scheduler() as scheduler:
         if event.type == "step_delta" and event.delta.content:
             print(event.delta.content, end="", flush=True)
 
-    # Steer the agent
+    # Steer only while the root is active
     await scheduler.steer(orchestrator_id, "Focus on enterprise use cases")
 
     # Cancel when done
