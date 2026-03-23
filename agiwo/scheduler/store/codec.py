@@ -55,10 +55,10 @@ def serialize_wake_condition_for_store(
 
     result: dict[str, Any] = {"type": wake_condition.type.value}
     if wake_condition.wait_for:
-        result["wait_for"] = wake_condition.wait_for
+        result["wait_for"] = list(wake_condition.wait_for)
     result["wait_mode"] = wake_condition.wait_mode.value
     if wake_condition.completed_ids:
-        result["completed_ids"] = wake_condition.completed_ids
+        result["completed_ids"] = list(wake_condition.completed_ids)
     if wake_condition.time_value is not None:
         result["time_value"] = wake_condition.time_value
     if wake_condition.time_unit is not None:

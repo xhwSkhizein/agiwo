@@ -107,9 +107,9 @@ class TestWakeCondition:
         assert payload is not None
         restored = deserialize_wake_condition_for_store(payload)
         assert restored.type == WakeType.WAITSET
-        assert restored.wait_for == ["c1", "c2"]
+        assert restored.wait_for == ("c1", "c2")
         assert restored.wait_mode == WaitMode.ANY
-        assert restored.completed_ids == ["c1"]
+        assert restored.completed_ids == ("c1",)
         assert restored.wakeup_at == wakeup
         assert restored.timeout_at == timeout
 

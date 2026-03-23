@@ -232,7 +232,11 @@ class SchedulerRunner:
     async def _prepare_state_for_run(self, action: DispatchAction) -> UserInput:
         state = action.state
         if action.reason == DispatchReason.ROOT_SUBMIT:
-            return action.input_override if action.input_override is not None else state.task
+            return (
+                action.input_override
+                if action.input_override is not None
+                else state.task
+            )
 
         if action.reason == DispatchReason.ROOT_QUEUED_INPUT:
             if action.input_override is None:
@@ -248,7 +252,11 @@ class SchedulerRunner:
             return action.input_override
 
         if action.reason == DispatchReason.CHILD_PENDING:
-            user_input = action.input_override if action.input_override is not None else state.task
+            user_input = (
+                action.input_override
+                if action.input_override is not None
+                else state.task
+            )
             await self._save_state(
                 state.with_running(
                     task=user_input,
@@ -322,9 +330,11 @@ class SchedulerRunner:
         ):
             await self._fanout_stream_item(state, item)
             result = self._maybe_build_run_output(item, fallback=result)
-
-        final_result = await handle.wait()
-        return final_result if result is None else result
+        if result is None:
+            raise RuntimeError(
+                f"Agent '{state.id}' execution stream ended without a terminal result"
+            )
+        return result
 
     def _maybe_build_run_output(
         self,
@@ -349,7 +359,9 @@ class SchedulerRunner:
             )
         return fallback
 
-    async def _fanout_stream_item(self, state: AgentState, item: AgentStreamItem) -> None:
+    async def _fanout_stream_item(
+        self, state: AgentState, item: AgentStreamItem
+    ) -> None:
         root_id = state.id if state.is_root else state.parent_id
         if root_id is None:
             return
@@ -502,10 +514,10 @@ class SchedulerRunner:
                 failed[child_id] = "Agent state not found"
             elif child.status == AgentStateStatus.FAILED:
                 failed[child_id] = child.result_summary or "Unknown failure"
+            elif child.status == AgentStateStatus.COMPLETED:
+                succeeded[child_id] = child.result_summary or "Completed"
             else:
-                succeeded[child_id] = (
-                    child.result_summary or f"status={child.status.value}"
-                )
+                failed[child_id] = f"Not finished: status={child.status.value}"
         return succeeded, failed
 
     def _should_preserve_terminal_abort(self, state: AgentState) -> bool:

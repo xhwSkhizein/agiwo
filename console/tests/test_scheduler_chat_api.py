@@ -129,7 +129,7 @@ class TestSchedulerChatCancel:
         assert data["ok"] is True
         assert data["state_id"] == "running-state"
 
-        updated = await scheduler._store.get_state("running-state")
+        updated = await scheduler.get_state("running-state")
         assert updated is not None
         assert updated.status == AgentStateStatus.FAILED
 
@@ -189,15 +189,15 @@ class TestSchedulerChatCancel:
         )
         assert resp.status_code == 200
 
-        parent_state = await scheduler._store.get_state("parent-cancel")
+        parent_state = await scheduler.get_state("parent-cancel")
         assert parent_state is not None
         assert parent_state.status == AgentStateStatus.FAILED
 
-        child1_state = await scheduler._store.get_state("child-cancel-1")
+        child1_state = await scheduler.get_state("child-cancel-1")
         assert child1_state is not None
         assert child1_state.status == AgentStateStatus.FAILED
 
-        child2_state = await scheduler._store.get_state("child-cancel-2")
+        child2_state = await scheduler.get_state("child-cancel-2")
         assert child2_state is not None
         assert child2_state.status == AgentStateStatus.COMPLETED
 

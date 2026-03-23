@@ -5,7 +5,8 @@ This module owns the persisted scheduler state snapshot plus related enums and
 configuration models.
 """
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
@@ -87,6 +88,55 @@ def to_seconds(value: float, unit: TimeUnit) -> float:
     raise ValueError(f"Unknown time unit: {unit}")
 
 
+def _freeze_value(value: object) -> object:
+    if isinstance(value, FrozenDict):
+        return value
+    if isinstance(value, dict):
+        return FrozenDict(value)
+    if isinstance(value, list):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_value(item) for item in value)
+    return deepcopy(value)
+
+
+class FrozenDict(dict[str, Any]):
+    """Shallowly immutable mapping with deepcopy support for frozen dataclasses."""
+
+    __slots__ = ()
+
+    def __init__(self, initial: Mapping[str, Any] | None = None) -> None:
+        super().__init__()
+        if initial is None:
+            return
+        for key, value in initial.items():
+            dict.__setitem__(self, key, _freeze_value(value))
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "FrozenDict":
+        return type(self)(
+            {deepcopy(key, memo): deepcopy(value, memo) for key, value in self.items()}
+        )
+
+    def _blocked(self, *_args: object, **_kwargs: object) -> None:
+        raise TypeError("FrozenDict is immutable")
+
+    __setitem__ = _blocked
+    __delitem__ = _blocked
+    clear = _blocked
+    pop = _blocked
+    popitem = _blocked
+    setdefault = _blocked
+    update = _blocked
+
+
+def thaw_value(value: object) -> object:
+    if isinstance(value, FrozenDict):
+        return {key: thaw_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [thaw_value(item) for item in value]
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class ChildAgentConfigOverrides:
     """Typed overrides used when deriving a scheduler child agent."""
@@ -100,13 +150,17 @@ class WakeCondition:
     """Condition under which a waiting agent should be woken."""
 
     type: WakeType
-    wait_for: list[str] = field(default_factory=list)
+    wait_for: tuple[str, ...] = field(default_factory=tuple)
     wait_mode: WaitMode = WaitMode.ALL
-    completed_ids: list[str] = field(default_factory=list)
+    completed_ids: tuple[str, ...] = field(default_factory=tuple)
     time_value: float | None = None
     time_unit: TimeUnit | None = None
     wakeup_at: datetime | None = None
     timeout_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "wait_for", tuple(self.wait_for))
+        object.__setattr__(self, "completed_ids", tuple(self.completed_ids))
 
     def is_satisfied(self, now: datetime) -> bool:
         """Check if this wake condition is currently satisfied."""
@@ -130,8 +184,8 @@ class WakeCondition:
             return None
         return to_seconds(self.time_value, self.time_unit)
 
-    def with_completed_ids(self, completed_ids: list[str]) -> "WakeCondition":
-        return replace(self, completed_ids=list(completed_ids))
+    def with_completed_ids(self, completed_ids: Collection[str]) -> "WakeCondition":
+        return replace(self, completed_ids=tuple(completed_ids))
 
     def with_next_wakeup(self, wakeup_at: datetime) -> "WakeCondition":
         return replace(self, wakeup_at=wakeup_at)
@@ -156,7 +210,7 @@ class AgentState:
     task: UserInput
     parent_id: str | None = None
     pending_input: UserInput | None = None
-    config_overrides: dict[str, Any] = field(default_factory=dict)
+    config_overrides: Mapping[str, Any] = field(default_factory=FrozenDict)
     wake_condition: WakeCondition | None = None
     result_summary: str | None = None
     signal_propagated: bool = False
@@ -167,6 +221,15 @@ class AgentState:
     explain: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "config_overrides",
+            self.config_overrides
+            if isinstance(self.config_overrides, FrozenDict)
+            else FrozenDict(self.config_overrides),
+        )
 
     @property
     def is_root(self) -> bool:
@@ -314,9 +377,21 @@ class PendingEvent:
     target_agent_id: str
     session_id: str
     event_type: SchedulerEventType
-    payload: dict[str, Any]
+    payload: Mapping[str, Any]
     created_at: datetime
     source_agent_id: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "payload",
+            self.payload
+            if isinstance(self.payload, FrozenDict)
+            else FrozenDict(self.payload),
+        )
+
+    def with_payload(self, payload: Mapping[str, Any]) -> "PendingEvent":
+        return replace(self, payload=FrozenDict(payload))
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,7 +399,16 @@ class AgentStateStorageConfig:
     """Configuration for AgentStateStorage."""
 
     storage_type: str = "memory"
-    config: dict[str, Any] = field(default_factory=dict)
+    config: Mapping[str, Any] = field(default_factory=FrozenDict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "config",
+            self.config
+            if isinstance(self.config, FrozenDict)
+            else FrozenDict(self.config),
+        )
 
 
 @dataclass(frozen=True, slots=True)

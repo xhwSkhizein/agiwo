@@ -112,7 +112,7 @@ def nudge(self) -> None:
 
 ## 2. 目标文件结构
 
-```
+```text
 scheduler/
 ├── __init__.py          # 公开导出
 ├── models.py            # frozen AgentState + with_*() + 枚举 + WakeCondition

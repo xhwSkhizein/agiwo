@@ -61,6 +61,9 @@ class RuntimeAgentPool:
             )
 
         previous_runtime_id = session.runtime_agent_id
+        # Capture the pre-assignment runtime id; after _assign_runtime_identity()
+        # session.runtime_agent_id points at the new agent id, so this is the key
+        # we must remove from the old runtime caches.
         agent = await build_agent(
             base_config,
             self._console_config,

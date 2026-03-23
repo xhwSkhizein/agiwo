@@ -96,7 +96,7 @@ graph TD
 
 问题不在于模块数量本身，而在于**它们的依赖关系是网状而非层次化的**：
 
-```
+```text
 engine ──→ runner ──→ coordinator
   │  ↘        ↗          ↑
   │   state_ops ←── tick_ops
@@ -231,7 +231,7 @@ async def _handle_agent_output(self, state, output):
 
 真正的架构边界应该是：
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │           Public API (facade)            │ ← 外部调用方
 ├─────────────────────────────────────────┤

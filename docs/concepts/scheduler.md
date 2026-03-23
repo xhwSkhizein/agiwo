@@ -113,7 +113,7 @@ async for item in scheduler.stream("Write a summary", agent=agent):
 | `WAITING` | 正在等待 wake condition |
 | `IDLE` | persistent root 本轮完成，正在待命 |
 | `QUEUED` | persistent root 已收到下一条输入，等待下一轮启动 |
-| `COMPLETED` | 非 persistent run 完成 |
+| `COMPLETED` | 非 persistent、one-shot run 完成 |
 | `FAILED` | 当前 state 失败或被终止 |
 
 ### Root lifecycle

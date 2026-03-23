@@ -3,7 +3,7 @@
 from typing import Any
 
 from agiwo.agent.serialization import serialize_user_input_payload
-from agiwo.scheduler.models import AgentState, PendingEvent, WakeCondition
+from agiwo.scheduler.models import AgentState, PendingEvent, WakeCondition, thaw_value
 from agiwo.utils.serialization import serialize_enum_value, serialize_optional_datetime
 
 
@@ -14,9 +14,9 @@ def serialize_wake_condition_payload(
         return None
     return {
         "type": serialize_enum_value(wake_condition.type),
-        "wait_for": wake_condition.wait_for,
+        "wait_for": list(wake_condition.wait_for),
         "wait_mode": serialize_enum_value(wake_condition.wait_mode),
-        "completed_ids": wake_condition.completed_ids,
+        "completed_ids": list(wake_condition.completed_ids),
         "time_value": wake_condition.time_value,
         "time_unit": (
             serialize_enum_value(wake_condition.time_unit)
@@ -36,7 +36,7 @@ def serialize_agent_state_payload(state: AgentState) -> dict[str, Any]:
         "task": serialize_user_input_payload(state.task),
         "parent_id": state.parent_id,
         "pending_input": serialize_user_input_payload(state.pending_input),
-        "config_overrides": state.config_overrides,
+        "config_overrides": thaw_value(state.config_overrides),
         "wake_condition": serialize_wake_condition_payload(state.wake_condition),
         "result_summary": state.result_summary,
         "signal_propagated": state.signal_propagated,
@@ -55,7 +55,7 @@ def serialize_pending_event_payload(event: PendingEvent) -> dict[str, Any]:
         "target_agent_id": event.target_agent_id,
         "source_agent_id": event.source_agent_id,
         "event_type": serialize_enum_value(event.event_type),
-        "payload": event.payload,
+        "payload": thaw_value(event.payload),
         "created_at": serialize_optional_datetime(event.created_at),
     }
 

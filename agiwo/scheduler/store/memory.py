@@ -42,7 +42,7 @@ class InMemoryAgentStateStorage(AgentStateStorage):
         offset: int = 0,
     ) -> list[AgentState]:
         status_filter = normalize_statuses(statuses)
-        states = [deepcopy(state) for state in self._states.values()]
+        states = list(self._states.values())
         if status_filter is not None:
             states = [state for state in states if state.status in status_filter]
         if parent_id is not None:
@@ -55,6 +55,7 @@ class InMemoryAgentStateStorage(AgentStateStorage):
                 for state in states
                 if state.signal_propagated == signal_propagated
             ]
+        states = [deepcopy(state) for state in states]
         states.sort(key=lambda state: state.updated_at, reverse=True)
         return states[offset : offset + limit]
 
@@ -68,13 +69,14 @@ class InMemoryAgentStateStorage(AgentStateStorage):
         target_agent_id: str | None = None,
         session_id: str | None = None,
     ) -> list[PendingEvent]:
-        events = [deepcopy(event) for event in self._events.values()]
+        events = list(self._events.values())
         if target_agent_id is not None:
             events = [
                 event for event in events if event.target_agent_id == target_agent_id
             ]
         if session_id is not None:
             events = [event for event in events if event.session_id == session_id]
+        events = [deepcopy(event) for event in events]
         events.sort(key=lambda event: event.created_at)
         return events
 

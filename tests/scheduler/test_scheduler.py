@@ -1042,7 +1042,9 @@ class TestSchedulerShutdown:
                 AgentStateStatus.QUEUED,
                 AgentStateStatus.RUNNING,
             )
-            shutdown_text = updated.pending_input if updated.pending_input else updated.task
+            shutdown_text = (
+                updated.pending_input if updated.pending_input else updated.task
+            )
             assert isinstance(shutdown_text, str)
             assert "shutdown" in shutdown_text.lower()
 

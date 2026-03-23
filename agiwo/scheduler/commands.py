@@ -1,6 +1,6 @@
 """Scheduler domain commands and dispatch actions."""
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
@@ -9,6 +9,7 @@ from agiwo.agent.input import UserInput
 from agiwo.agent.runtime import AgentStreamItem
 from agiwo.scheduler.models import (
     AgentState,
+    FrozenDict,
     PendingEvent,
     TimeUnit,
     WaitMode,
@@ -82,7 +83,17 @@ class CancelChildRequest:
 class CancelChildResult:
     outcome: CancelChildOutcome
     state: AgentState | None = None
-    running_processes: list[dict[str, object]] = field(default_factory=list)
+    running_processes: tuple[Mapping[str, object], ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "running_processes",
+            tuple(
+                proc if isinstance(proc, FrozenDict) else FrozenDict(proc)
+                for proc in self.running_processes
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -78,7 +78,7 @@ class TestInMemorySaveStateUpdate:
         assert retrieved is not None
         assert retrieved.status == AgentStateStatus.WAITING
         assert retrieved.wake_condition is not None
-        assert retrieved.wake_condition.wait_for == ["c1"]
+        assert retrieved.wake_condition.wait_for == ("c1",)
 
     @pytest.mark.asyncio
     async def test_save_updates_pending_input_and_summary(self, store):
@@ -193,7 +193,7 @@ class TestSQLiteAgentStateStorage:
         assert retrieved.pending_input == "next input"
         assert retrieved.explain == "waiting for child"
         assert retrieved.wake_condition is not None
-        assert retrieved.wake_condition.completed_ids == ["child-1"]
+        assert retrieved.wake_condition.completed_ids == ("child-1",)
 
         await store.close()
 

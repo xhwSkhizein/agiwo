@@ -69,18 +69,6 @@ class Scheduler:
     async def stop(self) -> None:
         self._running = False
 
-        if self._engine._rt.active_tasks:
-            logger.info(
-                "scheduler_waiting_for_active_tasks",
-                count=len(self._engine._rt.active_tasks),
-            )
-            _done, pending = await asyncio.wait(
-                self._engine._rt.active_tasks,
-                timeout=self._config.graceful_shutdown_wait_seconds,
-            )
-            for task in pending:
-                task.cancel()
-
         if self._loop_task is not None:
             self._loop_task.cancel()
             try:
@@ -88,6 +76,21 @@ class Scheduler:
             except asyncio.CancelledError:
                 pass
             self._loop_task = None
+
+        active_tasks = set(self._engine._rt.active_tasks)
+        if active_tasks:
+            logger.info(
+                "scheduler_waiting_for_active_tasks",
+                count=len(active_tasks),
+            )
+            _done, pending = await asyncio.wait(
+                active_tasks,
+                timeout=self._config.graceful_shutdown_wait_seconds,
+            )
+            if pending:
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
 
         await self._store.close()
         logger.info("scheduler_stopped")
@@ -272,14 +275,18 @@ class Scheduler:
 
     async def _loop(self) -> None:
         logger.info("scheduler_loop_started")
+        failure_backoff = min(self._check_interval, 0.1)
         while self._running:
             try:
                 await self._engine.tick()
+                failure_backoff = min(self._check_interval, 0.1)
                 await self._engine.wait_for_nudge(self._check_interval)
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("scheduler_tick_error")
+                await asyncio.sleep(failure_backoff)
+                failure_backoff = min(max(failure_backoff * 2, 0.1), 5.0)
 
 
 __all__ = ["Scheduler"]

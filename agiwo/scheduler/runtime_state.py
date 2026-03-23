@@ -1,6 +1,8 @@
 """Private scheduler runtime containers and tick helper functions."""
 
 import asyncio
+import time
+from collections.abc import AsyncIterator
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -8,8 +10,15 @@ from datetime import datetime, timedelta, timezone
 from agiwo.agent.execution import AgentExecutionHandlePort
 from agiwo.agent.input import UserInput
 from agiwo.agent.input_codec import extract_text
+from agiwo.agent.runtime import AgentStreamItem
 from agiwo.agent.scheduler_port import SchedulerAgentPort
-from agiwo.scheduler.models import PendingEvent, SchedulerEventType
+from agiwo.scheduler.models import (
+    AgentState,
+    AgentStateStatus,
+    PendingEvent,
+    SchedulerEventType,
+)
+from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.utils.abort_signal import AbortSignal
 
 
@@ -74,6 +83,84 @@ def build_mailbox_input(
     return f"{base_text}\n\nAdditional queued user input:\n{hint_block}"
 
 
+async def list_all_states(
+    store: AgentStateStorage,
+    *,
+    statuses: tuple[AgentStateStatus, ...] | None = None,
+    page_size: int = 1000,
+) -> list[AgentState]:
+    states: list[AgentState] = []
+    offset = 0
+    while True:
+        batch = await store.list_states(
+            statuses=statuses, limit=page_size, offset=offset
+        )
+        states.extend(batch)
+        if len(batch) < page_size:
+            return states
+        offset += page_size
+
+
+async def finish_stream_channel(rt: "RuntimeState", state_id: str) -> None:
+    channel = rt.stream_channels.get(state_id)
+    if channel is not None:
+        await channel.queue.put(None)
+
+
+def open_stream_channel(
+    rt: "RuntimeState",
+    state_id: str,
+    *,
+    include_child_events: bool,
+) -> None:
+    if state_id in rt.stream_channels:
+        raise RuntimeError(f"stream subscriber already active for root '{state_id}'")
+    rt.stream_channels[state_id] = StreamChannelState(
+        queue=asyncio.Queue(),
+        include_child_events=include_child_events,
+    )
+
+
+def close_stream_channel(rt: "RuntimeState", state_id: str) -> None:
+    rt.stream_channels.pop(state_id, None)
+
+
+async def consume_stream_channel(
+    rt: "RuntimeState",
+    state_id: str,
+    *,
+    timeout: float | None,
+) -> AsyncIterator[AgentStreamItem]:
+    start = time.monotonic()
+    while True:
+        remaining = stream_remaining(timeout, start)
+        if timeout is not None and remaining == 0:
+            return
+
+        try:
+            item = await asyncio.wait_for(
+                rt.stream_channels[state_id].queue.get(),
+                timeout=remaining,
+            )
+        except asyncio.TimeoutError:
+            return
+
+        if item is None:
+            return
+        yield item
+        if item.depth == 0 and item.type in {"run_completed", "run_failed"}:
+            return
+
+
+def stream_remaining(timeout: float | None, start: float) -> float | None:
+    if timeout is None:
+        return None
+    elapsed = time.monotonic() - start
+    if elapsed >= timeout:
+        return 0
+    return timeout - elapsed
+
+
 @dataclass
 class StreamChannelState:
     queue: asyncio.Queue
@@ -99,7 +186,13 @@ __all__ = [
     "RuntimeState",
     "StreamChannelState",
     "build_mailbox_input",
+    "close_stream_channel",
+    "consume_stream_channel",
     "ensure_utc",
+    "finish_stream_channel",
     "group_events",
+    "list_all_states",
+    "open_stream_channel",
     "select_debounced_event_targets",
+    "stream_remaining",
 ]

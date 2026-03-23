@@ -129,7 +129,9 @@ class TestSpawnAgentTool:
         assert state.config_overrides["system_prompt"] == "You are a specialist."
 
     @pytest.mark.asyncio
-    async def test_spawn_rejects_custom_child_id_collision(self, store, control, context):
+    async def test_spawn_rejects_custom_child_id_collision(
+        self, store, control, context
+    ):
         await _register_parent(store)
         existing = AgentState(
             id="my-child",
@@ -196,9 +198,7 @@ class TestSpawnAgentTool:
         assert "Spawn rejected" in result.result.content
 
     @pytest.mark.asyncio
-    async def test_spawn_rejected_max_children(
-        self, store, context
-    ):
+    async def test_spawn_rejected_max_children(self, store, context):
         limits = TaskLimits(max_children_per_agent=2)
         guard = TaskGuard(limits, store)
         control = SchedulerEngine(
@@ -301,7 +301,7 @@ class TestSleepAndWaitTool:
         )
 
         state = await store.get_state("orch")
-        assert state.wake_condition.wait_for == ["child-1"]
+        assert state.wake_condition.wait_for == ("child-1",)
 
     @pytest.mark.asyncio
     async def test_sleep_timer(self, store, control, context):

@@ -436,7 +436,7 @@ Store 层（base + codec + memory + sqlite + mongo）是真正独立的持久化
 
 重构后的 3 个核心模块各有清晰的职责：
 
-```
+```text
 ┌──────────────────────┐
 │  Engine (520 行)      │  状态机 + 调度 + 协调
 │  "什么时候做什么"      │
@@ -451,7 +451,7 @@ Store 层（base + codec + memory + sqlite + mongo）是真正独立的持久化
 
 三者之间的依赖方向是单向的：
 
-```
+```text
 Facade → Engine → Runner
                 ↗
 Tools ─────────┘

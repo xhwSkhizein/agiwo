@@ -30,9 +30,13 @@ from agiwo.scheduler.models import (
 from agiwo.scheduler.runner import RunnerContext, SchedulerRunner
 from agiwo.scheduler.runtime_state import (
     RuntimeState,
-    StreamChannelState,
     build_mailbox_input,
+    close_stream_channel,
+    consume_stream_channel,
+    finish_stream_channel,
     group_events,
+    list_all_states,
+    open_stream_channel,
     select_debounced_event_targets,
 )
 from agiwo.scheduler.store import AgentStateStorage
@@ -81,9 +85,14 @@ class SchedulerEngine:
         self._scheduling_tools: list[object] = []
 
     def get_registered_agent(self, state_id: str):
-        return None if (agent := self._rt.agents.get(state_id)) is None else agent.unwrap_agent()
+        return (
+            None
+            if (agent := self._rt.agents.get(state_id)) is None
+            else agent.unwrap_agent()
+        )
 
-    def set_scheduling_tools(self, tools: list[object]) -> None: self._scheduling_tools = list(tools)
+    def set_scheduling_tools(self, tools: list[object]) -> None:
+        self._scheduling_tools = list(tools)
 
     async def wait_for_nudge(self, timeout: float) -> None:
         try:
@@ -95,6 +104,7 @@ class SchedulerEngine:
 
     def nudge(self) -> None:
         self._rt.nudge.set()
+
     async def run(
         self,
         agent: SchedulerAgentPort,
@@ -257,9 +267,14 @@ class SchedulerEngine:
                     )
             return RouteResult(action="steered", state_id=current_state.id)
 
-        if current_state.is_root and current_state.is_persistent and current_state.status in (
-            AgentStateStatus.IDLE,
-            AgentStateStatus.FAILED,
+        if (
+            current_state.is_root
+            and current_state.is_persistent
+            and current_state.status
+            in (
+                AgentStateStatus.IDLE,
+                AgentStateStatus.FAILED,
+            )
         ):
             return await self._route_with_stream(
                 root_state_id=current_state.id,
@@ -348,7 +363,6 @@ class SchedulerEngine:
 
         try:
             while True:
-                event.clear()
                 state = await self._store.get_state(state_id)
                 if state is not None:
                     if state.status in (
@@ -376,6 +390,7 @@ class SchedulerEngine:
                     await asyncio.wait_for(event.wait(), timeout=remaining)
                 except asyncio.TimeoutError:
                     return RunOutput(termination_reason=TerminationReason.TIMEOUT)
+                event.clear()
         finally:
             waiters = self._rt.waiters.get(state_id)
             if waiters is not None:
@@ -417,7 +432,7 @@ class SchedulerEngine:
         )
 
     async def get_stats(self) -> dict[str, int]:
-        states = await self._store.list_states(limit=10000)
+        states = await list_all_states(self._store)
         counts: dict[str, int] = {
             "pending": 0,
             "running": 0,
@@ -518,7 +533,14 @@ class SchedulerEngine:
 
     async def tick(self) -> None:
         await self._propagate_signals()
-        states = await self._store.list_states(limit=10000)
+        states = await list_all_states(
+            self._store,
+            statuses=(
+                AgentStateStatus.PENDING,
+                AgentStateStatus.WAITING,
+                AgentStateStatus.QUEUED,
+            ),
+        )
         events = await self._store.list_events()
         now = datetime.now(timezone.utc)
         actions = self._plan_tick(states, events, now=now)
@@ -558,7 +580,9 @@ class SchedulerEngine:
                     DispatchAction(
                         state=state,
                         reason=DispatchReason.ROOT_QUEUED_INPUT,
-                        input_override=build_mailbox_input(state.pending_input, mailbox),
+                        input_override=build_mailbox_input(
+                            state.pending_input, mailbox
+                        ),
                         events=mailbox,
                     )
                 )
@@ -594,13 +618,30 @@ class SchedulerEngine:
 
         return actions
 
-    async def spawn_child(self, request: SpawnChildRequest) -> AgentState: return await self._tool_control.spawn_child(request)
-    async def sleep_current_agent(self, request: SleepRequest) -> SleepResult: return await self._tool_control.sleep_current_agent(request)
-    async def get_child_state(self, target_id: str) -> AgentState | None: return await self._tool_control.get_child_state(target_id)
-    async def list_child_states(self, *, caller_id: str | None, session_id: str) -> list[AgentState]: return await self._tool_control.list_child_states(caller_id=caller_id, session_id=session_id)
-    async def inspect_child_processes(self, target_id: str) -> list[dict[str, object]]: return await self._tool_control.inspect_child_processes(target_id)
-    async def cancel_child(self, request: CancelChildRequest) -> CancelChildResult: return await self._tool_control.cancel_child(request)
-    def age_seconds(self, timestamp: datetime, *, now: datetime | None = None) -> int: return self._tool_control.age_seconds(timestamp, now=now)
+    async def spawn_child(self, request: SpawnChildRequest) -> AgentState:
+        return await self._tool_control.spawn_child(request)
+
+    async def sleep_current_agent(self, request: SleepRequest) -> SleepResult:
+        return await self._tool_control.sleep_current_agent(request)
+
+    async def get_child_state(self, target_id: str) -> AgentState | None:
+        return await self._tool_control.get_child_state(target_id)
+
+    async def list_child_states(
+        self, *, caller_id: str | None, session_id: str
+    ) -> list[AgentState]:
+        return await self._tool_control.list_child_states(
+            caller_id=caller_id, session_id=session_id
+        )
+
+    async def inspect_child_processes(self, target_id: str) -> list[dict[str, object]]:
+        return await self._tool_control.inspect_child_processes(target_id)
+
+    async def cancel_child(self, request: CancelChildRequest) -> CancelChildResult:
+        return await self._tool_control.cancel_child(request)
+
+    def age_seconds(self, timestamp: datetime, *, now: datetime | None = None) -> int:
+        return self._tool_control.age_seconds(timestamp, now=now)
 
     async def _dispatch_action(self, action: DispatchAction) -> None:
         state = action.state
@@ -666,7 +707,7 @@ class SchedulerEngine:
             return
         await self._save_state(state.with_failed(reason))
         if state.is_root:
-            await self._finish_stream_channel(state.id)
+            await finish_stream_channel(self._rt, state.id)
 
     async def _shutdown_subtree(self, state_id: str) -> None:
         for child in await self._active_children(state_id):
@@ -703,7 +744,6 @@ class SchedulerEngine:
         waiters.add(event)
         try:
             while True:
-                event.clear()
                 state = await self._store.get_state(state_id)
                 if state is None or state.status != AgentStateStatus.PENDING:
                     return state
@@ -717,6 +757,7 @@ class SchedulerEngine:
                         f"Timed out waiting for scheduler state '{state_id}' "
                         "to become routable"
                     ) from exc
+                event.clear()
         finally:
             waiters = self._rt.waiters.get(state_id)
             if waiters is not None:
@@ -732,11 +773,6 @@ class SchedulerEngine:
         self._rt.active_tasks.add(task)
         task.add_done_callback(self._rt.active_tasks.discard)
 
-    async def _finish_stream_channel(self, state_id: str) -> None:
-        channel = self._rt.stream_channels.get(state_id)
-        if channel is not None:
-            await channel.queue.put(None)
-
     def _build_stream(
         self,
         state_id: str,
@@ -744,41 +780,24 @@ class SchedulerEngine:
         timeout: float | None,
         include_child_events: bool,
     ) -> AsyncIterator[AgentStreamItem]:
-        self._open_stream_channel(
-            state_id,
-            include_child_events=include_child_events,
-        )
-
         async def iterator() -> AsyncIterator[AgentStreamItem]:
+            open_stream_channel(
+                self._rt,
+                state_id,
+                include_child_events=include_child_events,
+            )
             try:
-                async for item in self._consume_stream_channel(
+                async for item in consume_stream_channel(
+                    self._rt,
                     state_id,
                     timeout=timeout,
                 ):
                     yield item
             finally:
                 await self._raise_stream_failure_if_needed(state_id)
-                self._close_stream_channel(state_id)
+                close_stream_channel(self._rt, state_id)
 
         return iterator()
-
-    def _open_stream_channel(
-        self,
-        state_id: str,
-        *,
-        include_child_events: bool,
-    ) -> None:
-        if state_id in self._rt.stream_channels:
-            raise RuntimeError(
-                f"stream subscriber already active for root '{state_id}'"
-            )
-        self._rt.stream_channels[state_id] = StreamChannelState(
-            queue=asyncio.Queue(),
-            include_child_events=include_child_events,
-        )
-
-    def _close_stream_channel(self, state_id: str) -> None:
-        self._rt.stream_channels.pop(state_id, None)
 
     async def _route_with_stream(
         self,
@@ -789,17 +808,20 @@ class SchedulerEngine:
         include_child_events: bool,
         operation: Callable[[], Awaitable[str]],
     ) -> RouteResult:
-        stream = self._build_stream(
-            root_state_id,
-            timeout=timeout,
-            include_child_events=include_child_events,
+        if root_state_id in self._rt.stream_channels:
+            raise RuntimeError(
+                f"stream subscriber already active for root '{root_state_id}'"
+            )
+        state_id = await operation()
+        return RouteResult(
+            action=action,
+            state_id=state_id,
+            stream=self._build_stream(
+                root_state_id,
+                timeout=timeout,
+                include_child_events=include_child_events,
+            ),
         )
-        try:
-            state_id = await operation()
-        except Exception:
-            self._close_stream_channel(root_state_id)
-            raise
-        return RouteResult(action=action, state_id=state_id, stream=stream)
 
     async def _enqueue_and_return_state_id(
         self,
@@ -826,7 +848,9 @@ class SchedulerEngine:
     async def _shutdown_running_state(self, state: AgentState) -> None:
         if state.is_root and state.is_persistent:
             self._rt.shutdown_requested.add(state.id)
-            await self._save_state(state.with_queued(pending_input=_SHUTDOWN_SUMMARY_TASK))
+            await self._save_state(
+                state.with_queued(pending_input=_SHUTDOWN_SUMMARY_TASK)
+            )
             return
         await self._save_state(state.with_failed("Shutdown before completion"))
 
@@ -835,7 +859,9 @@ class SchedulerEngine:
             AgentStateStatus.WAITING,
             AgentStateStatus.IDLE,
         ):
-            await self._save_state(state.with_queued(pending_input=_SHUTDOWN_SUMMARY_TASK))
+            await self._save_state(
+                state.with_queued(pending_input=_SHUTDOWN_SUMMARY_TASK)
+            )
             return
 
         if state.status in (
@@ -845,41 +871,7 @@ class SchedulerEngine:
         ):
             await self._save_state(state.with_failed("Shutdown before completion"))
             if state.is_root:
-                await self._finish_stream_channel(state.id)
-
-    async def _consume_stream_channel(
-        self,
-        state_id: str,
-        *,
-        timeout: float | None,
-    ) -> AsyncIterator[AgentStreamItem]:
-        start = time.monotonic()
-        while True:
-            remaining = self._stream_remaining(timeout, start)
-            if timeout is not None and remaining == 0:
-                return
-
-            try:
-                item = await asyncio.wait_for(
-                    self._rt.stream_channels[state_id].queue.get(),
-                    timeout=remaining,
-                )
-            except asyncio.TimeoutError:
-                return
-
-            if item is None:
-                return
-            yield item
-            if item.depth == 0 and item.type in {"run_completed", "run_failed"}:
-                return
-
-    def _stream_remaining(self, timeout: float | None, start: float) -> float | None:
-        if timeout is None:
-            return None
-        elapsed = time.monotonic() - start
-        if elapsed >= timeout:
-            return 0
-        return timeout - elapsed
+                await finish_stream_channel(self._rt, state.id)
 
     def _deadline_remaining(self, deadline: float | None) -> float | None:
         if deadline is None:

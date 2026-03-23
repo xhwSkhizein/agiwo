@@ -1,11 +1,11 @@
 """Event-driven agent execution bridge for channel sessions."""
 
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from agiwo.agent import Agent, UserInput
 from agiwo.agent.runtime import RunOutput
 from agiwo.scheduler.commands import RouteResult
-from agiwo.scheduler.models import AgentState
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 
@@ -13,6 +13,9 @@ from server.channels.session.binding import assign_scheduler_state
 from server.channels.session.models import ChannelChatSessionStore, Session
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from agiwo.scheduler.models import AgentState
 
 
 class AgentExecutor:
@@ -57,7 +60,7 @@ class AgentExecutor:
             return
         await self._scheduler.cancel(session.scheduler_state_id, reason)
 
-    async def get_state(self, state_id: str | None) -> AgentState | None:
+    async def get_state(self, state_id: str | None) -> "AgentState | None":
         """Fetch the latest scheduler state for a session-owned root."""
         if not state_id:
             return None
