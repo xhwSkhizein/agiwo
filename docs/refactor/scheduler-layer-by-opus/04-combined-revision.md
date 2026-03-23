@@ -1,29 +1,34 @@
-# Scheduler 层重构方案：综合修订版
+# Scheduler 层重构方案：综合修订版 v2
 
-> 基于 Opus 方案（01-03）和 GPT 方案的交叉审视，取长补短后的最终设计。
-> 同时纳入 console/server 对 scheduler 内部语义的越权使用问题。
+> 基于 Opus 方案（01-03）、GPT 方案、以及 GPT 对 v1 综合版的 8 点评价，取长补短后的最终设计。
+> 纳入 console/server 对 scheduler 内部语义的越权使用问题。
 
-## 0. 两个方案的核心差异
+## 0. 设计主轴
 
-| 维度 | Opus 方案 | GPT 方案 |
-|------|----------|----------|
-| **合并力度** | 激进：5 ops → engine 内联 | 适度：替换为 service/runtime/planning/executor |
-| **文件数** | 9 个（-44%） | 10 个 |
-| **代码缩减** | ~44% | ~15% |
-| **DispatchAction** | 无，直接方法调用 | ✅ 显式 enum + frozen dataclass |
-| **AgentState 可变性** | 保持可变，减少冗余刷新 | ✅ frozen + copy-on-write |
-| **Tick 驱动** | 保持轮询 | ✅ nudge event + periodic sweep |
-| **SchedulerControl** | 删除 | 保留（重命名） |
-| **Bug 识别** | 结构性痛点 | ✅ 具体 P1/P2 bug |
-| **Tool 精简** | ✅ 3→1 result 构造器 | 未涉及 |
-| **Console 边界** | 未涉及 | 提及但未展开 |
-| **量化度量** | ✅ 依赖边数、行数对比 | 定性描述 |
+这次重构只有 3 根主轴，所有设计决策都应能追溯到其中之一：
 
-## 1. 我从 GPT 方案中采纳的改进
+1. **`DispatchAction` + frozen `AgentState` + tick 三段式** — 让调度语义显式化、状态迁移不可变化
+2. **让每个模块只承载一个变化原因** — 不为压文件数而制造新的超级 owner
+3. **把 Console 和 scheduler 的边界收硬** — 移除 `scheduler.store` 直读路径
 
-### 1.1 DispatchAction 模型 ✅ 采纳
+文件数和代码行数是结果度量，不是设计牵引目标。
 
-GPT 提出用显式 `DispatchAction` 替代 `AgentRunMode + AgentRunSpec` 的布尔矩阵。这是严格更优的设计。
+## 1. 两方案对比与采纳决策
+
+| 维度 | Opus 方案 | GPT 方案 | 本方案采纳 |
+|------|----------|----------|-----------|
+| **DispatchAction** | 无 | ✅ | ✅ GPT |
+| **Frozen AgentState** | 保持可变 | ✅ | ✅ GPT |
+| **Nudge tick** | 保持轮询 | ✅ | ✅ GPT |
+| **Bug 识别** | 结构性痛点 | ✅ 具体 P1/P2 | ✅ GPT |
+| **三输入通道** | 未涉及 | ✅ | ✅ GPT |
+| **合并力度** | 激进 | 适度 | 折中（见下文） |
+| **Tool 精简** | ✅ | 未涉及 | ✅ Opus |
+| **Console 边界** | 未涉及 | 提及未展开 | ✅ 新增 |
+
+### 1.1 DispatchAction 模型
+
+替代 `AgentRunMode + AgentRunSpec` 布尔矩阵。调度原因提升为第一等语义。
 
 ```python
 class DispatchReason(str, Enum):
@@ -35,7 +40,6 @@ class DispatchReason(str, Enum):
     WAKE_EVENTS = "wake_events"
     SHUTDOWN_SUMMARY = "shutdown_summary"
 
-
 @dataclass(frozen=True)
 class DispatchAction:
     state_id: str
@@ -46,14 +50,9 @@ class DispatchAction:
     clear_wake_condition: bool = False
 ```
 
-**为什么优于我原方案**：
-- 调度原因成为第一等语义，不再编码进 flag 组合
-- Planner 输出 `list[DispatchAction]`，executor 逐个执行 — 两者可独立测试
-- 新增 dispatch 原因只需加一个枚举值
+### 1.2 Frozen AgentState + copy-on-write
 
-### 1.2 Frozen AgentState + copy-on-write ✅ 采纳
-
-GPT 指出可变 `AgentState` 是冗余刷新的根本原因。我之前只想"减少刷新次数"，而 GPT 直接从根源解决。
+从根源消灭 runner.py 中 4 次/分支的 `refreshed = await store.get_state(...)` 防御式刷新。
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -69,186 +68,281 @@ class AgentState:
                        task=task or self.task,
                        updated_at=datetime.now(timezone.utc), **kw)
 
-    def with_waiting(self, *, wake_condition, **kw) -> "AgentState":
-        return replace(self, status=AgentStateStatus.WAITING,
-                       wake_condition=wake_condition,
-                       updated_at=datetime.now(timezone.utc), **kw)
-
+    def with_waiting(self, *, wake_condition, **kw) -> "AgentState": ...
     def with_idle(self, *, result_summary=None, **kw) -> "AgentState": ...
     def with_queued(self, *, pending_input, **kw) -> "AgentState": ...
     def with_completed(self, *, result_summary, **kw) -> "AgentState": ...
     def with_failed(self, *, result_summary, **kw) -> "AgentState": ...
 ```
 
-**收益**：
-- 彻底消除 `refreshed = await store.get_state(...)` 的 defensive dance
-- Memory store 和 SQLite/Mongo store 行为一致（不再有 mutable alias 差异）
-- 删除整个 `state_ops.py` — transition 逻辑回归 model 自身
-
-### 1.3 Nudge event + periodic sweep ✅ 采纳
-
-当前纯轮询 tick 导致 `submit()` 后 child 要等最多 `check_interval` 才被拉起。GPT 的 nudge 方案消除了这个延迟。
+### 1.3 Nudge event + periodic sweep
 
 ```python
-# engine 内部
 self._nudge = asyncio.Event()
 
 async def _loop(self):
     while self._running:
         self._nudge.clear()
         await self.tick()
-        # 等 nudge 或超时
         with suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(
-                self._nudge.wait(), timeout=self._check_interval
-            )
+            await asyncio.wait_for(self._nudge.wait(), timeout=self._check_interval)
 
 def nudge(self) -> None:
-    """唤醒 tick loop，消除延迟。"""
     self._nudge.set()
 ```
 
-在 `submit()`, `enqueue_input()`, `save_event()` 后调用 `self.nudge()`。
+在 `submit()`, `enqueue_input()`, `save_event()` 后调用 `nudge()`。
 
-**收益**：
-- 保持 periodic sweep 作为兜底
-- 消除"为什么 submit 后没立刻动"的延迟感
-- 统一掉当前散落的 fast path（如 submit 后直接起 task）
-
-### 1.4 Bug 修复纳入 ✅ 采纳
-
-GPT 识别的 P1/P2 bug 必须在重构中修复，不应 bug-for-bug 继承：
+### 1.4 Bug 修复（不做 bug-for-bug 继承）
 
 | Bug | 修复方向 |
 |-----|---------|
-| **QUEUED steer 丢消息** | mailbox events 在 `QUEUED` 状态下不删除，等 agent 运行时消费 |
-| **shutdown(RUNNING) no-op** | 对 RUNNING root 触发 abort signal + 标记 shutdown pending |
-| **spawn_child id 冲突** | save 前检查 id 是否已存在，冲突则拒绝 |
-| **mutable alias 差异** | frozen AgentState 彻底消除 |
+| QUEUED steer 丢消息 | mailbox events 在 `QUEUED` 状态下保留不删，等 RUNNING 后消费 |
+| shutdown(RUNNING) no-op | 对 RUNNING root 触发 abort signal + 标记 shutdown pending |
+| spawn_child id 冲突 | save 前检查 id 是否已存在，冲突则拒绝 |
+| mutable alias 差异 | frozen AgentState 彻底消除 |
 
-### 1.5 三条输入通道显式化 ✅ 采纳
+### 1.5 三条输入通道显式化
 
 | Channel | 作用 | 允许消费状态 |
 |---------|------|-------------|
-| **next-input slot** | persistent root 下一轮开始输入 | `IDLE/FAILED → QUEUED → RUNNING` |
+| **next-input slot** | persistent root 下一轮输入 | `IDLE/FAILED → QUEUED → RUNNING` |
 | **live steer** | 当前正在运行的一轮纠偏 | `RUNNING` |
 | **mailbox events** | async 通知 (child result, user hint) | `WAITING`；`QUEUED` 时保留不删 |
 
-## 2. 我保持不变的优势点
+## 2. 目标文件结构
 
-### 2.1 激进合并策略
+```
+scheduler/
+├── __init__.py          # 公开导出
+├── models.py            # frozen AgentState + with_*() + 枚举 + WakeCondition
+├── commands.py          # 领域命令: DispatchAction, SpawnChildRequest, SleepRequest, RouteResult ...
+├── scheduler.py         # Facade: 生命周期 + 公开 API + route_root_input + 查询
+├── engine.py            # 状态机 + tick(normalize→plan→dispatch) + _RuntimeState
+├── runner.py            # 单次执行 + 唤醒消息（通过 RunnerContext 访问 engine）
+├── tools.py             # 5 个运行时工具（精简基类）
+├── guard.py             # 限制检查
+├── formatting.py        # 文本格式化
+├── serialization.py     # 传输序列化
+└── store/               # 持久化层（不变）
+```
 
-GPT 的 5 文件方案（service/runtime/planning/executor/messages）虽然每个 owner 更强，但**本质上还是把现有 7 个模块换成了 5 个新模块**，依赖网没有根本性简化。
+### 为什么是 10 个文件而不是 9 个
 
-我继续主张：**核心编排只需 3 个模块**（engine + runner + tools）。
+v1 综合版把所有 DTO（DispatchAction、SpawnChildRequest、SleepRequest、RouteResult ...）都塞进 `tools.py`。
+GPT 的评价正确指出：**这些是 scheduler 的领域命令，不是 tool 实现细节**。
 
-但我会吸收 GPT 的 TickPlanner 纯化思路 — 不是把它做成独立文件，而是在 engine 内部保持 plan/execute 的分离：
+多一个小 `commands.py`（~80 行 frozen dataclass）换来的是：
+- `tools.py` 只含工具实现，不混杂领域语义
+- `engine.py` 和 `tools.py` 共享 commands 而不是互相依赖
+- 新增命令类型时不需要改 tools.py
+
+## 3. Engine 内部设计
+
+### 3.1 `_RuntimeState` 容器
+
+v1 综合版让 engine 顶层直接挂 7 个 dict/set 字段。GPT 正确指出这接近"第二个 God Object"。
+
+解决方案：**将运行时内存状态聚成私有 `_RuntimeState` 容器**。不是独立文件，而是 engine 的内部 dataclass：
+
+```python
+@dataclass
+class _RuntimeState:
+    """进程内 live state — 不碰持久化，不碰调度决策。"""
+    agents: dict[str, SchedulerAgentPort] = field(default_factory=dict)
+    execution_handles: dict[str, AgentExecutionHandlePort] = field(default_factory=dict)
+    abort_signals: dict[str, AbortSignal] = field(default_factory=dict)
+    state_events: dict[str, asyncio.Event] = field(default_factory=dict)
+    dispatched: set[str] = field(default_factory=set)
+    active_tasks: set[asyncio.Task] = field(default_factory=set)
+    stream_channels: dict[str, StreamChannelState] = field(default_factory=dict)
+    nudge: asyncio.Event = field(default_factory=asyncio.Event)
+```
+
+Engine 持有 `self._rt = _RuntimeState()`，通过 `self._rt.agents` 等访问。
+
+**收益**：
+- Engine 顶层字段从 ~14 个降到 ~5 个（`_store`, `_guard`, `_config`, `_runner`, `_rt`）
+- 运行时状态有明确的分组边界
+- `_RuntimeState` 可以整体 reset（测试友好）
+
+### 3.2 Engine 的职责分区
 
 ```python
 class SchedulerEngine:
+    """状态机 + tick + 调度协调。"""
+
+    def __init__(self, *, store, guard, config): ...
+        self._store = store
+        self._guard = guard
+        self._config = config
+        self._rt = _RuntimeState()
+        self._runner = SchedulerRunner(RunnerContext.from_engine(self))
+
+    # ── Public API（供 facade 委托） ────────────────
+    async def submit(...) -> str: ...
+    async def enqueue_input(...) -> None: ...
+    async def route_root_input(...) -> RouteResult: ...
+    async def stream(...) -> AsyncIterator: ...
+    async def wait_for(...) -> RunOutput: ...
+    async def cancel(...) -> bool: ...
+    async def steer(...) -> bool: ...
+    async def shutdown(...) -> bool: ...
+
+    # ── 查询 API ────────────────────────────────────
+    async def list_states(...) -> list[AgentState]: ...
+    async def list_events(...) -> list[PendingEvent]: ...
+    async def get_stats(...) -> dict[str, int]: ...
+    async def rebind_agent(state_id, agent) -> bool: ...
+
+    # ── Tool-facing control ─────────────────────────
+    async def spawn_child(request) -> AgentState: ...
+    async def sleep_current_agent(request) -> SleepResult: ...
+    async def cancel_child(request) -> CancelChildResult: ...
+    async def get_child_state(target_id) -> AgentState | None: ...
+    async def list_child_states(**kw) -> list[AgentState]: ...
+
+    # ── Tick: normalize → plan → dispatch ───────────
     async def tick(self) -> None:
-        # Phase 1: Plan (pure)
+        # 1. Normalize: propagate signals (has side effects)
+        await self._propagate_signals()
+        # 2. Plan: pure function → list[DispatchAction]
         states = await self._store.list_states(...)
         events = await self._store.list_events(...)
         actions = self._plan_tick(states, events, now=datetime.now(timezone.utc))
-        # Phase 2: Execute (side effects)
+        # 3. Dispatch: schedule execution tasks
         for action in actions:
-            self._dispatch_task(action)
+            self._dispatch_action(action)
 
     def _plan_tick(self, states, events, now) -> list[DispatchAction]:
-        """Pure function: 给定当前快照，返回应执行的动作列表。"""
-        actions = []
-        actions.extend(self._plan_signal_propagation(states))
-        actions.extend(self._plan_timeouts(states, now))
-        actions.extend(self._plan_pending_events(states, events))
-        actions.extend(self._plan_pending_starts(states))
-        actions.extend(self._plan_queued_starts(states))
-        actions.extend(self._plan_wake_waiting(states, now))
-        return actions
+        """纯函数：给定快照，返回动作列表。可独立单测。"""
+        ...
+
+    # ── State persistence (via frozen model) ────────
+    async def _save_state(self, state: AgentState) -> None:
+        await self._store.save_state(state)
+        self._notify_state_change(state.id)
+
+    # ── Tree ops ────────────────────────────────────
+    async def _cancel_subtree(...) -> None: ...
+    async def _shutdown_subtree(...) -> None: ...
 ```
 
-**这比 GPT 的独立 TickPlanner 更好**：
-- 保持 plan 逻辑纯粹且可测试（`_plan_tick` 是纯函数）
-- 不需要额外文件、额外构造函数、额外依赖注入
-- Plan 结果直接在 engine 内消费，不需要跨模块传递
+### 3.3 为什么 Engine 不是 God Object
 
-### 2.2 Tool 层精简
+v1 综合版的 engine 同时持有 7 个平铺 dict + 全部 API + tick + tree ops + state persistence，确实有膨胀风险。
 
-GPT 未涉及 tool 样板压缩。我的 `_result(status=...)` 合并方案继续保留：
+修订后的分权：
+
+| 关注点 | 实际 owner |
+|--------|-----------|
+| 运行时内存状态 | `_RuntimeState` 容器（engine 内部） |
+| 状态迁移规则 | `AgentState.with_*()` 方法（models） |
+| 领域命令定义 | `commands.py` |
+| 执行周期 | `SchedulerRunner`（通过窄 context） |
+| 限制检查 | `TaskGuard` |
+| 工具实现 | `tools.py` |
+
+Engine 做的是**编排协调**：接收请求 → 查状态 → 做决策 → 委托执行 → 持久化。它不再直接持有内存 dict 或转换规则。
+
+## 4. Runner 的窄依赖面：`RunnerContext`
+
+### 4.1 问题
+
+v1 综合版让 runner 持有完整 engine 引用。GPT 正确指出：如果 runner 能看到整个 engine，边界很快会塌陷。
+
+### 4.2 Runner 的实际依赖面
+
+审计 `runner.py` 当前 584 行代码，runner 对外部的调用可以穷举为：
+
+**Store 操作（3 种）**:
+- `store.get_state(id)` — 6 处（frozen state 后大部分可消除）
+- `store.save_state(state)` — 间接通过 state_ops
+- `store.save_event(event)` — 1 处
+
+**Runtime 状态操作（11 种）**:
+- `get/set/pop_abort_signal`
+- `set/pop_execution_handle`
+- `get/register/unregister_agent`
+- `get/finish_stream_channel`
+- `release_state_dispatch`
+
+**State 迁移（5 种）**:
+- `mark_running/waiting/idle/completed/failed`
+
+### 4.3 `RunnerContext` 设计
+
+不用 Protocol（过重），用一个明确的 dataclass 束口：
 
 ```python
-# 3 个方法 (~60 行) → 1 个方法 (~20 行)
-def _result(self, *, parameters, start_time, content,
-            status="success", error=None, reason=None,
-            output=None, input_args=None,
-            termination_reason=None) -> RuntimeToolOutcome: ...
+@dataclass
+class RunnerContext:
+    """Runner 的全部外部依赖面 — 不多一个方法。"""
+
+    # ── 持久化 ────────────────────────────────
+    store: AgentStateStorage
+
+    # ── 运行时状态 ────────────────────────────
+    rt: _RuntimeState
+
+    # ── 通知 ──────────────────────────────────
+    notify_state_change: Callable[[str], None]
+    nudge: Callable[[], None]
+
+    # ── 信号量 ────────────────────────────────
+    semaphore: asyncio.Semaphore
 ```
 
-### 2.3 量化度量
+Runner 通过 `self._ctx.store.save_state(...)`, `self._ctx.rt.agents.get(...)` 等访问。
 
-继续维护精确的文件数/行数/依赖边数对比，这是评估重构效果的基线。
+**Runner 看不到什么**：
+- Engine 的公开 API（submit, cancel, steer, enqueue_input ...）
+- Tool-facing control（spawn_child, sleep_current_agent ...）
+- Tick / plan 方法
+- Guard
 
-## 3. 新增：Console 边界优化
+这保证了 runner 只做"执行一次 agent cycle 并翻译结果"，不会反向调用编排 API。
 
-这是两个方案都未充分展开的问题，也是本次修订的重点补充。
+### 4.4 Frozen state 消除冗余刷新
 
-### 3.1 问题诊断
+With frozen state + `DispatchAction` 携带 `input_override`，runner 中 6 处 `store.get_state()` 刷新变化如下：
 
-Console 侧有 3 个模块直接依赖 scheduler 内部语义：
+| 现有调用位置 | 原因 | 改造后 |
+|-------------|------|--------|
+| `_prepare_state_for_run` (L410) | 拿最新 wake_count | frozen → DispatchAction 携带 |
+| `_load_pending_input` (L433) | 拿 pending_input | DispatchAction.input_override 携带 |
+| `_handle_agent_output` (L471, L486, L503, L513) | 防 mutable alias | frozen → 消除 |
+| `_emit_event_to_parent` (L536) | 检查 parent 存在 | 保留（合理的存在性检查） |
+| `_maybe_cleanup_agent` (L568) | 检查最终状态 | 保留（合理的最终态检查） |
 
-#### (A) `agent_executor.py` — 重新实现了 scheduler 的状态路由
+6 处 → 2 处，且剩余 2 处是合理的业务查询而非 defensive dance。
 
-```python
-# agent_executor.py:80-114
-if status in (RUNNING, WAITING, QUEUED):
-    → steer (urgent 取决于是否 WAITING)
-if status == PENDING:
-    → wait_for 然后重试
-if is_root and is_persistent and status in (IDLE, FAILED):
-    → enqueue_input
-else:
-    → submit
-```
+## 5. Console 边界优化
 
-这段逻辑**就是 scheduler 的调度语义**，但它被写在了 console 的 channel 层。如果 scheduler 的状态机发生任何变化（比如新增一个状态），这里也必须同步修改。
+### 5.1 问题诊断
 
-#### (B) `routers/scheduler.py` — 直接穿透 store 查询
+Console 侧 3 个模块直接依赖 scheduler 内部语义：
 
-```python
-# scheduler router
-storage = scheduler.store          # 直接拿 store
-states = await storage.list_states(...)
-events = await storage.list_events(...)
-```
+**(A) `agent_executor.py`** — 重写了 ~150 行状态路由逻辑（检查 RUNNING/WAITING/QUEUED/IDLE/FAILED 决定 submit/enqueue/steer）
 
-Router 绕过 scheduler facade 直接操作 store，知道了 store 的查询接口细节。
+**(B) `routers/scheduler.py`** — `scheduler.store.list_states()` 直接穿透到 store
 
-#### (C) `runtime_agent_pool.py` — 检查 scheduler state status
+**(C) `runtime_agent_pool.py`** — import `AgentStateStatus` 检查 RUNNING 状态
 
-```python
-# runtime_agent_pool.py:59-67
-state = await self._scheduler.get_state(session.scheduler_state_id)
-if state is not None and state.status == AgentStateStatus.RUNNING:
-    # 推迟 agent 刷新
-    return existing
-```
+### 5.2 `route_root_input()` — 封装状态路由
 
-Pool 需要知道"RUNNING 状态下不能刷新 agent"这个 scheduler 内部约束。
-
-### 3.2 解决方案：Scheduler facade 提供高层 API
-
-#### (A) 新增 `Scheduler.route_input()` — 封装状态路由
+命名采用 GPT 建议：用**中性的 scheduler 语义**，不用聊天会话语义。明确处理的是"root agent 输入路由"。
 
 ```python
+@dataclass(frozen=True)
 class RouteResult:
-    action: Literal["submitted", "enqueued", "steered", "rejected"]
-    state_id: str | None = None
+    action: Literal["submitted", "enqueued", "steered"]
+    state_id: str
     stream: AsyncIterator[AgentStreamItem] | None = None
-    reason: str | None = None
 
 
 class Scheduler:
-    async def route_input(
+    async def route_root_input(
         self,
         user_input: UserInput,
         *,
@@ -258,51 +352,22 @@ class Scheduler:
         persistent: bool = True,
         timeout: int | None = None,
     ) -> RouteResult:
-        """高层 API：根据当前状态自动选择 submit/enqueue/steer。
+        """根据 state_id 对应的当前状态，自动选择 submit/enqueue/steer。
 
-        Console 不再需要知道状态机细节。
+        这是 root agent 输入的统一入口。Console 和其他集成方不再需要
+        自己实现状态路由。
         """
-        if state_id is None:
-            # 无已有 state → submit
-            ...
-            return RouteResult(action="submitted", state_id=..., stream=...)
-
-        state = await self.get_state(state_id)
-        if state is None:
-            return RouteResult(action="submitted", state_id=..., stream=...)
-
-        if state.status == AgentStateStatus.RUNNING:
-            await self.steer(state_id, user_input)
-            return RouteResult(action="steered", state_id=state_id)
-
-        if state.status == AgentStateStatus.WAITING:
-            await self.steer(state_id, user_input, urgent=True)
-            return RouteResult(action="steered", state_id=state_id)
-
-        if state.status == AgentStateStatus.QUEUED:
-            await self.steer(state_id, user_input)
-            return RouteResult(action="steered", state_id=state_id)
-
-        if state.status == AgentStateStatus.PENDING:
-            await self.wait_for(state_id, timeout=timeout)
-            # 递归: state 已完成，重新路由
-            return await self.route_input(...)
-
-        if state.can_accept_enqueue_input():
-            stream = self.stream(user_input, agent=agent, state_id=state_id, timeout=timeout)
-            return RouteResult(action="enqueued", state_id=state_id, stream=stream)
-
-        # COMPLETED 或其他终态 → 重新 submit
-        stream = self.stream(user_input, agent=agent, session_id=session_id, persistent=persistent, timeout=timeout)
-        return RouteResult(action="submitted", state_id=agent.id, stream=stream)
+        ...
 ```
 
-**Console 侧的 agent_executor.py 简化为**：
+**关键改进**：`stream()` 内部复用 `route_root_input()`，而不是两处各自保留一套 submit/enqueue/steer 分流。
+
+Console 侧简化：
 
 ```python
 class AgentExecutor:
     async def execute(self, agent, session, user_input) -> DispatchResult:
-        result = await self._scheduler.route_input(
+        result = await self._scheduler.route_root_input(
             user_input,
             agent=agent,
             state_id=session.scheduler_state_id,
@@ -310,7 +375,7 @@ class AgentExecutor:
             persistent=True,
             timeout=self._timeout,
         )
-        if result.state_id and result.state_id != session.scheduler_state_id:
+        if result.state_id != session.scheduler_state_id:
             assign_scheduler_state(session, result.state_id)
         await self._touch_session(session)
         return DispatchResult(action=result.action, stream=result.stream)
@@ -318,216 +383,98 @@ class AgentExecutor:
 
 从 ~150 行状态路由逻辑降到 ~15 行纯委托。
 
-#### (B) Scheduler facade 提供查询方法
+### 5.3 查询 facade — 替代 `scheduler.store` 直读
 
 ```python
 class Scheduler:
-    # 已有
-    async def get_state(self, state_id) -> AgentState | None: ...
-
-    # 新增 — Console 不再直接碰 store
     async def list_states(self, *, statuses=None, parent_id=None,
                           session_id=None, limit=100, offset=0) -> list[AgentState]: ...
-
     async def list_events(self, *, target_agent_id=None,
                           session_id=None) -> list[PendingEvent]: ...
-
     async def get_stats(self) -> dict[str, int]: ...
 ```
 
-Router 变为纯委托：
+Router 变为纯委托，不再 import `AgentStateStorage`。
 
-```python
-@router.get("/states")
-async def list_agent_states(scheduler: SchedulerDep, ...):
-    states = await scheduler.list_states(statuses=..., limit=limit, offset=offset)
-    # ... 序列化
-```
+### 5.4 `rebind_agent()` — 替代 `is_agent_refreshable()` 布尔查询
 
-#### (C) Scheduler 提供 `is_agent_refreshable()` 查询
+GPT 正确指出：`is_agent_refreshable()` 只判断 "不是 RUNNING 就能刷新" 太弱。`WAITING/QUEUED` 状态下 scheduler 仍然依赖已注册的 live agent。
+
+更稳的方案是把**决策 + 替换**都交给 scheduler：
 
 ```python
 class Scheduler:
-    async def is_agent_refreshable(self, state_id: str) -> bool:
-        """返回 agent 是否可以安全刷新（非 RUNNING 状态）。"""
+    async def rebind_agent(self, state_id: str, agent: Agent) -> bool:
+        """尝试替换已注册的 runtime agent。
+
+        只有 IDLE / COMPLETED / FAILED / 不存在 时允许替换。
+        Active 状态（RUNNING / WAITING / QUEUED / PENDING）一律拒绝。
+
+        返回 True 表示替换成功，False 表示被拒绝。
+        """
         state = await self.get_state(state_id)
-        if state is None:
-            return True
-        return state.status != AgentStateStatus.RUNNING
+        if state is not None and state.is_active():
+            return False
+        self._engine._rt.agents[state_id] = adapt_scheduler_agent(agent)
+        return True
 ```
 
-RuntimeAgentPool 不再需要 import `AgentStateStatus`：
+RuntimeAgentPool 不再需要 import 任何 scheduler 内部类型：
 
 ```python
-if not await self._scheduler.is_agent_refreshable(session.scheduler_state_id):
+# runtime_agent_pool.py — 改造后
+rebound = await self._scheduler.rebind_agent(session.scheduler_state_id, agent)
+if not rebound:
+    logger.info("runtime_agent_refresh_deferred", reason="state_active")
     return existing
 ```
 
-### 3.3 Console 侧改动量评估
+### 5.5 移除 `scheduler.store` public escape hatch
 
-| 文件 | 改动 | 行数变化 |
-|------|------|---------|
-| `agent_executor.py` | 状态路由逻辑删除，改为 `route_input()` 调用 | -100 行 |
-| `runtime_agent_pool.py` | 删除 `AgentStateStatus` import，改用 `is_agent_refreshable()` | -5 行 |
-| `routers/scheduler.py` | `scheduler.store.xxx()` → `scheduler.xxx()` | ~-10 行 |
-| `feishu/commands/scheduler.py` | 同上 | ~-5 行 |
-| **总计** | | ~-120 行 console 代码 |
+现有 `Scheduler.store` property 直接暴露底层 `AgentStateStorage`。即使补了 facade 查询 API，只要这个出口在，console 以后还是会穿透回来。
 
-### 3.4 依赖方向清理
+```python
+# 移除
+@property
+def store(self) -> AgentStateStorage: ...
+
+# 改为 internal（下划线前缀）
+# 仅 scheduler 自身测试或 console tests 通过 _store 访问
+```
+
+所有 console 的合法 store 访问已经被 facade 方法覆盖（list_states, list_events, get_stats, get_state）。
+
+### 5.6 依赖方向对比
 
 ```mermaid
-graph LR
+graph TD
     subgraph "现状"
-        Console1["agent_executor.py"] -->|import AgentStateStatus| Models1["scheduler.models"]
-        Console1 -->|直接检查 status| Scheduler1["Scheduler"]
-        Router1["routers/scheduler.py"] -->|scheduler.store.xxx()| Store1["AgentStateStorage"]
-        Pool1["runtime_agent_pool.py"] -->|import AgentStateStatus| Models1
+        AE1["agent_executor"] -->|"import AgentStateStatus<br/>检查 6 种 status"| M1["scheduler.models"]
+        R1["routers/scheduler"] -->|"scheduler.store.xxx()"| S1["AgentStateStorage"]
+        P1["runtime_agent_pool"] -->|"import AgentStateStatus<br/>检查 RUNNING"| M1
     end
 
     subgraph "重构后"
-        Console2["agent_executor.py"] -->|route_input()| Scheduler2["Scheduler"]
-        Router2["routers/scheduler.py"] -->|list_states()| Scheduler2
-        Pool2["runtime_agent_pool.py"] -->|is_agent_refreshable()| Scheduler2
+        AE2["agent_executor"] -->|"route_root_input()"| SC2["Scheduler"]
+        R2["routers/scheduler"] -->|"list_states() / get_stats()"| SC2
+        P2["runtime_agent_pool"] -->|"rebind_agent()"| SC2
     end
 ```
 
-**重构后 console 侧只依赖 Scheduler facade 的公开方法**，不再 import scheduler 内部模型（`AgentStateStatus`）或直接穿透 `store`。
-
-## 4. 修订后的目标文件结构
-
-```
-scheduler/
-├── __init__.py          #  25 行  │ 公开导出
-├── models.py            # 280 行  │ 领域模型（frozen + with_* transitions）
-├── scheduler.py         # 180 行  │ Facade: 生命周期 + 公开 API + route_input + 查询
-├── engine.py            # 550 行  │ 状态机 + tick(plan→execute) + 调度协调
-├── runner.py            # 350 行  │ 单次执行 + 唤醒消息
-├── tools.py             # 420 行  │ 5 个运行时工具（含 DTO）
-├── guard.py             #  80 行  │ 限制检查（不变）
-├── formatting.py        #  57 行  │ 文本格式化（不变）
-├── serialization.py     #  68 行  │ 传输序列化（不变）
-└── store/               # 776 行  │ 持久化层（不变）
-```
-
-**核心编排 ~2,010 行**（vs 现状 3,434 行 = -41%）
-
-### 与两个原方案对比
-
-| 维度 | Opus 原方案 | GPT 方案 | 修订方案 |
-|------|-----------|----------|---------|
-| 核心文件数 | 9 | 10 | 9 |
-| 核心 LOC | ~1,910 | ~2,900 | ~2,010 |
-| DispatchAction | ❌ | ✅ | ✅ |
-| Frozen state | ❌ | ✅ | ✅ |
-| Nudge tick | ❌ | ✅ | ✅ |
-| Tool 精简 | ✅ | ❌ | ✅ |
-| Console 边界 | ❌ | ❌ | ✅ |
-| Bug 修复 | ❌ | ✅ | ✅ |
-| Plan/Execute 分离 | ❌ | ✅ (独立文件) | ✅ (engine 内方法) |
-
-## 5. 修订后的 Engine 内部结构
-
-```python
-class SchedulerEngine:
-    """状态机 + tick + 调度协调。"""
-
-    # ── 构造 ────────────────────────────────────────
-    def __init__(self, *, store, guard, config): ...
-
-    # ── Runtime 内存状态（原 coordinator） ─────────────
-    _agents: dict[str, SchedulerAgentPort]
-    _execution_handles: dict[str, AgentExecutionHandlePort]
-    _abort_signals: dict[str, AbortSignal]
-    _state_events: dict[str, asyncio.Event]
-    _dispatched: set[str]
-    _active_tasks: set[asyncio.Task]
-    _stream_channels: dict[str, StreamChannelState]
-    _nudge: asyncio.Event  # 新增
-
-    # ── Public API ──────────────────────────────────
-    async def submit(...) -> str: ...
-    async def enqueue_input(...) -> None: ...
-    async def route_input(...) -> RouteResult: ...  # 新增
-    async def stream(...) -> AsyncIterator: ...
-    async def wait_for(...) -> RunOutput: ...
-    async def cancel(...) -> bool: ...
-    async def steer(...) -> bool: ...
-    async def shutdown(...) -> bool: ...
-
-    # ── 查询 API（供 facade 委托） ──────────────────
-    async def list_states(...) -> list[AgentState]: ...
-    async def list_events(...) -> list[PendingEvent]: ...
-    async def get_stats(...) -> dict[str, int]: ...
-    async def is_agent_refreshable(state_id) -> bool: ...
-
-    # ── Tool-facing control ─────────────────────────
-    async def spawn_child(request) -> AgentState: ...
-    async def sleep_current_agent(request) -> SleepResult: ...
-    async def cancel_child(request) -> CancelChildResult: ...
-    async def get_child_state(target_id) -> AgentState | None: ...
-    async def list_child_states(**kw) -> list[AgentState]: ...
-
-    # ── Tick: plan + execute ────────────────────────
-    async def tick(self) -> None:
-        states = await self._store.list_states(...)
-        events = await self._store.list_events(...)
-        # 先做 signal propagation（有 store 写入副作用）
-        await self._propagate_signals(states)
-        # 再做 pure planning
-        actions = self._plan_tick(states, events, now)
-        # 最后 dispatch
-        for action in actions:
-            self._dispatch_action(action)
-
-    def _plan_tick(self, states, events, now) -> list[DispatchAction]:
-        """纯函数：给定快照，返回动作列表。"""
-        ...
-
-    # ── State transitions (via frozen model) ───────
-    async def _save_running(self, state, **kw) -> AgentState:
-        new = state.with_running(**kw)
-        await self._store.save_state(new)
-        self._notify_state_change(state.id)
-        return new
-
-    async def _save_waiting(self, state, **kw) -> AgentState: ...
-    async def _save_idle(self, state, **kw) -> AgentState: ...
-    async def _save_queued(self, state, **kw) -> AgentState: ...
-    async def _save_completed(self, state, **kw) -> AgentState: ...
-    async def _save_failed(self, state, **kw) -> AgentState: ...
-
-    # ── Tree ops ────────────────────────────────────
-    async def _cancel_subtree(self, state_id, reason) -> None: ...
-    async def _shutdown_subtree(self, state_id) -> None: ...
-
-    # ── Dispatch helpers ────────────────────────────
-    def _dispatch_action(self, action: DispatchAction) -> bool: ...
-    def _track_task(self, task) -> None: ...
-    def nudge(self) -> None: ...
-```
-
-### 关键改进相比原方案
-
-1. **`_plan_tick()` 是纯函数** — 输入 states/events/now，输出 `list[DispatchAction]`，可独立单测
-2. **`_save_*()` 替代 `_mark_*()`** — 命名更准确，语义是"生成新 state snapshot 并持久化"
-3. **State transitions 在 model 上** — `state.with_running()` 返回新 frozen 实例，`_save_*` 只负责持久化+通知
-4. **`nudge` event** — submit/enqueue/save_event 后调用，消除 tick 延迟
-5. **`route_input()` + 查询 API** — console 不再穿透 store 或重写状态路由
-
 ## 6. 修订后的状态机
 
-保持枚举不变，但明确三条输入通道的消费规则：
+保持枚举不变，明确三条输入通道的消费规则：
 
 ```mermaid
 stateDiagram-v2
-    [*] --> RUNNING : submit(root) / route_input(new)
+    [*] --> RUNNING : submit(root)
 
     RUNNING --> WAITING : sleep_current_agent()
     RUNNING --> IDLE : persistent root settled
     RUNNING --> COMPLETED : non-persistent settled
     RUNNING --> FAILED : exception / cancel
 
-    IDLE --> QUEUED : enqueue_input() / route_input(existing)
+    IDLE --> QUEUED : enqueue_input()
     FAILED --> QUEUED : enqueue_input(persistent root)
     QUEUED --> RUNNING : dispatch(ROOT_QUEUED_INPUT)
 
@@ -535,90 +482,109 @@ stateDiagram-v2
     WAITING --> FAILED : cancel / shutdown(child)
 
     note right of RUNNING
-        live steer channel:
-        handle.steer(message)
+        live steer: handle.steer()
     end note
 
     note right of WAITING
-        mailbox events:
-        PendingEvent → wake
+        mailbox: PendingEvent → wake
     end note
 
     note right of QUEUED
-        mailbox events:
-        保留不删，等 RUNNING 后消费
+        mailbox: 保留不删，RUNNING 后消费
     end note
 ```
 
-## 7. 修订后的迁移策略
+## 7. 迁移策略
 
-### Phase 1: Model 层（最低风险）
+### Phase 1: 主轴落地
+
+**只做 3 件事**：frozen state、dispatch model、tick 三段式。
 
 1. `AgentState` 改为 `frozen=True` + `with_*()` transition 方法
-2. 添加 `DispatchAction` + `DispatchReason` 到 `models.py`
-3. 删除 `ChildAgentConfigOverrides` dataclass
-4. 删除 `normalize_statuses()` 全局函数（内联到 store）
+2. 新建 `commands.py`，包含 `DispatchAction` + `DispatchReason` + 从 control.py 迁入的 DTOs
+3. 添加 `_RuntimeState` 容器到 engine
+4. 实现 `_plan_tick()` 纯函数 + tick 三段式
+5. 添加 nudge event
 
-**验证**: 所有现有测试通过（store 实现需要适配 frozen state）。
+**不做**：删文件、改名、顺手清理。
 
-### Phase 2: Engine 内聚化
+**验证**：所有现有测试通过。
 
-1. 将 coordinator/state_ops/tick_ops/tree_ops/selectors 内联到 engine
-2. 实现 `_plan_tick()` 纯函数 + `_dispatch_action()` 执行
-3. 添加 `nudge` event
-4. 实现 `_save_*()` 方法替代 `_mark_*()` + 冗余刷新
-5. 删除 5 个被吸收的文件
+### Phase 2: Engine 内聚化 + Runner 窄化
 
-**验证**: 所有测试通过。
+1. 将 coordinator/state_ops/tick_ops/tree_ops/selectors 内联到 engine（进入 `_RuntimeState` 或成为 engine 方法）
+2. 实现 `RunnerContext` 窄接口
+3. Runner 改为接收 `DispatchAction` 而非 `AgentRunMode`
+4. wake_messages 内联到 runner
+5. 删除被吸收的文件（mv to trash/）
 
-### Phase 3: Runner 内聚化
+**验证**：所有测试通过。
 
-1. wake_messages 内联到 runner
-2. Runner 构造函数改为持有 engine 引用
-3. Runner 的 dispatch mode 改为接收 `DispatchAction`
+### Phase 3: Console 边界 + Tools 精简
 
-**验证**: 所有测试通过。
+1. Scheduler facade 新增 `route_root_input()`, `list_states()`, `list_events()`, `get_stats()`, `rebind_agent()`
+2. 移除 `scheduler.store` public property
+3. Console 侧适配：agent_executor 简化、router 改用 facade、pool 改用 `rebind_agent()`
+4. 删除 `SchedulerControl` protocol
+5. 精简 tools 基类 result 构造器
 
-### Phase 4: Tools 精简 + Console 边界
+**验证**：所有 SDK + Console 测试通过。
 
-1. control.py DTOs 移入 tools.py
-2. 删除 SchedulerControl protocol
-3. 精简基类 result 构造器
-4. Scheduler facade 新增 `route_input()`, `list_states()`, `list_events()`, `get_stats()`, `is_agent_refreshable()`
-5. Console 侧适配：agent_executor 简化、router 改用 facade 方法、pool 改用查询 API
-
-**验证**: 所有 SDK + Console 测试通过。
-
-### Phase 5: Bug 修复
+### Phase 4: Bug 修复 + 清理
 
 1. QUEUED steer 不再丢消息
 2. shutdown(RUNNING) 正确触发 abort
 3. spawn_child id 冲突检查
+4. 删除 `ChildAgentConfigOverrides` dataclass
+5. 更新 `__init__.py` 导出、README.md
 
-**验证**: 新增对应边界测试。
+**验证**：新增对应边界测试。
 
-### Phase 6: 清理
+## 8. 架构依赖图
 
-1. 更新 `__init__.py` 导出
-2. 旧文件 mv 到 trash/
-3. 更新 README.md / DESIGN_QA.md
+```mermaid
+graph TD
+    Facade["scheduler.py<br/><b>Facade</b>"]
+    Engine["engine.py<br/><b>Engine</b><br/>(含 _RuntimeState)"]
+    Runner["runner.py<br/><b>Runner</b><br/>(via RunnerContext)"]
+    Tools["tools.py<br/><b>Tools</b>"]
+    Guard["guard.py"]
+    Models["models.py<br/>(frozen AgentState)"]
+    Commands["commands.py<br/>(DispatchAction, DTOs)"]
+    Store["store/"]
+    Fmt["formatting.py"]
 
-## 8. 最终收益矩阵
+    Facade --> Engine
+    Facade --> Models
+    Facade --> Commands
 
-| 维度 | 现状 | 修订方案 | 改善 |
-|------|------|---------|------|
-| SDK 源文件数（不含 store） | 16 | 9 | -44% |
-| SDK 代码行数（不含 store） | 3,434 | ~2,010 | -41% |
-| 内部依赖边数 | 43 | ~18 | -58% |
-| Console 对 scheduler 内部 import | 3 个文件直接穿透 | 0（全部走 facade） | -100% |
-| Console agent_executor 状态路由代码 | ~150 行 | ~15 行 | -90% |
-| State transition 冗余刷新 | 4 次/分支 | 0（frozen copy-on-write） | -100% |
-| Tick 延迟 | 最多 check_interval | nudge 后立刻触发 | ~0ms |
-| 已知 P1 bug | 3 个 | 0 | 全修 |
+    Engine --> Runner
+    Engine --> Guard
+    Engine --> Models
+    Engine --> Commands
+    Engine --> Store
 
-## 9. 这次不做的事（边界声明）
+    Runner --> Models
+    Runner --> Commands
+    Runner --> Store
+    Runner --> Fmt
 
-与两个原方案一致，以下功能超出本次重构范围：
+    Tools --> Engine
+    Tools --> Models
+    Tools --> Commands
+    Tools --> Fmt
+
+    Guard --> Models
+    Guard --> Store
+```
+
+**关键特征**：
+- Runner 通过 `RunnerContext` 访问 engine，不直接依赖 engine 类型
+- Tools 依赖 engine 的 tool-facing 方法，不碰 public API
+- `commands.py` 被 engine/runner/tools 共享，是领域命令的唯一定义点
+- Store 只被 engine、runner、guard 直接依赖（runner 通过 context 拿到 store 引用）
+
+## 9. 这次不做的事
 
 1. 分布式调度 / lease
 2. 真正的 inbox 多消息队列
@@ -626,3 +592,5 @@ stateDiagram-v2
 4. 多租户 stream hub
 5. WakeCondition 组合表达式
 6. 自动 retry policy
+7. 把 scheduler 改成 actor framework
+8. ~~为了压文件数把所有东西塞回一个 God Object~~
