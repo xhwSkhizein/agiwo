@@ -196,9 +196,9 @@ def _assemble_messages(
 
 
 def _apply_steering_messages(
-    messages: list[dict],
+    messages: list[dict[str, Any]],
     steering_queue: asyncio.Queue[object] | None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     updated_messages = copy.deepcopy(messages)
     if steering_queue is None or steering_queue.empty():
         return updated_messages
@@ -663,10 +663,10 @@ async def _run_assistant_turn(
 ) -> tuple[StepRecord, LLMCallContext]:
     replace_messages(
         state,
-        _apply_steering_messages(state.messages, state.steering_queue),
+        _apply_steering_messages(state.copy_messages(), state.steering_queue),
     )
     if state.hooks.on_before_llm_call:
-        modified = await state.hooks.on_before_llm_call(state.messages)
+        modified = await state.hooks.on_before_llm_call(state.copy_messages())
         if modified is not None:
             replace_messages(state, modified)
 
@@ -824,7 +824,7 @@ async def _maybe_generate_summary(
         model,
         state,
         abort_signal,
-        messages=state.messages,
+        messages=state.copy_messages(),
         tools=None,
     )
     step.name = "summary"

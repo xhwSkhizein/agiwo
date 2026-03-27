@@ -1,5 +1,6 @@
 """Shared mutation of RunContext step-tracking state."""
 
+from agiwo.agent.run_mutations import append_message as append_message_record
 from agiwo.agent.run_state import RunContext
 from agiwo.agent.types import StepRecord, step_to_message
 
@@ -45,4 +46,4 @@ def track_step_state(
     _track_step_metrics(state, step)
     _track_assistant_step(state, step)
     if append_message:
-        ledger.messages.append(step_to_message(step))
+        append_message_record(state, step_to_message(step))

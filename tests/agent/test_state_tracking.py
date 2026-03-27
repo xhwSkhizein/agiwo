@@ -62,7 +62,7 @@ def test_track_step_state_updates_counters_response_and_messages() -> None:
     assert state.output_tokens == 6
     assert state.cache_read_tokens == 2
     assert state.cache_creation_tokens == 3
-    assert state.messages == [step_to_message(step)]
+    assert list(state.messages) == [step_to_message(step)]
 
 
 def test_track_step_state_skips_message_append_when_disabled() -> None:
@@ -73,7 +73,7 @@ def test_track_step_state_skips_message_append_when_disabled() -> None:
 
     assert state.steps_count == 1
     assert state.assistant_steps_count == 0
-    assert state.messages == []
+    assert list(state.messages) == []
 
 
 def test_run_mutations_only_touch_mutable_ledger_state() -> None:
@@ -97,7 +97,7 @@ def test_run_mutations_only_touch_mutable_ledger_state() -> None:
     )
     set_termination_reason(state, TerminationReason.CANCELLED)
 
-    assert state.messages == [{"role": "assistant", "content": "summary"}]
+    assert list(state.messages) == [{"role": "assistant", "content": "summary"}]
     assert state.last_compact_metadata is not None
     assert state.termination_reason == TerminationReason.CANCELLED
     assert state.run_id == "run-1"
@@ -123,6 +123,9 @@ def test_run_context_disallows_direct_assignment_to_mutable_ledger_fields() -> N
         state.messages = [{"role": "assistant", "content": "summary"}]
 
     with pytest.raises(AttributeError):
+        state.messages.append({"role": "assistant", "content": "summary"})
+
+    with pytest.raises(AttributeError):
         state.tool_schemas = [{"type": "function"}]
 
     with pytest.raises(AttributeError):
@@ -130,3 +133,8 @@ def test_run_context_disallows_direct_assignment_to_mutable_ledger_fields() -> N
 
     with pytest.raises(AttributeError):
         state.last_compact_metadata = metadata
+
+    replace_messages(state, [{"role": "assistant", "content": "summary"}])
+    snapshot = state.messages
+    snapshot[0]["content"] = "mutated"
+    assert list(state.messages) == [{"role": "assistant", "content": "summary"}]

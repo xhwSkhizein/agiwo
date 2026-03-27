@@ -217,7 +217,7 @@ async def compact_if_needed(
     if max_context_window is None:
         return None
     metrics_resolver = ModelUsageEstimator(model)
-    estimated_tokens = metrics_resolver.estimate_messages_tokens(state.messages)
+    estimated_tokens = metrics_resolver.estimate_messages_tokens(state.copy_messages())
     threshold = int(max_context_window * settings.compact_threshold_ratio)
     if estimated_tokens < threshold:
         return None
@@ -275,7 +275,8 @@ async def _compact(
     root_path: str,
 ) -> CompactMetadata:
     metrics_resolver = ModelUsageEstimator(model)
-    before_token_estimate = metrics_resolver.estimate_messages_tokens(state.messages)
+    current_messages = state.copy_messages()
+    before_token_estimate = metrics_resolver.estimate_messages_tokens(current_messages)
 
     prompt_template = compact_prompt or DEFAULT_COMPACT_PROMPT
     previous_summary = ""
@@ -285,7 +286,7 @@ async def _compact(
         previous_summary=previous_summary or "None",
     )
     latest_user_message = next(
-        (m for m in reversed(state.messages) if m.get("role") == "user"),
+        (m for m in reversed(current_messages) if m.get("role") == "user"),
         None,
     )
 
@@ -302,7 +303,7 @@ async def _compact(
         model,
         state,
         abort_signal,
-        messages=list(state.messages),
+        messages=state.copy_messages(),
         tools=None,
     )
     step.name = "compact"
@@ -316,12 +317,12 @@ async def _compact(
     start_seq = compact_start_seq
 
     system_prompt = (
-        state.messages[0].get("content", "")
-        if state.messages and state.messages[0].get("role") == "system"
+        current_messages[0].get("content", "")
+        if current_messages and current_messages[0].get("role") == "system"
         else ""
     )
 
-    messages_to_backup = state.messages[1:] if system_prompt else state.messages
+    messages_to_backup = current_messages[1:] if system_prompt else current_messages
     transcript_path = await save_transcript(
         messages=messages_to_backup,
         agent_id=state.agent_id,

@@ -1,4 +1,5 @@
-from collections.abc import Sequence
+import copy
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from agiwo.agent.compact_types import CompactMetadata
@@ -7,14 +8,20 @@ from agiwo.agent.types import TerminationReason
 
 
 def replace_messages(state: RunContext, messages: Sequence[dict[str, Any]]) -> None:
-    state.ledger.messages = list(messages)
+    state.ledger.messages = copy.deepcopy(list(messages))
+
+
+def append_message(state: RunContext, message: Mapping[str, Any]) -> None:
+    state.ledger.messages.append(copy.deepcopy(dict(message)))
 
 
 def set_tool_schemas(
     state: RunContext,
     tool_schemas: Sequence[dict[str, Any]] | None,
 ) -> None:
-    state.ledger.tool_schemas = list(tool_schemas) if tool_schemas is not None else None
+    state.ledger.tool_schemas = (
+        copy.deepcopy(list(tool_schemas)) if tool_schemas is not None else None
+    )
 
 
 def record_compaction_metadata(

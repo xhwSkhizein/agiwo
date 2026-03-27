@@ -1,6 +1,7 @@
 """RunContext — session runtime plus split identity and mutable ledger."""
 
 import asyncio
+import copy
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -177,12 +178,19 @@ class RunContext:
         return trace_runtime.trace_id if trace_runtime is not None else None
 
     @property
-    def messages(self) -> list[dict[str, Any]]:
-        return self.ledger.messages
+    def messages(self) -> tuple[dict[str, Any], ...]:
+        return tuple(self.copy_messages())
+
+    def copy_messages(self) -> list[dict[str, Any]]:
+        return copy.deepcopy(self.ledger.messages)
 
     @property
-    def tool_schemas(self) -> list[dict[str, Any]] | None:
-        return self.ledger.tool_schemas
+    def tool_schemas(self) -> tuple[dict[str, Any], ...] | None:
+        schemas = self.copy_tool_schemas()
+        return tuple(schemas) if schemas is not None else None
+
+    def copy_tool_schemas(self) -> list[dict[str, Any]] | None:
+        return copy.deepcopy(self.ledger.tool_schemas)
 
     @property
     def start_time(self) -> float:
