@@ -1,9 +1,11 @@
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 import pytest
 
-from agiwo.agent import Agent, AgentConfig
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -66,6 +68,19 @@ async def test_handle_supports_multiple_stream_subscribers() -> None:
     assert [event.type for event in events_one] == [event.type for event in events_two]
 
 
+@pytest.mark.asyncio
+async def test_trivial_root_run_keeps_steps_count_stable() -> None:
+    agent = Agent(
+        AgentConfig(name="metrics-contract", description="metrics contract test"),
+        model=FixedResponseModel(),
+    )
+
+    result = await agent.run("hello", session_id="metrics-contract-session")
+
+    assert result.response == "final answer"
+    assert result.metrics.steps_count == 1
+
+
 async def _collect_stream(stream):
     events = []
     async for event in stream:
@@ -73,3 +88,48 @@ async def _collect_stream(stream):
         if event.type in {"run_completed", "run_failed"}:
             break
     return events
+
+
+@dataclass
+class _DummyEvent:
+    type: str
+
+
+class _StubHandle:
+    def __init__(self, *, wait_error: BaseException | None = None) -> None:
+        self._wait_error = wait_error
+        self.cancel_reason: str | None = None
+
+    def stream(self) -> AsyncIterator[_DummyEvent]:
+        async def _stream() -> AsyncIterator[_DummyEvent]:
+            yield _DummyEvent(type="step_delta")
+
+        return _stream()
+
+    async def wait(self):
+        if self._wait_error is not None:
+            raise self._wait_error
+        raise AssertionError("wait() should not be called on the completed path")
+
+    def cancel(self, reason: str | None = None) -> None:
+        self.cancel_reason = reason
+
+
+@pytest.mark.asyncio
+async def test_run_stream_close_propagates_non_cancelled_cleanup_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = Agent(
+        AgentConfig(name="run-stream-contract", description="run stream contract test"),
+        model=FixedResponseModel(),
+    )
+    handle = _StubHandle(wait_error=RuntimeError("boom"))
+    monkeypatch.setattr(agent, "start", lambda *_args, **_kwargs: handle)
+
+    stream = agent.run_stream("hello")
+    await anext(stream)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await stream.aclose()
+
+    assert handle.cancel_reason == "run_stream consumer closed"

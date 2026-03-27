@@ -14,7 +14,6 @@ from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.memory_types import MemoryRecord
 from agiwo.agent.run_state import RunContext
 from agiwo.agent.step_pipeline import commit_step
-from agiwo.agent.storage.session import SessionStorage
 from agiwo.agent.tool_executor import execute_tool_batch
 from agiwo.tool.base import BaseTool
 from agiwo.agent.types import (
@@ -403,14 +402,13 @@ async def execute_run(
     run.metrics.start_at = time.time()
     await _start_run(context, run)
     try:
-        await commit_step(context, user_step, append_message=False)
+        await commit_step(context, user_step, append_message=False, track_state=False)
         await _run_loop(
             state=context,
             model=model,
             tools_map=tools_map,
             options=options,
             max_input_tokens_per_call=max_input_tokens_per_call,
-            session_storage=context.session_runtime.session_storage,
             compact_prompt=options.compact_prompt,
             max_context_window=max_context_window,
             compact_start_seq=compact_start_seq,
@@ -480,7 +478,6 @@ async def _run_loop(
     tools_map: dict[str, BaseTool],
     options: AgentOptions,
     max_input_tokens_per_call: int,
-    session_storage: SessionStorage,
     compact_prompt: str | None,
     max_context_window: int | None,
     compact_start_seq: int,

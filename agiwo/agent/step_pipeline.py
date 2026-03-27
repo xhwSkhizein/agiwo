@@ -13,8 +13,10 @@ async def commit_step(
     *,
     llm: LLMCallContext | None = None,
     append_message: bool = True,
+    track_state: bool = True,
 ) -> StepRecord:
-    track_step_state(state, step, append_message=append_message)
+    if track_state:
+        track_step_state(state, step, append_message=append_message)
     await state.session_runtime.run_step_storage.save_step(step)
     if state.session_runtime.trace_runtime is not None:
         await state.session_runtime.trace_runtime.on_step(step, llm)
