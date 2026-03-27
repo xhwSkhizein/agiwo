@@ -13,8 +13,9 @@ import aiofiles
 
 from agiwo.agent.compact_types import CompactMetadata
 from agiwo.agent.llm_caller import stream_assistant_step
+from agiwo.agent.run_mutations import record_compaction_metadata, replace_messages
 from agiwo.agent.run_state import RunContext
-from agiwo.agent.step_pipeline import commit_step, replace_messages
+from agiwo.agent.step_pipeline import commit_step
 from agiwo.agent.types import StepRecord
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator
@@ -354,11 +355,8 @@ async def _compact(
         compact_tokens=(step.metrics.total_tokens if step.metrics else 0),
     )
 
-    replace_messages(
-        state,
-        compacted_messages,
-        compact_metadata=metadata,
-    )
+    replace_messages(state, compacted_messages)
+    record_compaction_metadata(state, metadata)
     await state.session_runtime.session_storage.save_compact_metadata(
         state.session_id,
         state.agent_id,

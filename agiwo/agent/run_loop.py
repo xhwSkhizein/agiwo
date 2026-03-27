@@ -12,6 +12,11 @@ from agiwo.agent.input import ChannelContext, UserInput
 from agiwo.agent.input_codec import normalize_to_message
 from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.memory_types import MemoryRecord
+from agiwo.agent.run_mutations import (
+    record_compaction_metadata,
+    replace_messages,
+    set_termination_reason,
+)
 from agiwo.agent.run_state import RunContext
 from agiwo.agent.step_pipeline import commit_step
 from agiwo.agent.tool_executor import execute_tool_batch
@@ -382,15 +387,18 @@ async def execute_run(
     user_message = normalize_to_message(user_input)
     context.config = options
     context.hooks = hooks
-    context.messages = _assemble_messages(
-        system_prompt,
-        existing_steps,
-        memories,
-        before_run_hook_result,
-        channel_context=user_message.context,
+    replace_messages(
+        context,
+        _assemble_messages(
+            system_prompt,
+            existing_steps,
+            memories,
+            before_run_hook_result,
+            channel_context=user_message.context,
+        ),
     )
     context.tool_schemas = tool_schemas
-    context.last_compact_metadata = last_compact
+    record_compaction_metadata(context, last_compact)
     run = Run(
         id=context.run_id,
         agent_id=context.agent_id,
@@ -466,7 +474,7 @@ async def _execute_tool_calls(
         await commit_step(state, tool_step)
 
         if result.termination_reason is not None:
-            state.termination_reason = result.termination_reason
+            set_termination_reason(state, result.termination_reason)
             return True
     return state.is_terminal
 
@@ -512,13 +520,14 @@ async def _run_loop(
             if should_stop:
                 return
     except asyncio.CancelledError:
-        state.termination_reason = TerminationReason.CANCELLED
+        set_termination_reason(state, TerminationReason.CANCELLED)
         logger.info("agent_execution_cancelled", run_id=state.run_id)
     except Exception:
-        state.termination_reason = (
+        set_termination_reason(
+            state,
             TerminationReason.ERROR_WITH_CONTEXT
             if state.assistant_steps_count > 0
-            else TerminationReason.ERROR
+            else TerminationReason.ERROR,
         )
         logger.error(
             "agent_execution_failed",
@@ -602,7 +611,7 @@ def _apply_termination_reason(
 ) -> bool:
     if reason is None:
         return False
-    state.termination_reason = reason
+    set_termination_reason(state, reason)
     return True
 
 
@@ -638,7 +647,7 @@ async def _run_compaction_cycle(
         state.config.max_run_cost is not None
         and state.token_cost >= state.config.max_run_cost
     ):
-        state.termination_reason = TerminationReason.MAX_RUN_COST
+        set_termination_reason(state, TerminationReason.MAX_RUN_COST)
     return compact_start_seq, True
 
 
@@ -652,7 +661,7 @@ async def _run_assistant_turn(
     if state.hooks.on_before_llm_call:
         modified = await state.hooks.on_before_llm_call(state.messages)
         if modified is not None:
-            state.messages = list(modified)
+            replace_messages(state, modified)
 
     step, llm_context = await stream_assistant_step(
         model,
@@ -689,7 +698,7 @@ async def _handle_assistant_turn_result(
         return True
 
     if not step.tool_calls:
-        state.termination_reason = TerminationReason.COMPLETED
+        set_termination_reason(state, TerminationReason.COMPLETED)
         return True
 
     return await _execute_tool_calls(
