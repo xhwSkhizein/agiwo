@@ -242,6 +242,8 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
     assert "# Summary\ncompressed" in state.messages[1]["content"]
     assert state.messages[2]["role"] == "assistant"
     assert "Understood" in state.messages[2]["content"]
+    assert state.messages[3] == {"role": "user", "content": "hello"}
+    assert all(message.get("name") != "compact_request" for message in state.messages)
     assert state.last_compact_metadata == metadata
 
     persisted = await session_storage.get_latest_compact_metadata("sess-1", "agent-1")

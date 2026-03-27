@@ -283,6 +283,10 @@ async def _compact(
     compact_prompt_content = prompt_template.format(
         previous_summary=previous_summary or "None",
     )
+    latest_user_message = next(
+        (m for m in reversed(state.messages) if m.get("role") == "user"),
+        None,
+    )
 
     sequence = await state.session_runtime.allocate_sequence()
     compact_user_step = StepRecord.user(
@@ -314,10 +318,6 @@ async def _compact(
         state.messages[0].get("content", "")
         if state.messages and state.messages[0].get("role") == "system"
         else ""
-    )
-    latest_user_message = next(
-        (m for m in reversed(state.messages) if m.get("role") == "user"),
-        None,
     )
 
     messages_to_backup = state.messages[1:] if system_prompt else state.messages
