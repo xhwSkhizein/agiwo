@@ -15,7 +15,6 @@ from agiwo.agent.compact_types import CompactMetadata
 from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.run_state import RunContext
 from agiwo.agent.step_pipeline import commit_step, replace_messages
-from agiwo.agent.storage.session import SessionStorage
 from agiwo.agent.types import StepRecord
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator
@@ -208,7 +207,6 @@ async def compact_if_needed(
     *,
     state: RunContext,
     model: Model,
-    session_storage: SessionStorage,
     abort_signal: AbortSignal | None,
     max_context_window: int | None,
     compact_prompt: str | None = None,
@@ -231,7 +229,6 @@ async def compact_if_needed(
             metadata = await _compact(
                 state,
                 model,
-                session_storage,
                 abort_signal,
                 compact_prompt=compact_prompt,
                 compact_start_seq=compact_start_seq,
@@ -270,7 +267,6 @@ async def compact_if_needed(
 async def _compact(
     state: RunContext,
     model: Model,
-    session_storage: SessionStorage,
     abort_signal: AbortSignal | None,
     *,
     compact_prompt: str | None,
@@ -363,7 +359,7 @@ async def _compact(
         compacted_messages,
         compact_metadata=metadata,
     )
-    await session_storage.save_compact_metadata(
+    await state.session_runtime.session_storage.save_compact_metadata(
         state.session_id,
         state.agent_id,
         metadata,

@@ -219,7 +219,6 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
     metadata = await compact_if_needed(
         state=state,
         model=_CompactModel(id="compact-model", name="compact-model", provider="openai"),
-        session_storage=session_storage,
         abort_signal=None,
         max_context_window=1,
         compact_prompt=None,
@@ -237,3 +236,13 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
     ]
     assert metadata is not None
     assert metadata.get_summary() == "compressed"
+    assert state.messages[0] == {"role": "system", "content": "sys"}
+    assert state.messages[1]["role"] == "user"
+    assert metadata.transcript_path in state.messages[1]["content"]
+    assert "# Summary\ncompressed" in state.messages[1]["content"]
+    assert state.messages[2]["role"] == "assistant"
+    assert "Understood" in state.messages[2]["content"]
+    assert state.last_compact_metadata == metadata
+
+    persisted = await session_storage.get_latest_compact_metadata("sess-1", "agent-1")
+    assert persisted == metadata
