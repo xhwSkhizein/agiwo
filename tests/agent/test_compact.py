@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from agiwo.agent.compaction import _compact, build_compacted_messages
+from agiwo.agent.compaction import build_compacted_messages, compact_if_needed
 from agiwo.agent.compact_types import CompactMetadata
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.run_state import RunContext, SessionRuntime
@@ -182,7 +182,9 @@ class TestDefaultPrompt:
 
 
 @pytest.mark.asyncio
-async def test_compact_uses_the_same_step_commit_pipeline_as_normal_runs(tmp_path):
+async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
+    tmp_path,
+):
     step_storage = InMemoryRunStepStorage()
     session_storage = InMemorySessionStorage()
     session_runtime = SessionRuntime(
@@ -214,11 +216,12 @@ async def test_compact_uses_the_same_step_commit_pipeline_as_normal_runs(tmp_pat
         ],
     )
 
-    metadata = await _compact(
-        state,
-        _CompactModel(id="compact-model", name="compact-model", provider="openai"),
-        session_storage,
+    metadata = await compact_if_needed(
+        state=state,
+        model=_CompactModel(id="compact-model", name="compact-model", provider="openai"),
+        session_storage=session_storage,
         abort_signal=None,
+        max_context_window=1,
         compact_prompt=None,
         compact_start_seq=1,
         root_path=str(tmp_path),
@@ -232,4 +235,5 @@ async def test_compact_uses_the_same_step_commit_pipeline_as_normal_runs(tmp_pat
         "step_completed",
         "step_completed",
     ]
+    assert metadata is not None
     assert metadata.get_summary() == "compressed"

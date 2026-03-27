@@ -228,7 +228,7 @@ async def compact_if_needed(
     last_error: Exception | None = None
     for attempt in range(retry_count + 1):
         try:
-            result = await _compact(
+            metadata = await _compact(
                 state,
                 model,
                 session_storage,
@@ -240,13 +240,13 @@ async def compact_if_needed(
             logger.info(
                 "compact_success",
                 run_id=state.run_id,
-                start_seq=result.metadata.start_seq,
-                end_seq=result.metadata.end_seq,
-                before_tokens=result.metadata.before_token_estimate,
-                after_tokens=result.metadata.after_token_estimate,
+                start_seq=metadata.start_seq,
+                end_seq=metadata.end_seq,
+                before_tokens=metadata.before_token_estimate,
+                after_tokens=metadata.after_token_estimate,
                 attempt=attempt + 1,
             )
-            return result
+            return metadata
         except Exception as error:  # noqa: BLE001 - compaction retries guard the runtime boundary
             last_error = error
             logger.warning(
