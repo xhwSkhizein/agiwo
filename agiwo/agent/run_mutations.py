@@ -10,6 +10,13 @@ def replace_messages(state: RunContext, messages: Sequence[dict[str, Any]]) -> N
     state.ledger.messages = list(messages)
 
 
+def set_tool_schemas(
+    state: RunContext,
+    tool_schemas: Sequence[dict[str, Any]] | None,
+) -> None:
+    state.ledger.tool_schemas = list(tool_schemas) if tool_schemas is not None else None
+
+
 def record_compaction_metadata(
     state: RunContext,
     metadata: CompactMetadata | None,

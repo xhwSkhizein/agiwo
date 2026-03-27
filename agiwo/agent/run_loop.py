@@ -1,6 +1,7 @@
 """Single-run execution engine — the core run loop."""
 
 import asyncio
+import copy
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -15,6 +16,7 @@ from agiwo.agent.memory_types import MemoryRecord
 from agiwo.agent.run_mutations import (
     record_compaction_metadata,
     replace_messages,
+    set_tool_schemas,
     set_termination_reason,
 )
 from agiwo.agent.run_state import RunContext
@@ -196,9 +198,10 @@ def _assemble_messages(
 def _apply_steering_messages(
     messages: list[dict],
     steering_queue: asyncio.Queue[object] | None,
-) -> None:
+) -> list[dict]:
+    updated_messages = copy.deepcopy(messages)
     if steering_queue is None or steering_queue.empty():
-        return
+        return updated_messages
 
     parts: list[str] = []
     while not steering_queue.empty():
@@ -208,11 +211,11 @@ def _apply_steering_messages(
             break
 
     if not parts:
-        return
+        return updated_messages
 
     steering_text = "\n".join(parts)
     tag = f"\n\n<system-steering>{steering_text}</system-steering>"
-    last_message = messages[-1] if messages else None
+    last_message = updated_messages[-1] if updated_messages else None
     if last_message and last_message.get("role") in ("user", "tool"):
         content = last_message.get("content", "")
         if isinstance(content, str):
@@ -221,9 +224,10 @@ def _apply_steering_messages(
             content.append({"type": "text", "text": tag})
         else:
             last_message["content"] = tag
-        return
+        return updated_messages
 
-    messages.append({"role": "user", "content": steering_text})
+    updated_messages.append({"role": "user", "content": steering_text})
+    return updated_messages
 
 
 def _render_channel_context(ctx: ChannelContext) -> str:
@@ -397,7 +401,7 @@ async def execute_run(
             channel_context=user_message.context,
         ),
     )
-    context.tool_schemas = tool_schemas
+    set_tool_schemas(context, tool_schemas)
     record_compaction_metadata(context, last_compact)
     run = Run(
         id=context.run_id,
@@ -657,7 +661,10 @@ async def _run_assistant_turn(
     model: Model,
     abort_signal: AbortSignal | None,
 ) -> tuple[StepRecord, LLMCallContext]:
-    _apply_steering_messages(state.messages, state.steering_queue)
+    replace_messages(
+        state,
+        _apply_steering_messages(state.messages, state.steering_queue),
+    )
     if state.hooks.on_before_llm_call:
         modified = await state.hooks.on_before_llm_call(state.messages)
         if modified is not None:

@@ -180,17 +180,9 @@ class RunContext:
     def messages(self) -> list[dict[str, Any]]:
         return self.ledger.messages
 
-    @messages.setter
-    def messages(self, value: list[dict[str, Any]]) -> None:
-        self.ledger.messages = value
-
     @property
     def tool_schemas(self) -> list[dict[str, Any]] | None:
         return self.ledger.tool_schemas
-
-    @tool_schemas.setter
-    def tool_schemas(self, value: list[dict[str, Any]] | None) -> None:
-        self.ledger.tool_schemas = value
 
     @property
     def start_time(self) -> float:
@@ -203,10 +195,6 @@ class RunContext:
     @property
     def termination_reason(self) -> TerminationReason | None:
         return self.ledger.termination_reason
-
-    @termination_reason.setter
-    def termination_reason(self, value: TerminationReason | None) -> None:
-        self.ledger.termination_reason = value
 
     @property
     def total_tokens(self) -> int:
@@ -291,10 +279,6 @@ class RunContext:
     @property
     def last_compact_metadata(self) -> CompactMetadata | None:
         return self.ledger.last_compact_metadata
-
-    @last_compact_metadata.setter
-    def last_compact_metadata(self, value: CompactMetadata | None) -> None:
-        self.ledger.last_compact_metadata = value
 
     @property
     def elapsed(self) -> float:

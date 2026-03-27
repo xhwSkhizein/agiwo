@@ -102,3 +102,31 @@ def test_run_mutations_only_touch_mutable_ledger_state() -> None:
     assert state.termination_reason == TerminationReason.CANCELLED
     assert state.run_id == "run-1"
     assert state.session_id == "session-1"
+
+
+def test_run_context_disallows_direct_assignment_to_mutable_ledger_fields() -> None:
+    state = _make_state()
+    metadata = CompactMetadata(
+        session_id="session-1",
+        agent_id="agent-1",
+        start_seq=1,
+        end_seq=2,
+        before_token_estimate=100,
+        after_token_estimate=10,
+        message_count=2,
+        transcript_path="/tmp/t.jsonl",
+        analysis={"summary": "summary"},
+        created_at=datetime(2026, 3, 26, 12, 0, 0),
+    )
+
+    with pytest.raises(AttributeError):
+        state.messages = [{"role": "assistant", "content": "summary"}]
+
+    with pytest.raises(AttributeError):
+        state.tool_schemas = [{"type": "function"}]
+
+    with pytest.raises(AttributeError):
+        state.termination_reason = TerminationReason.CANCELLED
+
+    with pytest.raises(AttributeError):
+        state.last_compact_metadata = metadata
