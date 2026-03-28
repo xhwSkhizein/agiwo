@@ -134,6 +134,15 @@ def test_run_context_disallows_direct_assignment_to_mutable_ledger_fields() -> N
     with pytest.raises(AttributeError):
         state.last_compact_metadata = metadata
 
+    with pytest.raises(AttributeError):
+        state.total_tokens = 99
+
+    with pytest.raises(AttributeError):
+        state.steps_count = 99
+
+    with pytest.raises(AttributeError):
+        state.response_content = "direct write"
+
     replace_messages(state, [{"role": "assistant", "content": "summary"}])
     snapshot = state.messages
     snapshot[0]["content"] = "mutated"

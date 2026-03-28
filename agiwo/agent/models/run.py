@@ -1,6 +1,5 @@
 """Run-scoped models and enums for agent execution."""
 
-import dataclasses
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -8,22 +7,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
+from agiwo.agent.models._serialization import fields_to_dict
 from agiwo.agent.models.compact import CompactMetadata
 from agiwo.agent.models.input import UserInput
-from agiwo.utils.serialization import serialize_optional_datetime
-
-
-def _fields_to_dict(obj: object) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for field_info in dataclasses.fields(obj):
-        value = getattr(obj, field_info.name)
-        if isinstance(value, datetime):
-            result[field_info.name] = serialize_optional_datetime(value)
-        elif isinstance(value, Enum):
-            result[field_info.name] = value.value
-        else:
-            result[field_info.name] = value
-    return result
 
 
 class RunStatus(str, Enum):
@@ -103,7 +89,7 @@ class RunMetrics:
     response_latency: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return _fields_to_dict(self)
+        return fields_to_dict(self)
 
 
 @dataclass
