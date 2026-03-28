@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timezone
 
 from agiwo.agent import Agent
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.exceptions import BaseAgentNotFoundError

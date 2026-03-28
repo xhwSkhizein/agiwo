@@ -5,7 +5,7 @@ Feishu channel service factory — dependency injection and component wiring.
 import tempfile
 from pathlib import Path
 
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 
 from server.channels.agent_executor import AgentExecutor
 from server.channels.feishu.api_client import FeishuApiClient

@@ -11,13 +11,13 @@ from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from uuid import uuid4
 
-from agiwo.agent import Agent
-from agiwo.agent import UserInput
-from agiwo.agent import AgentStreamItem, RunOutput, TerminationReason
+from agiwo.agent import Agent, AgentStreamItem, RunOutput, TerminationReason, UserInput
 from agiwo.scheduler.commands import DispatchAction, DispatchReason
 from agiwo.scheduler.formatting import (
-    build_child_result_detail_lines,
-    format_child_results_summary,
+    SHUTDOWN_SUMMARY_TASK,
+    build_events_message,
+    build_timeout_message,
+    build_wake_message,
 )
 from agiwo.scheduler.models import (
     AgentState,
@@ -27,17 +27,13 @@ from agiwo.scheduler.models import (
     WakeType,
 )
 from agiwo.scheduler.runtime_state import ExecutionHandleLike, RuntimeState
-from agiwo.scheduler.store import AgentStateStorage
+from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.codec import deserialize_child_agent_config_overrides
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_SHUTDOWN_SUMMARY_TASK = (
-    "System shutdown requested. Please produce a final summary "
-    "report of all work done so far."
-)
 _FAILED_TERMINATIONS = frozenset(
     {
         TerminationReason.CANCELLED,
@@ -134,87 +130,13 @@ class SchedulerRunner:
         self._ctx.rt.agents[state.id] = child
         return child
 
-    async def build_wake_message(self, state: AgentState) -> UserInput:
-        wc = state.wake_condition
-        if wc is None:
-            return "You have been woken up. Please continue your task."
-
-        if wc.type == WakeType.WAITSET:
-            succeeded, failed = await self._collect_child_results(state)
-            done = len(succeeded) + len(failed)
-            return format_child_results_summary(
-                header=f"Child agents completed ({done}/{len(wc.wait_for)}).",
-                succeeded=succeeded,
-                failed=failed,
-                closing_instruction=(
-                    "Please synthesize a final response based on the successful "
-                    "results above."
-                ),
-            )
-        if wc.type == WakeType.TIMER:
-            return "The scheduled delay has elapsed. Please continue your task."
-        if wc.type == WakeType.PERIODIC:
-            return (
-                "A scheduled periodic check has triggered. "
-                "Please check progress and decide whether to continue waiting "
-                "or produce a final result."
-            )
-        return "You have been woken up. Please continue your task."
-
-    async def build_timeout_message(self, state: AgentState) -> str:
+    async def _build_wake_message(self, state: AgentState) -> UserInput:
         succeeded, failed = await self._collect_child_results(state)
-        wc = state.wake_condition
-        done = len(succeeded) + len(failed)
-        return format_child_results_summary(
-            header="Wait timeout reached.",
-            succeeded=succeeded,
-            failed=failed,
-            progress_line=f"Completed children: {done}/{len(wc.wait_for) if wc else 0}",
-            closing_instruction=(
-                "Please produce a summary report with whatever results are available."
-            ),
-        )
+        return build_wake_message(state.wake_condition, succeeded, failed)
 
-    def build_events_message(self, events: tuple[PendingEvent, ...]) -> str:
-        lines = [f"You have {len(events)} new notification(s):\n"]
-        for event in events:
-            event_label = event.event_type.value.replace("_", " ").title()
-            child_id = event.payload.get(
-                "child_agent_id", event.source_agent_id or "unknown"
-            )
-            lines.append(f"### {event_label} - Agent: {child_id}")
-            if event.event_type == SchedulerEventType.CHILD_SLEEP_RESULT:
-                lines.extend(
-                    build_child_result_detail_lines(
-                        result=event.payload.get("result", ""),
-                        explain=event.payload.get("explain"),
-                        periodic=event.payload.get("periodic", False),
-                        result_as_block=True,
-                    )
-                )
-            elif event.event_type == SchedulerEventType.CHILD_COMPLETED:
-                lines.extend(
-                    build_child_result_detail_lines(
-                        result=event.payload.get("result", ""),
-                        result_as_block=True,
-                    )
-                )
-            elif event.event_type == SchedulerEventType.CHILD_FAILED:
-                lines.extend(
-                    build_child_result_detail_lines(
-                        failure_reason=event.payload.get("reason", "Unknown failure")
-                    )
-                )
-            elif event.event_type == SchedulerEventType.USER_HINT:
-                hint = event.payload.get("hint", "")
-                if hint:
-                    lines.append(f"User hint: {hint}")
-            lines.append("")
-        lines.append(
-            "Please review these notifications and take appropriate action "
-            "(e.g., summarize results for the user, cancel stuck agents, etc.)."
-        )
-        return "\n".join(lines)
+    async def _build_timeout_message(self, state: AgentState) -> str:
+        succeeded, failed = await self._collect_child_results(state)
+        return build_timeout_message(state.wake_condition, succeeded, failed)
 
     async def _resolve_agent(
         self,
@@ -272,19 +194,19 @@ class SchedulerRunner:
             user_input = (
                 action.input_override
                 if action.input_override is not None
-                else self.build_events_message(action.events)
+                else build_events_message(action.events)
             )
         elif action.reason == DispatchReason.WAKE_TIMEOUT:
             user_input = (
                 action.input_override
                 if action.input_override is not None
-                else await self.build_timeout_message(state)
+                else await self._build_timeout_message(state)
             )
         else:
             user_input = (
                 action.input_override
                 if action.input_override is not None
-                else await self.build_wake_message(state)
+                else await self._build_wake_message(state)
             )
 
         await self._save_state(
@@ -506,20 +428,21 @@ class SchedulerRunner:
         state: AgentState,
     ) -> tuple[dict[str, str], dict[str, str]]:
         wc = state.wake_condition
-        child_ids = wc.wait_for if wc else []
-        if not child_ids:
-            child_ids = [
-                child.id
-                for child in await self._ctx.store.list_states(
-                    parent_id=state.id,
-                    limit=1000,
-                )
-            ]
+        target_ids = set(wc.wait_for) if wc and wc.wait_for else None
+
+        children = await self._ctx.store.list_states(
+            parent_id=state.id,
+            limit=1000,
+        )
+        children_by_id = {child.id: child for child in children}
+
+        if target_ids is None:
+            target_ids = set(children_by_id.keys())
 
         succeeded: dict[str, str] = {}
         failed: dict[str, str] = {}
-        for child_id in child_ids:
-            child = await self._ctx.store.get_state(child_id)
+        for child_id in target_ids:
+            child = children_by_id.get(child_id)
             if child is None:
                 failed[child_id] = "Agent state not found"
             elif child.status == AgentStateStatus.FAILED:
@@ -550,7 +473,7 @@ class SchedulerRunner:
         if state.is_root and state.is_persistent:
             await self._save_state(
                 state.with_queued(
-                    pending_input=_SHUTDOWN_SUMMARY_TASK,
+                    pending_input=SHUTDOWN_SUMMARY_TASK,
                 ).with_updates(result_summary=text)
             )
             return True

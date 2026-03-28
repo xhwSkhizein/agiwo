@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, Request
 
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.observability.base import BaseTraceStorage
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 
 from server.channels.feishu import FeishuChannelService
 from server.config import ConsoleConfig

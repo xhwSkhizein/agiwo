@@ -190,6 +190,9 @@ class WakeCondition:
     def with_next_wakeup(self, wakeup_at: datetime) -> "WakeCondition":
         return replace(self, wakeup_at=wakeup_at)
 
+    def with_timeout_at(self, timeout_at: datetime) -> "WakeCondition":
+        return replace(self, timeout_at=timeout_at)
+
 
 _UNSET = object()
 

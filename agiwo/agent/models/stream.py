@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 from agiwo.agent.models.run import RunMetrics, TerminationReason
 from agiwo.agent.models.step import StepDelta, StepRecord
 from agiwo.utils.serialization import serialize_optional_datetime
-from agiwo.utils.tojson import to_json
 
 if TYPE_CHECKING:
     from agiwo.agent.runtime.context import RunContext
@@ -48,9 +47,6 @@ class AgentStreamItemBase:
 
     def to_dict(self) -> dict[str, Any]:
         return self._base_dict()
-
-    def to_sse(self) -> str:
-        return f"data: {to_json(self)}\n\n"
 
 
 @dataclass(kw_only=True)

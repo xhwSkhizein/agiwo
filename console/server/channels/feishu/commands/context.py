@@ -10,7 +10,7 @@ from agiwo.llm.limits import (
     resolve_max_input_tokens_per_call,
     resolve_max_output_tokens,
 )
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 
 from server.channels.feishu.commands.base import (
     CommandContext,

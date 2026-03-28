@@ -12,7 +12,8 @@ from agiwo.scheduler.models import (
     WakeCondition,
     WakeType,
 )
-from agiwo.scheduler.store import InMemoryAgentStateStorage, SQLiteAgentStateStorage
+from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
+from agiwo.scheduler.store.sqlite import SQLiteAgentStateStorage
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from agiwo.scheduler.commands import DispatchReason
-from agiwo.scheduler.engine import SchedulerEngine
+from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -14,7 +14,7 @@ from agiwo.scheduler.models import (
     WakeCondition,
     WakeType,
 )
-from agiwo.scheduler.store import InMemoryAgentStateStorage
+from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
 
 
 def _state(id: str, *, status: AgentStateStatus, **kwargs) -> AgentState:
@@ -27,8 +27,8 @@ def _state(id: str, *, status: AgentStateStatus, **kwargs) -> AgentState:
     )
 
 
-def _engine(*, event_debounce_min_count: int = 2) -> SchedulerEngine:
-    return SchedulerEngine(
+def _engine(*, event_debounce_min_count: int = 2) -> Scheduler:
+    return Scheduler(
         store=InMemoryAgentStateStorage(),
         config=SchedulerConfig(event_debounce_min_count=event_debounce_min_count),
         semaphore=asyncio.Semaphore(1),

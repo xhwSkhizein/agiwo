@@ -7,7 +7,7 @@ from agiwo.agent import Agent
 from agiwo.agent import UserInput
 from agiwo.agent import RunOutput
 from agiwo.scheduler.commands import RouteResult
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.session.binding import assign_scheduler_state

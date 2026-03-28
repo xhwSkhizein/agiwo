@@ -17,7 +17,7 @@ from agiwo.scheduler.models import (
     AgentStateStorageConfig,
     SchedulerConfig,
 )
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 
 from server.app import create_app
 from server.dependencies import (

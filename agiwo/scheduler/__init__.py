@@ -10,8 +10,8 @@ from agiwo.scheduler.models import (
     WakeType,
     TimeUnit,
 )
-from agiwo.scheduler.scheduler import Scheduler
-from agiwo.scheduler.store import AgentStateStorage
+from agiwo.scheduler.engine import Scheduler
+from agiwo.scheduler.store.base import AgentStateStorage
 
 __all__ = [
     "AgentState",

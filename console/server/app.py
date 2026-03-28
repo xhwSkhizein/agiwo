@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from agiwo.scheduler.models import SchedulerConfig
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 
 from server.config import ConsoleConfig
 from server.dependencies import (

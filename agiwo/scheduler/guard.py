@@ -6,7 +6,7 @@ instead of implementing checks themselves.
 """
 
 from agiwo.scheduler.models import ACTIVE_AGENT_STATUSES, AgentState, TaskLimits
-from agiwo.scheduler.store import AgentStateStorage
+from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)

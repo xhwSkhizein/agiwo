@@ -10,13 +10,8 @@ def test_nested_agent_modules_are_exposed_from_new_package() -> None:
     assert hasattr(context_module, "AgentToolContext")
 
 
-def test_transport_serialization_module_has_agent_payload_serializers() -> None:
-    serialization_module = importlib.import_module(
-        "agiwo.agent.transport.serialization"
-    )
-
-    assert hasattr(serialization_module, "serialize_run_payload")
-    assert hasattr(serialization_module, "serialize_step_record_payload")
+def test_transport_serialization_removed_from_sdk_layer() -> None:
+    assert importlib.util.find_spec("agiwo.agent.transport") is None
 
 
 def test_hooks_are_grouped_under_hooks_package() -> None:

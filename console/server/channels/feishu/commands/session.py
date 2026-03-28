@@ -5,7 +5,7 @@ Session management commands: /new, /list, /switch and /fork.
 from datetime import datetime
 from functools import partial
 
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 
 from server.channels.feishu.commands.base import (
     CommandContext,
