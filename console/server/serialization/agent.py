@@ -5,7 +5,6 @@ from typing import Any, Literal
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.models.run import Run, RunMetrics
 from agiwo.agent.models.step import StepDelta, StepMetrics, StepRecord
-from agiwo.agent.models.stream import AgentStreamItem
 from agiwo.utils.serialization import serialize_optional_datetime
 
 

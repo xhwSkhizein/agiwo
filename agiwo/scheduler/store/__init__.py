@@ -10,16 +10,16 @@ def create_agent_state_storage(config: AgentStateStorageConfig) -> AgentStateSto
     cfg = config.config
 
     if storage_type == "memory":
-        from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
+        from agiwo.scheduler.store.memory import InMemoryAgentStateStorage  # noqa: PLC0415
 
         return InMemoryAgentStateStorage()
     if storage_type == "sqlite":
-        from agiwo.scheduler.store.sqlite import SQLiteAgentStateStorage
+        from agiwo.scheduler.store.sqlite import SQLiteAgentStateStorage  # noqa: PLC0415
 
         db_path = cfg.get("db_path", "scheduler.db")
         return SQLiteAgentStateStorage(db_path=db_path)
     if storage_type == "mongodb":
-        from agiwo.scheduler.store.mongo import MongoAgentStateStorage
+        from agiwo.scheduler.store.mongo import MongoAgentStateStorage  # noqa: PLC0415
 
         uri = cfg.get("uri", "mongodb://localhost:27017")
         db_name = cfg.get("db_name", "agiwo")
