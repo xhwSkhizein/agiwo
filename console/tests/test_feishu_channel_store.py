@@ -238,7 +238,9 @@ async def test_sqlite_feishu_channel_store_persists_across_reconnects(
         assert (
             await second_store.get_chat_context(chat_context.scope_id) == chat_context
         )
-        assert await second_store.get_session_with_context(session.id) is not None
+        # feishu_session is dropped on reconnect (test-phase schema reset),
+        # so the session written by first_store is gone.
+        assert await second_store.get_session_with_context(session.id) is None
     finally:
         await second_store.close()
 
@@ -296,5 +298,55 @@ async def test_sqlite_feishu_channel_store_preserves_created_at_on_upsert(
         assert loaded_session is not None
         assert loaded_session.created_at == original_created_at
         assert loaded_session.updated_at == replacement_updated_at
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["memory", "sqlite"])
+async def test_feishu_channel_store_round_trips_task_and_fork_fields(
+    kind: str,
+    tmp_path,
+) -> None:
+    store = _create_store(kind, tmp_path)
+    await store.connect()
+    try:
+        now = datetime.now(timezone.utc)
+        chat_context = _make_chat_context(
+            context_id="ctx-1",
+            scope_id="scope-1",
+            updated_at=now,
+        )
+        session = Session(
+            id="sess-1",
+            chat_context_id="ctx-1",
+            base_agent_id="base-agent",
+            runtime_agent_id="runtime-1",
+            scheduler_state_id="state-1",
+            created_by="AUTO",
+            created_at=now,
+            updated_at=now,
+            current_task_id="task-42",
+            task_message_count=3,
+            source_session_id="sess-0",
+            source_task_id="task-0",
+            fork_context_summary="forked for subtask",
+        )
+
+        await store.upsert_chat_context(chat_context)
+        await store.upsert_session(session)
+
+        loaded = await store.get_session("sess-1")
+        assert loaded is not None
+        assert loaded.current_task_id == "task-42"
+        assert loaded.task_message_count == 3
+        assert loaded.source_session_id == "sess-0"
+        assert loaded.source_task_id == "task-0"
+        assert loaded.fork_context_summary == "forked for subtask"
+
+        with_context = await store.get_session_with_context("sess-1")
+        assert with_context is not None
+        assert with_context.session.current_task_id == "task-42"
+        assert with_context.session.source_session_id == "sess-0"
     finally:
         await store.close()

@@ -1,5 +1,5 @@
 """
-Session management commands: /new, /list and /switch.
+Session management commands: /new, /list, /switch and /fork.
 """
 
 from datetime import datetime
@@ -21,17 +21,13 @@ from server.channels.feishu.commands.post_builder import (
     text_element,
 )
 from server.channels.feishu.commands.status_text import format_scheduler_status
-from server.channels.session import SessionContextService, SessionManager
-from server.channels.session.binding import (
-    ChatContextNotFoundError,
-    SessionNotFoundError,
-    SessionNotInChatContextError,
-)
+from server.channels.session import SessionManager
 from server.channels.session.models import Session
+from server.services.remote_workspace_session import RemoteWorkspaceSessionService
 
 
 def build_session_command_specs(
-    session_service: SessionContextService,
+    workspace_session_service: RemoteWorkspaceSessionService,
     session_manager: SessionManager,
     scheduler: Scheduler,
 ) -> list[CommandSpec]:
@@ -41,21 +37,34 @@ def build_session_command_specs(
             description="创建新会话，重置当前对话上下文",
             execute=partial(
                 _execute_new_session,
-                session_service,
+                workspace_session_service,
                 session_manager,
             ),
         ),
         CommandSpec(
             name="list",
             description="列出历史会话和概览",
-            execute=partial(_execute_list_sessions, session_service, scheduler),
+            execute=partial(
+                _execute_list_sessions,
+                workspace_session_service,
+                scheduler,
+            ),
         ),
         CommandSpec(
             name="switch",
             description="切换当前会话 — /switch <session_id>",
             execute=partial(
                 _execute_switch_session,
-                session_service,
+                workspace_session_service,
+                session_manager,
+            ),
+        ),
+        CommandSpec(
+            name="fork",
+            description="从当前会话分叉新会话 — /fork <上下文描述>",
+            execute=partial(
+                _execute_fork_session,
+                workspace_session_service,
                 session_manager,
             ),
         ),
@@ -63,7 +72,7 @@ def build_session_command_specs(
 
 
 async def _execute_new_session(
-    session_service: SessionContextService,
+    service: RemoteWorkspaceSessionService,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
@@ -75,7 +84,7 @@ async def _execute_new_session(
             text="默认 Agent 不存在，无法创建会话。请先检查默认 Agent 配置。"
         )
 
-    created = await session_service.create_new_session(
+    result = await service.create_session(
         chat_context_scope_id=ctx.chat_context_scope_id,
         channel_instance_id=ctx.channel_instance_id,
         chat_id=ctx.chat_id,
@@ -86,12 +95,12 @@ async def _execute_new_session(
     )
     session_manager.reset_chat_context(ctx.chat_context_scope_id)
     return CommandResult(
-        text=f"新会话已创建: {created.session.id}，之前的任务将在后台继续运行。"
+        text=f"新会话已创建: {result.session.id}，之前的任务将在后台继续运行。"
     )
 
 
 async def _execute_switch_session(
-    session_service: SessionContextService,
+    service: RemoteWorkspaceSessionService,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
@@ -104,16 +113,12 @@ async def _execute_switch_session(
         return CommandResult(text=f"当前已在会话 {target_session_id}。")
 
     try:
-        switched = await session_service.switch_session(
+        switched = await service.switch_session(
             chat_context_scope_id=ctx.chat_context_scope_id,
             target_session_id=target_session_id,
         )
-    except (
-        ChatContextNotFoundError,
-        SessionNotFoundError,
-        SessionNotInChatContextError,
-    ) as exc:
-        return CommandResult(text=_switch_session_error_text(exc, target_session_id))
+    except RuntimeError as exc:
+        return CommandResult(text=f"切换失败: {exc}")
 
     session_manager.reset_chat_context(ctx.chat_context_scope_id)
     return CommandResult(
@@ -121,52 +126,70 @@ async def _execute_switch_session(
     )
 
 
+async def _execute_fork_session(
+    service: RemoteWorkspaceSessionService,
+    session_manager: SessionManager,
+    ctx: CommandContext,
+    args: str,
+) -> CommandResult:
+    context_summary = args.strip()
+    if not context_summary:
+        return CommandResult(
+            text="用法: /fork <上下文描述>\n例如: /fork 继续处理子任务B"
+        )
+
+    if ctx.current_session is None:
+        return CommandResult(text="当前没有活跃会话，请先发送消息创建会话。")
+
+    try:
+        result = await service.fork_session(
+            chat_context_scope_id=ctx.chat_context_scope_id,
+            context_summary=context_summary,
+            created_by="COMMAND_FORK",
+        )
+    except RuntimeError as exc:
+        return CommandResult(text=f"分叉失败: {exc}")
+
+    session_manager.reset_chat_context(ctx.chat_context_scope_id)
+    return CommandResult(
+        text=(
+            f"已从会话 {ctx.current_session.id} 分叉新会话: {result.session.id}\n"
+            f"上下文: {context_summary}"
+        )
+    )
+
+
 async def _execute_list_sessions(
-    session_service: SessionContextService,
+    service: RemoteWorkspaceSessionService,
     scheduler: Scheduler,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
     del args
 
-    items = await session_service.list_user_sessions(
-        user_open_id=ctx.trigger_user_open_id,
-        current_chat_context_scope_id=ctx.chat_context_scope_id,
+    sessions = await service.list_sessions(
+        chat_context_scope_id=ctx.chat_context_scope_id,
     )
-    if not items:
+    if not sessions:
         return CommandResult(text="暂无会话记录。")
 
-    content: list[list[dict]] = []
+    current_session_id = (
+        ctx.current_session.id if ctx.current_session is not None else None
+    )
 
-    # Title line
-    content.append([bold(f"📋 会话列表 (共 {len(items)} 个)")])
+    content: list[list[dict]] = []
+    content.append([bold(f"📋 会话列表 (共 {len(sessions)} 个)")])
     content.append(new_line())
 
-    for i, item in enumerate(items, 1):
-        chat_context = item.chat_context
-        session = item.session
-
-        # Chat type indicator
-        is_p2p = chat_context.chat_type == "p2p"
-        chat_icon = "👤" if is_p2p else "👥"
-        chat_label = "私聊" if is_p2p else "群聊"
-
-        # Status badge
+    for i, session in enumerate(sessions, 1):
         status_text = await _resolve_status_text(scheduler, session)
         status_emoji = _status_to_emoji(status_text)
 
-        # Header line with number and badges
-        header_parts = [
-            bold(f"{i}. "),
-            text_element(f"{chat_icon} {chat_label}"),
-        ]
-        if item.is_current:
-            header_parts.append(text_element("  [当前会话]", ["bold", "italic"]))
-        if item.in_current_context:
-            header_parts.append(text_element("  [当前上下文]", ["italic"]))
+        header_parts: list[dict] = [bold(f"{i}. ")]
+        if session.id == current_session_id:
+            header_parts.append(text_element("[当前] ", ["bold", "italic"]))
         content.append(header_parts)
 
-        # Detail lines
         content.append(
             [
                 text_element("   状态: "),
@@ -179,6 +202,21 @@ async def _execute_list_sessions(
                 code(session.id),
             ]
         )
+        if session.current_task_id:
+            content.append(
+                [
+                    text_element("   任务: "),
+                    code(session.current_task_id),
+                    text_element(f"  ({session.task_message_count} 条消息)"),
+                ]
+            )
+        if session.source_session_id:
+            content.append(
+                [
+                    text_element("   分叉自: "),
+                    code(session.source_session_id),
+                ]
+            )
         if session.scheduler_state_id:
             content.append(
                 [
@@ -193,20 +231,17 @@ async def _execute_list_sessions(
             ]
         )
 
-        # Separator between items (except last)
-        if i < len(items):
+        if i < len(sessions):
             content.append(separator_line())
 
-    # Tips
     content.append(new_line())
-    content.append([text_element("💡 提示: 使用 /switch <会话ID> 切换会话")])
+    content.append([text_element("💡 提示: /switch <会话ID> 切换 | /fork <描述> 分叉")])
 
     post_content = build_post_content("会话列表", content)
     return CommandResult(post_content=post_content)
 
 
 def _status_to_emoji(status: str) -> str:
-    """Convert status text to emoji."""
     status_map = {
         "运行中": "🟢",
         "等待中": "⏳",
@@ -223,26 +258,12 @@ def _status_to_emoji(status: str) -> str:
     return "⚪"
 
 
-def _switch_session_error_text(
-    error: Exception,
-    target_session_id: str,
-) -> str:
-    if isinstance(error, ChatContextNotFoundError):
-        return "当前聊天上下文不存在，请先发送一条消息。"
-    if isinstance(error, SessionNotFoundError):
-        return f"会话不存在: {target_session_id}"
-    if isinstance(error, SessionNotInChatContextError):
-        return "只能切换到当前聊天上下文下的历史会话。"
-    return f"切换失败: {error}"
-
-
 async def _resolve_status_text(
     scheduler: Scheduler,
     session: Session,
 ) -> str:
     if not session.scheduler_state_id:
         return "未启动"
-
     state = await scheduler.get_state(session.scheduler_state_id)
     if state is None:
         return "未启动"

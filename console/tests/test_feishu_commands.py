@@ -21,7 +21,6 @@ from server.channels.feishu.commands.scheduler import (
     _user_input_to_preview,
     _user_input_to_string,
 )
-from server.channels.session.binding import SessionNotFoundError
 from server.channels.session.models import Session
 from server.config import ConsoleConfig
 
@@ -85,8 +84,11 @@ async def test_build_command_registry_wraps_specs_and_adds_help() -> None:
 
 
 def test_build_feishu_command_registry_includes_expected_commands() -> None:
+    mock_workspace_service = SimpleNamespace()
     registry = build_feishu_command_registry(
-        session_service=SimpleNamespace(),
+        session_service=SimpleNamespace(
+            as_remote_workspace_service=lambda: mock_workspace_service,
+        ),
         agent_pool=SimpleNamespace(),
         session_manager=SimpleNamespace(),
         scheduler=SimpleNamespace(),
@@ -99,6 +101,7 @@ def test_build_feishu_command_registry_includes_expected_commands() -> None:
         "cancel",
         "context",
         "detail",
+        "fork",
         "help",
         "list",
         "new",
@@ -112,13 +115,13 @@ def test_build_feishu_command_registry_includes_expected_commands() -> None:
 @pytest.mark.asyncio
 async def test_switch_command_maps_known_errors_from_session_service() -> None:
     session_manager = SimpleNamespace(reset_chat_context=Mock())
-    session_service = SimpleNamespace(
-        switch_session=AsyncMock(side_effect=SessionNotFoundError("sess-2")),
-        create_new_session=AsyncMock(),
-        list_user_sessions=AsyncMock(),
+    workspace_service = SimpleNamespace(
+        switch_session=AsyncMock(side_effect=RuntimeError("Session not found: sess-2")),
     )
     registry = build_feishu_command_registry(
-        session_service=session_service,
+        session_service=SimpleNamespace(
+            as_remote_workspace_service=lambda: workspace_service,
+        ),
         agent_pool=SimpleNamespace(
             runtime_agents={}, get_or_create_runtime_agent=AsyncMock()
         ),
@@ -137,7 +140,8 @@ async def test_switch_command_maps_known_errors_from_session_service() -> None:
         args,
     )
 
-    assert result.text == "会话不存在: sess-2"
+    assert "切换失败" in result.text
+    assert "sess-2" in result.text
     session_manager.reset_chat_context.assert_not_called()
 
 

@@ -23,6 +23,11 @@ SELECT
     s.created_by AS s_created_by,
     s.created_at AS s_created_at,
     s.updated_at AS s_updated_at,
+    s.current_task_id AS s_current_task_id,
+    s.task_message_count AS s_task_message_count,
+    s.source_session_id AS s_source_session_id,
+    s.source_task_id AS s_source_task_id,
+    s.fork_context_summary AS s_fork_context_summary,
     c.id AS c_id,
     c.scope_id AS c_scope_id,
     c.channel_instance_id AS c_channel_instance_id,
@@ -64,6 +69,11 @@ def _row_to_session(row: aiosqlite.Row) -> Session:
         created_by=row["created_by"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
+        current_task_id=row["current_task_id"],
+        task_message_count=row["task_message_count"],
+        source_session_id=row["source_session_id"],
+        source_task_id=row["source_task_id"],
+        fork_context_summary=row["fork_context_summary"],
     )
 
 
@@ -78,6 +88,11 @@ def _joined_row_to_session_with_context(row: aiosqlite.Row) -> SessionWithContex
             created_by=row["s_created_by"],
             created_at=datetime.fromisoformat(row["s_created_at"]),
             updated_at=datetime.fromisoformat(row["s_updated_at"]),
+            current_task_id=row["s_current_task_id"],
+            task_message_count=row["s_task_message_count"],
+            source_session_id=row["s_source_session_id"],
+            source_task_id=row["s_source_task_id"],
+            fork_context_summary=row["s_fork_context_summary"],
         ),
         chat_context=ChannelChatContext(
             id=row["c_id"],
@@ -276,6 +291,7 @@ class SqliteFeishuChannelStore:
             )
             """
         )
+        await conn.execute("DROP TABLE IF EXISTS feishu_session")
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS feishu_session (
@@ -286,7 +302,12 @@ class SqliteFeishuChannelStore:
                 scheduler_state_id TEXT NOT NULL,
                 created_by TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                current_task_id TEXT,
+                task_message_count INTEGER NOT NULL DEFAULT 0,
+                source_session_id TEXT,
+                source_task_id TEXT,
+                fork_context_summary TEXT
             )
             """
         )
@@ -362,15 +383,25 @@ class SqliteFeishuChannelStore:
                 scheduler_state_id,
                 created_by,
                 created_at,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                updated_at,
+                current_task_id,
+                task_message_count,
+                source_session_id,
+                source_task_id,
+                fork_context_summary
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 chat_context_id = excluded.chat_context_id,
                 base_agent_id = excluded.base_agent_id,
                 runtime_agent_id = excluded.runtime_agent_id,
                 scheduler_state_id = excluded.scheduler_state_id,
                 created_by = excluded.created_by,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                current_task_id = excluded.current_task_id,
+                task_message_count = excluded.task_message_count,
+                source_session_id = excluded.source_session_id,
+                source_task_id = excluded.source_task_id,
+                fork_context_summary = excluded.fork_context_summary
             """,
             (
                 session.id,
@@ -381,6 +412,11 @@ class SqliteFeishuChannelStore:
                 session.created_by,
                 session.created_at.isoformat(),
                 session.updated_at.isoformat(),
+                session.current_task_id,
+                session.task_message_count,
+                session.source_session_id,
+                session.source_task_id,
+                session.fork_context_summary,
             ),
         )
 
