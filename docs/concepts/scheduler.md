@@ -32,7 +32,8 @@ flowchart LR
 ```python
 import asyncio
 
-from agiwo import Agent, AgentConfig, Scheduler
+from agiwo.agent import Agent, AgentConfig
+from agiwo.scheduler import Scheduler
 from agiwo.llm import OpenAIModel
 
 
@@ -179,8 +180,8 @@ flowchart TD
 
 ```python
 RuntimeState(
-    agents=...,             # live SchedulerAgentPort
-    execution_handles=...,  # live AgentExecutionHandlePort
+    agents=...,             # live scheduler-managed Agent instances
+    execution_handles=...,  # live execution handles
     abort_signals=...,
     waiters=...,
     stream_channels=...,

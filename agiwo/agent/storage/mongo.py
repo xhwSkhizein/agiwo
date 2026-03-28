@@ -4,7 +4,8 @@ MongoDB implementation of RunStepStorage.
 
 from pymongo import UpdateOne
 
-from agiwo.agent.runtime import Run, StepRecord
+from agiwo.agent.models.run import Run
+from agiwo.agent.models.step import StepRecord
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.serialization import (
     deserialize_run_from_storage,
@@ -193,7 +194,6 @@ class MongoRunStepStorage(RunStepStorage):
         step_data = self._serialize_dataclass(step)
 
         try:
-            # Use upsert: update if step.id exists, insert otherwise
             await self.steps_collection.update_one(
                 {"id": step.id}, {"$set": step_data}, upsert=True
             )
@@ -346,7 +346,6 @@ class MongoRunStepStorage(RunStepStorage):
         await self._ensure_connection()
 
         try:
-            # First, try to increment existing counter
             result = await self.counters_collection.find_one_and_update(
                 {"session_id": session_id},
                 {"$inc": {"sequence": 1}},
@@ -356,11 +355,8 @@ class MongoRunStepStorage(RunStepStorage):
             if result:
                 return result["sequence"]
 
-            # Counter doesn't exist, initialize from steps collection
             max_seq = await self.get_max_sequence(session_id)
 
-            # Try to insert initial counter value
-            # Use insert to avoid race condition (will fail if another thread inserted first)
             try:
                 await self.counters_collection.insert_one(
                     {
@@ -370,7 +366,6 @@ class MongoRunStepStorage(RunStepStorage):
                 )
                 return max_seq + 1
             except Exception:  # noqa: BLE001 - concurrent counter init boundary
-                # Another thread already initialized, retry increment
                 result = await self.counters_collection.find_one_and_update(
                     {"session_id": session_id},
                     {"$inc": {"sequence": 1}},
@@ -378,7 +373,6 @@ class MongoRunStepStorage(RunStepStorage):
                 )
                 if result:
                     return result["sequence"]
-                # Should never reach here
                 raise RuntimeError(
                     f"Failed to allocate sequence for session {session_id}"
                 ) from None

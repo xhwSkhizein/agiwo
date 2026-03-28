@@ -8,21 +8,13 @@ delegated to SchedulerEngine.
 import asyncio
 from typing import Any, AsyncIterator
 
-from agiwo.agent.agent import Agent
-from agiwo.agent.input import UserInput
-from agiwo.agent.runtime import AgentStreamItem, RunOutput
-from agiwo.agent.scheduler_port import adapt_scheduler_agent
+from agiwo.agent import Agent
+from agiwo.agent import UserInput
+from agiwo.agent import AgentStreamItem, RunOutput
 from agiwo.scheduler.commands import RouteResult
 from agiwo.scheduler.engine import SchedulerEngine
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import AgentState, PendingEvent, SchedulerConfig
-from agiwo.scheduler.runtime_tools import (
-    CancelAgentTool,
-    ListAgentsTool,
-    QuerySpawnedAgentTool,
-    SleepAndWaitTool,
-    SpawnAgentTool,
-)
 from agiwo.scheduler.store import create_agent_state_storage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
@@ -47,17 +39,6 @@ class Scheduler:
         )
         self._running = False
         self._loop_task: asyncio.Task | None = None
-        self._scheduling_tools: list[object] = self._create_scheduling_tools()
-        self._engine.set_scheduling_tools(self._scheduling_tools)
-
-    def _create_scheduling_tools(self) -> list[object]:
-        return [
-            SpawnAgentTool(self._engine),
-            SleepAndWaitTool(self._engine),
-            QuerySpawnedAgentTool(self._engine),
-            CancelAgentTool(self._engine),
-            ListAgentsTool(self._engine),
-        ]
 
     async def start(self) -> None:
         if self._running:
@@ -105,11 +86,6 @@ class Scheduler:
     def get_registered_agent(self, state_id: str) -> Agent | None:
         return self._engine.get_registered_agent(state_id)
 
-    def _adapt_agent(self, agent: Agent | None):
-        if agent is None:
-            return None
-        return adapt_scheduler_agent(agent)
-
     async def run(
         self,
         agent: Agent,
@@ -121,7 +97,7 @@ class Scheduler:
         persistent: bool = False,
     ) -> RunOutput:
         return await self._engine.run(
-            self._adapt_agent(agent),
+            agent,
             user_input,
             session_id=session_id,
             timeout=timeout,
@@ -140,7 +116,7 @@ class Scheduler:
         agent_config_id: str | None = None,
     ) -> str:
         return await self._engine.submit(
-            self._adapt_agent(agent),
+            agent,
             user_input,
             session_id=session_id,
             abort_signal=abort_signal,
@@ -158,7 +134,7 @@ class Scheduler:
         await self._engine.enqueue_input(
             state_id,
             user_input,
-            agent=self._adapt_agent(agent),
+            agent=agent,
         )
 
     async def route_root_input(
@@ -176,7 +152,7 @@ class Scheduler:
     ) -> RouteResult:
         return await self._engine.route_root_input(
             user_input,
-            agent=self._adapt_agent(agent),
+            agent=agent,
             state_id=state_id,
             session_id=session_id,
             abort_signal=abort_signal,
@@ -201,7 +177,7 @@ class Scheduler:
     ) -> AsyncIterator[AgentStreamItem]:
         async for item in self._engine.stream(
             user_input,
-            agent=self._adapt_agent(agent),
+            agent=agent,
             state_id=state_id,
             session_id=session_id,
             abort_signal=abort_signal,
@@ -271,7 +247,7 @@ class Scheduler:
         return await self._engine.shutdown(state_id)
 
     async def rebind_agent(self, state_id: str, agent: Agent) -> bool:
-        return await self._engine.rebind_agent(state_id, self._adapt_agent(agent))
+        return await self._engine.rebind_agent(state_id, agent)
 
     async def _loop(self) -> None:
         logger.info("scheduler_loop_started")

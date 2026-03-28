@@ -3,8 +3,9 @@
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from agiwo.agent import Agent, UserInput
-from agiwo.agent.runtime import RunOutput
+from agiwo.agent import Agent
+from agiwo.agent import UserInput
+from agiwo.agent import RunOutput
 from agiwo.scheduler.commands import RouteResult
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger

@@ -6,7 +6,8 @@ import json
 
 import aiosqlite
 
-from agiwo.agent.runtime import Run, StepRecord
+from agiwo.agent.models.run import Run
+from agiwo.agent.models.step import StepRecord
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.serialization import (
     deserialize_run_from_storage,

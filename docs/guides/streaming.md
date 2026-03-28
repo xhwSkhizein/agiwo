@@ -67,32 +67,28 @@ async for event in scheduler.stream(
 
 ## Stream Consumption
 
-The `consume_execution_stream()` helper handles common patterns:
+`run_stream()` is the high-level streaming API. If you need more control, call `start()` and consume `handle.stream()` directly:
 
 ```python
-from agiwo.agent.streaming import consume_execution_stream
-
 handle = agent.start("Do something")
 
-# Automatically handles cleanup on early exit
-async for event in consume_execution_stream(
-    handle,
-    cancel_reason="consumer closed",
-):
-    process(event)
+try:
+    async for event in handle.stream():
+        process(event)
+finally:
+    handle.cancel("consumer closed")
 ```
 
 ## Under the Hood
 
 ```
 Agent.run_stream()
-  └─► Agent.start() → AgentExecutionHandle
-       └─► consume_execution_stream()
-            └─► handle.stream()
-                 └─► ExecutionOrchestrator → ExecutionEngine
-                      └─► LLM Model.arun_stream()
-                           └─► StreamChunk (provider-specific)
-                                └─► AgentStreamItem (normalized)
+  └─► Agent.start() → execution handle
+       └─► handle.stream()
+            └─► session runtime → run loop
+                 └─► LLM Model.arun_stream()
+                      └─► StreamChunk (provider-specific)
+                           └─► AgentStreamItem (normalized)
 ```
 
 All execution paths — `run()`, `run_stream()`, Scheduler — share this pipeline. The difference is only in how the consumer processes events.

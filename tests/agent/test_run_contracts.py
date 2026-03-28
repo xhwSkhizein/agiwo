@@ -1,11 +1,17 @@
 import asyncio
+import inspect
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import pytest
 
+import agiwo.agent.agent as agent_module
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig
+from agiwo.agent import RunOutput
+from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -133,3 +139,65 @@ async def test_run_stream_close_propagates_non_cancelled_cleanup_errors(
         await stream.aclose()
 
     assert handle.cancel_reason == "run_stream consumer closed"
+
+
+def test_run_child_contract_does_not_expose_child_id_parameter() -> None:
+    assert "child_id" not in inspect.signature(Agent.run_child).parameters
+
+
+@pytest.mark.asyncio
+async def test_run_child_uses_agent_instance_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, str | None] = {}
+
+    async def fake_execute_run(
+        user_input,
+        *,
+        context,
+        model,
+        system_prompt,
+        tools,
+        hooks,
+        options,
+        abort_signal,
+        root_path,
+    ) -> RunOutput:
+        del (
+            user_input,
+            model,
+            system_prompt,
+            tools,
+            hooks,
+            options,
+            abort_signal,
+            root_path,
+        )
+        captured["agent_id"] = context.agent_id
+        return RunOutput(response="child ok", run_id=context.run_id)
+
+    monkeypatch.setattr(agent_module, "execute_run", fake_execute_run)
+
+    agent = Agent(
+        AgentConfig(name="child-contract", description="child contract test"),
+        id="child-template",
+        model=FixedResponseModel(),
+    )
+    session_runtime = SessionRuntime(
+        session_id="sess-child",
+        run_step_storage=InMemoryRunStepStorage(),
+        session_storage=InMemorySessionStorage(),
+    )
+
+    result = await agent.run_child(
+        "hello",
+        session_runtime=session_runtime,
+        parent_run_id="parent-run",
+        parent_depth=0,
+        parent_user_id="user-1",
+        parent_timeout_at=None,
+        parent_metadata={},
+    )
+
+    assert result.response == "child ok"
+    assert captured["agent_id"] == "child-template"

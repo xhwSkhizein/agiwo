@@ -6,9 +6,10 @@ Build a tool that the agent can call during reasoning.
 
 import asyncio
 
-from agiwo import Agent, AgentConfig, BaseTool, ToolResult
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig
 from agiwo.llm import OpenAIModel
-from agiwo.tool import ToolContext
+from agiwo.tool import BaseTool, ToolContext, ToolResult
 
 
 class WeatherTool(BaseTool):

@@ -6,7 +6,8 @@ import asyncio
 import bisect
 from abc import ABC, abstractmethod
 
-from agiwo.agent.runtime import Run, StepRecord
+from agiwo.agent.models.run import Run
+from agiwo.agent.models.step import StepRecord
 
 
 class RunStepStorage(ABC):

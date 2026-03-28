@@ -1,35 +1,31 @@
 from typing import Any
 
-from agiwo.agent.engine.context import AgentRunContext
-from agiwo.agent.lifecycle.session import AgentSessionRuntime
-from agiwo.agent.storage.base import InMemoryRunStepStorage, RunStepStorage
-from agiwo.agent.storage.session import InMemorySessionStorage, SessionStorage
+from agiwo.tool.context import ToolContext
 
 
-def build_agent_context(
+def build_tool_context(
     *,
     session_id: str = "test-session",
     run_id: str = "test-run",
     agent_id: str = "test-agent",
     agent_name: str = "test-agent",
-    run_step_storage: RunStepStorage | None = None,
-    session_storage: SessionStorage | None = None,
     user_id: str | None = None,
+    timeout_at: float | None = None,
+    depth: int = 0,
+    session_runtime: object | None = None,
     metadata: dict[str, Any] | None = None,
-) -> AgentRunContext:
-    session_runtime = AgentSessionRuntime(
+    gate_checked: bool = False,
+) -> ToolContext:
+    return ToolContext(
         session_id=session_id,
-        run_step_storage=run_step_storage or InMemoryRunStepStorage(),
-        session_storage=session_storage or InMemorySessionStorage(),
-    )
-    return AgentRunContext(
-        session_runtime=session_runtime,
-        run_id=run_id,
         agent_id=agent_id,
         agent_name=agent_name,
         user_id=user_id,
+        timeout_at=timeout_at,
+        depth=depth,
         metadata=dict(metadata or {}),
+        gate_checked=gate_checked,
     )
 
 
-__all__ = ["AgentRunContext", "build_agent_context"]
+__all__ = ["build_tool_context"]

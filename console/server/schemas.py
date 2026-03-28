@@ -270,50 +270,6 @@ class PendingEventResponse(BaseModel):
     created_at: str | None = None
 
 
-class StepDeltaResponse(BaseModel):
-    content: str | None = None
-    reasoning_content: str | None = None
-    tool_calls: list[dict[str, Any]] | None = None
-    usage: dict[str, int] | None = None
-
-
-class AgentStreamItemPayload(BaseModel):
-    type: str
-    session_id: str
-    run_id: str
-    agent_id: str
-    parent_run_id: str | None = None
-    depth: int = 0
-    timestamp: str | None = None
-
-
-class RunStartedEventPayload(AgentStreamItemPayload):
-    type: str = "run_started"
-
-
-class StepDeltaEventPayload(AgentStreamItemPayload):
-    type: str = "step_delta"
-    step_id: str
-    delta: StepDeltaResponse
-
-
-class StepCompletedEventPayload(AgentStreamItemPayload):
-    type: str = "step_completed"
-    step: StepResponse
-
-
-class RunCompletedEventPayload(AgentStreamItemPayload):
-    type: str = "run_completed"
-    response: str | None = None
-    metrics: RunMetricsResponse | None = None
-    termination_reason: str | None = None
-
-
-class RunFailedEventPayload(AgentStreamItemPayload):
-    type: str = "run_failed"
-    error: str
-
-
 # ── Chat ────────────────────────────────────────────────────────────────
 
 

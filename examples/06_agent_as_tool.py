@@ -6,8 +6,8 @@ Compose agents — one specialist wrapped as a tool for another.
 
 import asyncio
 
-from agiwo import Agent, AgentConfig
-from agiwo.agent.runtime_tools import as_tool
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig
 from agiwo.llm import OpenAIModel
 
 
@@ -37,7 +37,7 @@ async def main() -> None:
             ),
         ),
         model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
-        tools=[as_tool(researcher)],
+        tools=[researcher.as_tool()],
     )
 
     result = await writer.run(

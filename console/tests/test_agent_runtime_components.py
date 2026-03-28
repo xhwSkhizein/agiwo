@@ -6,7 +6,7 @@ from unittest.mock import ANY, AsyncMock
 import pytest
 
 from agiwo.scheduler.commands import RouteResult
-from agiwo.agent.runtime import RunCompletedEvent, RunOutput, TerminationReason
+from agiwo.agent import RunCompletedEvent, RunOutput, TerminationReason
 from server.channels.agent_executor import AgentExecutor
 from server.channels.base import BaseChannelService
 from server.channels.runtime_agent_pool import RuntimeAgentPool

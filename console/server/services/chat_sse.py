@@ -3,14 +3,13 @@
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass
 from uuid import uuid4
 
 from fastapi import HTTPException
 from sse_starlette.sse import EventSourceResponse
 
-from agiwo.agent import Agent, AgentStreamItem
-from agiwo.agent.serialization import serialize_stream_item_payload
+from agiwo.agent import Agent
+from agiwo.agent import AgentStreamItem
 from agiwo.utils.abort_signal import AbortSignal
 
 from server.dependencies import ConsoleRuntime
@@ -27,17 +26,10 @@ UnexpectedErrorBuilder = Callable[[Exception], SseMessage]
 # ── Shared helpers ───────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True)
-class PreparedConversation:
-    agent: Agent
-    message: str
-    session_id: str
-
-
 def stream_event_message(event: AgentStreamItem) -> SseMessage:
     return {
         "event": event.type,
-        "data": json.dumps(serialize_stream_item_payload(event), default=str),
+        "data": json.dumps(event.to_dict(), default=str),
     }
 
 
@@ -49,12 +41,15 @@ def error_event_message(error: Exception) -> SseMessage:
     return json_event_message("error", {"error": str(error)})
 
 
-async def prepare_conversation(
+async def create_conversation_response(
     agent_id: str,
     message: str,
     session_id: str | None,
     runtime: ConsoleRuntime,
-) -> PreparedConversation:
+    strategy: ConversationEventStrategy,
+    *,
+    unexpected_error_builder: UnexpectedErrorBuilder | None = None,
+) -> EventSourceResponse:
     registry = runtime.agent_registry
     agent_config = await registry.get_agent(agent_id)
     if agent_config is None:
@@ -65,38 +60,22 @@ async def prepare_conversation(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return PreparedConversation(
-        agent=agent,
-        message=message,
-        session_id=session_id or str(uuid4()),
-    )
-
-
-async def create_conversation_response(
-    agent_id: str,
-    message: str,
-    session_id: str | None,
-    runtime: ConsoleRuntime,
-    strategy: ConversationEventStrategy,
-    *,
-    unexpected_error_builder: UnexpectedErrorBuilder | None = None,
-) -> EventSourceResponse:
-    prepared = await prepare_conversation(agent_id, message, session_id, runtime)
+    resolved_session_id = session_id or str(uuid4())
     error_builder = unexpected_error_builder or error_event_message
 
     async def event_generator() -> AsyncIterator[SseMessage]:
         try:
             async for sse_msg in strategy(
                 runtime,
-                prepared.agent,
-                prepared.message,
-                prepared.session_id,
+                agent,
+                message,
+                resolved_session_id,
             ):
                 yield sse_msg
         except Exception as exc:  # noqa: BLE001
             yield error_builder(exc)
         finally:
-            await prepared.agent.close()
+            await agent.close()
 
     return EventSourceResponse(event_generator())
 

@@ -2,21 +2,21 @@ from datetime import datetime
 
 import pytest
 
-from agiwo.agent.compact_types import CompactMetadata
-from agiwo.agent.run_mutations import (
+from agiwo.agent.models.compact import CompactMetadata
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.runtime.state_ops import (
     record_compaction_metadata,
     replace_messages,
     set_termination_reason,
+    track_step_state,
 )
-from agiwo.agent.run_state import RunContext, SessionRuntime
-from agiwo.agent.state_tracking import track_step_state
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.agent.types import (
     StepMetrics,
     StepRecord,
     TerminationReason,
-    step_to_message,
 )
 
 
@@ -62,7 +62,7 @@ def test_track_step_state_updates_counters_response_and_messages() -> None:
     assert state.output_tokens == 6
     assert state.cache_read_tokens == 2
     assert state.cache_creation_tokens == 3
-    assert list(state.messages) == [step_to_message(step)]
+    assert list(state.messages) == [step.to_message()]
 
 
 def test_track_step_state_skips_message_append_when_disabled() -> None:
@@ -76,7 +76,7 @@ def test_track_step_state_skips_message_append_when_disabled() -> None:
     assert list(state.messages) == []
 
 
-def test_run_mutations_only_touch_mutable_ledger_state() -> None:
+def test_runtime_state_ops_only_touch_mutable_ledger_state() -> None:
     state = _make_state()
 
     replace_messages(state, [{"role": "assistant", "content": "summary"}])

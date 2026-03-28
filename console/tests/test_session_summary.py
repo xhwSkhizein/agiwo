@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agiwo.agent import ContentPart, ContentType, serialize_user_input
+from agiwo.agent import ContentPart, ContentType, UserMessage
 from server.domain.run_metrics import RunMetricsSummary
 from server.domain.sessions import (
     session_aggregate_to_chat_summary,
@@ -81,7 +81,7 @@ async def test_collect_session_aggregates_uses_latest_run_and_paginates() -> Non
                 run_id="run-2",
                 session_id="sess-1",
                 agent_id="agent-a",
-                user_input=serialize_user_input(
+                user_input=UserMessage.serialize(
                     [ContentPart(type=ContentType.TEXT, text="latest")]
                 ),
                 response_content="new-response",

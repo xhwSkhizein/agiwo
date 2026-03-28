@@ -1,7 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from agiwo.agent import options as agent_options_module
+from agiwo.agent import AgentOptions
+from agiwo.config.settings import settings
 from agiwo.llm.openai import OpenAIModel
 from server.app import _build_default_agent_config
 from server.config import ConsoleConfig
@@ -52,7 +53,7 @@ def test_console_config_rejects_plain_api_key_in_default_model_params(
 def test_build_agent_options_uses_global_skills_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(agent_options_module.settings, "is_skills_enabled", False)
+    monkeypatch.setattr(settings, "is_skills_enabled", False)
 
     config = AgentConfigRecord(
         name="tester",
@@ -78,7 +79,7 @@ def test_default_agent_config_uses_shared_option_defaults() -> None:
     record = _build_default_agent_config(config)
 
     assert record.options == build_default_agent_options()
-    assert record.options["max_steps"] == agent_options_module.AgentOptions().max_steps
+    assert record.options["max_steps"] == AgentOptions().max_steps
 
 
 def test_agent_options_payload_normalizes_single_skills_dirs() -> None:
@@ -90,7 +91,7 @@ def test_agent_options_payload_normalizes_single_skills_dirs() -> None:
 def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(agent_options_module.settings, "is_skills_enabled", True)
+    monkeypatch.setattr(settings, "is_skills_enabled", True)
 
     config = AgentConfigRecord(
         name="tester",

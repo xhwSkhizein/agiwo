@@ -2,20 +2,36 @@ from dataclasses import dataclass
 
 import pytest
 
-from agiwo.agent import AgentTool
-from agiwo.agent.execution import ChildAgentSpec
-from agiwo.agent.engine.context import AgentRunContext
-from agiwo.agent.runtime import RunOutput
-from tests.utils.agent_context import build_agent_context
+from agiwo.agent import RunOutput
+from agiwo.agent.nested.agent_tool import AgentTool
+from agiwo.agent.nested.context import AgentToolContext
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.session import InMemorySessionStorage
+from agiwo.tool.context import ToolContext
 
 
-def _make_context(*, metadata: dict | None = None) -> AgentRunContext:
-    return build_agent_context(
+def _make_context(*, metadata: dict | None = None):
+    session_runtime = SessionRuntime(
         session_id="sess-1",
+        run_step_storage=InMemoryRunStepStorage(),
+        session_storage=InMemorySessionStorage(),
+    )
+    return RunContext(
+        session_runtime=session_runtime,
         run_id="run-1",
         agent_id="caller-id",
         agent_name="caller",
-        metadata=metadata,
+        metadata=dict(metadata or {}),
+    )
+
+
+def _make_runtime_tool_context(*, metadata: dict | None = None) -> AgentToolContext:
+    run_context = _make_context(metadata=metadata)
+    return AgentToolContext.from_run_context(
+        run_context,
+        timeout_at=run_context.timeout_at,
     )
 
 
@@ -26,26 +42,38 @@ class FakeAgent:
     description: str = ""
     version: str = "v1"
     last_metadata_updates: dict | None = None
-    last_spec: object | None = None
-
-    def derive_child_spec(self, *, child_id: str) -> ChildAgentSpec:
-        return ChildAgentSpec(
-            agent_id=child_id,
-            agent_name=self.name,
-            description=f"{self.description}:{self.version}",
-        )
 
     async def run_child(
         self,
         user_input: str,
         *,
-        spec,
-        parent_context: AgentRunContext,
+        session_runtime,
+        parent_run_id: str,
+        parent_depth: int,
+        parent_user_id: str | None,
+        parent_timeout_at: float | None,
+        parent_metadata: dict[str, object],
+        instruction: str | None = None,
+        system_prompt_override: str | None = None,
+        exclude_tool_names: set[str] | None = None,
+        metadata_overrides: dict | None = None,
         metadata_updates: dict | None = None,
         abort_signal=None,
     ) -> RunOutput:
-        del user_input, parent_context, abort_signal
-        self.last_spec = spec
+        del (
+            user_input,
+            session_runtime,
+            parent_run_id,
+            parent_depth,
+            parent_user_id,
+            parent_timeout_at,
+            parent_metadata,
+            abort_signal,
+            instruction,
+            system_prompt_override,
+            exclude_tool_names,
+            metadata_overrides,
+        )
         self.last_metadata_updates = metadata_updates
         return RunOutput(response=f"ran:{self.id}:{self.version}")
 
@@ -58,7 +86,7 @@ async def test_agent_tool_allows_same_name_when_agent_ids_differ():
     parent_tool = AgentTool(parent_agent)
     child_tool = AgentTool(child_agent)
 
-    context = _make_context()
+    context = _make_runtime_tool_context()
     parent_result = await parent_tool.execute({"task": "first"}, context)
 
     assert parent_result.is_success is True
@@ -66,7 +94,7 @@ async def test_agent_tool_allows_same_name_when_agent_ids_differ():
 
     child_result = await child_tool.execute(
         {"task": "second"},
-        _make_context(metadata={"_call_stack": ["agent-parent"]}),
+        _make_runtime_tool_context(metadata={"_call_stack": ["agent-parent"]}),
     )
 
     assert child_result.is_success is True
@@ -79,11 +107,10 @@ async def test_agent_tool_resolves_child_spec_at_execution_time():
     tool = AgentTool(agent)
     agent.version = "v2"
 
-    result = await tool.execute({"task": "dynamic"}, _make_context())
+    result = await tool.execute({"task": "dynamic"}, _make_runtime_tool_context())
 
     assert result.is_success is True
     assert result.content == "ran:agent-dynamic:v2"
-    assert agent.last_spec.description == "child:v2"
 
 
 @pytest.mark.asyncio
@@ -91,10 +118,28 @@ async def test_agent_tool_detects_circular_reference_by_agent_id():
     agent = FakeAgent(id="agent-loop", name="shared-name")
     tool = AgentTool(agent)
 
-    context = _make_context()
+    context = _make_runtime_tool_context()
     context.metadata["_call_stack"] = ["agent-loop"]
 
     result = await tool.execute({"task": "loop"}, context)
 
     assert result.is_success is False
     assert "agent-loop" in result.error
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_rejects_plain_tool_context_without_runtime_bridge():
+    tool = AgentTool(FakeAgent(id="agent-child", name="child"))
+
+    result = await tool.execute({"task": "hello"}, ToolContext(session_id="sess-1"))
+
+    assert result.is_success is False
+    assert result.error == "AgentTool requires agent runtime context"
+
+
+def test_agent_tool_context_can_be_built_from_run_context() -> None:
+    runtime_context = AgentToolContext.from_run_context(_make_context(), timeout_at=1.0)
+
+    assert runtime_context.session_id == "sess-1"
+    assert runtime_context.parent_run_id == "run-1"
+    assert runtime_context.depth == 0

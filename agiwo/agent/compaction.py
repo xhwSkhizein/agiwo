@@ -11,12 +11,15 @@ from typing import Any
 
 import aiofiles
 
-from agiwo.agent.compact_types import CompactMetadata
+from agiwo.agent.models.compact import CompactMetadata
 from agiwo.agent.llm_caller import stream_assistant_step
-from agiwo.agent.run_mutations import record_compaction_metadata, replace_messages
-from agiwo.agent.run_state import RunContext
-from agiwo.agent.step_pipeline import commit_step
-from agiwo.agent.types import StepRecord
+from agiwo.agent.models.step import StepRecord
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.state_ops import (
+    record_compaction_metadata,
+    replace_messages,
+)
+from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator
 from agiwo.config.settings import settings

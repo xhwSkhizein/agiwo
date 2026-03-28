@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from agiwo.agent.input import ContentPart, ContentType, UserMessage
+from agiwo.agent import ContentPart, ContentType, UserMessage
 from agiwo.scheduler.models import AgentState, AgentStateStatus
 from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
 from server.channels.feishu.commands import build_feishu_command_registry

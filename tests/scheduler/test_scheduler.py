@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from agiwo.agent import Agent, AgentConfig, AgentHooks, TerminationReason
-from agiwo.agent.runtime import AgentStreamItem, RunCompletedEvent
-from agiwo.agent.options import AgentOptions
-from agiwo.agent.scheduler_port import adapt_scheduler_agent
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig, AgentOptions
+from agiwo.agent import AgentHooks
+from agiwo.agent import AgentStreamItem, RunCompletedEvent, TerminationReason
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.scheduler.commands import DispatchAction, DispatchReason
@@ -209,53 +209,46 @@ class TestSchedulerLifecycle:
 
 class TestSchedulerPrepareAgent:
     @pytest.mark.asyncio
-    async def test_prepare_injects_tools(self):
-        scheduler = Scheduler()
-        model = MockModel()
-        agent = _make_agent(name="test", model=model, id="test", tools=[])
+    async def test_submit_prepares_runtime_clone(self):
+        async with Scheduler(_fast_config()) as scheduler:
+            model = MockModel([_simple_completion("Hello")])
+            agent = _make_agent(name="test", model=model, id="test", tools=[])
 
-        scheduler._engine.prepare_agent(agent)
+            state_id = await scheduler.submit(agent, "Hello")
+            registered = scheduler.get_registered_agent(state_id)
+            assert registered is not None
+            assert registered is not agent
 
-        tool_names = {t.get_name() for t in agent.tools}
-        assert "spawn_agent" in tool_names
-        assert "sleep_and_wait" in tool_names
-        assert "query_spawned_agent" in tool_names
-        await scheduler.stop()
-
-    @pytest.mark.asyncio
-    async def test_prepare_is_idempotent(self):
-        scheduler = Scheduler()
-        model = MockModel()
-        agent = _make_agent(name="test", model=model, id="test", tools=[])
-
-        agent_port = adapt_scheduler_agent(agent)
-        scheduler._engine.prepare_agent(agent_port)
-        count_after_first = len(agent.tools)
-        scheduler._engine.prepare_agent(agent_port)
-        assert len(agent.tools) == count_after_first
-        await scheduler.stop()
+            tool_names = {t.get_name() for t in registered.tools}
+            assert "spawn_agent" in tool_names
+            assert "sleep_and_wait" in tool_names
+            assert "query_spawned_agent" in tool_names
 
     @pytest.mark.asyncio
-    async def test_prepare_registers_agent(self):
-        scheduler = Scheduler()
-        model = MockModel()
-        agent = _make_agent(name="test", model=model, id="test", tools=[])
+    async def test_submit_does_not_mutate_original_agent(self):
+        async with Scheduler(_fast_config()) as scheduler:
+            model = MockModel([_simple_completion("Hello")])
+            opts = AgentOptions(enable_termination_summary=False)
+            agent = _make_agent(
+                name="test", model=model, id="test", tools=[], options=opts
+            )
 
-        agent_port = adapt_scheduler_agent(agent)
-        scheduler._engine.prepare_agent(agent_port)
-        assert scheduler.get_registered_agent("test") is agent
-        await scheduler.stop()
+            await scheduler.submit(agent, "Hello")
+
+            tool_names = {t.get_name() for t in agent.tools}
+            assert "spawn_agent" not in tool_names
+            assert "sleep_and_wait" not in tool_names
+            assert "query_spawned_agent" not in tool_names
+            assert agent.options.enable_termination_summary is False
 
     @pytest.mark.asyncio
-    async def test_prepare_enables_termination_summary(self):
-        scheduler = Scheduler()
-        model = MockModel()
-        opts = AgentOptions(enable_termination_summary=False)
-        agent = _make_agent(name="test", model=model, id="test", tools=[], options=opts)
-        agent_port = adapt_scheduler_agent(agent)
-        scheduler._engine.prepare_agent(agent_port)
-        assert agent.options.enable_termination_summary is True
-        await scheduler.stop()
+    async def test_submit_registers_agent(self):
+        async with Scheduler(_fast_config()) as scheduler:
+            model = MockModel([_simple_completion("Hello")])
+            agent = _make_agent(name="test", model=model, id="test", tools=[])
+
+            await scheduler.submit(agent, "Hello")
+            assert scheduler.get_registered_agent("test") is not None
 
 
 class TestSchedulerSubmit:
@@ -338,8 +331,8 @@ class TestSchedulerCreateChildAgent:
             tools=[],
             system_prompt="Be helpful",
         )
-        parent_port = adapt_scheduler_agent(parent)
-        scheduler._engine.prepare_agent(parent_port)
+        state_id = await scheduler.submit(parent, "root task")
+        assert state_id == "parent"
 
         state = AgentState(
             id="child-1",
@@ -348,11 +341,8 @@ class TestSchedulerCreateChildAgent:
             task="sub-task",
             parent_id="parent",
         )
-        child = await scheduler._engine._runner.create_child_agent(state)
-        child_agent = child.unwrap_agent()
-        assert child_agent is not None
+        child_agent = await scheduler._engine._runner.create_child_agent(state)
 
-        assert child.id == "child-1"
         assert child_agent.id == "child-1"
         assert child_agent.name == "parent"
         assert child_agent.model is parent.model
@@ -380,8 +370,8 @@ class TestSchedulerCreateChildAgent:
             tools=[],
             system_prompt="Default prompt",
         )
-        parent_port = adapt_scheduler_agent(parent)
-        scheduler._engine.prepare_agent(parent_port)
+        state_id = await scheduler.submit(parent, "root task")
+        assert state_id == "parent"
 
         state = AgentState(
             id="child-1",
@@ -391,9 +381,7 @@ class TestSchedulerCreateChildAgent:
             parent_id="parent",
             config_overrides={"instruction": "Focus on specialized area."},
         )
-        child = await scheduler._engine._runner.create_child_agent(state)
-        child_agent = child.unwrap_agent()
-        assert child_agent is not None
+        child_agent = await scheduler._engine._runner.create_child_agent(state)
 
         # Check child inherited parent's fully built system_prompt
         child_prompt = await child_agent.get_effective_system_prompt()
@@ -413,8 +401,8 @@ class TestSchedulerCreateChildAgent:
             tools=[],
             system_prompt="Default prompt",
         )
-        parent_port = adapt_scheduler_agent(parent)
-        scheduler._engine.prepare_agent(parent_port)
+        state_id = await scheduler.submit(parent, "root task")
+        assert state_id == "parent"
 
         state = AgentState(
             id="child-1",
@@ -424,9 +412,7 @@ class TestSchedulerCreateChildAgent:
             parent_id="parent",
             config_overrides={"system_prompt": "You are a specialist."},
         )
-        child = await scheduler._engine._runner.create_child_agent(state)
-        child_agent = child.unwrap_agent()
-        assert child_agent is not None
+        child_agent = await scheduler._engine._runner.create_child_agent(state)
 
         child_prompt = await child_agent.get_effective_system_prompt()
         assert "You are a specialist." in child_prompt
@@ -514,7 +500,13 @@ class TestSchedulerRunnerCleanup:
         scheduler = Scheduler()
         model = MockModel([_simple_completion("Recovered after timeout")])
         agent = _make_agent(name="root", model=model, id="root", tools=[])
-        scheduler._engine.prepare_agent(agent)
+        prepared_agent = await agent.create_child_agent(
+            child_id=agent.id,
+            system_prompt_override=agent.config.system_prompt,
+            exclude_tool_names={tool.get_name() for tool in agent.tools},
+            extra_tools=list(scheduler._engine._scheduling_tools),
+        )
+        scheduler._engine._rt.agents[prepared_agent.id] = prepared_agent
         state = AgentState(
             id="root",
             session_id="sess",
@@ -774,8 +766,13 @@ class TestSchedulerQueuedMailbox:
         scheduler = Scheduler(_fast_config(event_debounce_min_count=1))
         model = EchoMessagesModel()
         agent = _make_agent(name="root", model=model, id="root", tools=[])
-        scheduler._engine.prepare_agent(adapt_scheduler_agent(agent))
-
+        prepared_agent = await agent.create_child_agent(
+            child_id=agent.id,
+            system_prompt_override=agent.config.system_prompt,
+            exclude_tool_names={tool.get_name() for tool in agent.tools},
+            extra_tools=list(scheduler._engine._scheduling_tools),
+        )
+        scheduler._engine._rt.agents[prepared_agent.id] = prepared_agent
         await scheduler._store.save_state(
             AgentState(
                 id="root",
@@ -943,9 +940,15 @@ class TestSchedulerDebounce:
         scheduler = Scheduler(_fast_config(event_debounce_min_count=1))
         store = scheduler._store
         model = MockModel([_simple_completion("done")])
-        scheduler._engine.prepare_agent(
-            _make_agent(name="parent", model=model, id="parent-dbounce", tools=[])
+        prepared_agent = await _make_agent(
+            name="parent", model=model, id="parent-dbounce", tools=[]
+        ).create_child_agent(
+            child_id="parent-dbounce",
+            system_prompt_override="",
+            exclude_tool_names=set(),
+            extra_tools=list(scheduler._engine._scheduling_tools),
         )
+        scheduler._engine._rt.agents[prepared_agent.id] = prepared_agent
 
         parent = AgentState(
             id="parent-dbounce",

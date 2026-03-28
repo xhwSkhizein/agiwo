@@ -7,7 +7,7 @@ for managing scheduler agents directly from Feishu chat.
 
 from functools import partial
 
-from agiwo.agent.input import ContentPart, UserInput, UserMessage
+from agiwo.agent import ContentPart, UserInput, UserMessage
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.channels.feishu.commands.base import (

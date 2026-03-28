@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import SecretStr
 
-from agiwo.agent.engine.context import AgentRunContext
+from agiwo.tool.context import ToolContext
 from agiwo.config.settings import settings
 from agiwo.llm.base import StreamChunk
 from agiwo.tool.builtin.config import WebReaderApiConfig
@@ -12,11 +12,11 @@ from agiwo.tool.builtin.html_extract import HtmlContent
 from agiwo.tool.builtin.web_reader.web_reader_tool import WebReaderTool
 from agiwo.tool.builtin.web_search.web_search_tool import WebSearchTool
 from agiwo.tool.storage.citation import CitationStoreConfig
-from tests.utils.agent_context import build_agent_context
+from tests.utils.agent_context import build_tool_context
 
 
-def _make_context(session_id: str) -> AgentRunContext:
-    return build_agent_context(
+def _make_context(session_id: str) -> ToolContext:
+    return build_tool_context(
         session_id=session_id,
         run_id=f"run-{session_id}",
         agent_id="agent-1",

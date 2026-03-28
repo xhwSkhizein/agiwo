@@ -10,10 +10,7 @@ from pathlib import Path
 
 from agiwo.skill.config import SkillDiscoveryConfig, resolve_skill_dirs
 from agiwo.skill.loader import SkillLoader
-from agiwo.skill.prompt_catalog import (
-    SkillPromptCatalog,
-    SkillPromptSnapshot,
-)
+from agiwo.skill.prompt_catalog import SkillPromptCatalog
 from agiwo.skill.registry import SkillMetadata, SkillRegistry
 from agiwo.skill.skill_tool import SkillTool
 from agiwo.utils.logging import get_logger
@@ -124,9 +121,3 @@ class SkillManager:
 
     def get_change_token(self) -> str:
         return self._change_token
-
-    def get_prompt_snapshot(self) -> SkillPromptSnapshot:
-        return SkillPromptSnapshot(
-            rendered_section=self.render_skills_section(),
-            change_token=self._change_token,
-        )

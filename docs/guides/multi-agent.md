@@ -7,8 +7,7 @@ Agiwo supports composing agents in two ways: **Agent-as-Tool** for simple delega
 Wrap an agent as a tool that another agent can call:
 
 ```python
-from agiwo import Agent, AgentConfig
-from agiwo.agent.runtime_tools import as_tool
+from agiwo.agent import Agent, AgentConfig
 from agiwo.llm import OpenAIModel
 
 # Specialist agent
@@ -29,7 +28,7 @@ orchestrator = Agent(
         system_prompt="Delegate independent research tasks to the researcher tool.",
     ),
     model=OpenAIModel(id="gpt-4o", name="gpt-4o"),
-    tools=[as_tool(researcher)],
+    tools=[researcher.as_tool()],
 )
 
 result = await orchestrator.run("Compare Python and Rust for systems programming")
@@ -42,25 +41,16 @@ result = await orchestrator.run("Compare Python and Rust for systems programming
 3. The researcher's final response is returned as the tool result
 4. The orchestrator continues reasoning with the researcher's output
 
-### Deriving Child Specs
+### Child configuration
 
-For fine-grained control over child agents:
-
-```python
-child_spec = agent.derive_child_spec(
-    child_id="focused-researcher",
-    instruction="Focus only on technical details",
-    system_prompt_override="You only discuss technical implementation details.",
-    exclude_tool_names={"bash"},  # Don't give bash to this child
-)
-```
+The supported public composition API is `Agent.as_tool()`. If you need child agents with different prompts or tool sets, create a separate `Agent` instance with the configuration you want and wrap that instance as a tool.
 
 ## Scheduler Orchestration
 
 For long-running, persistent multi-agent setups, use the Scheduler:
 
 ```python
-from agiwo import Scheduler, SchedulerConfig
+from agiwo.scheduler import Scheduler, SchedulerConfig
 
 async with Scheduler() as scheduler:
     # Submit a persistent orchestrator

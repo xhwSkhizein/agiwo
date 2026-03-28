@@ -6,7 +6,8 @@ The simplest possible agent — ask a question, get an answer.
 
 import asyncio
 
-from agiwo import Agent, AgentConfig
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig
 from agiwo.llm import OpenAIModel
 
 

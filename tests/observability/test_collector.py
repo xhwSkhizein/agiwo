@@ -12,7 +12,7 @@ from agiwo.agent import (
     StepRecord,
     TerminationReason,
 )
-from agiwo.agent.trace import AgentTraceCollector
+from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.observability.trace import SpanKind
 
 

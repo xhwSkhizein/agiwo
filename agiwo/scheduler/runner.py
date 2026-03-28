@@ -11,11 +11,9 @@ from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from uuid import uuid4
 
-from agiwo.agent.execution import AgentExecutionHandlePort
-from agiwo.agent.input import UserInput
-from agiwo.agent.runtime import AgentStreamItem, RunOutput, TerminationReason
-from agiwo.agent.scheduler_port import ChildAgentOverrides, SchedulerAgentPort
-from agiwo.agent.streaming import consume_execution_stream
+from agiwo.agent import Agent
+from agiwo.agent import UserInput
+from agiwo.agent import AgentStreamItem, RunOutput, TerminationReason
 from agiwo.scheduler.commands import DispatchAction, DispatchReason
 from agiwo.scheduler.formatting import (
     build_child_result_detail_lines,
@@ -28,7 +26,7 @@ from agiwo.scheduler.models import (
     SchedulerEventType,
     WakeType,
 )
-from agiwo.scheduler.runtime_state import RuntimeState
+from agiwo.scheduler.runtime_state import ExecutionHandleLike, RuntimeState
 from agiwo.scheduler.store import AgentStateStorage
 from agiwo.scheduler.store.codec import deserialize_child_agent_config_overrides
 from agiwo.utils.abort_signal import AbortSignal
@@ -59,6 +57,7 @@ class RunnerContext:
     notify_state_change: Callable[[str], None]
     nudge: Callable[[], None]
     semaphore: asyncio.Semaphore
+    scheduling_tools: tuple[object, ...]
 
 
 class SchedulerRunner:
@@ -115,19 +114,22 @@ class SchedulerRunner:
             self._ctx.rt.abort_signals.pop(state.id, None)
             await self._cleanup_after_run(state)
 
-    async def create_child_agent(self, state: AgentState) -> SchedulerAgentPort:
+    async def create_child_agent(self, state: AgentState) -> Agent:
         parent = self._ctx.rt.agents.get(state.parent_id or "")
         if parent is None:
             raise RuntimeError(f"Parent agent '{state.parent_id}' not found in runtime")
 
         overrides = deserialize_child_agent_config_overrides(state.config_overrides)
-        child = await parent.create_scheduler_child(
+        child = await parent.create_child_agent(
             child_id=state.id,
-            overrides=ChildAgentOverrides(
-                instruction=overrides.instruction,
-                system_prompt=overrides.system_prompt,
-                exclude_tool_names={"spawn_agent"},
-            ),
+            instruction=overrides.instruction,
+            system_prompt_override=overrides.system_prompt,
+            exclude_tool_names={"spawn_agent"},
+            extra_tools=[
+                tool
+                for tool in self._ctx.scheduling_tools
+                if tool.get_name() != "spawn_agent"
+            ],
         )
         self._ctx.rt.agents[state.id] = child
         return child
@@ -217,7 +219,7 @@ class SchedulerRunner:
     async def _resolve_agent(
         self,
         action: DispatchAction,
-    ) -> SchedulerAgentPort | None:
+    ) -> Agent | None:
         state = action.state
         if action.reason == DispatchReason.CHILD_PENDING:
             return await self.create_child_agent(state)
@@ -300,7 +302,7 @@ class SchedulerRunner:
         *,
         action: DispatchAction,
         state: AgentState,
-        agent: SchedulerAgentPort,
+        agent: Agent,
         user_input: UserInput,
         session_id: str,
         abort_signal: AbortSignal | None,
@@ -321,15 +323,23 @@ class SchedulerRunner:
         self,
         *,
         state: AgentState,
-        handle: AgentExecutionHandlePort,
+        handle: ExecutionHandleLike,
     ) -> RunOutput:
         result: RunOutput | None = None
-        async for item in consume_execution_stream(
-            handle,
-            cancel_reason="scheduler event stream closed",
-        ):
-            await self._fanout_stream_item(state, item)
-            result = self._maybe_build_run_output(item, fallback=result)
+        completed = False
+        try:
+            async for item in handle.stream():
+                await self._fanout_stream_item(state, item)
+                result = self._maybe_build_run_output(item, fallback=result)
+            await handle.wait()
+            completed = True
+        finally:
+            if not completed:
+                handle.cancel("scheduler event stream closed")
+                try:
+                    await handle.wait()
+                except asyncio.CancelledError:
+                    pass
         if result is None:
             raise RuntimeError(
                 f"Agent '{state.id}' execution stream ended without a terminal result"

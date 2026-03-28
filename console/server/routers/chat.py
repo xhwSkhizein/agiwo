@@ -1,12 +1,12 @@
 """Chat API router — real-time Agent conversation via SSE."""
 
+import asyncio
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
-from agiwo.agent.agent import Agent
-from agiwo.agent.streaming import consume_execution_stream
+from agiwo.agent import Agent
 from agiwo.utils.abort_signal import AbortSignal
 
 from server.dependencies import ConsoleRuntime, ConsoleRuntimeDep
@@ -34,11 +34,19 @@ async def _stream_chat_events(
         abort_signal=abort_signal,
     )
 
-    async for event in consume_execution_stream(
-        handle,
-        cancel_reason="SSE connection closed",
-    ):
-        yield stream_event_message(event)
+    completed = False
+    try:
+        async for event in handle.stream():
+            yield stream_event_message(event)
+        await handle.wait()
+        completed = True
+    finally:
+        if not completed:
+            handle.cancel("SSE connection closed")
+            try:
+                await handle.wait()
+            except asyncio.CancelledError:
+                pass
 
 
 @router.post("/{agent_id}")

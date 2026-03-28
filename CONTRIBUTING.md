@@ -141,7 +141,7 @@ refactor: extract state ops from scheduler engine
 ### Adding a Hook
 
 1. Add hook type and field in `agiwo/agent/hooks.py`
-2. Wire it in `agiwo/agent/agent.py` or `agiwo/agent/inner/executor.py`
+2. Wire it into the agent execution flow in `agiwo/agent/agent.py`, `agiwo/agent/run_loop.py`, or the relevant runtime module
 
 ## Reporting Issues
 

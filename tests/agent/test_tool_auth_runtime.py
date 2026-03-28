@@ -2,10 +2,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from agiwo.agent.engine.context import AgentRunContext
-from agiwo.agent.lifecycle.session import AgentSessionRuntime
-from agiwo.agent.engine.tool_runtime import ResolvedToolCall, ToolRuntime
-from agiwo.agent.runtime_tools.agent_tool import AgentTool
+from agiwo.agent.nested.agent_tool import AgentTool
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.tool_executor import execute_tool_batch
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.tool.base import BaseTool, ToolGateDecision, ToolResult
@@ -51,14 +51,13 @@ class DenyTool(EchoTool):
         return ToolGateDecision.deny("Blocked")
 
 
-def build_context() -> AgentRunContext:
-    session_runtime = AgentSessionRuntime(
-        session_id="session-1",
-        run_step_storage=InMemoryRunStepStorage(),
-        session_storage=InMemorySessionStorage(),
-    )
-    return AgentRunContext(
-        session_runtime=session_runtime,
+def build_context():
+    return RunContext(
+        session_runtime=SessionRuntime(
+            session_id="session-1",
+            run_step_storage=InMemoryRunStepStorage(),
+            session_storage=InMemorySessionStorage(),
+        ),
         run_id="run-1",
         agent_id="agent-1",
         agent_name="agent-1",
@@ -78,7 +77,7 @@ async def test_base_tool_defaults_to_allow_gate() -> None:
 async def test_agent_tool_defaults_to_allow_gate() -> None:
     tool = AgentTool(SimpleNamespace(id="child", name="child", description="child"))
 
-    decision = await tool.gate_for_agent({}, build_context())
+    decision = await tool.gate({}, ToolContext(session_id="session-1"))
 
     assert decision.action == "allow"
 
@@ -86,37 +85,42 @@ async def test_agent_tool_defaults_to_allow_gate() -> None:
 @pytest.mark.asyncio
 async def test_tool_runtime_allows_default_gate() -> None:
     tool = EchoTool()
-    runtime = ToolRuntime([tool])
 
-    outcome = await runtime.execute_resolved(
-        ResolvedToolCall(
-            raw_call={},
-            call_id="call-1",
-            tool_name="echo",
-            tool=runtime.tools_map["echo"],
-            args={"tool_call_id": "call-1"},
-        ),
+    results = await execute_tool_batch(
+        [
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "echo", "arguments": "{}"},
+            }
+        ],
+        tools_map={tool.get_name(): tool},
         context=build_context(),
     )
+    result = results[0]
 
-    assert outcome.result.is_success is True
-    assert outcome.result.content == "ok"
+    assert result.is_success is True
+    assert result.content == "ok"
+    assert result.termination_reason is None
 
 
 @pytest.mark.asyncio
 async def test_tool_runtime_denies_immediately_when_gate_denies() -> None:
-    runtime = ToolRuntime([DenyTool()])
+    tool = DenyTool()
 
-    outcome = await runtime.execute_resolved(
-        ResolvedToolCall(
-            raw_call={},
-            call_id="call-1",
-            tool_name="echo",
-            tool=runtime.tools_map["echo"],
-            args={"tool_call_id": "call-1"},
-        ),
+    results = await execute_tool_batch(
+        [
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "echo", "arguments": "{}"},
+            }
+        ],
+        tools_map={tool.get_name(): tool},
         context=build_context(),
     )
+    result = results[0]
 
-    assert outcome.result.is_success is False
-    assert "Blocked" in (outcome.result.error or "")
+    assert result.is_success is False
+    assert "Blocked" in (result.error or "")
+    assert result.termination_reason is None

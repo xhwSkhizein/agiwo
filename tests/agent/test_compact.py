@@ -7,9 +7,10 @@ from datetime import datetime
 import pytest
 
 from agiwo.agent.compaction import build_compacted_messages, compact_if_needed
-from agiwo.agent.compact_types import CompactMetadata
+from agiwo.agent.models.compact import CompactMetadata
 from agiwo.agent.hooks import AgentHooks
-from agiwo.agent.run_state import RunContext, SessionRuntime
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.llm.base import Model, StreamChunk
@@ -218,7 +219,9 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
 
     metadata = await compact_if_needed(
         state=state,
-        model=_CompactModel(id="compact-model", name="compact-model", provider="openai"),
+        model=_CompactModel(
+            id="compact-model", name="compact-model", provider="openai"
+        ),
         abort_signal=None,
         max_context_window=1,
         compact_prompt=None,

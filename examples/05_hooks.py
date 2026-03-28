@@ -6,7 +6,9 @@ Observe and intercept agent lifecycle events.
 
 import asyncio
 
-from agiwo import Agent, AgentConfig, AgentHooks
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig
+from agiwo.agent import AgentHooks
 from agiwo.llm import OpenAIModel
 
 

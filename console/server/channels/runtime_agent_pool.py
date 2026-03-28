@@ -7,7 +7,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
-from agiwo.agent.agent import Agent
+from agiwo.agent import Agent
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
 

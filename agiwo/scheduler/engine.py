@@ -4,10 +4,14 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from agiwo.agent.input import UserInput
-from agiwo.agent.input_codec import extract_text
-from agiwo.agent.runtime import AgentStreamItem, RunOutput, TerminationReason
-from agiwo.agent.scheduler_port import SchedulerAgentPort, adapt_scheduler_agent
+from agiwo.agent import (
+    Agent,
+    AgentStreamItem,
+    RunOutput,
+    TerminationReason,
+    UserInput,
+    UserMessage,
+)
 from agiwo.scheduler.commands import (
     CancelChildRequest,
     CancelChildResult,
@@ -28,6 +32,13 @@ from agiwo.scheduler.models import (
     SchedulerEventType,
 )
 from agiwo.scheduler.runner import RunnerContext, SchedulerRunner
+from agiwo.scheduler.runtime_tools import (
+    CancelAgentTool,
+    ListAgentsTool,
+    QuerySpawnedAgentTool,
+    SleepAndWaitTool,
+    SpawnAgentTool,
+)
 from agiwo.scheduler.runtime_state import (
     RuntimeState,
     build_mailbox_input,
@@ -66,6 +77,13 @@ class SchedulerEngine:
         self._config = config or SchedulerConfig()
         self._guard = guard or TaskGuard(self._config.task_limits, store)
         self._rt = RuntimeState()
+        self._scheduling_tools = (
+            SpawnAgentTool(self),
+            SleepAndWaitTool(self),
+            QuerySpawnedAgentTool(self),
+            CancelAgentTool(self),
+            ListAgentsTool(self),
+        )
         self._runner = SchedulerRunner(
             RunnerContext(
                 store=store,
@@ -73,6 +91,7 @@ class SchedulerEngine:
                 notify_state_change=self._notify_state_change,
                 nudge=self.nudge,
                 semaphore=semaphore or asyncio.Semaphore(self._config.max_concurrent),
+                scheduling_tools=self._scheduling_tools,
             )
         )
         self._tool_control = SchedulerToolControl(
@@ -82,17 +101,9 @@ class SchedulerEngine:
             save_state=self._save_state,
             cancel_subtree=self._cancel_subtree,
         )
-        self._scheduling_tools: list[object] = []
 
     def get_registered_agent(self, state_id: str):
-        return (
-            None
-            if (agent := self._rt.agents.get(state_id)) is None
-            else agent.unwrap_agent()
-        )
-
-    def set_scheduling_tools(self, tools: list[object]) -> None:
-        self._scheduling_tools = list(tools)
+        return self._rt.agents.get(state_id)
 
     async def wait_for_nudge(self, timeout: float) -> None:
         try:
@@ -107,7 +118,7 @@ class SchedulerEngine:
 
     async def run(
         self,
-        agent: SchedulerAgentPort,
+        agent: Agent,
         user_input: UserInput,
         *,
         session_id: str | None = None,
@@ -126,7 +137,7 @@ class SchedulerEngine:
 
     async def submit(
         self,
-        agent: SchedulerAgentPort,
+        agent: Agent,
         user_input: UserInput,
         *,
         session_id: str | None = None,
@@ -134,17 +145,23 @@ class SchedulerEngine:
         persistent: bool = False,
         agent_config_id: str | None = None,
     ) -> str:
-        existing = await self._store.get_state(agent.id)
+        prepared_agent = await agent.create_child_agent(
+            child_id=agent.id,
+            system_prompt_override=agent.config.system_prompt,
+            exclude_tool_names={tool.get_name() for tool in agent.tools},
+            extra_tools=list(self._scheduling_tools),
+        )
+        existing = await self._store.get_state(prepared_agent.id)
         if existing is not None and existing.status in ACTIVE_AGENT_STATUSES:
             raise RuntimeError(
-                f"Agent '{agent.id}' is already active (status={existing.status.value}). "
+                f"Agent '{prepared_agent.id}' is already active (status={existing.status.value}). "
                 f"Cannot submit concurrently. Use a different agent_id or enqueue_input()."
             )
 
-        self.prepare_agent(agent)
+        self._rt.agents[prepared_agent.id] = prepared_agent
         resolved_session_id = session_id or str(uuid4())
         state = AgentState(
-            id=agent.id,
+            id=prepared_agent.id,
             session_id=resolved_session_id,
             status=AgentStateStatus.RUNNING,
             task=user_input,
@@ -171,7 +188,7 @@ class SchedulerEngine:
         state_id: str,
         user_input: UserInput,
         *,
-        agent: SchedulerAgentPort | None = None,
+        agent: Agent | None = None,
     ) -> None:
         state = await self._store.get_state(state_id)
         if state is None:
@@ -186,7 +203,19 @@ class SchedulerEngine:
                 f"Cannot enqueue input (expected IDLE or FAILED)."
             )
         if agent is not None:
-            self.prepare_agent(agent)
+            prepared_agent = await agent.create_child_agent(
+                child_id=state_id,
+                system_prompt_override=agent.config.system_prompt,
+                exclude_tool_names={tool.get_name() for tool in agent.tools},
+                extra_tools=list(self._scheduling_tools),
+            )
+            existing_agent = self._rt.agents.get(state_id)
+            self._rt.agents[state_id] = prepared_agent
+            if existing_agent is not None and existing_agent is not prepared_agent:
+                try:
+                    await existing_agent.close()
+                except Exception:  # noqa: BLE001
+                    logger.exception("scheduler_rebind_close_failed", state_id=state_id)
 
         await self._save_state(state.with_queued(pending_input=user_input))
         self.nudge()
@@ -195,7 +224,7 @@ class SchedulerEngine:
         self,
         user_input: UserInput,
         *,
-        agent: SchedulerAgentPort,
+        agent: Agent,
         state_id: str | None = None,
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
@@ -307,7 +336,7 @@ class SchedulerEngine:
         self,
         user_input: UserInput,
         *,
-        agent: SchedulerAgentPort | None = None,
+        agent: Agent | None = None,
         state_id: str | None = None,
         session_id: str | None = None,
         abort_signal: AbortSignal | None = None,
@@ -460,7 +489,7 @@ class SchedulerEngine:
         *,
         urgent: bool = False,
     ) -> bool:
-        message = extract_text(user_input)
+        message = UserMessage.from_value(user_input).extract_text()
         if not message:
             return False
 
@@ -498,7 +527,7 @@ class SchedulerEngine:
         self.nudge()
         return True
 
-    async def rebind_agent(self, state_id: str, agent: SchedulerAgentPort) -> bool:
+    async def rebind_agent(self, state_id: str, agent: Agent) -> bool:
         state = await self._store.get_state(state_id)
         if state is not None and state.status not in (
             AgentStateStatus.IDLE,
@@ -508,28 +537,19 @@ class SchedulerEngine:
             return False
 
         previous = self._rt.agents.get(state_id)
-        self.prepare_agent(agent)
-        previous_agent = previous.unwrap_agent() if previous is not None else None
-        next_agent = agent.unwrap_agent()
-        if previous is not None and previous_agent is not next_agent:
+        prepared = await agent.create_child_agent(
+            child_id=state_id,
+            system_prompt_override=agent.config.system_prompt,
+            exclude_tool_names={tool.get_name() for tool in agent.tools},
+            extra_tools=list(self._scheduling_tools),
+        )
+        self._rt.agents[state_id] = prepared
+        if previous is not None and previous is not prepared:
             try:
                 await previous.close()
             except Exception:  # noqa: BLE001
                 logger.exception("scheduler_rebind_close_failed", state_id=state_id)
         return True
-
-    def prepare_agent(
-        self,
-        agent: SchedulerAgentPort,
-        scheduling_tools: list[object] | None = None,
-    ) -> None:
-        agent = adapt_scheduler_agent(agent)
-        tools_to_inject = (
-            scheduling_tools if scheduling_tools is not None else self._scheduling_tools
-        )
-        agent.install_runtime_tools(list(tools_to_inject))
-        agent.set_termination_summary_enabled(True)
-        self._rt.agents[agent.id] = agent
 
     async def tick(self) -> None:
         await self._propagate_signals()
@@ -827,7 +847,7 @@ class SchedulerEngine:
         self,
         *,
         state_id: str,
-        agent: SchedulerAgentPort,
+        agent: Agent,
         user_input: UserInput,
     ) -> str:
         await self.enqueue_input(state_id, user_input, agent=agent)

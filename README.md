@@ -65,7 +65,7 @@ export OPENAI_API_KEY=...
 ```python
 import asyncio
 
-from agiwo import Agent, AgentConfig
+from agiwo.agent import Agent, AgentConfig
 from agiwo.llm import OpenAIModel
 
 
@@ -95,7 +95,7 @@ asyncio.run(main())
 ### Custom Tool Example
 
 ```python
-from agiwo import BaseTool, ToolResult
+from agiwo.tool import BaseTool, ToolResult
 from agiwo.tool import ToolContext
 
 
@@ -139,7 +139,7 @@ class WeatherTool(BaseTool):
 ### Agent As Tool
 
 ```python
-from agiwo import Agent, AgentConfig, as_tool
+from agiwo.agent import Agent, AgentConfig
 from agiwo.llm import DeepseekModel
 
 researcher = Agent(
@@ -158,7 +158,7 @@ orchestrator = Agent(
         system_prompt="Delegate independent research tasks when useful.",
     ),
     model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
-    tools=[as_tool(researcher)],
+    tools=[researcher.as_tool()],
 )
 ```
 
@@ -167,7 +167,8 @@ orchestrator = Agent(
 ```python
 import asyncio
 
-from agiwo import Agent, AgentConfig, Scheduler
+from agiwo.agent import Agent, AgentConfig
+from agiwo.scheduler import Scheduler
 from agiwo.llm import DeepseekModel
 
 
@@ -253,13 +254,13 @@ Important current rules:
 
 ### SDK
 
-- `agiwo/agent/`: public `Agent` API, runtime types, agent runtime tools, agent trace adapter, prompt runtime, tool auth runtime, run/session storage, and the internal lifecycle/engine execution pipeline
+- `agiwo/agent/`: canonical agent runtime: public `Agent` API, runtime types, child-agent adapter, hooks, prompt assembly, run/session state, streaming, and run-step storage integration
 - `agiwo/llm/`: model abstractions, providers, config policy, factory, token usage estimation
 - `agiwo/tool/`: tool abstractions, `ToolContext`, builtin tools, authz domain types, process registry, citation storage
 - `agiwo/scheduler/`: orchestration facade, engine, runner, command models, runtime state, tool control, store, runtime tools
 - `agiwo/workspace/`: workspace layout, bootstrap, and workspace document loading
 - `agiwo/memory/`: shared MEMORY indexing/search plus `WorkspaceMemoryService`
-- `agiwo/observability/`: trace models and storage backends; agent trace collection lives under `agiwo/agent/trace/`
+- `agiwo/observability/`: trace/span models and storage backends; `agiwo.agent.trace_writer.AgentTraceCollector` bridges agent runs into traces
 - `agiwo/skill/`: skill discovery, loading, registry, `SkillTool`
 
 ### Console

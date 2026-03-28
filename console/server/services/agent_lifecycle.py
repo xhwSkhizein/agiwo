@@ -9,10 +9,10 @@ Consolidates all Agent construction paths:
 
 from typing import Any
 
-from agiwo.agent import Agent, AgentConfig
-from agiwo.agent.runtime_tools import RuntimeToolLike
-from agiwo.agent.options import AgentOptions
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig, AgentOptions
 from agiwo.llm.base import Model
+from agiwo.tool.base import BaseTool
 from agiwo.llm import create_model_from_dict
 from agiwo.scheduler.models import AgentState
 from agiwo.scheduler.scheduler import Scheduler
@@ -95,7 +95,7 @@ async def build_agent(
     model = build_model(config)
     options = build_agent_options(config, console_config)
 
-    async def _build_agent_tool(ref: AgentToolRef) -> RuntimeToolLike | None:
+    async def _build_agent_tool(ref: AgentToolRef) -> BaseTool | None:
         child_config = await registry.get_agent(ref.agent_id)
         if child_config is None:
             return None

@@ -4,7 +4,7 @@ Runtime context inspection commands: /context and /status.
 
 from functools import partial
 
-from agiwo.agent.agent import Agent
+from agiwo.agent import Agent
 from agiwo.llm.limits import (
     resolve_max_context_window,
     resolve_max_input_tokens_per_call,

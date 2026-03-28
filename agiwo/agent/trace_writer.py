@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from agiwo.agent.types import LLMCallContext, Run, RunOutput, StepRecord
+from agiwo.agent.models.run import Run, RunOutput
+from agiwo.agent.models.step import LLMCallContext, StepRecord
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 from agiwo.utils.logging import get_logger

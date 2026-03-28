@@ -6,12 +6,9 @@ from collections.abc import AsyncIterator
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Protocol
 
-from agiwo.agent.execution import AgentExecutionHandlePort
-from agiwo.agent.input import UserInput
-from agiwo.agent.input_codec import extract_text
-from agiwo.agent.runtime import AgentStreamItem
-from agiwo.agent.scheduler_port import SchedulerAgentPort
+from agiwo.agent import Agent, AgentStreamItem, RunOutput, UserInput, UserMessage
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -66,7 +63,9 @@ def build_mailbox_input(
 
     base_text = ""
     if pending_input is not None:
-        base_text = extract_text(pending_input) or str(pending_input)
+        base_text = UserMessage.from_value(pending_input).extract_text() or str(
+            pending_input
+        )
 
     hints = [
         event.payload.get("hint", "").strip()
@@ -161,6 +160,19 @@ def stream_remaining(timeout: float | None, start: float) -> float | None:
     return timeout - elapsed
 
 
+class ExecutionHandleLike(Protocol):
+    run_id: str
+    session_id: str
+
+    def stream(self) -> AsyncIterator[AgentStreamItem]: ...
+
+    async def wait(self) -> RunOutput: ...
+
+    async def steer(self, user_input: UserInput) -> bool: ...
+
+    def cancel(self, reason: str | None = None) -> None: ...
+
+
 @dataclass
 class StreamChannelState:
     queue: asyncio.Queue
@@ -171,8 +183,8 @@ class StreamChannelState:
 class RuntimeState:
     """Process-local runtime state only."""
 
-    agents: dict[str, SchedulerAgentPort] = field(default_factory=dict)
-    execution_handles: dict[str, AgentExecutionHandlePort] = field(default_factory=dict)
+    agents: dict[str, Agent] = field(default_factory=dict)
+    execution_handles: dict[str, ExecutionHandleLike] = field(default_factory=dict)
     abort_signals: dict[str, AbortSignal] = field(default_factory=dict)
     waiters: dict[str, set[asyncio.Event]] = field(default_factory=dict)
     dispatched: set[str] = field(default_factory=set)

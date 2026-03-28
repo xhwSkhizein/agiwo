@@ -1,41 +1,48 @@
 """Single-run execution engine — the core run loop."""
 
 import asyncio
-import copy
 import time
 from datetime import datetime, timezone
 from typing import Any
 
 from agiwo.agent.compaction import compact_if_needed
-from agiwo.agent.config import AgentOptions
+from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import AgentHooks
-from agiwo.agent.input import ChannelContext, UserInput
-from agiwo.agent.input_codec import normalize_to_message
+from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.llm_caller import stream_assistant_step
-from agiwo.agent.memory_types import MemoryRecord
-from agiwo.agent.run_mutations import (
+from agiwo.agent.models.memory import MemoryRecord
+from agiwo.agent.prompt import apply_steering_messages, assemble_run_messages
+from agiwo.agent.models.run import (
+    Run,
+    RunMetrics,
+    RunOutput,
+    RunStatus,
+    TerminationReason,
+)
+from agiwo.agent.models.step import (
+    LLMCallContext,
+    StepRecord,
+)
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.state_ops import (
     record_compaction_metadata,
     replace_messages,
     set_tool_schemas,
     set_termination_reason,
 )
-from agiwo.agent.run_state import RunContext
-from agiwo.agent.step_pipeline import commit_step
-from agiwo.agent.tool_executor import execute_tool_batch
-from agiwo.tool.base import BaseTool
-from agiwo.agent.types import (
-    LLMCallContext,
-    Run,
+from agiwo.agent.runtime.step_committer import commit_step
+from agiwo.agent.models.stream import (
     RunCompletedEvent,
     RunFailedEvent,
-    RunMetrics,
-    RunOutput,
     RunStartedEvent,
-    RunStatus,
-    StepRecord,
-    TerminationReason,
-    steps_to_messages,
 )
+from agiwo.agent.termination.limits import (
+    check_non_recoverable_limits,
+    check_post_llm_limits,
+)
+from agiwo.agent.termination.summarizer import maybe_generate_termination_summary
+from agiwo.agent.tool_executor import execute_tool_batch
+from agiwo.tool.base import BaseTool
 from agiwo.config.settings import settings
 from agiwo.llm.base import Model
 from agiwo.llm.limits import (
@@ -46,34 +53,6 @@ from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-_SUMMARY_REASONS = {
-    TerminationReason.MAX_STEPS,
-    TerminationReason.TIMEOUT,
-    TerminationReason.MAX_OUTPUT_TOKENS,
-    TerminationReason.MAX_INPUT_TOKENS_PER_CALL,
-    TerminationReason.MAX_RUN_COST,
-    TerminationReason.CANCELLED,
-    TerminationReason.TOOL_LIMIT,
-    TerminationReason.ERROR,
-    TerminationReason.ERROR_WITH_CONTEXT,
-}
-
-DEFAULT_TERMINATION_USER_PROMPT = """**IMPORTANT: Execution Limit Reached**
-
-The execution has been interrupted due to %s. This is NOT a normal completion.
-
-Please provide a summary report that includes:
-1. **Original Request**: What was the user asking for
-2. **Work Completed**: What has been accomplished so far (be specific, cite actual results)
-3. **Pending Work**: What remains incomplete or was interrupted
-4. **Key Findings & Refs**: Any important results, data, or conclusions discovered with references
-
-**Requirements**:
-- Base your summary ONLY on the actual work done and results obtained - do not fabricate or assume
-- If you must make any assumptions, clearly mark them as such
-- Clearly indicate this is an INCOMPLETE/INTERRUPTED execution report
-- Use the same language as the original request"""
 
 
 async def _start_run(state: RunContext, run: Run) -> None:
@@ -160,172 +139,6 @@ def _build_output(state: RunContext) -> RunOutput:
     )
 
 
-def _assemble_messages(
-    system_prompt: str,
-    existing_steps: list[StepRecord] | None = None,
-    memories: list[MemoryRecord] | None = None,
-    before_run_hook_result: str | None = None,
-    *,
-    channel_context: ChannelContext | None = None,
-) -> list[dict]:
-    if existing_steps is None:
-        existing_steps = []
-    if memories is None:
-        memories = []
-
-    messages: list[dict] = steps_to_messages(existing_steps)
-    filtered_memories = _filter_memories(messages, memories)
-
-    preamble_parts: list[str] = []
-    if channel_context:
-        preamble_parts.append(_render_channel_context(channel_context))
-    if filtered_memories:
-        preamble_parts.append(_render_memories(filtered_memories))
-    if before_run_hook_result:
-        preamble_parts.append(_render_hook_result(before_run_hook_result))
-
-    if preamble_parts and messages:
-        last_msg = messages[-1]
-        if last_msg.get("role") == "user":
-            _prepend_to_user_message(last_msg, "\n\n".join(preamble_parts))
-
-    if system_prompt:
-        messages.insert(0, {"role": "system", "content": system_prompt})
-
-    return messages
-
-
-def _apply_steering_messages(
-    messages: list[dict[str, Any]],
-    steering_queue: asyncio.Queue[object] | None,
-) -> list[dict[str, Any]]:
-    updated_messages = copy.deepcopy(messages)
-    if steering_queue is None or steering_queue.empty():
-        return updated_messages
-
-    parts: list[str] = []
-    while not steering_queue.empty():
-        try:
-            parts.append(str(steering_queue.get_nowait()))
-        except asyncio.QueueEmpty:
-            break
-
-    if not parts:
-        return updated_messages
-
-    steering_text = "\n".join(parts)
-    tag = f"\n\n<system-steering>{steering_text}</system-steering>"
-    last_message = updated_messages[-1] if updated_messages else None
-    if last_message and last_message.get("role") in ("user", "tool"):
-        content = last_message.get("content", "")
-        if isinstance(content, str):
-            last_message["content"] = content + tag
-        elif isinstance(content, list):
-            content.append({"type": "text", "text": tag})
-        else:
-            last_message["content"] = tag
-        return updated_messages
-
-    updated_messages.append({"role": "user", "content": steering_text})
-    return updated_messages
-
-
-def _render_channel_context(ctx: ChannelContext) -> str:
-    lines = [f"source: {ctx.source}"]
-    for key, value in ctx.metadata.items():
-        if key in ("recent_dm_messages", "recent_group_messages") and isinstance(
-            value, list
-        ):
-            if value:
-                lines.append(f"{key}:")
-                for msg in value:
-                    lines.append(f"  - {msg}")
-        elif isinstance(value, (str, int, float, bool)):
-            lines.append(f"{key}: {value}")
-    return "<channel-context>\n" + "\n".join(lines) + "\n</channel-context>"
-
-
-def _render_memories(memories: list[MemoryRecord]) -> str:
-    content = "\n\n".join(memory.content for memory in memories)
-    return f"<relevant-memories>\n{content}\n</relevant-memories>"
-
-
-def _render_hook_result(result: str) -> str:
-    return f"<before_run_hook_result>\n{result}\n</before_run_hook_result>"
-
-
-def _prepend_to_user_message(msg: dict[str, Any], preamble: str) -> None:
-    content = msg.get("content")
-    if isinstance(content, str):
-        msg["content"] = preamble + "\n\n" + content
-    elif isinstance(content, list):
-        msg["content"] = [{"type": "text", "text": preamble}] + content
-    else:
-        msg["content"] = preamble
-
-
-def _filter_memories(
-    messages: list[dict], memories: list[MemoryRecord]
-) -> list[MemoryRecord]:
-    if not memories:
-        return []
-
-    min_relevance_score = 0.5
-    similarity_threshold = 0.8
-
-    existing_texts: list[str] = [
-        msg.get("content", "")
-        for msg in messages[:-1]
-        if isinstance(msg.get("content"), str)
-    ]
-
-    def _is_similar_to_history(content: str) -> bool:
-        content_lower = content.lower()
-        for text in existing_texts:
-            if _text_similarity(content_lower, text.lower()) > similarity_threshold:
-                return True
-        return False
-
-    filtered: list[MemoryRecord] = []
-    seen_contents: set[str] = set()
-
-    for memory in sorted(
-        [m for m in memories if m.relevance_score is not None],
-        key=lambda m: m.relevance_score or 0,
-        reverse=True,
-    ):
-        if memory.relevance_score < min_relevance_score:
-            continue
-
-        content_normalized = memory.content.strip()
-        if content_normalized in seen_contents:
-            continue
-        seen_contents.add(content_normalized)
-
-        if _is_similar_to_history(content_normalized):
-            continue
-
-        filtered.append(memory)
-
-    return filtered
-
-
-def _text_similarity(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    if a in b or b in a:
-        return 0.9
-
-    a_words = set(a.split())
-    b_words = set(b.split())
-    if not a_words or not b_words:
-        return 0.0
-
-    intersection = a_words & b_words
-    union = a_words | b_words
-    return len(intersection) / len(union)
-
-
 async def execute_run(
     user_input: UserInput,
     *,
@@ -342,6 +155,8 @@ async def execute_run(
     """Execute a single agent run — the core entry point."""
     options = options or AgentOptions()
     hooks = hooks or AgentHooks()
+    context.config = options
+    context.hooks = hooks
 
     tools_map = {tool.get_name(): tool for tool in tools}
     max_input_tokens_per_call = resolve_max_input_tokens_per_call(
@@ -388,12 +203,10 @@ async def execute_run(
     if all(step.id != user_step.id for step in existing_steps):
         existing_steps.append(user_step)
         existing_steps.sort(key=lambda step: step.sequence)
-    user_message = normalize_to_message(user_input)
-    context.config = options
-    context.hooks = hooks
+    user_message = UserMessage.from_value(user_input)
     replace_messages(
         context,
-        _assemble_messages(
+        assemble_run_messages(
             system_prompt,
             existing_steps,
             memories,
@@ -428,7 +241,7 @@ async def execute_run(
             abort_signal=abort_signal,
             root_path=root_path or settings.root_path,
         )
-        await _maybe_generate_summary(
+        await maybe_generate_termination_summary(
             state=context,
             options=options,
             model=model,
@@ -575,7 +388,7 @@ async def _run_loop_iteration(
 ) -> tuple[int, int, bool]:
     if _apply_termination_reason(
         state,
-        _check_non_recoverable_limits(state, options, current_step),
+        check_non_recoverable_limits(state, options, current_step),
     ):
         return current_step, compact_start_seq, True
 
@@ -663,7 +476,7 @@ async def _run_assistant_turn(
 ) -> tuple[StepRecord, LLMCallContext]:
     replace_messages(
         state,
-        _apply_steering_messages(state.copy_messages(), state.steering_queue),
+        apply_steering_messages(state.copy_messages(), state.steering_queue),
     )
     if state.hooks.on_before_llm_call:
         modified = await state.hooks.on_before_llm_call(state.copy_messages())
@@ -694,7 +507,7 @@ async def _handle_assistant_turn_result(
 ) -> bool:
     if _apply_termination_reason(
         state,
-        _check_post_llm_limits(
+        check_post_llm_limits(
             state,
             step,
             llm_context,
@@ -714,144 +527,6 @@ async def _handle_assistant_turn_result(
         tools_map=tools_map,
         abort_signal=abort_signal,
     )
-
-
-def _check_non_recoverable_limits(
-    state: RunContext,
-    options: AgentOptions,
-    current_step: int,
-) -> TerminationReason | None:
-    if current_step >= options.max_steps:
-        logger.warning(
-            "limit_hit_max_steps",
-            current_step=current_step,
-            max_steps=options.max_steps,
-            run_id=state.run_id,
-        )
-        return TerminationReason.MAX_STEPS
-
-    if options.run_timeout and state.elapsed > options.run_timeout:
-        logger.warning(
-            "limit_hit_timeout",
-            elapsed=state.elapsed,
-            run_timeout=options.run_timeout,
-            run_id=state.run_id,
-        )
-        return TerminationReason.TIMEOUT
-
-    if state.timeout_at and time.time() >= state.timeout_at:
-        logger.warning(
-            "limit_hit_context_timeout",
-            timeout_at=state.timeout_at,
-            run_id=state.run_id,
-        )
-        return TerminationReason.TIMEOUT
-
-    return None
-
-
-def _check_post_llm_limits(
-    state: RunContext,
-    step: StepRecord,
-    llm_context: LLMCallContext,
-    *,
-    options: AgentOptions,
-    max_input_tokens_per_call: int,
-) -> TerminationReason | None:
-    input_tokens = step.metrics.input_tokens if step.metrics else 0
-    if input_tokens and input_tokens > max_input_tokens_per_call:
-        logger.warning(
-            "limit_hit_max_input_tokens_per_call",
-            input_tokens=input_tokens,
-            max_input_tokens_per_call=max_input_tokens_per_call,
-            run_id=state.run_id,
-        )
-        return TerminationReason.MAX_INPUT_TOKENS_PER_CALL
-
-    if options.max_run_cost is not None and state.token_cost >= options.max_run_cost:
-        logger.warning(
-            "limit_hit_max_run_cost",
-            token_cost=state.token_cost,
-            max_run_cost=options.max_run_cost,
-            run_id=state.run_id,
-        )
-        return TerminationReason.MAX_RUN_COST
-
-    finish_reason = llm_context.finish_reason
-    if finish_reason and finish_reason.strip().lower() in {"length", "max_tokens"}:
-        logger.warning(
-            "limit_hit_max_output_tokens",
-            finish_reason=finish_reason,
-            run_id=state.run_id,
-        )
-        return TerminationReason.MAX_OUTPUT_TOKENS
-
-    return None
-
-
-async def _maybe_generate_summary(
-    *,
-    state: RunContext,
-    options: AgentOptions,
-    model: Model,
-    abort_signal: AbortSignal | None,
-) -> None:
-    if not options.enable_termination_summary:
-        return
-    if state.termination_reason not in _SUMMARY_REASONS:
-        return
-
-    prompt_template = (
-        options.termination_summary_prompt or DEFAULT_TERMINATION_USER_PROMPT
-    )
-    termination_reason_str = _format_termination_reason(state.termination_reason)
-    user_prompt = (
-        prompt_template % termination_reason_str
-        if "%s" in prompt_template
-        else prompt_template
-    )
-
-    sequence = await state.session_runtime.allocate_sequence()
-    summary_user_step = StepRecord.user(
-        state,
-        sequence=sequence,
-        content=user_prompt,
-        name="summary_request",
-    )
-    await commit_step(state, summary_user_step, append_message=True)
-
-    step, llm_context = await stream_assistant_step(
-        model,
-        state,
-        abort_signal,
-        messages=state.copy_messages(),
-        tools=None,
-    )
-    step.name = "summary"
-    await commit_step(state, step, llm=llm_context, append_message=False)
-
-    logger.info(
-        "summary_generated",
-        tokens=step.metrics.total_tokens if step.metrics else 0,
-    )
-
-
-def _format_termination_reason(reason: TerminationReason | str) -> str:
-    reason_val = reason.value if isinstance(reason, TerminationReason) else reason
-    reason_mapping = {
-        TerminationReason.MAX_STEPS.value: "reaching the maximum number of execution steps",
-        TerminationReason.TIMEOUT.value: "execution timeout",
-        TerminationReason.MAX_OUTPUT_TOKENS.value: "reaching model output token limit for one LLM call",
-        TerminationReason.MAX_INPUT_TOKENS_PER_CALL.value: "reaching model input token limit for one LLM call",
-        TerminationReason.MAX_RUN_COST.value: "reaching maximum token cost budget for this run",
-        TerminationReason.CANCELLED.value: "user cancellation",
-        TerminationReason.TOOL_LIMIT.value: "reaching the tool call limit",
-        TerminationReason.ERROR.value: "internal error",
-        TerminationReason.ERROR_WITH_CONTEXT.value: "error with context",
-        TerminationReason.COMPLETED.value: "completed successfully",
-        TerminationReason.SLEEPING.value: "sleeping/waiting",
-    }
-    return reason_mapping.get(reason_val, reason_val)
 
 
 __all__ = ["execute_run"]

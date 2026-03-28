@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from agiwo.agent.input import UserInput
+from agiwo.agent import UserInput
 
 
 class AgentStateStatus(str, Enum):
