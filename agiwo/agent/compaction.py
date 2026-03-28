@@ -87,7 +87,7 @@ async def save_transcript(
 ) -> str:
     """Persist compacted source messages to a transcript file."""
     root = root_path or settings.root_path
-    transcript_dir = Path(root) / "transcripts" / agent_id / session_id
+    transcript_dir = Path(root) / "compaction" / "transcripts" / agent_id / session_id
     transcript_dir.mkdir(parents=True, exist_ok=True)
 
     date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
