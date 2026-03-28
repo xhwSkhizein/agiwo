@@ -31,6 +31,8 @@ class BashResultFormatter:
         parameters: dict[str, Any],
         command: str,
         result: CommandResult,
+        *,
+        tool_call_id: str = "",
         **extra: Any,
     ) -> ToolResult:
         payload = {
@@ -47,7 +49,7 @@ class BashResultFormatter:
             return ToolResult.success(
                 tool_name=self._tool_name,
                 content=content,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=tool_call_id,
                 input_args=parameters,
                 output=payload,
             )
@@ -58,7 +60,7 @@ class BashResultFormatter:
         return ToolResult.failed(
             tool_name=self._tool_name,
             error=error_msg,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=tool_call_id,
             input_args=parameters,
             content=content,
             output=payload,
@@ -67,6 +69,8 @@ class BashResultFormatter:
     def ok(
         self,
         parameters: dict[str, Any],
+        *,
+        tool_call_id: str = "",
         stdout: str = "",
         **extra: Any,
     ) -> ToolResult:
@@ -82,7 +86,7 @@ class BashResultFormatter:
         content = f"exit_code: {payload['exit_code']}\nstdout: {payload['stdout']}"
         return ToolResult.success(
             tool_name=self._tool_name,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=tool_call_id,
             input_args=parameters,
             content=content,
             output=payload,
@@ -92,6 +96,8 @@ class BashResultFormatter:
         self,
         parameters: dict[str, Any],
         message: str,
+        *,
+        tool_call_id: str = "",
         exit_code: int = 1,
         **extra: Any,
     ) -> ToolResult:
@@ -108,7 +114,7 @@ class BashResultFormatter:
         content = f"exit_code: {payload['exit_code']}\nstderr: {payload['stderr']}"
         return ToolResult.failed(
             tool_name=self._tool_name,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=tool_call_id,
             input_args=parameters,
             content=content,
             output=payload,

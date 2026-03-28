@@ -229,10 +229,12 @@ class InMemoryRunStepStorage(RunStepStorage):
         if step.id in id_idx:
             idx = id_idx[step.id]
             old = step_list[idx]
-            step_list[idx] = step
             if old.sequence != step.sequence:
-                del seq_idx[old.sequence]
-                seq_idx[step.sequence] = idx
+                step_list.pop(idx)
+                self._rebuild_indexes(sid)
+                self._insert_new_step(sid, step)
+            else:
+                step_list[idx] = step
             return
 
         # O(1) lookup by sequence
@@ -244,11 +246,14 @@ class InMemoryRunStepStorage(RunStepStorage):
             id_idx[step.id] = idx
             return
 
-        # New step: bisect insert to maintain sort order
+        self._insert_new_step(sid, step)
+
+    def _insert_new_step(self, sid: str, step: StepRecord) -> None:
+        """Bisect-insert a brand-new step and rebuild indexes."""
+        step_list = self.steps[sid]
         sequences = [s.sequence for s in step_list]
         pos = bisect.bisect_left(sequences, step.sequence)
         step_list.insert(pos, step)
-        # Rebuild indexes after insert (shifted positions)
         self._rebuild_indexes(sid)
         current = self._sequence_counters.get(sid)
         if current is not None and step.sequence > current:

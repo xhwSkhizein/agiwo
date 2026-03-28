@@ -79,7 +79,7 @@ class SpawnAgentTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error="Cannot spawn agent: no agent_id in execution context",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -103,14 +103,14 @@ class SpawnAgentTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=str(exc),
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
 
         return ToolResult.success(
             tool_name=self.name,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=context.tool_call_id,
             input_args={"task": task, "child_id": state.id},
             content=f"Spawned child agent '{state.id}' for task: {task}",
             output={"child_id": state.id, "status": "pending"},
@@ -192,7 +192,7 @@ class SleepAndWaitTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error="Cannot sleep: no agent_id in execution context",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -211,7 +211,7 @@ class SleepAndWaitTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Invalid wake_type: {wake_type_str}",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -234,14 +234,14 @@ class SleepAndWaitTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=str(exc),
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
 
         return ToolResult.success(
             tool_name=self.name,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=context.tool_call_id,
             input_args=parameters,
             content=sleep_result.summary,
             output={"wake_type": wake_type_str, "agent_id": agent_id},
@@ -299,7 +299,7 @@ class QuerySpawnedAgentTool(BaseTool):
         context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
-        del context, abort_signal
+        del abort_signal
         start_time = time.time()
         target_id = parameters.get("agent_id", "")
 
@@ -308,7 +308,7 @@ class QuerySpawnedAgentTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Agent '{target_id}' not found",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content=f"Agent '{target_id}' not found.",
                 start_time=start_time,
@@ -337,7 +337,7 @@ class QuerySpawnedAgentTool(BaseTool):
 
         return ToolResult.success(
             tool_name=self.name,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=context.tool_call_id,
             input_args=parameters,
             content="\n".join(content_parts),
             output=result_info,
@@ -412,7 +412,7 @@ class CancelAgentTool(BaseTool):
             return ToolResult.denied(
                 tool_name=self.name,
                 reason=str(exc),
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content=f"Permission denied: {exc}.",
                 output={"success": False},
@@ -423,7 +423,7 @@ class CancelAgentTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Agent '{target_id}' not found",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content=f"Agent '{target_id}' not found.",
                 output={"success": False},
@@ -434,7 +434,7 @@ class CancelAgentTool(BaseTool):
         if cancel_result.outcome == "already_terminal" and target_state is not None:
             return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content=(
                     f"Agent '{target_id}' is already in terminal state: "
@@ -465,7 +465,7 @@ class CancelAgentTool(BaseTool):
                 )
             return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content="\n".join(content_parts),
                 output={
@@ -479,7 +479,7 @@ class CancelAgentTool(BaseTool):
 
         return ToolResult.success(
             tool_name=self.name,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=context.tool_call_id,
             input_args=parameters,
             content=f"Agent '{target_id}' and its subtree have been cancelled. Reason: {reason}",
             output={"success": True, "agent_id": target_id},
@@ -531,7 +531,7 @@ class ListAgentsTool(BaseTool):
         if not children:
             return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content="No child agents found.",
                 output={"agents": []},
@@ -577,7 +577,7 @@ class ListAgentsTool(BaseTool):
 
         return ToolResult.success(
             tool_name=self.name,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=context.tool_call_id,
             input_args=parameters,
             content="\n".join(content_lines),
             output={"agents": agent_infos},

@@ -15,19 +15,25 @@ from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_DEFAULT_TIMEOUT_SECONDS = 30
 
-
-def _build_tool_context(ctx: RunContext, tool: BaseTool) -> ToolContext:
-    timeout_seconds = tool.timeout_seconds or _DEFAULT_TIMEOUT_SECONDS
-    timeout_at = ctx.timeout_at
-    if timeout_seconds:
-        timeout_at = time.time() + timeout_seconds
+def _build_tool_context(
+    ctx: RunContext,
+    tool: BaseTool,
+    *,
+    tool_call_id: str = "",
+) -> ToolContext:
+    tool_deadline = time.time() + tool.timeout_seconds
+    timeout_at = (
+        min(ctx.timeout_at, tool_deadline)
+        if ctx.timeout_at is not None
+        else tool_deadline
+    )
     if isinstance(tool, AgentTool):
         return AgentToolContext.from_run_context(
             ctx,
             timeout_at=timeout_at,
             gate_checked=True,
+            tool_call_id=tool_call_id,
         )
     return ToolContext(
         session_id=ctx.session_id,
@@ -38,6 +44,7 @@ def _build_tool_context(ctx: RunContext, tool: BaseTool) -> ToolContext:
         depth=ctx.depth,
         metadata=dict(ctx.metadata),
         gate_checked=True,
+        tool_call_id=tool_call_id,
     )
 
 
@@ -152,14 +159,12 @@ async def _prepare_tool_call(
             start_time=start_time,
         )
 
-    args["tool_call_id"] = call_id
     if context.hooks.on_before_tool_call:
         modified = await context.hooks.on_before_tool_call(
             call_id, tool_name, dict(args)
         )
         if modified is not None:
             args = dict(modified)
-            args["tool_call_id"] = call_id
 
     return call_id, tool_name, tool, args
 
@@ -175,7 +180,7 @@ async def _execute_prepared_tool_call(
     start_time: float,
 ) -> ToolResult:
     try:
-        tool_context = _build_tool_context(context, tool)
+        tool_context = _build_tool_context(context, tool, tool_call_id=call_id)
         gate_decision = await _gate_tool_call(tool, args, tool_context)
         if gate_decision.action == "deny":
             return ToolResult.denied(

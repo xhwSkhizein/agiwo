@@ -3,7 +3,7 @@
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -38,7 +38,7 @@ class TerminationReason(str, Enum):
     SLEEPING = "sleeping"
 
 
-@dataclass(frozen=True)
+@dataclass
 class RunIdentity:
     run_id: str
     agent_id: str
@@ -104,8 +104,8 @@ class Run:
     status: RunStatus = RunStatus.STARTING
     response_content: str | None = None
     metrics: RunMetrics = field(default_factory=RunMetrics)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     parent_run_id: str | None = None
     trace_id: str | None = None
 

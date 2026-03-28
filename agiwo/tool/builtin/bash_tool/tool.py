@@ -152,15 +152,18 @@ class BashTool(BaseTool):
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         del abort_signal
+        tool_call_id = context.tool_call_id
 
-        request = self._resolve_request(parameters)
+        request = self._resolve_request(parameters, tool_call_id=tool_call_id)
         if isinstance(request, ToolResult):
             return request
 
         if not context.gate_checked:
             safety_decision = await self._safety_validator.validate(request.command)
             if safety_decision.action == "deny":
-                return self._formatter.error(parameters, safety_decision.reason)
+                return self._formatter.error(
+                    parameters, safety_decision.reason, tool_call_id=tool_call_id
+                )
 
         try:
             return await self._execute_shell(
@@ -174,9 +177,13 @@ class BashTool(BaseTool):
                 stdin=request.stdin,
             )
         except TimeoutError:
-            return self._formatter.error(parameters, "command timed out")
+            return self._formatter.error(
+                parameters, "command timed out", tool_call_id=tool_call_id
+            )
         except (RuntimeError, ValueError, OSError) as exc:
-            return self._formatter.error(parameters, str(exc))
+            return self._formatter.error(
+                parameters, str(exc), tool_call_id=tool_call_id
+            )
 
     async def _execute_shell(
         self,
@@ -189,18 +196,24 @@ class BashTool(BaseTool):
         use_pty: bool,
         stdin: str | None,
     ) -> ToolResult:
+        tool_call_id = context.tool_call_id
         shell_command = self._apply_before_hook(command)
         foreground_command = shell_command.strip()
         if not foreground_command:
-            return self._formatter.error(parameters, "command cannot be empty")
+            return self._formatter.error(
+                parameters, "command cannot be empty", tool_call_id=tool_call_id
+            )
 
         if background and stdin is not None:
             return self._formatter.error(
                 parameters,
                 "stdin is only supported for foreground PTY execution",
+                tool_call_id=tool_call_id,
             )
         if stdin is not None and not use_pty:
-            return self._formatter.error(parameters, "stdin requires pty=true")
+            return self._formatter.error(
+                parameters, "stdin requires pty=true", tool_call_id=tool_call_id
+            )
 
         if background:
             agent_id = context.agent_id
@@ -211,7 +224,8 @@ class BashTool(BaseTool):
                 use_pty=use_pty,
             )
             return self._formatter.ok(
-                parameters=parameters,
+                parameters,
+                tool_call_id=tool_call_id,
                 stdout=f"started background job {job_id}\n",
                 job_id=job_id,
                 state="running",
@@ -231,6 +245,7 @@ class BashTool(BaseTool):
             parameters,
             foreground_command,
             result,
+            tool_call_id=tool_call_id,
             mode="pty" if use_pty else "pipe",
         )
 
@@ -251,27 +266,38 @@ class BashTool(BaseTool):
     def _resolve_request(
         self,
         parameters: dict[str, Any],
+        *,
+        tool_call_id: str = "",
     ) -> BashExecutionRequest | ToolResult:
         command = str(parameters.get("command", "")).strip()
         if not command:
-            return self._formatter.error(parameters, "command is required")
+            return self._formatter.error(
+                parameters, "command is required", tool_call_id=tool_call_id
+            )
 
         timeout = self._parser.parse_timeout(parameters)
         if isinstance(timeout, ParseError):
-            return self._formatter.error(parameters, timeout.message)
+            return self._formatter.error(
+                parameters, timeout.message, tool_call_id=tool_call_id
+            )
 
         modes = self._parser.parse_modes(parameters)
         if isinstance(modes, ParseError):
-            return self._formatter.error(parameters, modes.message)
+            return self._formatter.error(
+                parameters, modes.message, tool_call_id=tool_call_id
+            )
 
         stdin = self._parser.parse_stdin(parameters)
         if isinstance(stdin, ParseError):
-            return self._formatter.error(parameters, stdin.message)
+            return self._formatter.error(
+                parameters, stdin.message, tool_call_id=tool_call_id
+            )
 
         if command.rstrip().endswith("&"):
             return self._formatter.error(
                 parameters,
                 "trailing '&' is not supported; use background=true",
+                tool_call_id=tool_call_id,
                 exit_code=2,
             )
 

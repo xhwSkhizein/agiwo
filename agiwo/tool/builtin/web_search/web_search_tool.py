@@ -1,7 +1,7 @@
 """Web search tool backed by Serper."""
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from agiwo.config.settings import settings
@@ -240,7 +240,7 @@ To fetch full content from a search result, use web_reader with the result index
                     source=item.get("source"),
                     query=query,
                     index=start_index + offset,
-                    created_at=datetime.now(),
+                    created_at=datetime.now(timezone.utc),
                 )
             )
         return citation_sources
@@ -315,7 +315,7 @@ To fetch full content from a search result, use web_reader with the result index
             if abort_signal and abort_signal.is_aborted():
                 return ToolResult.aborted(
                     tool_name=self.name,
-                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    tool_call_id=context.tool_call_id,
                     input_args=parameters,
                     start_time=start_time,
                 )
@@ -325,7 +325,7 @@ To fetch full content from a search result, use web_reader with the result index
                 return ToolResult.failed(
                     tool_name=self.name,
                     error="Error: query must be a non-empty string",
-                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    tool_call_id=context.tool_call_id,
                     input_args=parameters,
                     start_time=start_time,
                 )
@@ -339,7 +339,7 @@ To fetch full content from a search result, use web_reader with the result index
                 return ToolResult.failed(
                     tool_name=self.name,
                     error=raw_results,
-                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    tool_call_id=context.tool_call_id,
                     input_args=parameters,
                     start_time=start_time,
                 )
@@ -347,7 +347,7 @@ To fetch full content from a search result, use web_reader with the result index
             if abort_signal and abort_signal.is_aborted():
                 return ToolResult.aborted(
                     tool_name=self.name,
-                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    tool_call_id=context.tool_call_id,
                     input_args=parameters,
                     start_time=start_time,
                 )
@@ -360,7 +360,7 @@ To fetch full content from a search result, use web_reader with the result index
 
             return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content=result_text,
                 output={
@@ -375,7 +375,7 @@ To fetch full content from a search result, use web_reader with the result index
             return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Error performing web search: {error_message}",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )

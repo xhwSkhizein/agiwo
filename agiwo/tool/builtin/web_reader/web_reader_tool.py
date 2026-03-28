@@ -130,7 +130,7 @@ class WebReaderTool(BaseTool):
             if abort_signal and abort_signal.is_aborted():
                 return ToolResult.aborted(
                     tool_name=self.name,
-                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    tool_call_id=context.tool_call_id,
                     input_args=parameters,
                     start_time=start_time,
                 )
@@ -156,7 +156,7 @@ class WebReaderTool(BaseTool):
                 return ToolResult.failed(
                     tool_name=self.name,
                     error=fallback_error or "Failed to fetch content",
-                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    tool_call_id=context.tool_call_id,
                     input_args=parameters,
                     start_time=start_time,
                 )
@@ -164,7 +164,7 @@ class WebReaderTool(BaseTool):
             if abort_signal and abort_signal.is_aborted():
                 return ToolResult.aborted(
                     tool_name=self.name,
-                    tool_call_id=str(parameters.get("tool_call_id", "")),
+                    tool_call_id=context.tool_call_id,
                     input_args=parameters,
                     start_time=start_time,
                 )
@@ -202,7 +202,7 @@ class WebReaderTool(BaseTool):
 
             return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content=result_content,
                 output={
@@ -218,7 +218,7 @@ class WebReaderTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Error: {exc!s}",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )

@@ -1,7 +1,7 @@
 """Public agent stream event payloads."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from agiwo.agent.models.run import RunMetrics, TerminationReason
@@ -22,7 +22,7 @@ class AgentStreamItemBase:
     agent_id: str
     parent_run_id: str | None
     depth: int
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @classmethod
     def from_context(cls, ctx: "RunContext", **kwargs: Any) -> "AgentStreamItemBase":

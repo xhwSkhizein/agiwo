@@ -450,10 +450,20 @@ class Agent:
                     *[task for task, _ in active],
                     return_exceptions=True,
                 )
-            await self._run_step_storage.close()
-            await self._session_storage.close()
+            storage_names = ["run_step_storage", "session_storage"]
+            close_coros = [
+                self._run_step_storage.close(),
+                self._session_storage.close(),
+            ]
             if self._trace_storage is not None:
-                await self._trace_storage.close()
+                storage_names.append("trace_storage")
+                close_coros.append(self._trace_storage.close())
+            results = await asyncio.gather(*close_coros, return_exceptions=True)
+            for name, result in zip(storage_names, results):
+                if isinstance(result, BaseException):
+                    logger.error(
+                        "storage_close_failed", storage=name, error=str(result)
+                    )
             self._active_executions.clear()
             self._closed = True
             self._closing = False

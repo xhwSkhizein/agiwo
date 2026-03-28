@@ -23,7 +23,7 @@ def _drop_none(value: Any) -> Any:
             key: _drop_none(item) for key, item in value.items() if item is not None
         }
     if isinstance(value, list):
-        return [_drop_none(item) for item in value if item is not None]
+        return [_drop_none(item) if item is not None else None for item in value]
     return value
 
 
@@ -41,9 +41,15 @@ def _normalize_storage_value(value: Any) -> Any:
             if item is not None
         }
     if isinstance(value, list):
-        return [_normalize_storage_value(item) for item in value if item is not None]
+        return [
+            _normalize_storage_value(item) if item is not None else None
+            for item in value
+        ]
     if isinstance(value, tuple):
-        return [_normalize_storage_value(item) for item in value if item is not None]
+        return [
+            _normalize_storage_value(item) if item is not None else None
+            for item in value
+        ]
     return value
 
 

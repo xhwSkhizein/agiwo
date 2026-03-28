@@ -124,7 +124,9 @@ class UserMessage:
                 continue
 
             url = part.url or ""
-            if url and _is_local_path(url):
+            if not url:
+                continue
+            if _is_local_path(url):
                 result.append({"type": "text", "text": _render_local_resource(part)})
                 continue
             result.append(_build_media_block(part, url))

@@ -14,6 +14,7 @@ class ToolContext:
     depth: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
     gate_checked: bool = False
+    tool_call_id: str = ""
 
 
 __all__ = ["ToolContext"]

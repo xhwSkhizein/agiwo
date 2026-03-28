@@ -95,6 +95,7 @@ class SQLiteRunStepStorage(RunStepStorage):
                     tool_calls TEXT,
                     tool_call_id TEXT,
                     name TEXT,
+                    is_error INTEGER DEFAULT 0,
                     metrics TEXT,
                     created_at TEXT NOT NULL,
                     parent_run_id TEXT,
@@ -292,15 +293,16 @@ class SQLiteRunStepStorage(RunStepStorage):
 
         try:
             serialized = [self._serialize_model(step) for step in steps]
-            columns = ", ".join(serialized[0].keys())
-            placeholders = ", ".join(["?" for _ in serialized[0]])
+            all_keys = list(dict.fromkeys(k for s in serialized for k in s))
+            columns = ", ".join(all_keys)
+            placeholders = ", ".join(["?" for _ in all_keys])
             query = f"""
                 INSERT OR REPLACE INTO steps ({columns})
                 VALUES ({placeholders})
             """
             await self._connection.executemany(
                 query,
-                [list(item.values()) for item in serialized],
+                [tuple(item.get(k) for k in all_keys) for item in serialized],
             )
             await self._connection.commit()
         except Exception as e:

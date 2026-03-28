@@ -16,6 +16,7 @@ from agiwo.agent.hooks.memory import filter_relevant_memories
 from agiwo.agent.models.input import ChannelContext, UserMessage
 from agiwo.agent.models.memory import MemoryRecord
 from agiwo.agent.models.step import StepRecord
+from agiwo.tool.base import BaseTool
 from agiwo.skill.prompt_catalog import SkillPromptProvider
 from agiwo.utils.logging import get_logger
 from agiwo.workspace import WorkspaceBootstrapper, WorkspaceDocumentStore
@@ -34,7 +35,7 @@ def _get_os_info() -> str:
     extra_info = ""
     if os_name == "Darwin":
         mac_version = platform.mac_ver()[0]
-        extra_info = f", macOS verion:{mac_version}"
+        extra_info = f", macOS version:{mac_version}"
     elif os_name == "Windows":
         win_ver = platform.win32_ver()[1]
         extra_info = f", Windows version detail:{win_ver}"
@@ -179,10 +180,12 @@ def assemble_run_messages(
     if before_run_hook_result:
         preamble_parts.append(_render_hook_result(before_run_hook_result))
 
-    if preamble_parts and messages:
-        last_msg = messages[-1]
-        if last_msg.get("role") == "user":
-            _prepend_to_user_message(last_msg, "\n\n".join(preamble_parts))
+    if preamble_parts:
+        preamble_text = "\n\n".join(preamble_parts)
+        if messages and messages[-1].get("role") == "user":
+            _prepend_to_user_message(messages[-1], preamble_text)
+        elif preamble_text.strip():
+            messages.append({"role": "user", "content": preamble_text})
 
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
@@ -230,7 +233,7 @@ async def build_system_prompt(
     *,
     base_prompt: str,
     workspace: AgentWorkspace,
-    tools: list[object] | None = None,
+    tools: list[BaseTool] | None = None,
     skill_manager: SkillPromptProvider | None = None,
     bootstrapper: WorkspaceBootstrapper | None = None,
     document_store: WorkspaceDocumentStore | None = None,
