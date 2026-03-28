@@ -18,6 +18,7 @@ from server.dependencies import (
 )
 from server.channels.base import safe_close_all
 from server.channels.feishu import FeishuChannelService
+from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
 from server.services.agent_registry import AgentRegistry, AgentConfigRecord
 from server.services.agent_lifecycle import build_default_agent_options
 from server.services.storage_wiring import (
@@ -67,6 +68,9 @@ async def lifespan(app: FastAPI):
     sched = Scheduler(scheduler_config)
     await sched.start()
 
+    console_session_store = InMemoryFeishuChannelStore()
+    await console_session_store.connect()
+
     feishu_channel_service: FeishuChannelService | None = None
     if config.feishu_enabled:
         logger.info("feishu_channel_enabled", enabled=True)
@@ -110,6 +114,7 @@ async def lifespan(app: FastAPI):
             agent_registry=agent_registry,
             scheduler=sched,
             feishu_channel_service=feishu_channel_service,
+            session_store=console_session_store,
         ),
     )
 
