@@ -1,6 +1,6 @@
 """Feishu channel command protocol."""
 
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 
 from server.channels.feishu.commands.base import (
     CommandContext,

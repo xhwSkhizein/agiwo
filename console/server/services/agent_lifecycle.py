@@ -15,7 +15,7 @@ from agiwo.llm.base import Model
 from agiwo.tool.base import BaseTool
 from agiwo.llm import create_model_from_dict
 from agiwo.scheduler.models import AgentState
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 
 from server.config import ConsoleConfig
 from server.domain.agent_configs import AgentOptionsInput, ModelParamsInput

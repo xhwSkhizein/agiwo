@@ -2,6 +2,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
+from typing import Any
 from uuid import uuid4
 
 from agiwo.agent import (
@@ -13,15 +14,11 @@ from agiwo.agent import (
     UserMessage,
 )
 from agiwo.scheduler.commands import (
-    CancelChildRequest,
-    CancelChildResult,
     DispatchAction,
     DispatchReason,
     RouteResult,
-    SleepRequest,
-    SleepResult,
-    SpawnChildRequest,
 )
+from agiwo.scheduler.formatting import SHUTDOWN_SUMMARY_TASK
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     ACTIVE_AGENT_STATUSES,
@@ -42,58 +39,40 @@ from agiwo.scheduler.runtime_tools import (
 from agiwo.scheduler.runtime_state import (
     RuntimeState,
     build_mailbox_input,
+    group_events,
+    list_all_states,
+    select_debounced_event_targets,
+)
+from agiwo.scheduler.stream import (
     close_stream_channel,
     consume_stream_channel,
     finish_stream_channel,
-    group_events,
-    list_all_states,
     open_stream_channel,
-    select_debounced_event_targets,
 )
-from agiwo.scheduler.store import AgentStateStorage
+from agiwo.scheduler.store import create_agent_state_storage
+from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.tool_control import SchedulerToolControl
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
-_SHUTDOWN_SUMMARY_TASK = (
-    "System shutdown requested. Please produce a final summary "
-    "report of all work done so far."
-)
 
 
-class SchedulerEngine:
-    """Own scheduler API, state machine, tick planning, and runtime coordination."""
+class Scheduler:
+    """Scheduler: lifecycle, tick loop, API, state machine, and runtime coordination."""
 
     def __init__(
         self,
-        *,
-        store: AgentStateStorage,
         config: SchedulerConfig | None = None,
+        *,
+        store: AgentStateStorage | None = None,
         guard: TaskGuard | None = None,
         semaphore: asyncio.Semaphore | None = None,
     ) -> None:
-        self._store = store
         self._config = config or SchedulerConfig()
-        self._guard = guard or TaskGuard(self._config.task_limits, store)
+        self._store = store or create_agent_state_storage(self._config.state_storage)
+        self._guard = guard or TaskGuard(self._config.task_limits, self._store)
         self._rt = RuntimeState()
-        self._scheduling_tools = (
-            SpawnAgentTool(self),
-            SleepAndWaitTool(self),
-            QuerySpawnedAgentTool(self),
-            CancelAgentTool(self),
-            ListAgentsTool(self),
-        )
-        self._runner = SchedulerRunner(
-            RunnerContext(
-                store=store,
-                rt=self._rt,
-                notify_state_change=self._notify_state_change,
-                nudge=self.nudge,
-                semaphore=semaphore or asyncio.Semaphore(self._config.max_concurrent),
-                scheduling_tools=self._scheduling_tools,
-            )
-        )
         self._tool_control = SchedulerToolControl(
             store=self._store,
             guard=self._guard,
@@ -101,6 +80,87 @@ class SchedulerEngine:
             save_state=self._save_state,
             cancel_subtree=self._cancel_subtree,
         )
+        self._scheduling_tools = (
+            SpawnAgentTool(self._tool_control),
+            SleepAndWaitTool(self._tool_control),
+            QuerySpawnedAgentTool(self._tool_control),
+            CancelAgentTool(self._tool_control),
+            ListAgentsTool(self._tool_control),
+        )
+        self._runner = SchedulerRunner(
+            RunnerContext(
+                store=self._store,
+                rt=self._rt,
+                notify_state_change=self._notify_state_change,
+                nudge=self.nudge,
+                semaphore=semaphore or asyncio.Semaphore(self._config.max_concurrent),
+                scheduling_tools=self._scheduling_tools,
+            )
+        )
+        self._running = False
+        self._loop_task: asyncio.Task | None = None
+
+    # -- Lifecycle ------------------------------------------------------------
+
+    async def start(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self._loop_task = asyncio.create_task(self._loop())
+        logger.info("scheduler_started", check_interval=self._config.check_interval)
+
+    async def stop(self) -> None:
+        self._running = False
+
+        if self._loop_task is not None:
+            self._loop_task.cancel()
+            try:
+                await self._loop_task
+            except asyncio.CancelledError:
+                pass
+            self._loop_task = None
+
+        active_tasks = set(self._rt.active_tasks)
+        if active_tasks:
+            logger.info(
+                "scheduler_waiting_for_active_tasks",
+                count=len(active_tasks),
+            )
+            _done, pending = await asyncio.wait(
+                active_tasks,
+                timeout=self._config.graceful_shutdown_wait_seconds,
+            )
+            if pending:
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+
+        await self._store.close()
+        logger.info("scheduler_stopped")
+
+    async def __aenter__(self) -> "Scheduler":
+        await self.start()
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        await self.stop()
+
+    async def _loop(self) -> None:
+        logger.info("scheduler_loop_started")
+        failure_backoff = min(self._config.check_interval, 0.1)
+        while self._running:
+            try:
+                await self.tick()
+                failure_backoff = min(self._config.check_interval, 0.1)
+                await self.wait_for_nudge(self._config.check_interval)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("scheduler_tick_error")
+                await asyncio.sleep(failure_backoff)
+                failure_backoff = min(max(failure_backoff * 2, 0.1), 5.0)
+
+    # -- Public API -----------------------------------------------------------
 
     def get_registered_agent(self, state_id: str):
         return self._rt.agents.get(state_id)
@@ -145,12 +205,7 @@ class SchedulerEngine:
         persistent: bool = False,
         agent_config_id: str | None = None,
     ) -> str:
-        prepared_agent = await agent.create_child_agent(
-            child_id=agent.id,
-            system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.get_name() for tool in agent.tools},
-            extra_tools=list(self._scheduling_tools),
-        )
+        prepared_agent = await self._prepare_root_agent(agent, agent.id)
         existing = await self._store.get_state(prepared_agent.id)
         if existing is not None and existing.status in ACTIVE_AGENT_STATUSES:
             raise RuntimeError(
@@ -203,19 +258,8 @@ class SchedulerEngine:
                 f"Cannot enqueue input (expected IDLE or FAILED)."
             )
         if agent is not None:
-            prepared_agent = await agent.create_child_agent(
-                child_id=state_id,
-                system_prompt_override=agent.config.system_prompt,
-                exclude_tool_names={tool.get_name() for tool in agent.tools},
-                extra_tools=list(self._scheduling_tools),
-            )
-            existing_agent = self._rt.agents.get(state_id)
-            self._rt.agents[state_id] = prepared_agent
-            if existing_agent is not None and existing_agent is not prepared_agent:
-                try:
-                    await existing_agent.close()
-                except Exception:  # noqa: BLE001
-                    logger.exception("scheduler_rebind_close_failed", state_id=state_id)
+            prepared = await self._prepare_root_agent(agent, state_id)
+            await self._rebind_registered_agent(state_id, prepared)
 
         await self._save_state(state.with_queued(pending_input=user_input))
         self.nudge()
@@ -236,46 +280,26 @@ class SchedulerEngine:
         lookup_id = state_id or agent.id
         deadline = None if timeout is None else time.monotonic() + timeout
 
-        while True:
-            current_state = await self._store.get_state(lookup_id)
-            if current_state is None:
-                return await self._route_with_stream(
-                    root_state_id=agent.id,
-                    action="submitted",
-                    timeout=timeout,
-                    include_child_events=include_child_events,
-                    operation=lambda: self.submit(
-                        agent,
-                        user_input,
-                        session_id=session_id,
-                        abort_signal=abort_signal,
-                        persistent=persistent,
-                        agent_config_id=agent_config_id,
-                    ),
-                )
-
-            if current_state.status != AgentStateStatus.PENDING:
-                break
-
-            current_state = await self._wait_until_not_pending(
-                current_state.id,
-                deadline=deadline,
+        async def do_submit() -> str:
+            return await self.submit(
+                agent,
+                user_input,
+                session_id=session_id,
+                abort_signal=abort_signal,
+                persistent=persistent,
+                agent_config_id=agent_config_id,
             )
-            if current_state is None:
-                return await self._route_with_stream(
-                    root_state_id=agent.id,
-                    action="submitted",
-                    timeout=self._deadline_remaining(deadline),
-                    include_child_events=include_child_events,
-                    operation=lambda: self.submit(
-                        agent,
-                        user_input,
-                        session_id=session_id,
-                        abort_signal=abort_signal,
-                        persistent=persistent,
-                        agent_config_id=agent_config_id,
-                    ),
-                )
+
+        current_state = await self._resolve_routable_state(lookup_id, deadline)
+
+        if current_state is None:
+            return await self._route_with_stream(
+                root_state_id=agent.id,
+                action="submitted",
+                timeout=self._deadline_remaining(deadline) if deadline else timeout,
+                include_child_events=include_child_events,
+                operation=do_submit,
+            )
 
         if current_state.status in (
             AgentStateStatus.RUNNING,
@@ -299,11 +323,7 @@ class SchedulerEngine:
         if (
             current_state.is_root
             and current_state.is_persistent
-            and current_state.status
-            in (
-                AgentStateStatus.IDLE,
-                AgentStateStatus.FAILED,
-            )
+            and current_state.status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
         ):
             return await self._route_with_stream(
                 root_state_id=current_state.id,
@@ -322,14 +342,7 @@ class SchedulerEngine:
             action="submitted",
             timeout=timeout,
             include_child_events=include_child_events,
-            operation=lambda: self.submit(
-                agent,
-                user_input,
-                session_id=session_id,
-                abort_signal=abort_signal,
-                persistent=persistent,
-                agent_config_id=agent_config_id,
-            ),
+            operation=do_submit,
         )
 
     async def stream(
@@ -501,9 +514,7 @@ class SchedulerEngine:
             handle = self._rt.execution_handles.get(state_id)
             if handle is None:
                 return False
-            if not await handle.steer(message):
-                return False
-            return True
+            return await handle.steer(message)
 
         event = PendingEvent(
             id=str(uuid4()),
@@ -536,19 +547,8 @@ class SchedulerEngine:
         ):
             return False
 
-        previous = self._rt.agents.get(state_id)
-        prepared = await agent.create_child_agent(
-            child_id=state_id,
-            system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.get_name() for tool in agent.tools},
-            extra_tools=list(self._scheduling_tools),
-        )
-        self._rt.agents[state_id] = prepared
-        if previous is not None and previous is not prepared:
-            try:
-                await previous.close()
-            except Exception:  # noqa: BLE001
-                logger.exception("scheduler_rebind_close_failed", state_id=state_id)
+        prepared = await self._prepare_root_agent(agent, state_id)
+        await self._rebind_registered_agent(state_id, prepared)
         return True
 
     async def tick(self) -> None:
@@ -638,31 +638,6 @@ class SchedulerEngine:
 
         return actions
 
-    async def spawn_child(self, request: SpawnChildRequest) -> AgentState:
-        return await self._tool_control.spawn_child(request)
-
-    async def sleep_current_agent(self, request: SleepRequest) -> SleepResult:
-        return await self._tool_control.sleep_current_agent(request)
-
-    async def get_child_state(self, target_id: str) -> AgentState | None:
-        return await self._tool_control.get_child_state(target_id)
-
-    async def list_child_states(
-        self, *, caller_id: str | None, session_id: str
-    ) -> list[AgentState]:
-        return await self._tool_control.list_child_states(
-            caller_id=caller_id, session_id=session_id
-        )
-
-    async def inspect_child_processes(self, target_id: str) -> list[dict[str, object]]:
-        return await self._tool_control.inspect_child_processes(target_id)
-
-    async def cancel_child(self, request: CancelChildRequest) -> CancelChildResult:
-        return await self._tool_control.cancel_child(request)
-
-    def age_seconds(self, timestamp: datetime, *, now: datetime | None = None) -> int:
-        return self._tool_control.age_seconds(timestamp, now=now)
-
     async def _dispatch_action(self, action: DispatchAction) -> None:
         state = action.state
         if state.id in self._rt.dispatched:
@@ -708,17 +683,7 @@ class SchedulerEngine:
             await self._save_state(state.with_signal_propagated())
 
     async def _cancel_subtree(self, state_id: str, reason: str) -> None:
-        signal = self._rt.abort_signals.get(state_id)
-        if signal is None:
-            signal = AbortSignal()
-            self._rt.abort_signals[state_id] = signal
-        if not signal.is_aborted():
-            signal.abort(reason)
-
-        handle = self._rt.execution_handles.get(state_id)
-        if handle is not None:
-            handle.cancel(reason)
-
+        self._abort_runtime_state(state_id, reason)
         for child in await self._active_children(state_id):
             await self._cancel_subtree(child.id, reason)
 
@@ -727,7 +692,7 @@ class SchedulerEngine:
             return
         await self._save_state(state.with_failed(reason))
         if state.is_root:
-            await finish_stream_channel(self._rt, state.id)
+            await finish_stream_channel(self._rt.stream_channels, state.id)
 
     async def _shutdown_subtree(self, state_id: str) -> None:
         for child in await self._active_children(state_id):
@@ -752,6 +717,22 @@ class SchedulerEngine:
         await self._store.save_state(state)
         self._notify_state_change(state.id)
         self.nudge()
+
+    async def _resolve_routable_state(
+        self,
+        state_id: str,
+        deadline: float | None,
+    ) -> AgentState | None:
+        """Return a non-PENDING state, or None if the state vanishes."""
+        while True:
+            state = await self._store.get_state(state_id)
+            if state is None:
+                return None
+            if state.status != AgentStateStatus.PENDING:
+                return state
+            state = await self._wait_until_not_pending(state.id, deadline=deadline)
+            if state is None:
+                return None
 
     async def _wait_until_not_pending(
         self,
@@ -802,20 +783,20 @@ class SchedulerEngine:
     ) -> AsyncIterator[AgentStreamItem]:
         async def iterator() -> AsyncIterator[AgentStreamItem]:
             open_stream_channel(
-                self._rt,
+                self._rt.stream_channels,
                 state_id,
                 include_child_events=include_child_events,
             )
             try:
                 async for item in consume_stream_channel(
-                    self._rt,
+                    self._rt.stream_channels,
                     state_id,
                     timeout=timeout,
                 ):
                     yield item
             finally:
                 await self._raise_stream_failure_if_needed(state_id)
-                close_stream_channel(self._rt, state_id)
+                close_stream_channel(self._rt.stream_channels, state_id)
 
         return iterator()
 
@@ -853,6 +834,25 @@ class SchedulerEngine:
         await self.enqueue_input(state_id, user_input, agent=agent)
         return state_id
 
+    async def _prepare_root_agent(self, agent: Agent, state_id: str) -> Agent:
+        """Prepare a root-level agent by injecting scheduling tools."""
+        return await agent.create_child_agent(
+            child_id=state_id,
+            system_prompt_override=agent.config.system_prompt,
+            exclude_tool_names={tool.get_name() for tool in agent.tools},
+            extra_tools=list(self._scheduling_tools),
+        )
+
+    async def _rebind_registered_agent(self, state_id: str, agent: Agent) -> None:
+        """Register prepared agent, closing any previous agent for the same state."""
+        previous = self._rt.agents.get(state_id)
+        self._rt.agents[state_id] = agent
+        if previous is not None and previous is not agent:
+            try:
+                await previous.close()
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduler_rebind_close_failed", state_id=state_id)
+
     def _abort_runtime_state(self, state_id: str, reason: str) -> None:
         signal = self._rt.abort_signals.get(state_id)
         if signal is None:
@@ -869,7 +869,7 @@ class SchedulerEngine:
         if state.is_root and state.is_persistent:
             self._rt.shutdown_requested.add(state.id)
             await self._save_state(
-                state.with_queued(pending_input=_SHUTDOWN_SUMMARY_TASK)
+                state.with_queued(pending_input=SHUTDOWN_SUMMARY_TASK)
             )
             return
         await self._save_state(state.with_failed("Shutdown before completion"))
@@ -880,7 +880,7 @@ class SchedulerEngine:
             AgentStateStatus.IDLE,
         ):
             await self._save_state(
-                state.with_queued(pending_input=_SHUTDOWN_SUMMARY_TASK)
+                state.with_queued(pending_input=SHUTDOWN_SUMMARY_TASK)
             )
             return
 
@@ -891,7 +891,7 @@ class SchedulerEngine:
         ):
             await self._save_state(state.with_failed("Shutdown before completion"))
             if state.is_root:
-                await finish_stream_channel(self._rt, state.id)
+                await finish_stream_channel(self._rt.stream_channels, state.id)
 
     def _deadline_remaining(self, deadline: float | None) -> float | None:
         if deadline is None:
@@ -907,4 +907,4 @@ class SchedulerEngine:
             raise RuntimeError(state.result_summary or "scheduler stream failed")
 
 
-__all__ = ["SchedulerEngine"]
+__all__ = ["Scheduler"]

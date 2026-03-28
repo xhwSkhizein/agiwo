@@ -2,9 +2,10 @@
 
 from typing import Any
 
-from agiwo.agent.transport.serialization import serialize_user_input_payload
 from agiwo.scheduler.models import AgentState, PendingEvent, WakeCondition, thaw_value
 from agiwo.utils.serialization import serialize_enum_value, serialize_optional_datetime
+
+from server.serialization.agent import serialize_user_input_payload
 
 
 def serialize_wake_condition_payload(

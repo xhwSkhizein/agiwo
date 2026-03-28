@@ -5,8 +5,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
-from agiwo.agent import UserInput
-from agiwo.agent import AgentStreamItem
+from agiwo.agent import AgentStreamItem, UserInput
 from agiwo.scheduler.models import (
     AgentState,
     FrozenDict,

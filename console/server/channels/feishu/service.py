@@ -17,7 +17,7 @@ from agiwo.agent import (
     StepCompletedEvent,
     UserMessage,
 )
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.base import BaseChannelService, safe_close_all

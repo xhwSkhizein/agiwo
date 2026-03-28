@@ -5,7 +5,6 @@ from typing import Any, Literal
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.models.run import Run, RunMetrics
 from agiwo.agent.models.step import StepDelta, StepMetrics, StepRecord
-from agiwo.agent.models.stream import AgentStreamItem
 from agiwo.utils.serialization import serialize_optional_datetime
 
 
@@ -92,17 +91,6 @@ def serialize_run_payload(
     }
 
 
-def serialize_stream_item_payload(item: AgentStreamItem) -> dict[str, Any]:
-    payload = item.to_dict()
-    if item.type == "step_completed":
-        payload["step"] = serialize_step_record_payload(item.step)
-    elif item.type == "step_delta":
-        payload["delta"] = serialize_step_delta_payload(item.delta)
-    elif item.type == "run_completed":
-        payload["metrics"] = serialize_run_metrics_payload(item.metrics)
-    return payload
-
-
 __all__ = [
     "serialize_run_metrics_payload",
     "serialize_run_payload",
@@ -110,6 +98,5 @@ __all__ = [
     "serialize_step_delta_payload",
     "serialize_step_metrics_payload",
     "serialize_step_record_payload",
-    "serialize_stream_item_payload",
     "serialize_user_input_payload",
 ]

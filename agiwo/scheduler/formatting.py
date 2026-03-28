@@ -1,5 +1,17 @@
 """Shared formatting helpers for scheduler-facing child-agent text."""
 
+from agiwo.scheduler.models import (
+    PendingEvent,
+    SchedulerEventType,
+    WakeCondition,
+    WakeType,
+)
+
+SHUTDOWN_SUMMARY_TASK = (
+    "System shutdown requested. Please produce a final summary "
+    "report of all work done so far."
+)
+
 
 def format_child_results_summary(
     *,
@@ -45,6 +57,98 @@ def build_child_result_detail_lines(
     if failure_reason:
         lines.append(f"Failure reason: {failure_reason}")
     return lines
+
+
+def build_wake_message(
+    wake_condition: WakeCondition | None,
+    succeeded: dict[str, str],
+    failed: dict[str, str],
+) -> str:
+    """Build the user-facing message when a sleeping agent is woken."""
+    if wake_condition is None:
+        return "You have been woken up. Please continue your task."
+
+    if wake_condition.type == WakeType.WAITSET:
+        done = len(succeeded) + len(failed)
+        return format_child_results_summary(
+            header=f"Child agents completed ({done}/{len(wake_condition.wait_for)}).",
+            succeeded=succeeded,
+            failed=failed,
+            closing_instruction=(
+                "Please synthesize a final response based on the successful "
+                "results above."
+            ),
+        )
+    if wake_condition.type == WakeType.TIMER:
+        return "The scheduled delay has elapsed. Please continue your task."
+    if wake_condition.type == WakeType.PERIODIC:
+        return (
+            "A scheduled periodic check has triggered. "
+            "Please check progress and decide whether to continue waiting "
+            "or produce a final result."
+        )
+    return "You have been woken up. Please continue your task."
+
+
+def build_timeout_message(
+    wake_condition: WakeCondition | None,
+    succeeded: dict[str, str],
+    failed: dict[str, str],
+) -> str:
+    """Build the user-facing message when a wait times out."""
+    done = len(succeeded) + len(failed)
+    return format_child_results_summary(
+        header="Wait timeout reached.",
+        succeeded=succeeded,
+        failed=failed,
+        progress_line=f"Completed children: {done}/{len(wake_condition.wait_for) if wake_condition else 0}",
+        closing_instruction=(
+            "Please produce a summary report with whatever results are available."
+        ),
+    )
+
+
+def build_events_message(events: tuple[PendingEvent, ...]) -> str:
+    """Build the user-facing message for pending event notifications."""
+    lines = [f"You have {len(events)} new notification(s):\n"]
+    for event in events:
+        event_label = event.event_type.value.replace("_", " ").title()
+        child_id = event.payload.get(
+            "child_agent_id", event.source_agent_id or "unknown"
+        )
+        lines.append(f"### {event_label} - Agent: {child_id}")
+        if event.event_type == SchedulerEventType.CHILD_SLEEP_RESULT:
+            lines.extend(
+                build_child_result_detail_lines(
+                    result=event.payload.get("result", ""),
+                    explain=event.payload.get("explain"),
+                    periodic=event.payload.get("periodic", False),
+                    result_as_block=True,
+                )
+            )
+        elif event.event_type == SchedulerEventType.CHILD_COMPLETED:
+            lines.extend(
+                build_child_result_detail_lines(
+                    result=event.payload.get("result", ""),
+                    result_as_block=True,
+                )
+            )
+        elif event.event_type == SchedulerEventType.CHILD_FAILED:
+            lines.extend(
+                build_child_result_detail_lines(
+                    failure_reason=event.payload.get("reason", "Unknown failure")
+                )
+            )
+        elif event.event_type == SchedulerEventType.USER_HINT:
+            hint = event.payload.get("hint", "")
+            if hint:
+                lines.append(f"User hint: {hint}")
+        lines.append("")
+    lines.append(
+        "Please review these notifications and take appropriate action "
+        "(e.g., summarize results for the user, cancel stuck agents, etc.)."
+    )
+    return "\n".join(lines)
 
 
 def summarize_text(text: str | None, limit: int) -> str | None:

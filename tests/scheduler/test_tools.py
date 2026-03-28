@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agiwo.agent import TerminationReason
-from agiwo.scheduler.engine import SchedulerEngine
+from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     AgentState,
@@ -25,7 +25,7 @@ from agiwo.scheduler.runtime_tools import (
     SleepAndWaitTool,
     SpawnAgentTool,
 )
-from agiwo.scheduler.store import InMemoryAgentStateStorage
+from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
 from agiwo.tool.builtin.bash_tool.process_tool import (
     BashProcessTool,
     BashProcessToolConfig,
@@ -45,13 +45,18 @@ def guard(store):
 
 
 @pytest.fixture
-def control(store, guard):
-    return SchedulerEngine(
+def engine(store, guard):
+    return Scheduler(
         config=SchedulerConfig(),
         store=store,
         guard=guard,
         semaphore=asyncio.Semaphore(10),
     )
+
+
+@pytest.fixture
+def control(engine):
+    return engine._tool_control
 
 
 @pytest.fixture
@@ -178,14 +183,14 @@ class TestSpawnAgentTool:
     async def test_spawn_rejected_max_depth(self, store, context):
         limits = TaskLimits(max_depth=2)
         guard = TaskGuard(limits, store)
-        control = SchedulerEngine(
+        eng = Scheduler(
             config=SchedulerConfig(),
             store=store,
             guard=guard,
             semaphore=asyncio.Semaphore(10),
         )
         await _register_parent(store, depth=2)
-        tool = SpawnAgentTool(control)
+        tool = SpawnAgentTool(eng._tool_control)
         tool_result = await tool.execute(
             {"task": "Deep task", "tool_call_id": "tc-1"},
             context,
@@ -197,14 +202,14 @@ class TestSpawnAgentTool:
     async def test_spawn_rejected_max_children(self, store, context):
         limits = TaskLimits(max_children_per_agent=2)
         guard = TaskGuard(limits, store)
-        control = SchedulerEngine(
+        eng = Scheduler(
             config=SchedulerConfig(),
             store=store,
             guard=guard,
             semaphore=asyncio.Semaphore(10),
         )
         await _register_parent(store)
-        tool = SpawnAgentTool(control)
+        tool = SpawnAgentTool(eng._tool_control)
         await tool.execute(
             {"task": "A", "child_id": "c1", "tool_call_id": "tc-1"}, context
         )

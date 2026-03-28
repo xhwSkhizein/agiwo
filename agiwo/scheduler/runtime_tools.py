@@ -2,7 +2,7 @@
 
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from agiwo.agent import TerminationReason
 from agiwo.scheduler.commands import (
@@ -15,18 +15,16 @@ from agiwo.scheduler.formatting import (
     summarize_text,
 )
 from agiwo.scheduler.models import TimeUnit, WaitMode, WakeType
+from agiwo.scheduler.tool_control import SchedulerToolPort
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
-
-if TYPE_CHECKING:
-    from agiwo.scheduler.engine import SchedulerEngine
 
 
 class SpawnAgentTool(BaseTool):
     """Spawn a child agent to handle a sub-task."""
 
-    def __init__(self, port: "SchedulerEngine") -> None:
+    def __init__(self, port: SchedulerToolPort) -> None:
         self._port = port
         super().__init__()
 
@@ -121,7 +119,7 @@ class SpawnAgentTool(BaseTool):
 class SleepAndWaitTool(BaseTool):
     """Put the current agent to sleep until a wake condition is met."""
 
-    def __init__(self, port: "SchedulerEngine") -> None:
+    def __init__(self, port: SchedulerToolPort) -> None:
         self._port = port
         super().__init__()
 
@@ -265,7 +263,7 @@ class SleepAndWaitTool(BaseTool):
 class QuerySpawnedAgentTool(BaseTool):
     """Query the status and result of a spawned child agent."""
 
-    def __init__(self, port: "SchedulerEngine") -> None:
+    def __init__(self, port: SchedulerToolPort) -> None:
         self._port = port
         super().__init__()
 
@@ -348,7 +346,7 @@ class QuerySpawnedAgentTool(BaseTool):
 class CancelAgentTool(BaseTool):
     """Cancel a child agent, optionally forcing termination even with running processes."""
 
-    def __init__(self, port: "SchedulerEngine") -> None:
+    def __init__(self, port: SchedulerToolPort) -> None:
         self._port = port
         super().__init__()
 
@@ -490,7 +488,7 @@ class CancelAgentTool(BaseTool):
 class ListAgentsTool(BaseTool):
     """List all direct child agents of the calling agent with detailed status information."""
 
-    def __init__(self, port: "SchedulerEngine") -> None:
+    def __init__(self, port: SchedulerToolPort) -> None:
         self._port = port
         super().__init__()
 

@@ -18,7 +18,7 @@ from agiwo.scheduler.models import (
     WakeType,
     TimeUnit,
 )
-from agiwo.scheduler.scheduler import Scheduler
+from agiwo.scheduler.engine import Scheduler
 
 from server.app import create_app
 from server.dependencies import (

@@ -4,7 +4,7 @@ import pytest
 
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import AgentState, AgentStateStatus, TaskLimits
-from agiwo.scheduler.store import InMemoryAgentStateStorage
+from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
 
 
 @pytest.fixture
