@@ -101,6 +101,7 @@ class SQLiteSessionStorage(SessionStorage):
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
         self._conn = await self._runtime.ensure_connection(self._initialize_schema)
+        self._conn.row_factory = aiosqlite.Row
         return self._conn
 
     async def close(self) -> None:
@@ -200,20 +201,20 @@ class SQLiteSessionStorage(SessionStorage):
             rows = await cursor.fetchall()
             return [self._row_to_metadata(row) for row in rows]
 
-    def _row_to_metadata(self, row: tuple) -> CompactMetadata:
+    def _row_to_metadata(self, row: aiosqlite.Row) -> CompactMetadata:
         return CompactMetadata(
-            session_id=row[1],
-            agent_id=row[2],
-            start_seq=row[3],
-            end_seq=row[4],
-            before_token_estimate=row[5],
-            after_token_estimate=row[6],
-            message_count=row[7],
-            transcript_path=row[8],
-            analysis=json.loads(row[9]),
-            created_at=datetime.fromisoformat(row[10]),
-            compact_model=row[11],
-            compact_tokens=row[12],
+            session_id=row["session_id"],
+            agent_id=row["agent_id"],
+            start_seq=row["start_seq"],
+            end_seq=row["end_seq"],
+            before_token_estimate=row["before_token_estimate"],
+            after_token_estimate=row["after_token_estimate"],
+            message_count=row["message_count"],
+            transcript_path=row["transcript_path"],
+            analysis=json.loads(row["analysis"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            compact_model=row["compact_model"],
+            compact_tokens=row["compact_tokens"],
         )
 
 

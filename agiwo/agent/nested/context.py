@@ -19,6 +19,7 @@ class AgentToolContext(ToolContext):
         *,
         timeout_at: float | None,
         gate_checked: bool = True,
+        tool_call_id: str = "",
     ) -> "AgentToolContext":
         return cls(
             session_id=ctx.session_id,
@@ -29,6 +30,7 @@ class AgentToolContext(ToolContext):
             depth=ctx.depth,
             metadata=dict(ctx.metadata),
             gate_checked=gate_checked,
+            tool_call_id=tool_call_id,
             parent_run_id=ctx.run_id,
             session_runtime=ctx.session_runtime,
         )

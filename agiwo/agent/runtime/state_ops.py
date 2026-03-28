@@ -60,13 +60,27 @@ def _track_step_metrics(state: RunContext, step: StepRecord) -> None:
         ledger.cache_creation_tokens += metrics.cache_creation_tokens
 
 
+def _extract_text_content(content: str | list[dict[str, Any]] | None) -> str | None:
+    """Coerce message content to plain text for response tracking."""
+    if content is None:
+        return None
+    if isinstance(content, str):
+        return content
+    texts = [
+        block.get("text", "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    ]
+    return "\n".join(texts) if texts else None
+
+
 def _track_assistant_step(state: RunContext, step: StepRecord) -> None:
     ledger = state.ledger
     if not step.is_assistant_step():
         return
     ledger.assistant_steps_count += 1
     if step.content is not None:
-        ledger.response_content = step.content
+        ledger.response_content = _extract_text_content(step.content)
     if step.tool_calls:
         ledger.tool_calls_count += len(step.tool_calls)
 

@@ -99,7 +99,7 @@ class SkillTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error="Missing required parameter: skill_name",
-                tool_call_id=parameters.get("tool_call_id", ""),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -108,7 +108,7 @@ class SkillTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Invalid skill_name type: expected string, got {type(skill_name)}",
-                tool_call_id=parameters.get("tool_call_id", ""),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -119,7 +119,7 @@ class SkillTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Skill '{skill_name}' not found. Available skills: {', '.join(self.registry.list_available())}",
-                tool_call_id=parameters.get("tool_call_id", ""),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -139,7 +139,7 @@ class SkillTool(BaseTool):
 
             return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=parameters.get("tool_call_id", ""),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content=resolved_body,  # Full skill content for LLM
                 content_for_user=f'The skill "{skill_name}" has been activated.',
@@ -154,7 +154,7 @@ class SkillTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=str(e),
-                tool_call_id=parameters.get("tool_call_id", ""),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -167,7 +167,7 @@ class SkillTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Failed to activate skill '{skill_name}': {e}",
-                tool_call_id=parameters.get("tool_call_id", ""),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )

@@ -40,7 +40,7 @@ async def resolve_web_reader_request(
         return ToolResult.failed(
             tool_name=tool_name,
             error="Error: summarize and search_query are mutually exclusive",
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=context.tool_call_id,
             input_args=parameters,
             start_time=start_time,
         )
@@ -54,7 +54,7 @@ async def resolve_web_reader_request(
             return ToolResult.failed(
                 tool_name=tool_name,
                 error="Error: index must be an integer",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -65,7 +65,7 @@ async def resolve_web_reader_request(
             return ToolResult.failed(
                 tool_name=tool_name,
                 error=f"Search result with index {index} not found",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -76,7 +76,7 @@ async def resolve_web_reader_request(
         return ToolResult.failed(
             tool_name=tool_name,
             error="Error: url must be a non-empty string",
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=context.tool_call_id,
             input_args=parameters,
             start_time=start_time,
         )

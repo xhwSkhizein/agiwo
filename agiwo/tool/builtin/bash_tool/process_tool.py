@@ -122,13 +122,15 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
-        del context, abort_signal
+        del abort_signal
+        tool_call_id = context.tool_call_id
 
         action = parameters.get("action")
         if not isinstance(action, str):
             return self._error(
                 parameters,
                 "action is required",
+                tool_call_id=tool_call_id,
                 exit_code=2,
             )
 
@@ -145,15 +147,18 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             return self._error(
                 parameters,
                 ("action must be one of: jobs, status, logs, stop, paths, input"),
+                tool_call_id=tool_call_id,
                 exit_code=2,
             )
 
         try:
-            return await handler(parameters)
+            return await handler(parameters, tool_call_id)
         except TimeoutError:
-            return self._error(parameters, "log retrieval timed out")
+            return self._error(
+                parameters, "log retrieval timed out", tool_call_id=tool_call_id
+            )
         except (RuntimeError, ValueError, OSError) as exc:
-            return self._error(parameters, str(exc))
+            return self._error(parameters, str(exc), tool_call_id=tool_call_id)
 
     async def list_agent_processes(
         self,
@@ -168,17 +173,28 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         )
         return [self._serialize_process(process) for process in processes]
 
-    async def _jobs(self, parameters: dict[str, Any]) -> ToolResult:
+    async def _jobs(
+        self, parameters: dict[str, Any], tool_call_id: str = ""
+    ) -> ToolResult:
         running_only = self._parse_bool(parameters.get("running_only"))
         if parameters.get("running_only") is not None and running_only is None:
             return self._error(
-                parameters, "running_only must be a boolean", exit_code=2
+                parameters,
+                "running_only must be a boolean",
+                tool_call_id=tool_call_id,
+                exit_code=2,
             )
 
         state = "running" if running_only else "all"
         jobs = await self.config.sandbox.list_processes(state=state)
         if not jobs:
-            return self._ok(parameters, stdout="no jobs\n", count=0, jobs=[])
+            return self._ok(
+                parameters,
+                tool_call_id=tool_call_id,
+                stdout="no jobs\n",
+                count=0,
+                jobs=[],
+            )
 
         header = "JOB ID    STATE    MODE   EXIT   COMMAND"
         lines = [header]
@@ -193,17 +209,21 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
 
         return self._ok(
             parameters,
+            tool_call_id=tool_call_id,
             stdout="\n".join(lines) + "\n",
             count=len(jobs),
             jobs=[self._serialize_process(job) for job in jobs],
         )
 
-    async def _status(self, parameters: dict[str, Any]) -> ToolResult:
+    async def _status(
+        self, parameters: dict[str, Any], tool_call_id: str = ""
+    ) -> ToolResult:
         job_id = self._require_job_id(parameters)
         if job_id is None:
             return self._error(
                 parameters,
                 "status requires job_id",
+                tool_call_id=tool_call_id,
                 exit_code=2,
             )
 
@@ -211,7 +231,12 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             status = await self.config.sandbox.get_process_status(job_id)
             info = await self.config.sandbox.attach_process(job_id)
         except KeyError:
-            return self._error(parameters, f"job not found: {job_id}", exit_code=1)
+            return self._error(
+                parameters,
+                f"job not found: {job_id}",
+                tool_call_id=tool_call_id,
+                exit_code=1,
+            )
 
         output = (
             "\n".join(
@@ -228,6 +253,7 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         )
         return self._ok(
             parameters,
+            tool_call_id=tool_call_id,
             stdout=output,
             job_id=job_id,
             state=status.state,
@@ -236,15 +262,27 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             command=info.command,
         )
 
-    async def _paths(self, parameters: dict[str, Any]) -> ToolResult:
+    async def _paths(
+        self, parameters: dict[str, Any], tool_call_id: str = ""
+    ) -> ToolResult:
         job_id = self._require_job_id(parameters)
         if job_id is None:
-            return self._error(parameters, "paths requires job_id", exit_code=2)
+            return self._error(
+                parameters,
+                "paths requires job_id",
+                tool_call_id=tool_call_id,
+                exit_code=2,
+            )
 
         try:
             logs = await self.config.sandbox.get_process_logs_info(job_id)
         except KeyError:
-            return self._error(parameters, f"job not found: {job_id}", exit_code=1)
+            return self._error(
+                parameters,
+                f"job not found: {job_id}",
+                tool_call_id=tool_call_id,
+                exit_code=1,
+            )
 
         output = (
             f"mode: {logs.mode}\n"
@@ -253,6 +291,7 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         )
         return self._ok(
             parameters,
+            tool_call_id=tool_call_id,
             stdout=output,
             job_id=job_id,
             stdout_path=logs.stdout_path,
@@ -260,41 +299,74 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             mode=logs.mode,
         )
 
-    async def _stop(self, parameters: dict[str, Any]) -> ToolResult:
+    async def _stop(
+        self, parameters: dict[str, Any], tool_call_id: str = ""
+    ) -> ToolResult:
         job_id = self._require_job_id(parameters)
         if job_id is None:
-            return self._error(parameters, "stop requires job_id", exit_code=2)
+            return self._error(
+                parameters,
+                "stop requires job_id",
+                tool_call_id=tool_call_id,
+                exit_code=2,
+            )
 
         force = self._parse_bool(parameters.get("force"))
         if parameters.get("force") is not None and force is None:
-            return self._error(parameters, "force must be a boolean", exit_code=2)
+            return self._error(
+                parameters,
+                "force must be a boolean",
+                tool_call_id=tool_call_id,
+                exit_code=2,
+            )
 
         signal_name = "KILL" if force else "TERM"
         try:
             await self.config.sandbox.stop_process(job_id, signal=signal_name)
         except KeyError:
-            return self._error(parameters, f"job not found: {job_id}", exit_code=1)
+            return self._error(
+                parameters,
+                f"job not found: {job_id}",
+                tool_call_id=tool_call_id,
+                exit_code=1,
+            )
 
         return self._ok(
             parameters,
+            tool_call_id=tool_call_id,
             stdout=f"stopped {job_id} with {signal_name}\n",
             job_id=job_id,
             signal=signal_name,
         )
 
-    async def _input(self, parameters: dict[str, Any]) -> ToolResult:
+    async def _input(
+        self, parameters: dict[str, Any], tool_call_id: str = ""
+    ) -> ToolResult:
         job_id = self._require_job_id(parameters)
         if job_id is None:
-            return self._error(parameters, "input requires job_id", exit_code=2)
+            return self._error(
+                parameters,
+                "input requires job_id",
+                tool_call_id=tool_call_id,
+                exit_code=2,
+            )
 
         payload = parameters.get("text")
         if not isinstance(payload, str) or not payload:
-            return self._error(parameters, "input requires non-empty text", exit_code=2)
+            return self._error(
+                parameters,
+                "input requires non-empty text",
+                tool_call_id=tool_call_id,
+                exit_code=2,
+            )
 
         append_newline = self._parse_bool(parameters.get("append_newline"))
         if parameters.get("append_newline") is not None and append_newline is None:
             return self._error(
-                parameters, "append_newline must be a boolean", exit_code=2
+                parameters,
+                "append_newline must be a boolean",
+                tool_call_id=tool_call_id,
+                exit_code=2,
             )
 
         data = payload
@@ -304,19 +376,29 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         try:
             await self.config.sandbox.write_process_stdin(job_id, data)
         except KeyError:
-            return self._error(parameters, f"job not found: {job_id}", exit_code=1)
+            return self._error(
+                parameters,
+                f"job not found: {job_id}",
+                tool_call_id=tool_call_id,
+                exit_code=1,
+            )
         except (RuntimeError, ValueError) as exc:
-            return self._error(parameters, str(exc), exit_code=1)
+            return self._error(
+                parameters, str(exc), tool_call_id=tool_call_id, exit_code=1
+            )
 
         return self._ok(
             parameters,
+            tool_call_id=tool_call_id,
             stdout=f"sent input to {job_id}\n",
             job_id=job_id,
             bytes=len(data.encode("utf-8")),
         )
 
-    async def _logs(self, parameters: dict[str, Any]) -> ToolResult:
-        request = self._resolve_logs_request(parameters)
+    async def _logs(
+        self, parameters: dict[str, Any], tool_call_id: str = ""
+    ) -> ToolResult:
+        request = self._resolve_logs_request(parameters, tool_call_id=tool_call_id)
         if isinstance(request, ToolResult):
             return request
 
@@ -324,7 +406,10 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             log_info = await self.config.sandbox.get_process_logs_info(request.job_id)
         except KeyError:
             return self._error(
-                parameters, f"job not found: {request.job_id}", exit_code=1
+                parameters,
+                f"job not found: {request.job_id}",
+                tool_call_id=tool_call_id,
+                exit_code=1,
             )
 
         source = self._log_source_command(
@@ -351,6 +436,7 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         return self._from_command_result(
             parameters,
             result,
+            tool_call_id=tool_call_id,
             job_id=request.job_id,
             stream=request.stream,
             logs_command=log_command,
@@ -361,6 +447,8 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         self,
         parameters: dict[str, Any],
         result: CommandResult,
+        *,
+        tool_call_id: str = "",
         **extra: Any,
     ) -> ToolResult:
         payload = {
@@ -386,11 +474,13 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             f"stderr: {payload['stderr']}"
         )
         if result.exit_code == 0:
-            return self._success(parameters, content=content, output=payload)
+            return self._success(
+                parameters, tool_call_id=tool_call_id, content=content, output=payload
+            )
         return ToolResult.failed(
             tool_name=self.name,
             error=str(payload["stderr"]),
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=tool_call_id,
             input_args=parameters,
             content=content,
             output=payload,
@@ -400,6 +490,7 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         self,
         parameters: dict[str, Any],
         *,
+        tool_call_id: str = "",
         stdout: str = "",
         **extra: Any,
     ) -> ToolResult:
@@ -416,13 +507,16 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         }
         payload.update(extra)
         content = f"exit_code: {payload['exit_code']}\nstdout: {payload['stdout']}"
-        return self._success(parameters, content=content, output=payload)
+        return self._success(
+            parameters, tool_call_id=tool_call_id, content=content, output=payload
+        )
 
     def _error(
         self,
         parameters: dict[str, Any],
         message: str,
         *,
+        tool_call_id: str = "",
         exit_code: int = 1,
         **extra: Any,
     ) -> ToolResult:
@@ -442,7 +536,7 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         return ToolResult.failed(
             tool_name=self.name,
             error=str(payload["stderr"]),
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=tool_call_id,
             input_args=parameters,
             content=content,
             output=payload,
@@ -452,13 +546,14 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         self,
         parameters: dict[str, Any],
         *,
+        tool_call_id: str = "",
         content: str,
         output: dict[str, Any],
     ) -> ToolResult:
         return ToolResult.success(
             tool_name=self.name,
             content=content,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=tool_call_id,
             input_args=parameters,
             output=output,
         )
@@ -494,23 +589,34 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
     def _resolve_logs_request(
         self,
         parameters: dict[str, Any],
+        *,
+        tool_call_id: str = "",
     ) -> BashLogsRequest | ToolResult:
         job_id = self._require_job_id(parameters)
         if job_id is None:
-            return self._error(parameters, "logs requires job_id", exit_code=2)
+            return self._error(
+                parameters,
+                "logs requires job_id",
+                tool_call_id=tool_call_id,
+                exit_code=2,
+            )
 
         stream = parameters.get("stream", "all")
         if not isinstance(stream, str) or stream not in {"all", "stdout", "stderr"}:
             return self._error(
                 parameters,
                 "stream must be one of: all, stdout, stderr",
+                tool_call_id=tool_call_id,
                 exit_code=2,
             )
 
         tail = self._coerce_int(parameters.get("tail"), positive=True, default=200)
         if tail is None:
             return self._error(
-                parameters, "tail must be a positive integer", exit_code=2
+                parameters,
+                "tail must be a positive integer",
+                tool_call_id=tool_call_id,
+                exit_code=2,
             )
 
         context_lines = self._coerce_int(
@@ -522,10 +628,11 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             return self._error(
                 parameters,
                 "context must be a non-negative integer",
+                tool_call_id=tool_call_id,
                 exit_code=2,
             )
 
-        filters = self._parse_log_filters(parameters)
+        filters = self._parse_log_filters(parameters, tool_call_id=tool_call_id)
         if isinstance(filters, ToolResult):
             return filters
 
@@ -541,14 +648,26 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
     def _parse_log_filters(
         self,
         parameters: dict[str, Any],
+        *,
+        tool_call_id: str = "",
     ) -> tuple[str | None, bool] | ToolResult:
         grep = parameters.get("grep")
         if grep is not None and not isinstance(grep, str):
-            return self._error(parameters, "grep must be a string", exit_code=2)
+            return self._error(
+                parameters,
+                "grep must be a string",
+                tool_call_id=tool_call_id,
+                exit_code=2,
+            )
 
         ignore_case = self._parse_bool(parameters.get("ignore_case"))
         if parameters.get("ignore_case") is not None and ignore_case is None:
-            return self._error(parameters, "ignore_case must be a boolean", exit_code=2)
+            return self._error(
+                parameters,
+                "ignore_case must be a boolean",
+                tool_call_id=tool_call_id,
+                exit_code=2,
+            )
 
         return grep, bool(ignore_case)
 

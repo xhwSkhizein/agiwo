@@ -3,7 +3,7 @@
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
@@ -99,8 +99,9 @@ class StepRecord:
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     name: str | None = None
+    is_error: bool = False
     metrics: StepMetrics | None = None
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     parent_run_id: str | None = None
     depth: int = 0
 
@@ -227,6 +228,7 @@ class StepRecord:
         name: str,
         content: str,
         content_for_user: str | None = None,
+        is_error: bool = False,
         metrics: StepMetrics | None = None,
         **overrides: Any,
     ) -> "StepRecord":
@@ -238,6 +240,7 @@ class StepRecord:
             content_for_user=content_for_user,
             tool_call_id=tool_call_id,
             name=name,
+            is_error=is_error,
             metrics=metrics,
             **context_attrs,
         )

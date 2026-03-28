@@ -24,7 +24,9 @@ def create_run_step_storage(config: RunStepStorageConfig) -> RunStepStorage:
         return InMemoryRunStepStorage()
     if storage_type == "sqlite":
         db_path = cfg.get("db_path", "agiwo.db")
-        return SQLiteRunStepStorage(db_path=db_path)
+        resolved_path = settings.resolve_path(db_path)
+        resolved = str(resolved_path) if resolved_path is not None else db_path
+        return SQLiteRunStepStorage(db_path=resolved)
     if storage_type == "mongodb":
         uri = cfg.get("mongo_uri") or cfg.get("uri", "mongodb://localhost:27017")
         db_name = cfg.get("db_name", "agiwo")

@@ -72,7 +72,7 @@ class MemoryRetrievalTool(BaseTool):
         if abort_signal and abort_signal.is_aborted():
             return ToolResult.aborted(
                 tool_name=self.name,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -91,7 +91,7 @@ class MemoryRetrievalTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error="No query provided",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -108,7 +108,7 @@ class MemoryRetrievalTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.name,
                 error="Could not resolve workspace directory",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -118,7 +118,7 @@ class MemoryRetrievalTool(BaseTool):
         if abort_signal and abort_signal.is_aborted():
             return ToolResult.aborted(
                 tool_name=self.name,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
@@ -139,7 +139,7 @@ class MemoryRetrievalTool(BaseTool):
             )
             return ToolResult.success(
                 tool_name=self.name,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 content=content,
                 output={"results": [], "debug": {"workspace": str(workspace_dir)}},
@@ -162,7 +162,7 @@ class MemoryRetrievalTool(BaseTool):
 
         return ToolResult.success(
             tool_name=self.name,
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=context.tool_call_id,
             input_args=parameters,
             content=content,
             output=output,

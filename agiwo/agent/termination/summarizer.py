@@ -46,20 +46,28 @@ async def maybe_generate_termination_summary(
     )
     await commit_step(state, summary_user_step, append_message=True)
 
-    step, llm_context = await stream_assistant_step(
-        model,
-        state,
-        abort_signal,
-        messages=state.copy_messages(),
-        tools=None,
-    )
-    step.name = "summary"
-    await commit_step(state, step, llm=llm_context, append_message=False)
+    try:
+        step, llm_context = await stream_assistant_step(
+            model,
+            state,
+            abort_signal,
+            messages=state.copy_messages(),
+            tools=None,
+        )
+        step.name = "summary"
+        await commit_step(state, step, llm=llm_context, append_message=False)
 
-    logger.info(
-        "summary_generated",
-        tokens=step.metrics.total_tokens if step.metrics else 0,
-    )
+        logger.info(
+            "summary_generated",
+            tokens=step.metrics.total_tokens if step.metrics else 0,
+        )
+    except Exception:  # noqa: BLE001 - summary is best-effort
+        logger.warning(
+            "summary_generation_failed",
+            run_id=state.run_id,
+            termination_reason=state.termination_reason,
+            exc_info=True,
+        )
 
 
 __all__ = ["maybe_generate_termination_summary"]

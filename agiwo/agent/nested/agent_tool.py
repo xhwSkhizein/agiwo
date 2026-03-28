@@ -19,7 +19,7 @@ class AgentTool(BaseTool):
     """Wrap a child agent template as a tool for nested execution."""
 
     cacheable = False
-    timeout_seconds = 30
+    timeout_seconds = 600
 
     def __init__(
         self,
@@ -92,12 +92,12 @@ class AgentTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.get_name(),
                 error="AgentTool requires agent runtime context",
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,
             )
 
-        toolcall_id = parameters.get("tool_call_id", "")
+        toolcall_id = context.tool_call_id
         task = parameters.get("task", "")
         extra_context = parameters.get("context", "")
         child_id = self._agent.id
@@ -161,7 +161,7 @@ class AgentTool(BaseTool):
             return ToolResult.failed(
                 tool_name=self.get_name(),
                 error=error,
-                tool_call_id=str(parameters.get("tool_call_id", "")),
+                tool_call_id=context.tool_call_id,
                 input_args=input_args,
                 start_time=start_time,
                 content=response_text,
@@ -170,7 +170,7 @@ class AgentTool(BaseTool):
 
         return ToolResult.success(
             tool_name=self.get_name(),
-            tool_call_id=str(parameters.get("tool_call_id", "")),
+            tool_call_id=context.tool_call_id,
             input_args=input_args,
             content=response_text,
             output=response_text,

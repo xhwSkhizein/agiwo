@@ -20,6 +20,11 @@ from agiwo.llm.base import Model, StreamChunk
 from agiwo.llm.event_normalizer import normalize_usage_metrics
 from agiwo.llm.usage_resolver import ModelUsageEstimator, UsageEstimate
 from agiwo.utils.abort_signal import AbortSignal
+from agiwo.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+_CHUNK_TIMEOUT_SECONDS = 120
 
 
 async def stream_assistant_step(
@@ -60,7 +65,18 @@ async def stream_assistant_step(
     finish_reason: str | None = None
     tool_calls_acc: dict[int, dict] = {}
 
-    async for chunk in model.arun_stream(messages, tools=tools_resolved):
+    stream = model.arun_stream(messages, tools=tools_resolved)
+    while True:
+        try:
+            async with asyncio.timeout(_CHUNK_TIMEOUT_SECONDS):
+                chunk = await stream.__anext__()
+        except StopAsyncIteration:
+            break
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"LLM stream stalled: no chunk received for {_CHUNK_TIMEOUT_SECONDS}s"
+            ) from exc
+
         _check_abort(abort_signal)
         delta, has_content, chunk_finish_reason = _apply_chunk_to_step(
             step=step,

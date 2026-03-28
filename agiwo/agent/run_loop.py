@@ -57,9 +57,9 @@ logger = get_logger(__name__)
 
 async def _start_run(state: RunContext, run: Run) -> None:
     run.trace_id = state.trace_id
-    await state.session_runtime.run_step_storage.save_run(run)
     if state.session_runtime.trace_runtime is not None:
-        state.session_runtime.trace_runtime.on_run_started(run)
+        run.trace_id = state.session_runtime.trace_runtime.on_run_started(run)
+    await state.session_runtime.run_step_storage.save_run(run)
     await state.session_runtime.publish(RunStartedEvent.from_context(state))
 
 
@@ -70,24 +70,14 @@ async def _complete_run(state: RunContext, run: Run, result: RunOutput) -> None:
         else RunStatus.COMPLETED
     )
     run.response_content = result.response
-    run.updated_at = datetime.now()
+    run.updated_at = datetime.now(timezone.utc)
     run.metrics.end_at = datetime.now(timezone.utc).timestamp()
     if result.metrics is not None:
-        for field_name in (
-            "duration_ms",
-            "total_tokens",
-            "input_tokens",
-            "output_tokens",
-            "cache_read_tokens",
-            "cache_creation_tokens",
-            "token_cost",
-            "steps_count",
-            "tool_calls_count",
-            "tool_errors_count",
-            "first_token_latency",
-            "response_latency",
-        ):
-            setattr(run.metrics, field_name, getattr(result.metrics, field_name))
+        preserved_start_at = run.metrics.start_at
+        preserved_end_at = run.metrics.end_at
+        run.metrics = result.metrics
+        run.metrics.start_at = preserved_start_at
+        run.metrics.end_at = preserved_end_at
     await state.session_runtime.run_step_storage.save_run(run)
     if state.session_runtime.trace_runtime is not None:
         await state.session_runtime.trace_runtime.on_run_completed(
@@ -106,7 +96,7 @@ async def _complete_run(state: RunContext, run: Run, result: RunOutput) -> None:
 
 async def _fail_run(state: RunContext, run: Run, error: Exception) -> None:
     run.status = RunStatus.FAILED
-    run.updated_at = datetime.now()
+    run.updated_at = datetime.now(timezone.utc)
     run.metrics.end_at = datetime.now(timezone.utc).timestamp()
     await state.session_runtime.run_step_storage.save_run(run)
     if state.session_runtime.trace_runtime is not None:
@@ -272,6 +262,7 @@ async def _execute_tool_calls(
         context=state,
         abort_signal=abort_signal,
     )
+    terminated = False
     for result in tool_results:
         call_id = result.tool_call_id or ""
         tool_name = result.tool_name
@@ -287,13 +278,14 @@ async def _execute_tool_calls(
             name=result.tool_name,
             content=result.content or "",
             content_for_user=result.content_for_user,
+            is_error=not result.is_success,
         )
         await commit_step(state, tool_step)
 
-        if result.termination_reason is not None:
+        if not terminated and result.termination_reason is not None:
             set_termination_reason(state, result.termination_reason)
-            return True
-    return state.is_terminal
+            terminated = True
+    return terminated or state.is_terminal
 
 
 async def _run_loop(
@@ -353,6 +345,7 @@ async def _run_loop(
             termination_reason=state.termination_reason,
             exc_info=True,
         )
+        raise
 
 
 async def _process_pending_tool_calls(

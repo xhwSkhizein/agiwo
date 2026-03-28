@@ -9,6 +9,8 @@ from agiwo.agent.models.run import Run, RunOutput
 from agiwo.agent.models.step import LLMCallContext, StepRecord
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
+from collections import OrderedDict
+
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -65,7 +67,7 @@ def _build_tool_span(
     end = _utc(m.end_at if m else None)
     dur = m.duration_ms if m else None
     parent_id, parent_depth = _resolve_parent(step, run_spans, fallback)
-    is_error = isinstance(step.content, str) and step.content.startswith("Error:")
+    is_error = step.is_error
 
     span = Span(
         trace_id=trace_id,
@@ -185,7 +187,7 @@ class AgentTraceCollector:
         self.store = store
         self._trace: Trace | None = None
         self._run_spans: dict[str, Span] = {}
-        self._assistant_cache: dict[str, StepRecord] = {}
+        self._assistant_cache: OrderedDict[str, StepRecord] = OrderedDict()
 
     @property
     def trace_id(self) -> str | None:
@@ -207,11 +209,11 @@ class AgentTraceCollector:
             input_query=input_query,
         )
         self._run_spans = {}
-        self._assistant_cache = {}
+        self._assistant_cache = OrderedDict()
 
-    def on_run_started(self, run: Run) -> None:
+    def on_run_started(self, run: Run) -> str:
         trace = self._require_trace()
-        run.trace_id = trace.trace_id
+        run_trace_id = trace.trace_id
         parent = self._run_spans.get(run.parent_run_id) if run.parent_run_id else None
         span = Span(
             trace_id=trace.trace_id,
@@ -231,6 +233,7 @@ class AgentTraceCollector:
             trace.root_span_id = span.span_id
         trace.add_span(span)
         self._run_spans[run.id] = span
+        return run_trace_id
 
     async def on_step(
         self, step: StepRecord, llm: LLMCallContext | None = None
@@ -294,12 +297,14 @@ class AgentTraceCollector:
         await self._save_trace()
         self._trace = None
         self._run_spans = {}
-        self._assistant_cache = {}
+        self._assistant_cache = OrderedDict()
 
     def _require_trace(self) -> Trace:
         if self._trace is None:
             raise RuntimeError("trace_not_started")
         return self._trace
+
+    _CACHE_MAX_SIZE = 10_000
 
     def _cache_tool_calls(self, step: StepRecord) -> None:
         if step.role.value != "assistant" or not step.tool_calls:
@@ -308,6 +313,8 @@ class AgentTraceCollector:
             tid = tc.get("id")
             if tid:
                 self._assistant_cache[tid] = step
+        while len(self._assistant_cache) > self._CACHE_MAX_SIZE:
+            self._assistant_cache.popitem(last=False)
 
     async def _save_trace(self) -> None:
         if self._trace is None or self.store is None:
