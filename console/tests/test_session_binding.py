@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from server.channels.session.binding import (
     assign_runtime_identity,
     assign_scheduler_state,
+    fork_session,
+    mark_session_task_started,
     open_initial_session,
     open_new_session,
     repair_missing_base_agent,
@@ -134,3 +136,37 @@ def test_switch_session_returns_updated_binding() -> None:
     assert mutation.current_session.updated_at == now
     assert mutation.previous_session is not None
     assert mutation.previous_session.id == "sess-1"
+
+
+def test_mark_session_task_started_initializes_implicit_task() -> None:
+    session = _session()
+
+    mark_session_task_started(session, task_id="task-2")
+
+    assert session.current_task_id == "task-2"
+    assert session.task_message_count == 0
+
+
+def test_fork_session_copies_lineage_but_resets_runtime_identity() -> None:
+    chat_context = _chat_context()
+    source_session = _session()
+    source_session.current_task_id = "task-1"
+    now = datetime.now(timezone.utc)
+
+    mutation = fork_session(
+        chat_context,
+        source_session,
+        created_by="COMMAND_FORK",
+        context_summary="Continue with follow-up task B",
+        now=now,
+    )
+
+    assert mutation.current_session.id != source_session.id
+    assert mutation.current_session.source_session_id == "sess-1"
+    assert mutation.current_session.source_task_id == "task-1"
+    assert (
+        mutation.current_session.fork_context_summary
+        == "Continue with follow-up task B"
+    )
+    assert mutation.current_session.runtime_agent_id == ""
+    assert mutation.current_session.scheduler_state_id == ""

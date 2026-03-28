@@ -4,6 +4,7 @@ Session and chat-context coordination for channel runtime flows.
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from agiwo.utils.logging import get_logger
 
@@ -29,6 +30,9 @@ from server.channels.session.models import (
     UserSessionItem,
 )
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
+
+if TYPE_CHECKING:
+    from server.services.remote_workspace_session import RemoteWorkspaceSessionService
 
 logger = get_logger(__name__)
 
@@ -297,3 +301,10 @@ class SessionContextService:
             session=mutation.current_session,
             retired_runtime_agent_id=mutation.retired_runtime_agent_id,
         )
+
+    def as_remote_workspace_service(self) -> "RemoteWorkspaceSessionService":
+        from server.services.remote_workspace_session import (  # noqa: PLC0415
+            RemoteWorkspaceSessionService,
+        )
+
+        return RemoteWorkspaceSessionService(store=self._store)

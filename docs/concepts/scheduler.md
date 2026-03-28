@@ -193,3 +193,13 @@ RuntimeState(
 1. `route_root_input()` 决定 root 输入怎么进入系统
 2. `tick()` 决定哪些 state 该被 dispatch
 3. `runner.run()` 执行一次 dispatch action，并把结果翻译回 state
+
+## Console and Feishu Integration
+
+Both Console and Feishu enter through session-first, scheduler-mediated flows:
+
+- Console SSE endpoint (`/api/chat/{agent_id}`) uses `stream_scheduler_events` which calls `scheduler.stream()`
+- Feishu batch execution delegates to `RemoteWorkspaceConversationService` which calls `executor.execute()` → `scheduler.route_root_input()`
+- Session session management APIs (create, switch, fork) use `RemoteWorkspaceSessionService`
+
+Entry adapters translate transport concerns into shared session and conversation services rather than invoking agent runtimes directly.

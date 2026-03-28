@@ -65,6 +65,11 @@ class Session:
     created_by: str
     created_at: datetime
     updated_at: datetime
+    current_task_id: str | None = None
+    task_message_count: int = 0
+    source_session_id: str | None = None
+    source_task_id: str | None = None
+    fork_context_summary: str | None = None
 
 
 @dataclass

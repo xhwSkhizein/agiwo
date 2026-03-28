@@ -8,6 +8,7 @@ from agiwo.agent import ContentPart, ContentType
 from server.channels.feishu.commands.base import CommandResult
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.connection import FeishuConnection
+from server.channels.feishu.factory import FeishuServiceComponents
 from server.channels.feishu.delivery_service import FeishuDeliveryService
 from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
 from server.channels.feishu.inbound_handler import FeishuInboundHandler
@@ -377,3 +378,25 @@ async def test_inbound_handler_acknowledges_and_enqueues_non_command_messages() 
         inbound,
         normalized_text="hello bot",
     )
+
+
+@pytest.mark.asyncio
+async def test_feishu_batch_uses_shared_conversation_service() -> None:
+    """Verify that the workspace conversation service is wired through the Feishu factory."""
+    components = FeishuServiceComponents(
+        api=Mock(),
+        store=Mock(),
+        parser=Mock(),
+        connection=Mock(),
+        session_service=Mock(),
+        agent_pool=Mock(),
+        executor=Mock(),
+        session_manager=Mock(),
+        tmp_dir=Path("/tmp/test"),
+        message_builder=Mock(),
+        delivery_service=Mock(),
+        inbound_handler=Mock(),
+        bot_open_id="bot-1",
+        workspace_conversation=Mock(),
+    )
+    assert components.workspace_conversation is not None

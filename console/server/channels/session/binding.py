@@ -166,6 +166,48 @@ def assign_scheduler_state(session: Session, scheduler_state_id: str) -> None:
     session.scheduler_state_id = scheduler_state_id
 
 
+def mark_session_task_started(session: Session, *, task_id: str) -> None:
+    """Mark a new implicit task as started on the session."""
+    session.current_task_id = task_id
+    session.task_message_count = 0
+
+
+def append_message_to_current_task(session: Session) -> None:
+    """Increment the message count for the current task."""
+    session.task_message_count += 1
+
+
+def fork_session(
+    chat_context: ChannelChatContext,
+    source_session: Session,
+    *,
+    created_by: str,
+    context_summary: str,
+    now: datetime,
+) -> SessionMutationPlan:
+    """Create a forked session with weak lineage from the source."""
+    session = Session(
+        id=str(uuid4()),
+        chat_context_id=chat_context.id,
+        base_agent_id=source_session.base_agent_id,
+        runtime_agent_id="",
+        scheduler_state_id="",
+        created_by=created_by,
+        created_at=now,
+        updated_at=now,
+        current_task_id=None,
+        task_message_count=0,
+        source_session_id=source_session.id,
+        source_task_id=source_session.current_task_id,
+        fork_context_summary=context_summary,
+    )
+    _set_current_session(chat_context, session.id, now=now)
+    return SessionMutationPlan(
+        chat_context=chat_context,
+        current_session=session,
+    )
+
+
 def _set_chat_context_base_agent(
     chat_context: ChannelChatContext,
     *,
@@ -192,8 +234,11 @@ __all__ = [
     "SessionMutationPlan",
     "SessionNotFoundError",
     "SessionNotInChatContextError",
+    "append_message_to_current_task",
     "assign_runtime_identity",
     "assign_scheduler_state",
+    "fork_session",
+    "mark_session_task_started",
     "open_initial_session",
     "open_new_session",
     "repair_missing_base_agent",

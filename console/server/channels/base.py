@@ -68,12 +68,14 @@ class BaseChannelService(ABC):
         session_service: SessionContextService,
         agent_pool: RuntimeAgentPool,
         executor: AgentExecutor,
+        workspace_conversation=None,
         debounce_ms: int,
         max_batch_window_ms: int,
     ) -> None:
         self._session_service = session_service
         self._agent_pool = agent_pool
         self._executor = executor
+        self._workspace_conversation = workspace_conversation
         self._deferred_replies = DeferredReplyManager(
             executor=executor,
             session_service=session_service,
@@ -145,7 +147,12 @@ class BaseChannelService(ABC):
 
     async def _execute_batch(self, batch: BatchPayload) -> None:
         session, agent = await self._prepare_batch_runtime(batch)
-        dispatch = await self._executor.execute(agent, session, batch.user_message)
+        if self._workspace_conversation is not None:
+            dispatch = await self._workspace_conversation.send_message_to_session(
+                agent=agent, session=session, user_message=batch.user_message
+            )
+        else:
+            dispatch = await self._executor.execute(agent, session, batch.user_message)
         if dispatch.action == "steered":
             await self._handle_steered_dispatch(batch, session)
             return

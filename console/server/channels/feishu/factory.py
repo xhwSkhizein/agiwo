@@ -31,6 +31,9 @@ from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.channels.session import SessionContextService, SessionManager
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
+from server.services.remote_workspace_conversation import (
+    RemoteWorkspaceConversationService,
+)
 
 
 class FeishuServiceComponents:
@@ -52,6 +55,7 @@ class FeishuServiceComponents:
         delivery_service: FeishuDeliveryService,
         inbound_handler: FeishuInboundHandler,
         bot_open_id: str,
+        workspace_conversation: RemoteWorkspaceConversationService | None = None,
     ) -> None:
         self.api = api
         self.store = store
@@ -66,6 +70,7 @@ class FeishuServiceComponents:
         self.delivery_service = delivery_service
         self.inbound_handler = inbound_handler
         self.bot_open_id = bot_open_id
+        self.workspace_conversation = workspace_conversation
 
 
 class FeishuServiceFactory:
@@ -181,6 +186,11 @@ class FeishuServiceFactory:
             ),
         )
 
+        workspace_conversation = RemoteWorkspaceConversationService(
+            session_service=session_service,
+            executor=executor,
+        )
+
         return FeishuServiceComponents(
             api=api,
             store=store,
@@ -195,6 +205,7 @@ class FeishuServiceFactory:
             delivery_service=delivery_service,
             inbound_handler=inbound_handler,
             bot_open_id=config.feishu_bot_open_id,
+            workspace_conversation=workspace_conversation,
         )
 
 
