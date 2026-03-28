@@ -165,15 +165,12 @@ def test_agent_config_owns_disabled_sdk_tool_names_for_default_sdk_tools() -> No
 
 
 def test_guardrails_treat_runtime_package_as_internal_execution_module() -> None:
-    repo_guard = Path("/Users/hongv/workspace/agiwo/scripts/repo_guard.py").read_text(
-        encoding="utf-8"
-    )
-    import_linter = Path(
-        "/Users/hongv/workspace/agiwo/lint/importlinter_agiwo.ini"
-    ).read_text(encoding="utf-8")
-    agents_doc = Path("/Users/hongv/workspace/agiwo/AGENTS.md").read_text(
-        encoding="utf-8"
-    )
+    # Get project root relative to test file location
+    project_root = Path(__file__).parent.parent.parent
+
+    repo_guard = (project_root / "scripts" / "repo_guard.py").read_text(encoding="utf-8")
+    import_linter = (project_root / "lint" / "importlinter_agiwo.ini").read_text(encoding="utf-8")
+    agents_doc = (project_root / "AGENTS.md").read_text(encoding="utf-8")
 
     assert "agiwo.agent.runtime" in import_linter
     assert '"agiwo.agent.runtime"' in repo_guard
@@ -181,9 +178,10 @@ def test_guardrails_treat_runtime_package_as_internal_execution_module() -> None
 
 
 def test_import_linter_guardrails_allow_public_agent_facade_transitively() -> None:
-    import_linter = Path(
-        "/Users/hongv/workspace/agiwo/lint/importlinter_agiwo.ini"
-    ).read_text(encoding="utf-8")
+    # Get project root relative to test file location
+    project_root = Path(__file__).parent.parent.parent
+
+    import_linter = (project_root / "lint" / "importlinter_agiwo.ini").read_text(encoding="utf-8")
 
     scheduler_contract = """[importlinter:contract:8]
 name = scheduler-runtime-must-not-depend-on-agent-internals
