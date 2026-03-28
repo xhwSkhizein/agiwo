@@ -2,9 +2,11 @@
 
 from typing import Any, Callable, TypeVar
 
-from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
+from agiwo.agent import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.base import RunStepStorage
-from agiwo.agent.storage.factory import StorageFactory
+from agiwo.agent.storage.factory import (
+    create_run_step_storage as _create_run_step_storage,
+)
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.factory import (
     create_trace_storage as _sdk_create_trace_storage,
@@ -110,7 +112,7 @@ def build_citation_store_config(console_config: ConsoleConfig) -> CitationStoreC
 
 
 def create_run_step_storage(config: ConsoleConfig) -> RunStepStorage:
-    return StorageFactory.create_run_step_storage(build_run_step_storage_config(config))
+    return _create_run_step_storage(build_run_step_storage_config(config))
 
 
 def create_trace_storage(config: ConsoleConfig) -> BaseTraceStorage:

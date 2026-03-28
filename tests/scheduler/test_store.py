@@ -52,6 +52,20 @@ class TestInMemorySaveAndGet:
     async def test_get_nonexistent(self, store):
         assert await store.get_state("nope") is None
 
+    @pytest.mark.asyncio
+    async def test_get_returns_snapshot_objects(self, store):
+        state = _make_state()
+        await store.save_state(state)
+
+        first = await store.get_state("agent-1")
+        second = await store.get_state("agent-1")
+
+        assert first is not None
+        assert second is not None
+        assert first is not state
+        assert second is not state
+        assert second is not first
+
 
 class TestInMemorySaveStateUpdate:
     @pytest.mark.asyncio
@@ -59,24 +73,25 @@ class TestInMemorySaveStateUpdate:
         state = _make_state()
         await store.save_state(state)
         wake = WakeCondition(type=WakeType.WAITSET, wait_for=["c1"])
-        state.status = AgentStateStatus.WAITING
-        state.wake_condition = wake
-        await store.save_state(state)
+        await store.save_state(state.with_waiting(wake_condition=wake))
         retrieved = await store.get_state("agent-1")
         assert retrieved is not None
         assert retrieved.status == AgentStateStatus.WAITING
         assert retrieved.wake_condition is not None
-        assert retrieved.wake_condition.wait_for == ["c1"]
+        assert retrieved.wake_condition.wait_for == ("c1",)
 
     @pytest.mark.asyncio
     async def test_save_updates_pending_input_and_summary(self, store):
         state = _make_state()
         await store.save_state(state)
-        state.pending_input = "next"
-        state.result_summary = "done"
-        state.explain = "idle"
-        state.wake_count = 2
-        await store.save_state(state)
+        await store.save_state(
+            state.with_updates(
+                pending_input="next",
+                result_summary="done",
+                explain="idle",
+                wake_count=2,
+            )
+        )
         retrieved = await store.get_state("agent-1")
         assert retrieved is not None
         assert retrieved.pending_input == "next"
@@ -154,16 +169,19 @@ class TestSQLiteAgentStateStorage:
     @pytest.mark.asyncio
     async def test_save_and_get_round_trip(self, tmp_path):
         store = SQLiteAgentStateStorage(str(tmp_path / "scheduler.db"))
-        state = _make_state(
+        base_state = _make_state(
             id="sqlite-agent",
+            status=AgentStateStatus.PENDING,
+        )
+        state = base_state.with_updates(
             status=AgentStateStatus.WAITING,
             explain="waiting for child",
             pending_input="next input",
-        )
-        state.wake_condition = WakeCondition(
-            type=WakeType.WAITSET,
-            wait_for=["child-1"],
-            completed_ids=["child-1"],
+            wake_condition=WakeCondition(
+                type=WakeType.WAITSET,
+                wait_for=["child-1"],
+                completed_ids=["child-1"],
+            ),
         )
 
         await store.save_state(state)
@@ -175,6 +193,23 @@ class TestSQLiteAgentStateStorage:
         assert retrieved.pending_input == "next input"
         assert retrieved.explain == "waiting for child"
         assert retrieved.wake_condition is not None
-        assert retrieved.wake_condition.completed_ids == ["child-1"]
+        assert retrieved.wake_condition.completed_ids == ("child-1",)
+
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_get_returns_snapshot_objects(self, tmp_path):
+        store = SQLiteAgentStateStorage(str(tmp_path / "scheduler.db"))
+        state = _make_state(id="sqlite-snapshot")
+        await store.save_state(state)
+
+        first = await store.get_state("sqlite-snapshot")
+        second = await store.get_state("sqlite-snapshot")
+
+        assert first is not None
+        assert second is not None
+        assert first is not state
+        assert second is not state
+        assert second is not first
 
         await store.close()

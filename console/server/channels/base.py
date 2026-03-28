@@ -9,8 +9,13 @@ behaviour (message delivery, prompt rendering, error mapping).
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 
-from agiwo.agent import Agent, UserMessage, extract_text
-from agiwo.agent.runtime import AgentStreamItem, RunCompletedEvent, RunFailedEvent
+from agiwo.agent import (
+    Agent,
+    AgentStreamItem,
+    RunCompletedEvent,
+    RunFailedEvent,
+    UserMessage,
+)
 from agiwo.utils.logging import get_logger
 
 from server.channels.agent_executor import AgentExecutor
@@ -124,7 +129,7 @@ class BaseChannelService(ABC):
             chat_type=batch.context.chat_type,
             chat_id=batch.context.chat_id,
             message_count=len(batch.messages),
-            input_preview=self._truncate_for_log(extract_text(user_message)),
+            input_preview=self._truncate_for_log(user_message.extract_text()),
         )
 
         try:

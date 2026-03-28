@@ -7,7 +7,7 @@ for managing scheduler agents directly from Feishu chat.
 
 from functools import partial
 
-from agiwo.agent.input import ContentPart, UserInput, UserMessage
+from agiwo.agent import ContentPart, UserInput, UserMessage
 from agiwo.scheduler.scheduler import Scheduler
 
 from server.channels.feishu.commands.base import (
@@ -70,7 +70,7 @@ async def _execute_agents(
 ) -> CommandResult:
     del ctx, args
 
-    states = await scheduler.store.list_states(limit=20)
+    states = await scheduler.list_states(limit=20)
     if not states:
         return CommandResult(text="当前没有 Agent 状态记录。")
 

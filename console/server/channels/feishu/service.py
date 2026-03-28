@@ -10,12 +10,12 @@ import asyncio
 import shutil
 from typing import Any, Literal
 
-from agiwo.agent import UserMessage
-from agiwo.agent.runtime import (
+from agiwo.agent import (
     AgentStreamItem,
     RunCompletedEvent,
     RunFailedEvent,
     StepCompletedEvent,
+    UserMessage,
 )
 from agiwo.scheduler.scheduler import Scheduler
 from agiwo.utils.logging import get_logger
@@ -163,18 +163,26 @@ class FeishuChannelService(BaseChannelService):
     @staticmethod
     def _format_full(item: AgentStreamItem) -> str | None:
         if isinstance(item, RunCompletedEvent):
-            if not item.response:
-                return None
-            if item.depth == 0:
-                return item.response
-            return f"[子Agent: {item.agent_id}] 完成:\n{item.response}"
+            return _format_completed_run_for_full_mode(item)
         if isinstance(item, RunFailedEvent):
-            if item.depth == 0:
-                return item.error
-            return f"[子Agent: {item.agent_id}] 失败:\n{item.error}"
+            return _format_failed_run_for_full_mode(item)
         if isinstance(item, StepCompletedEvent):
             return _format_step_for_full_mode(item)
         return None
+
+
+def _format_completed_run_for_full_mode(event: RunCompletedEvent) -> str | None:
+    if not event.response:
+        return None
+    if event.depth == 0:
+        return event.response
+    return f"[子Agent: {event.agent_id}] 完成:\n{event.response}"
+
+
+def _format_failed_run_for_full_mode(event: RunFailedEvent) -> str:
+    if event.depth == 0:
+        return event.error
+    return f"[子Agent: {event.agent_id}] 失败:\n{event.error}"
 
 
 def _format_step_for_full_mode(event: StepCompletedEvent) -> str | None:

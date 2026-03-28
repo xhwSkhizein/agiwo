@@ -5,7 +5,7 @@ Hooks let you observe and intercept agent lifecycle events. They're optional cal
 ## Hook Types
 
 ```python
-from agiwo.agent.hooks import AgentHooks
+from agiwo.agent import AgentHooks
 
 hooks = AgentHooks(
     on_before_run=my_before_run_hook,

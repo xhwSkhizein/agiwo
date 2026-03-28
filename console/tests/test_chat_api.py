@@ -1,5 +1,6 @@
 """Integration tests for the Chat API streaming endpoint."""
 
+from collections.abc import AsyncIterator
 from datetime import datetime
 from unittest.mock import AsyncMock
 
@@ -17,6 +18,7 @@ from server.dependencies import (
     clear_console_runtime,
     get_console_runtime_from_app,
 )
+from server.routers.chat import _stream_chat_events
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
@@ -142,3 +144,64 @@ async def test_chat_streams_agent_events_and_closes_agent(
     assert any(line == "event: step_delta" for line in lines)
     assert any('"run_id": "run-1"' in line for line in lines)
     assert fake_agent.closed is True
+
+
+class _StubChatHandle:
+    def __init__(self, *, wait_error: BaseException | None = None) -> None:
+        self._wait_error = wait_error
+        self.cancel_reason: str | None = None
+
+    async def wait(self):
+        if self._wait_error is not None:
+            raise self._wait_error
+        raise AssertionError("wait() should not be called on the completed path")
+
+    def cancel(self, reason: str | None = None) -> None:
+        self.cancel_reason = reason
+
+    def stream(self) -> AsyncIterator[StepDeltaEvent]:
+        async def _stream() -> AsyncIterator[StepDeltaEvent]:
+            yield StepDeltaEvent(
+                session_id="session-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                parent_run_id=None,
+                depth=0,
+                step_id="step-1",
+                delta=StepDelta(content="hello"),
+                timestamp=datetime(2026, 3, 10),
+            )
+
+        return _stream()
+
+
+class _StubChatAgent:
+    def __init__(self, handle: _StubChatHandle) -> None:
+        self._handle = handle
+
+    def start(self, message: str, *, session_id: str, abort_signal=None):
+        assert message == "hello"
+        assert session_id == "session-1"
+        del abort_signal
+        return self._handle
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_events_close_propagates_non_cancelled_cleanup_errors() -> (
+    None
+):
+    handle = _StubChatHandle(wait_error=RuntimeError("boom"))
+    agent = _StubChatAgent(handle)
+
+    stream = _stream_chat_events(
+        _runtime=None,
+        agent=agent,  # type: ignore[arg-type]
+        message="hello",
+        session_id="session-1",
+    )
+    await anext(stream)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await stream.aclose()
+
+    assert handle.cancel_reason == "SSE connection closed"

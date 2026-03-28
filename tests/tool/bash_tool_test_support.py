@@ -14,7 +14,7 @@ from agiwo.tool.builtin.bash_tool.types import (
     ProcessLogInfo,
     ProcessStatus,
 )
-from tests.utils.agent_context import build_agent_context
+from tests.utils.agent_context import build_tool_context
 
 
 class MockSandbox:
@@ -187,7 +187,7 @@ class MockSandbox:
 
 @pytest.fixture
 def mock_context():
-    return build_agent_context(agent_id="agent_1", agent_name="agent_1")
+    return build_tool_context(agent_id="agent_1", agent_name="agent_1")
 
 
 @pytest.fixture

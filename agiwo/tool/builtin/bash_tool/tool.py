@@ -157,7 +157,7 @@ class BashTool(BaseTool):
         if isinstance(request, ToolResult):
             return request
 
-        if not context.metadata.get("_tool_gate_checked"):
+        if not context.gate_checked:
             safety_decision = await self._safety_validator.validate(request.command)
             if safety_decision.action == "deny":
                 return self._formatter.error(parameters, safety_decision.reason)

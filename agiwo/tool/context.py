@@ -11,7 +11,9 @@ class ToolContext:
     agent_name: str | None = None
     user_id: str | None = None
     timeout_at: float | None = None
+    depth: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+    gate_checked: bool = False
 
 
 __all__ = ["ToolContext"]

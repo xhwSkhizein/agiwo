@@ -2,13 +2,16 @@
 
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agiwo.agent import Agent, AgentConfig, AgentHooks, MemoryRecord
-from agiwo.agent.engine.context import AgentRunContext
-from agiwo.agent.memory_hooks import DefaultMemoryHook, create_default_memory_hooks
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig
+from agiwo.agent import AgentHooks
+from agiwo.agent.hooks.memory import DefaultMemoryHook, filter_relevant_memories
+from agiwo.agent.models.memory import MemoryRecord
 from agiwo.llm.base import Model
 
 
@@ -38,8 +41,7 @@ class TestDefaultMemoryHook:
 
     def test_resolve_workspace(self, temp_workspace):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=AgentRunContext)
-        context.agent_name = "test-agent"
+        context = SimpleNamespace(agent_name="test-agent")
 
         with patch("os.path.expanduser", return_value=str(temp_workspace.parent)):
             result = hook._resolve_workspace(context)
@@ -48,9 +50,7 @@ class TestDefaultMemoryHook:
 
     def test_resolve_workspace_no_agent_name(self):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=AgentRunContext)
-        context.agent_name = None
-        context.agent_id = None
+        context = SimpleNamespace(agent_name=None, agent_id=None)
 
         result = hook._resolve_workspace(context)
         assert result is None
@@ -58,7 +58,7 @@ class TestDefaultMemoryHook:
     @pytest.mark.asyncio
     async def test_retrieve_memories_empty_query(self):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=AgentRunContext)
+        context = SimpleNamespace()
 
         result = await hook.retrieve_memories("", context)
         assert result == []
@@ -66,7 +66,7 @@ class TestDefaultMemoryHook:
     @pytest.mark.asyncio
     async def test_retrieve_memories_short_query(self):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=AgentRunContext)
+        context = SimpleNamespace()
 
         result = await hook.retrieve_memories("hi", context)
         assert result == []
@@ -74,24 +74,10 @@ class TestDefaultMemoryHook:
     @pytest.mark.asyncio
     async def test_retrieve_memories_no_workspace(self):
         hook = DefaultMemoryHook()
-        context = MagicMock(spec=AgentRunContext)
-        context.agent_name = None
-        context.agent_id = None
+        context = SimpleNamespace(agent_name=None, agent_id=None)
 
         result = await hook.retrieve_memories("test query", context)
         assert result == []
-
-
-class TestCreateDefaultMemoryHooks:
-    """Tests for create_default_memory_hooks helper."""
-
-    def test_create_default_hooks(self):
-        hooks = create_default_memory_hooks()
-        assert hooks.on_memory_retrieve is not None
-
-    def test_create_with_custom_top_k(self):
-        hooks = create_default_memory_hooks(top_k=10)
-        assert hooks.on_memory_retrieve is not None
 
 
 class TestAgentAutoInjectMemoryHook:
@@ -180,9 +166,10 @@ class TestMemoryHookIntegration:
         )
 
         # Mock context with agent_name that maps to our temp workspace
-        context = MagicMock(spec=AgentRunContext)
-        context.agent_name = str(temp_workspace.name)
-        context.agent_id = str(temp_workspace.name)
+        context = SimpleNamespace(
+            agent_name=str(temp_workspace.name),
+            agent_id=str(temp_workspace.name),
+        )
 
         with patch(
             "agiwo.memory.chunker._resolve_encoding",
@@ -208,9 +195,10 @@ class TestMemoryHookIntegration:
             root_path=temp_workspace.parent,
         )
 
-        context = MagicMock(spec=AgentRunContext)
-        context.agent_name = str(temp_workspace.name)
-        context.agent_id = str(temp_workspace.name)
+        context = SimpleNamespace(
+            agent_name=str(temp_workspace.name),
+            agent_id=str(temp_workspace.name),
+        )
 
         with patch(
             "agiwo.memory.chunker._resolve_encoding",
@@ -228,3 +216,23 @@ class TestMemoryHookIntegration:
                 assert record.source is not None
                 assert "chunk_id" in record.metadata
                 assert "start_line" in record.metadata
+
+
+def test_filter_relevant_memories_drops_low_score_duplicates_and_history_overlap():
+    messages = [
+        {
+            "role": "assistant",
+            "content": "You already know Alpha architecture decision",
+        },
+        {"role": "user", "content": "What changed?"},
+    ]
+    memories = [
+        MemoryRecord(content="Alpha architecture decision", relevance_score=0.95),
+        MemoryRecord(content="Alpha architecture decision", relevance_score=0.90),
+        MemoryRecord(content="Beta follow-up task", relevance_score=0.75),
+        MemoryRecord(content="Low score item", relevance_score=0.40),
+    ]
+
+    filtered = filter_relevant_memories(messages, memories)
+
+    assert [memory.content for memory in filtered] == ["Beta follow-up task"]

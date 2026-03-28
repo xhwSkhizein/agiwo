@@ -53,6 +53,7 @@ class ToolResult:
     )
     error: str | None = None
     is_success: bool = True
+    termination_reason: Any = None
 
     @classmethod
     def success(
@@ -64,6 +65,7 @@ class ToolResult:
         start_time: float | None = None,
         output: Any = None,
         content_for_user: str | None = None,
+        termination_reason: Any = None,
     ) -> "ToolResult":
         """Create a ToolResult representing a successful operation."""
         now = time.time()
@@ -79,6 +81,7 @@ class ToolResult:
             duration=now - start,
             content_for_user=content_for_user,
             is_success=True,
+            termination_reason=termination_reason,
         )
 
     @classmethod

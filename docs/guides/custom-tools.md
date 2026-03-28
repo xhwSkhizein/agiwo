@@ -7,8 +7,7 @@ This guide covers how to build tools with advanced features like caching, author
 The simplest tool:
 
 ```python
-from agiwo import BaseTool, ToolResult
-from agiwo.tool import ToolContext
+from agiwo.tool import BaseTool, ToolContext, ToolResult
 
 
 class GreetTool(BaseTool):
@@ -155,8 +154,4 @@ agent = Agent(
 )
 ```
 
-Or install runtime tools after creation:
-
-```python
-agent.install_runtime_tools([NewTool()])
-```
+Prefer registering the full tool set up front so the agent definition stays explicit.

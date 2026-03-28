@@ -7,7 +7,7 @@ Tools give agents the ability to interact with the external world — run shell 
 Every tool extends `BaseTool` and implements five methods:
 
 ```python
-from agiwo import BaseTool, ToolResult
+from agiwo.tool import BaseTool, ToolResult
 from agiwo.tool import ToolContext
 
 
@@ -117,9 +117,7 @@ Builtin tools are automatically included when you create an Agent. They live in 
 Agents can be wrapped as tools for composition. See [Multi-Agent Guide](../guides/multi-agent.md).
 
 ```python
-from agiwo.agent.runtime_tools import as_tool
-
-researcher_tool = as_tool(researcher_agent)
+researcher_tool = researcher_agent.as_tool()
 ```
 
-This is different from `BaseTool` — it's an `AgentTool` adapter that lives in `agiwo.agent.runtime_tools`, not `agiwo.tool`.
+This is different from `BaseTool` — it's an `AgentTool` adapter provided by the agent runtime, not part of `agiwo.tool` core.

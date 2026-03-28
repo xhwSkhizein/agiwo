@@ -7,23 +7,17 @@ serialized and deserialized in SQLite and MongoDB storage.
 
 import os
 import sqlite3
-import pytest
 import tempfile
 
-from agiwo.agent import (
-    ContentPart,
-    ContentType,
-    Run,
-    RunStatus,
-    RunMetrics,
-    StepRecord,
-    UserMessage,
-    ChannelContext,
-    serialize_user_input,
-    deserialize_user_input,
-)
+import pytest
+
+from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
-from tests.utils.agent_context import build_agent_context
+from agiwo.agent import Run, RunMetrics, RunStatus, StepRecord
 
 
 class TestUserInputSerialization:
@@ -32,9 +26,9 @@ class TestUserInputSerialization:
     def test_serialize_deserialize_string(self):
         """String input should remain unchanged."""
         original = "test message"
-        serialized = serialize_user_input(original)
+        serialized = UserMessage.serialize(original)
         assert serialized == original
-        deserialized = deserialize_user_input(serialized)
+        deserialized = UserMessage.deserialize(serialized)
         assert deserialized == original
 
     def test_serialize_deserialize_content_parts(self):
@@ -43,10 +37,10 @@ class TestUserInputSerialization:
             ContentPart(type=ContentType.TEXT, text="Hello"),
             ContentPart(type=ContentType.IMAGE, url="http://example.com/img.jpg"),
         ]
-        serialized = serialize_user_input(original)
+        serialized = UserMessage.serialize(original)
         assert isinstance(serialized, str)
         assert serialized.startswith("{")
-        deserialized = deserialize_user_input(serialized)
+        deserialized = UserMessage.deserialize(serialized)
         assert isinstance(deserialized, list)
         assert len(deserialized) == 2
         assert deserialized[0].type == ContentType.TEXT
@@ -61,10 +55,10 @@ class TestUserInputSerialization:
             content=[ContentPart(type=ContentType.TEXT, text="Hello World")],
             context=context,
         )
-        serialized = serialize_user_input(original)
+        serialized = UserMessage.serialize(original)
         assert isinstance(serialized, str)
         assert serialized.startswith("{")
-        deserialized = deserialize_user_input(serialized)
+        deserialized = UserMessage.deserialize(serialized)
         assert isinstance(deserialized, UserMessage)
         assert len(deserialized.content) == 1
         assert deserialized.content[0].text == "Hello World"
@@ -74,14 +68,47 @@ class TestUserInputSerialization:
     def test_deserialize_plain_string(self):
         """Plain string without JSON markers should remain unchanged."""
         original = "just a plain string"
-        deserialized = deserialize_user_input(original)
+        deserialized = UserMessage.deserialize(original)
         assert deserialized == original
 
     def test_deserialize_invalid_json(self):
         """Invalid JSON should remain unchanged."""
         original = "{not valid json"
-        deserialized = deserialize_user_input(original)
+        deserialized = UserMessage.deserialize(original)
         assert deserialized == original
+
+    def test_to_transport_payload_normalizes_serialized_structured_input(self):
+        original = UserMessage(
+            content=[
+                ContentPart(type=ContentType.TEXT, text="Hello"),
+                ContentPart(type=ContentType.IMAGE, url="https://example.com/a.png"),
+            ],
+            context=ChannelContext(source="api", metadata={"channel": "test"}),
+        )
+
+        payload = UserMessage.to_transport_payload(UserMessage.serialize(original))
+
+        assert payload == {
+            "content": [
+                {"type": "text", "text": "Hello"},
+                {"type": "image", "url": "https://example.com/a.png"},
+            ],
+            "context": {
+                "source": "api",
+                "metadata": {"channel": "test"},
+            },
+        }
+
+    def test_to_storage_value_round_trips_structured_input(self):
+        original = [
+            ContentPart(type=ContentType.TEXT, text="Hello"),
+            ContentPart(type=ContentType.IMAGE, url="https://example.com/a.png"),
+        ]
+
+        stored = UserMessage.to_storage_value(original)
+
+        assert isinstance(stored, str)
+        assert UserMessage.from_storage_value(stored) == original
 
 
 class TestSQLiteUserInputStorage:
@@ -89,8 +116,12 @@ class TestSQLiteUserInputStorage:
 
     @staticmethod
     def _make_context():
-        return build_agent_context(
-            session_id="test-session",
+        return RunContext(
+            session_runtime=SessionRuntime(
+                session_id="test-session",
+                run_step_storage=InMemoryRunStepStorage(),
+                session_storage=InMemorySessionStorage(),
+            ),
             run_id="test-run",
             agent_id="test-agent",
             agent_name="test-agent",

@@ -322,9 +322,9 @@ Score: 0.72
 
 ## 7. Prompt Runtime 集成
 
-位置：`agiwo/agent/prompt/runtime.py` + `agiwo/agent/prompt/sections.py`
+位置：`agiwo/agent/prompt.py`
 
-在 `_build_environment_section()` 中注入 Memory Recall 指令：
+在 `_render_environment()` 中注入 Memory Recall 指令：
 
 ```
 ## Memory Recall
@@ -334,7 +334,7 @@ call `memory_retrieval` to search MEMORY/ files, then use the returned
 file paths + line numbers to read precise sections if needed.
 ```
 
-同时，`_inject_memories()` 方法在每次 `build()` 时扫描 MEMORY/ 目录，将**最近 N 天**的记忆文件内容直接注入 system prompt 的 `<inject-memories>` 标签中（token 上限由 `AgentOptions.relevant_memory_max_token` 控制）。
+同时，`build_system_prompt()` 会在构建 system prompt 时准备 workspace 文档与环境信息；`render_system_prompt()` 再把这些内容和工具/skills 区块拼接成最终 prompt。`MEMORY/` 的近期内容会通过 `<inject-memories>` 约定自动注入，历史记忆仍通过 `memory_retrieval` 工具按需召回。
 
 **双轨机制**：
 - **自动注入**：近期记忆直接在 context 中，Agent 无需显式调用工具即可感知

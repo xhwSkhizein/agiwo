@@ -29,7 +29,7 @@ Welcome to the Agiwo documentation. Agiwo is a streaming-first AI Agent SDK and 
 
 ## API Reference
 
-- **[Agent API](./api/agent.md)** — `Agent`, `AgentConfig`, `AgentExecutionHandle`
+- **[Agent API](./api/agent.md)** — `Agent`, `AgentConfig`, `RunOutput`, `AgentStreamItem`
 - **[Tool API](./api/tool.md)** — `BaseTool`, `ToolResult`, `ToolContext`
 - **[Model API](./api/model.md)** — `Model`, provider implementations
 - **[Scheduler API](./api/scheduler.md)** — `Scheduler`, orchestration methods

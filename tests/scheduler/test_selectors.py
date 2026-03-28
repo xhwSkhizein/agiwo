@@ -1,21 +1,20 @@
-"""Tests for scheduler selector helpers."""
+"""Tests for scheduler tick planning."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
+from agiwo.scheduler.commands import DispatchReason
+from agiwo.scheduler.engine import SchedulerEngine
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     PendingEvent,
+    SchedulerConfig,
     SchedulerEventType,
     WakeCondition,
     WakeType,
 )
-from agiwo.scheduler.selectors import (
-    select_debounced_event_targets,
-    select_ready_waiting_states,
-    select_timed_out_states,
-    select_unpropagated_children,
-)
+from agiwo.scheduler.store import InMemoryAgentStateStorage
 
 
 def _state(id: str, *, status: AgentStateStatus, **kwargs) -> AgentState:
@@ -28,8 +27,17 @@ def _state(id: str, *, status: AgentStateStatus, **kwargs) -> AgentState:
     )
 
 
-def test_select_ready_waiting_states() -> None:
+def _engine(*, event_debounce_min_count: int = 2) -> SchedulerEngine:
+    return SchedulerEngine(
+        store=InMemoryAgentStateStorage(),
+        config=SchedulerConfig(event_debounce_min_count=event_debounce_min_count),
+        semaphore=asyncio.Semaphore(1),
+    )
+
+
+def test_plan_tick_marks_ready_waiting_state() -> None:
     now = datetime.now(timezone.utc)
+    engine = _engine()
     ready = _state(
         "ready",
         status=AgentStateStatus.WAITING,
@@ -46,12 +54,17 @@ def test_select_ready_waiting_states() -> None:
             wakeup_at=now + timedelta(seconds=1),
         ),
     )
-    result = select_ready_waiting_states([ready, blocked], now=now)
-    assert [state.id for state in result] == ["ready"]
+
+    actions = engine._plan_tick([ready, blocked], [], now=now)
+
+    assert [(action.state.id, action.reason) for action in actions] == [
+        ("ready", DispatchReason.WAKE_READY)
+    ]
 
 
-def test_select_timed_out_states() -> None:
+def test_plan_tick_marks_timed_out_waiting_state() -> None:
     now = datetime.now(timezone.utc)
+    engine = _engine()
     timed_out = _state(
         "timed-out",
         status=AgentStateStatus.WAITING,
@@ -60,51 +73,74 @@ def test_select_timed_out_states() -> None:
             timeout_at=now - timedelta(seconds=1),
         ),
     )
-    result = select_timed_out_states([timed_out], now=now)
-    assert [state.id for state in result] == ["timed-out"]
+
+    actions = engine._plan_tick([timed_out], [], now=now)
+
+    assert [(action.state.id, action.reason) for action in actions] == [
+        ("timed-out", DispatchReason.WAKE_TIMEOUT)
+    ]
 
 
-def test_select_debounced_event_targets() -> None:
+def test_plan_tick_debounces_pending_events_for_waiting_state() -> None:
     now = datetime.now(timezone.utc)
+    engine = _engine(event_debounce_min_count=2)
+    waiting = _state("parent", status=AgentStateStatus.WAITING)
     events = [
         PendingEvent(
             id="e1",
-            target_agent_id="a",
-            session_id="s1",
+            target_agent_id="parent",
+            session_id="sess",
             event_type=SchedulerEventType.USER_HINT,
-            payload={},
+            payload={"hint": "first"},
             created_at=now - timedelta(seconds=30),
         ),
         PendingEvent(
             id="e2",
-            target_agent_id="a",
-            session_id="s1",
+            target_agent_id="parent",
+            session_id="sess",
             event_type=SchedulerEventType.USER_HINT,
-            payload={},
+            payload={"hint": "second"},
             created_at=now - timedelta(seconds=20),
         ),
     ]
-    result = select_debounced_event_targets(
-        events,
-        min_count=2,
-        max_wait_seconds=60,
-        now=now,
-    )
-    assert result == [("a", "s1")]
+
+    actions = engine._plan_tick([waiting], events, now=now)
+
+    assert len(actions) == 1
+    assert actions[0].reason == DispatchReason.WAKE_EVENTS
+    assert [event.id for event in actions[0].events] == ["e1", "e2"]
 
 
-def test_select_unpropagated_children() -> None:
-    done = _state(
+def test_plan_tick_starts_pending_child_and_queued_root() -> None:
+    now = datetime.now(timezone.utc)
+    engine = _engine()
+    pending_child = _state(
         "child-1",
-        status=AgentStateStatus.COMPLETED,
+        status=AgentStateStatus.PENDING,
         parent_id="root",
-        signal_propagated=False,
     )
-    ignored = _state(
-        "child-2",
-        status=AgentStateStatus.RUNNING,
-        parent_id="root",
-        signal_propagated=False,
+    queued_root = _state(
+        "root",
+        status=AgentStateStatus.QUEUED,
+        is_persistent=True,
+        pending_input="first input",
     )
-    result = select_unpropagated_children([done, ignored])
-    assert [state.id for state in result] == ["child-1"]
+    mailbox_event = PendingEvent(
+        id="e1",
+        target_agent_id="root",
+        session_id="sess",
+        event_type=SchedulerEventType.USER_HINT,
+        payload={"hint": "second input"},
+        created_at=now,
+    )
+
+    actions = engine._plan_tick([pending_child, queued_root], [mailbox_event], now=now)
+
+    assert [(action.state.id, action.reason) for action in actions] == [
+        ("child-1", DispatchReason.CHILD_PENDING),
+        ("root", DispatchReason.ROOT_QUEUED_INPUT),
+    ]
+    queued_action = actions[1]
+    assert queued_action.input_override is not None
+    assert "first input" in queued_action.input_override
+    assert "second input" in queued_action.input_override

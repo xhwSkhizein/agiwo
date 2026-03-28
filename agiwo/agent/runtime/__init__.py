@@ -1,53 +1,25 @@
-"""Runtime-domain models for agent runs, steps, and streaming events."""
+"""Runtime context and helpers for agent execution."""
 
-from agiwo.agent.runtime.core import (
-    AgentContext,
-    MessageRole,
-    RunStatus,
-    TerminationReason,
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.runtime.state_ops import (
+    append_message,
+    record_compaction_metadata,
+    replace_messages,
+    set_termination_reason,
+    set_tool_schemas,
+    track_step_state,
 )
-from agiwo.agent.runtime.step import (
-    StepDelta,
-    StepMetrics,
-    StepRecord,
-    step_to_message,
-    steps_to_messages,
-)
-from agiwo.agent.runtime.run import (
-    LLMCallContext,
-    Run,
-    RunMetrics,
-    RunOutput,
-)
-from agiwo.agent.runtime.stream_events import (
-    AgentStreamItem,
-    AgentStreamItemBase,
-    RunCompletedEvent,
-    RunFailedEvent,
-    RunStartedEvent,
-    StepCompletedEvent,
-    StepDeltaEvent,
-)
+from agiwo.agent.runtime.step_committer import commit_step
 
 __all__ = [
-    "AgentStreamItem",
-    "AgentStreamItemBase",
-    "LLMCallContext",
-    "AgentContext",
-    "MessageRole",
-    "Run",
-    "RunCompletedEvent",
-    "RunFailedEvent",
-    "RunMetrics",
-    "RunOutput",
-    "RunStartedEvent",
-    "RunStatus",
-    "StepDelta",
-    "StepDeltaEvent",
-    "StepCompletedEvent",
-    "StepMetrics",
-    "StepRecord",
-    "TerminationReason",
-    "step_to_message",
-    "steps_to_messages",
+    "RunContext",
+    "SessionRuntime",
+    "append_message",
+    "commit_step",
+    "record_compaction_metadata",
+    "replace_messages",
+    "set_termination_reason",
+    "set_tool_schemas",
+    "track_step_state",
 ]

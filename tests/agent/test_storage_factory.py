@@ -1,5 +1,5 @@
 """
-Test cases for StorageFactory.
+Test cases for storage constructors.
 
 Tests storage creation and usage for all storage types.
 """
@@ -9,24 +9,29 @@ import os
 import pytest
 import tempfile
 
-from agiwo import Agent, AgentConfig, AgentOptions
-from agiwo.agent import Run, RunMetrics, RunStatus
-from agiwo.agent.options import RunStepStorageConfig, TraceStorageConfig
-from agiwo.agent.storage.factory import StorageFactory
+from agiwo.agent import Agent
+from agiwo.agent import (
+    AgentConfig,
+    AgentOptions,
+    RunStepStorageConfig,
+    TraceStorageConfig,
+)
 from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.factory import create_run_step_storage
 from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
+from agiwo.agent import Run, RunMetrics, RunStatus
 from agiwo.observability.factory import create_trace_storage
 from agiwo.observability.memory_store import InMemoryTraceStorage
 from agiwo.observability.sqlite_store import SQLiteTraceStorage
 from agiwo.observability.trace import SpanStatus, Trace
 
 
-class TestRunStepStorageFactory:
+class TestRunStepStorageConstructors:
     """Test RunStepStorage creation."""
 
     def test_create_memory_storage(self):
         config = RunStepStorageConfig(storage_type="memory")
-        storage = StorageFactory.create_run_step_storage(config)
+        storage = create_run_step_storage(config)
         assert isinstance(storage, InMemoryRunStepStorage)
 
     def test_create_sqlite_storage(self):
@@ -36,19 +41,19 @@ class TestRunStepStorageFactory:
                 storage_type="sqlite",
                 config={"db_path": db_path},
             )
-            storage = StorageFactory.create_run_step_storage(config)
+            storage = create_run_step_storage(config)
             assert isinstance(storage, SQLiteRunStepStorage)
             assert storage.db_path == db_path
 
     def test_create_unknown_storage_type(self):
         config = RunStepStorageConfig(storage_type="unknown")  # type: ignore
         with pytest.raises(ValueError, match="Unknown run_step_storage_type"):
-            StorageFactory.create_run_step_storage(config)
+            create_run_step_storage(config)
 
     @pytest.mark.asyncio
     async def test_memory_storage_works(self):
         config = RunStepStorageConfig(storage_type="memory")
-        storage = StorageFactory.create_run_step_storage(config)
+        storage = create_run_step_storage(config)
 
         run = Run(
             id="test-run",
@@ -73,7 +78,7 @@ class TestRunStepStorageFactory:
                 storage_type="sqlite",
                 config={"db_path": db_path},
             )
-            storage = StorageFactory.create_run_step_storage(config)
+            storage = create_run_step_storage(config)
             assert not storage._initialized
 
             run = Run(

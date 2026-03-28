@@ -6,7 +6,9 @@ Long-running agent with scheduler orchestration — submit, steer, wait.
 
 import asyncio
 
-from agiwo import Agent, AgentConfig, Scheduler
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig
+from agiwo.scheduler import Scheduler
 from agiwo.llm import OpenAIModel
 
 

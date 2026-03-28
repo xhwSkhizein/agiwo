@@ -94,11 +94,16 @@ List all scheduler agent states.
 ```json
 [
   {
-    "state_id": "state-xyz789",
-    "agent_id": "agent-abc123",
-    "status": "RUNNING",
+    "id": "agent-abc123",
+    "status": "running",
+    "task": "Research topic X",
+    "parent_id": null,
+    "agent_config_id": "config-1",
+    "is_persistent": true,
+    "depth": 0,
+    "wake_count": 1,
     "created_at": "2026-03-17T10:00:00Z",
-    "last_activity_at": "2026-03-17T10:05:00Z"
+    "updated_at": "2026-03-17T10:05:00Z"
   }
 ]
 ```
@@ -106,6 +111,18 @@ List all scheduler agent states.
 ### `GET /api/scheduler/states/{state_id}`
 
 Get details for a specific scheduler state.
+
+### `GET /api/scheduler/states/{state_id}/children`
+
+List direct child states.
+
+### `GET /api/scheduler/states/{state_id}/pending-events`
+
+List pending mailbox/events for a state.
+
+### `GET /api/scheduler/stats`
+
+Get aggregate counts for `pending/running/waiting/idle/queued/completed/failed`.
 
 ### `POST /api/scheduler/states/{state_id}/cancel`
 

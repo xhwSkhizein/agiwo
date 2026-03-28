@@ -4,9 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from agiwo.agent.agent import Agent
-from agiwo.agent import AgentTool
-from agiwo.agent.runtime_tools import RuntimeToolLike
+from agiwo.agent import Agent
 from agiwo.tool.base import BaseTool
 from agiwo.tool.builtin.registry import BUILTIN_TOOLS
 from agiwo.tool.storage.citation import CitationStoreConfig
@@ -106,12 +104,12 @@ async def build_tools(
     tool_refs: list[str] | list[ToolReference],
     *,
     console_config: ConsoleConfig,
-    build_agent_tool: Callable[[AgentToolRef], Awaitable[RuntimeToolLike | None]],
-) -> list[RuntimeToolLike]:
+    build_agent_tool: Callable[[AgentToolRef], Awaitable[BaseTool | None]],
+) -> list[BaseTool]:
     build_context = ConsoleToolBuildContext(
         citation_store_config=build_citation_store_config(console_config),
     )
-    tools: list[RuntimeToolLike] = []
+    tools: list[BaseTool] = []
     for ref in parse_tool_references(list(tool_refs)):
         if isinstance(ref, BuiltinToolRef):
             tools.append(_build_builtin_tool(ref, build_context))
@@ -122,8 +120,8 @@ async def build_tools(
     return tools
 
 
-def build_agent_tool(_ref: AgentToolRef, agent: Agent) -> AgentTool:
-    return AgentTool(agent)
+def build_agent_tool(_ref: AgentToolRef, agent: Agent) -> BaseTool:
+    return agent.as_tool()
 
 
 def _build_builtin_tool(

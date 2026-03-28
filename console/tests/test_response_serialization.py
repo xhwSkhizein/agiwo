@@ -8,7 +8,6 @@ from agiwo.agent import (
     StepMetrics,
     StepRecord,
     UserMessage,
-    serialize_user_input,
 )
 from agiwo.scheduler.models import AgentState, AgentStateStatus
 from server.domain.agent_configs import (
@@ -86,8 +85,8 @@ def test_scheduler_state_response_normalizes_serialized_user_input() -> None:
         id="agent-1",
         session_id="sess-1",
         status=AgentStateStatus.QUEUED,
-        task=serialize_user_input([ContentPart(type=ContentType.TEXT, text="queued")]),
-        pending_input=serialize_user_input(
+        task=UserMessage.serialize([ContentPart(type=ContentType.TEXT, text="queued")]),
+        pending_input=UserMessage.serialize(
             [ContentPart(type=ContentType.TEXT, text="wake me")]
         ),
     )

@@ -6,8 +6,7 @@ This module owns persistence-facing serialization for scheduler domain types.
 from datetime import datetime
 from typing import Any
 
-from agiwo.agent.input import UserInput
-from agiwo.agent.input_codec import deserialize_user_input, serialize_user_input
+from agiwo.agent import UserInput, UserMessage
 from agiwo.scheduler.models import (
     ChildAgentConfigOverrides,
     TimeUnit,
@@ -18,11 +17,17 @@ from agiwo.scheduler.models import (
 
 
 def serialize_user_input_for_store(value: UserInput) -> str:
-    return serialize_user_input(value)
+    stored = UserMessage.to_storage_value(value)
+    if stored is None:
+        raise TypeError("scheduler store requires non-null user input")
+    return stored
 
 
 def deserialize_user_input_for_store(value: str) -> UserInput:
-    return deserialize_user_input(value)
+    restored = UserMessage.from_storage_value(value)
+    if restored is None:
+        raise TypeError("scheduler store requires non-null user input")
+    return restored
 
 
 def serialize_child_agent_config_overrides(
@@ -55,10 +60,10 @@ def serialize_wake_condition_for_store(
 
     result: dict[str, Any] = {"type": wake_condition.type.value}
     if wake_condition.wait_for:
-        result["wait_for"] = wake_condition.wait_for
+        result["wait_for"] = list(wake_condition.wait_for)
     result["wait_mode"] = wake_condition.wait_mode.value
     if wake_condition.completed_ids:
-        result["completed_ids"] = wake_condition.completed_ids
+        result["completed_ids"] = list(wake_condition.completed_ids)
     if wake_condition.time_value is not None:
         result["time_value"] = wake_condition.time_value
     if wake_condition.time_unit is not None:

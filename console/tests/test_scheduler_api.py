@@ -84,7 +84,7 @@ async def _seed_states(client: AsyncClient) -> None:
     """Seed agent states into the in-memory storage."""
     scheduler = _runtime(client).scheduler
     assert scheduler is not None
-    storage = scheduler.store
+    storage = scheduler._store
 
     states = [
         AgentState(
@@ -290,7 +290,7 @@ class TestPersistentAgentEndpoints:
             agent_config_id=config.id,
             is_persistent=True,
         )
-        await scheduler.store.save_state(state)
+        await scheduler._store.save_state(state)
 
         response = await client.post(
             f"/api/scheduler/states/{state.id}/resume",

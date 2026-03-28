@@ -55,7 +55,7 @@ Create a file `hello.py`:
 ```python
 import asyncio
 
-from agiwo import Agent, AgentConfig
+from agiwo.agent import Agent, AgentConfig
 from agiwo.llm import OpenAIModel
 
 
@@ -98,7 +98,7 @@ async for event in agent.run_stream("Explain recursion in one sentence."):
 ## Adding Tools
 
 ```python
-from agiwo import BaseTool, ToolResult
+from agiwo.tool import BaseTool, ToolResult
 from agiwo.tool import ToolContext
 
 

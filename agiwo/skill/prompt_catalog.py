@@ -1,14 +1,7 @@
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from agiwo.skill.registry import SkillMetadata
-
-
-@dataclass(frozen=True)
-class SkillPromptSnapshot:
-    rendered_section: str
-    change_token: str
 
 
 class SkillPromptProvider(Protocol):
@@ -16,7 +9,7 @@ class SkillPromptProvider(Protocol):
 
     async def refresh_if_changed(self) -> None: ...
 
-    def get_prompt_snapshot(self) -> SkillPromptSnapshot: ...
+    def render_skills_section(self) -> str: ...
 
 
 class SkillPromptCatalog:
@@ -80,5 +73,4 @@ class SkillPromptCatalog:
 __all__ = [
     "SkillPromptCatalog",
     "SkillPromptProvider",
-    "SkillPromptSnapshot",
 ]

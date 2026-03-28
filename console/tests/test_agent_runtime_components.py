@@ -1,14 +1,13 @@
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
-from agiwo.agent.runtime import RunCompletedEvent, RunOutput, TerminationReason
-from agiwo.scheduler.models import AgentStateStatus
-
-from server.channels.agent_executor import AgentExecutor, DispatchResult
+from agiwo.scheduler.commands import RouteResult
+from agiwo.agent import RunCompletedEvent, RunOutput, TerminationReason
+from server.channels.agent_executor import AgentExecutor
 from server.channels.base import BaseChannelService
 from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.channels.session import SessionContextService
@@ -137,7 +136,7 @@ class _DeferredExecutor:
 
     async def execute(self, agent, session, user_input):
         del agent, session, user_input
-        return DispatchResult(action="steered")
+        return RouteResult(action="steered", state_id="runtime-1")
 
     async def get_state(self, state_id: str | None):
         del state_id
@@ -261,7 +260,7 @@ async def test_runtime_agent_pool_assigns_runtime_identity_and_persists_session(
         model_name="gpt-test",
     )
     registry = SimpleNamespace(get_agent=AsyncMock(return_value=base_config))
-    scheduler = SimpleNamespace(get_state=AsyncMock(return_value=None))
+    scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=True))
     built_agent = FakeAgent("generated-agent")
 
     async def fake_build_agent(*args, **kwargs):
@@ -311,14 +310,11 @@ async def test_runtime_agent_pool_defers_refresh_while_state_running(
         system_prompt="updated prompt",
     )
     registry = SimpleNamespace(get_agent=AsyncMock(return_value=base_config))
-    scheduler = SimpleNamespace(
-        get_state=AsyncMock(
-            return_value=SimpleNamespace(status=AgentStateStatus.RUNNING)
-        )
-    )
+    scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=False))
+    replacement_agent = FakeAgent("runtime-1")
 
     async def fake_build_agent(*args, **kwargs):
-        raise AssertionError("build_agent should not be called while state is running")
+        return replacement_agent
 
     monkeypatch.setattr(
         "server.channels.runtime_agent_pool.build_agent",
@@ -349,6 +345,8 @@ async def test_runtime_agent_pool_defers_refresh_while_state_running(
 
     assert agent is existing_agent
     assert existing_agent.closed is False
+    assert replacement_agent.closed is True
+    scheduler.rebind_agent.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -356,16 +354,9 @@ async def test_agent_executor_steers_running_state_and_returns_steered_dispatch(
     None
 ):
     store = FakeChannelChatSessionStore()
-    fake_state = SimpleNamespace(
-        status=AgentStateStatus.RUNNING,
-        is_root=True,
-        is_persistent=True,
-        is_active=lambda: True,
-    )
+    route_result = SimpleNamespace(action="steered", state_id="runtime-1", stream=None)
     scheduler = SimpleNamespace(
-        get_state=AsyncMock(return_value=fake_state),
-        steer=AsyncMock(return_value=True),
-        stream=AsyncMock(),
+        route_root_input=AsyncMock(return_value=route_result),
         wait_for=AsyncMock(),
     )
     executor = AgentExecutor(
@@ -388,8 +379,14 @@ async def test_agent_executor_steers_running_state_and_returns_steered_dispatch(
 
     assert dispatch.action == "steered"
     assert dispatch.stream is None
-    scheduler.steer.assert_awaited_once_with("runtime-1", "hello", urgent=False)
-    scheduler.stream.assert_not_called()
+    scheduler.route_root_input.assert_awaited_once_with(
+        "hello",
+        agent=ANY,
+        state_id="runtime-1",
+        session_id="sess-1",
+        persistent=True,
+        timeout=60,
+    )
     assert store.sessions["sess-1"] is session
 
 
@@ -509,7 +506,11 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
 
     executor = SimpleNamespace(
         execute=AsyncMock(
-            return_value=DispatchResult(action="submitted", stream=_stream())
+            return_value=RouteResult(
+                action="submitted",
+                state_id="runtime-stale",
+                stream=_stream(),
+            )
         ),
         get_state=AsyncMock(
             return_value=SimpleNamespace(is_active=lambda: False, result_summary=None)

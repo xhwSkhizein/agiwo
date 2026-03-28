@@ -1,9 +1,22 @@
 from datetime import datetime
 
+from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
+from agiwo.agent import StepCompletedEvent
+from agiwo.agent.models.step import StepRecord as InternalStepRecord
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.serialization import (
+    deserialize_run_from_storage,
+    deserialize_step_from_storage,
+    serialize_run_for_storage,
+    serialize_step_for_storage,
+)
+from agiwo.agent.storage.session import InMemorySessionStorage
+from agiwo.agent.models.stream import (
+    StepCompletedEvent as InternalStepCompletedEvent,
+)
 from agiwo.agent import (
-    ChannelContext,
-    ContentPart,
-    ContentType,
     MessageRole,
     Run,
     RunMetrics,
@@ -12,19 +25,59 @@ from agiwo.agent import (
     StepRecord,
     StepMetrics,
     TerminationReason,
-    UserMessage,
 )
-from agiwo.agent.engine.run_payloads import (
-    apply_run_metrics_payload,
-    build_run_completed_event_data,
-)
-from agiwo.agent.storage.serialization import (
-    deserialize_run_from_storage,
-    deserialize_step_from_storage,
-    serialize_run_for_storage,
-    serialize_step_for_storage,
-)
-from tests.utils.agent_context import build_agent_context
+
+
+_RUN_COMPLETED_METRIC_DEFAULTS: dict[str, int | float] = {
+    "duration_ms": 0.0,
+    "total_tokens": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0,
+    "token_cost": 0.0,
+    "steps_count": 0,
+    "tool_calls_count": 0,
+}
+
+
+def test_public_agent_exports_remain_stable_after_internal_type_split() -> None:
+    assert StepRecord is InternalStepRecord
+    assert StepCompletedEvent is InternalStepCompletedEvent
+
+
+def test_step_record_to_message_is_public_conversion_surface() -> None:
+    step = StepRecord.user(_make_context(), sequence=1, user_input="hello")
+
+    assert step.to_message() == {
+        "role": MessageRole.USER.value,
+        "content": "hello",
+    }
+
+
+def apply_run_metrics_payload(metrics: RunMetrics, payload: dict | None) -> None:
+    if not payload:
+        return
+
+    for field_name, default in _RUN_COMPLETED_METRIC_DEFAULTS.items():
+        setattr(metrics, field_name, payload.get(field_name, default))
+
+
+def build_run_completed_event_data(result: RunOutput) -> dict:
+    metrics_payload = dict(_RUN_COMPLETED_METRIC_DEFAULTS)
+    if result.metrics is not None:
+        for field_name in metrics_payload:
+            metrics_payload[field_name] = getattr(
+                result.metrics, field_name, metrics_payload[field_name]
+            )
+
+    data = {
+        "response": result.response or "",
+        "metrics": metrics_payload,
+    }
+    if result.termination_reason is not None:
+        data["termination_reason"] = result.termination_reason.value
+    return data
 
 
 def test_run_storage_round_trip_restores_structured_user_input_and_status() -> None:
@@ -49,8 +102,12 @@ def test_run_storage_round_trip_restores_structured_user_input_and_status() -> N
 
 
 def _make_context():
-    return build_agent_context(
-        session_id="session-1",
+    return RunContext(
+        session_runtime=SessionRuntime(
+            session_id="session-1",
+            run_step_storage=InMemoryRunStepStorage(),
+            session_storage=InMemorySessionStorage(),
+        ),
         run_id="run-1",
         agent_id="agent-1",
         agent_name="test-agent",
@@ -82,6 +139,37 @@ def test_step_storage_round_trip_derives_user_content_from_user_input() -> None:
     assert isinstance(restored.content, list)
     assert restored.content[0]["text"] == "hello"
     assert restored.content[1]["type"] == "image_url"
+
+
+def test_step_record_direct_user_construction_derives_content() -> None:
+    step = StepRecord(
+        id="step-direct-user",
+        session_id="session-1",
+        run_id="run-1",
+        sequence=1,
+        role=MessageRole.USER,
+        user_input=[
+            ContentPart(type=ContentType.TEXT, text="hello"),
+            ContentPart(type=ContentType.IMAGE, url="https://example.com/a.png"),
+        ],
+        created_at=datetime(2026, 3, 8, 12, 0, 0),
+    )
+
+    assert isinstance(step.content, list)
+    assert step.content[0]["text"] == "hello"
+    assert step.content[1]["type"] == "image_url"
+    assert step.to_message()["content"] == step.content
+
+
+def test_step_record_user_factory_preserves_name_override() -> None:
+    step = StepRecord.user(
+        _make_context(),
+        sequence=1,
+        content="summary prompt",
+        name="summary_request",
+    )
+
+    assert step.name == "summary_request"
 
 
 def test_step_storage_deserializer_ignores_backend_only_fields() -> None:

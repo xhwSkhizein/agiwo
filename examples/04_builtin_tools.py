@@ -6,7 +6,8 @@ Using Agiwo's built-in tools — web_search, bash, etc.
 
 import asyncio
 
-from agiwo import Agent, AgentConfig
+from agiwo.agent import Agent
+from agiwo.agent import AgentConfig
 from agiwo.llm import OpenAIModel
 
 

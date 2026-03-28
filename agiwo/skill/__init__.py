@@ -12,7 +12,6 @@ from agiwo.skill.manager import SkillManager
 from agiwo.skill.prompt_catalog import (
     SkillPromptCatalog,
     SkillPromptProvider,
-    SkillPromptSnapshot,
 )
 from agiwo.skill.skill_tool import SkillTool
 from agiwo.skill.registry import SkillMetadata, SkillRegistry
@@ -30,5 +29,4 @@ __all__ = [
     "SkillManager",
     "SkillPromptCatalog",
     "SkillPromptProvider",
-    "SkillPromptSnapshot",
 ]

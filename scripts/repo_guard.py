@@ -22,7 +22,7 @@ ALLOWED_OS_GETENV = {
     Path("agiwo/llm/factory.py"),
 }
 ALLOWED_MANUAL_USER_INPUT_DECODING = {
-    Path("agiwo/agent/input.py"),
+    Path("agiwo/agent/models/input.py"),
     Path("agiwo/agent/input_codec.py"),
     Path("tests"),
     Path("console/tests"),
@@ -32,7 +32,6 @@ ALLOWED_AGENT_INTERNAL_IMPORT_PREFIXES = (
     Path("tests"),
     Path("console/tests"),
 )
-ALLOWED_RUN_STATE_MUTATION_PREFIXES = (Path("agiwo/agent/engine/state.py"),)
 ALLOWED_DEAD_PERMISSION_API_PREFIXES = (
     Path("tests"),
     Path("console/tests"),
@@ -44,7 +43,7 @@ ALLOWED_BARE_ANY_ANNOTATION_PREFIXES = (
 
 # FIXME: review later & fix
 ALLOWED_BARE_ANY_ANNOTATION_PATHS = {
-    Path("agiwo/agent/options.py"),
+    Path("agiwo/agent/models/config.py"),
     Path("agiwo/agent/storage/serialization.py"),
     Path("agiwo/llm/config_policy.py"),
     Path("agiwo/llm/event_normalizer.py"),
@@ -116,10 +115,9 @@ FILE_GROWTH_BUDGETS = (
     (re.compile(r"^agiwo/config/settings\.py$"), 390),
     (re.compile(r"^agiwo/observability/collector\.py$"), 600),
     (re.compile(r"^agiwo/agent/agent\.py$"), 560),
-    (re.compile(r"^agiwo/agent/engine/engine\.py$"), 560),
-    (re.compile(r"^agiwo/agent/engine/recorder\.py$"), 260),
-    (re.compile(r"^agiwo/agent/lifecycle/orchestrator\.py$"), 220),
-    (re.compile(r"^agiwo/agent/lifecycle/definition\.py$"), 360),
+    (re.compile(r"^agiwo/agent/run_loop\.py$"), 560),
+    (re.compile(r"^agiwo/agent/nested/agent_tool\.py$"), 220),
+    (re.compile(r"^agiwo/agent/models/config\.py$"), 360),
     (re.compile(r"^agiwo/scheduler/coordinator\.py$"), 180),
     (re.compile(r"^agiwo/scheduler/runner\.py$"), 720),
     (re.compile(r"^agiwo/scheduler/engine\.py$"), 900),
@@ -161,15 +159,6 @@ SESSION_CONTEXT_ERROR_CODES = {
     "chat_context_not_found",
     "session_not_found",
     "session_not_in_current_chat_context",
-}
-RUN_STATE_MUTATION_FIELD_NAMES = {
-    "current_step",
-    "termination_reason",
-    "messages",
-    "pending_tool_calls",
-    "response_content",
-    "last_compact_metadata",
-    "compact_start_seq",
 }
 FEISHU_ENVELOPE_ENTRYPOINTS = {
     Path("console/server/channels/feishu/message_parser.py"): {
@@ -215,14 +204,29 @@ def _is_allowed_prefix(path: Path, prefixes: tuple[Path, ...] | set[Path]) -> bo
 def _imports_agent_internal(module_name: str | None) -> bool:
     if module_name is None:
         return False
-    return (
-        module_name == "agiwo.agent.inner"
-        or module_name.startswith("agiwo.agent.inner.")
-        or module_name == "agiwo.agent.engine"
-        or module_name.startswith("agiwo.agent.engine.")
-        or module_name == "agiwo.agent.lifecycle"
-        or module_name.startswith("agiwo.agent.lifecycle.")
+    return module_name in {
+        "agiwo.agent.run_loop",
+        "agiwo.agent.tool_executor",
+        "agiwo.agent.compaction",
+        "agiwo.agent.llm_caller",
+        "agiwo.agent.prompt",
+        "agiwo.agent.runtime",
+    } or module_name.startswith(
+        (
+            "agiwo.agent.run_loop.",
+            "agiwo.agent.tool_executor.",
+            "agiwo.agent.compaction.",
+            "agiwo.agent.llm_caller.",
+            "agiwo.agent.prompt.",
+            "agiwo.agent.runtime.",
+        )
     )
+
+
+def _imports_agent_v2(module_name: str | None) -> bool:
+    if module_name is None:
+        return False
+    return module_name == "agiwo.agent_v2" or module_name.startswith("agiwo.agent_v2.")
 
 
 def _imports_bash_tool_impl(module_name: str | None) -> bool:
@@ -247,14 +251,6 @@ def _imports_feishu_sdk_impl(module_name: str | None) -> bool:
     return module_name == "lark_oapi" or module_name.startswith("lark_oapi.")
 
 
-def _imports_agent_schema_impl(module_name: str | None) -> bool:
-    if module_name is None:
-        return False
-    return module_name == "agiwo.agent.schema" or module_name.startswith(
-        "agiwo.agent.schema."
-    )
-
-
 def _is_console_api_boundary_import(module_name: str | None) -> bool:
     return module_name in {"server.schemas", "server.response_serialization"}
 
@@ -275,14 +271,6 @@ def _allows_session_identity_assignment(path: Path) -> bool:
 
 def _is_session_identity_assignment_target(node: ast.AST) -> bool:
     return isinstance(node, ast.Attribute) and node.attr in SESSION_IDENTITY_FIELD_NAMES
-
-
-def _is_run_state_mutation_target(node: ast.AST) -> bool:
-    if not isinstance(node, ast.Attribute):
-        return False
-    if node.attr not in RUN_STATE_MUTATION_FIELD_NAMES:
-        return False
-    return isinstance(node.value, ast.Name) and node.value.id in {"state", "run_state"}
 
 
 def _is_os_getenv_call(node: ast.Call) -> bool:
@@ -733,7 +721,7 @@ def _detect_call_errors(path: Path, node: ast.Call) -> list[GuardError]:
                 node.lineno,
                 "AGW013",
                 (
-                    "Prefer StorageFactory/config injection; do not directly "
+                    "Prefer storage constructor/config injection; do not directly "
                     "instantiate storage backend classes outside the factory/tests."
                 ),
             )
@@ -802,6 +790,18 @@ def _detect_import_name_errors(
             "services/channels must use server.domain or core serializers instead."
         )
         errors.append(_make_error(path, line, code, message))
+    if _imports_agent_v2(module_name):
+        errors.append(
+            _make_error(
+                path,
+                line,
+                "AGW035",
+                (
+                    "Do not import agiwo.agent_v2; the canonical agent SDK surface "
+                    "lives under agiwo.agent."
+                ),
+            )
+        )
     if _imports_agent_internal(module_name) and not _is_allowed_prefix(
         path, ALLOWED_AGENT_INTERNAL_IMPORT_PREFIXES
     ):
@@ -811,9 +811,11 @@ def _detect_import_name_errors(
                 line,
                 "AGW003",
                 (
-                    "Do not import agiwo.agent internal packages "
-                    "(inner/engine/lifecycle) outside agiwo.agent/tests; "
-                    "depend on public agent APIs instead."
+                    "Do not import agiwo.agent internal execution modules "
+                    "(run_loop/tool_executor/compaction/"
+                    "llm_caller/prompt/runtime) outside "
+                    "agiwo.agent/tests; depend on agiwo.agent public surfaces "
+                    "or stable boundary modules instead."
                 ),
             )
         )
@@ -860,18 +862,6 @@ def _detect_import_name_errors(
                     "Feishu SDK imports must stay inside connection.py or "
                     "sdk_adapter.py; downstream code should depend on "
                     "FeishuConnection/FeishuInboundEnvelope instead of lark_oapi."
-                ),
-            )
-        )
-    if _imports_agent_schema_impl(module_name):
-        errors.append(
-            _make_error(
-                path,
-                line,
-                "AGW039",
-                (
-                    "Do not import agiwo.agent.schema; use agiwo.agent for the "
-                    "public surface or import canonical agent modules directly."
                 ),
             )
         )
@@ -958,23 +948,6 @@ def _detect_assign_errors(
                             "Do not mutate session/chat identity fields outside "
                             "session_binding.py; route updates through explicit "
                             "SessionBinding/SessionIdentity transitions."
-                        ),
-                    )
-                )
-                break
-
-    if not _is_allowed_prefix(path, ALLOWED_RUN_STATE_MUTATION_PREFIXES):
-        for target in targets:
-            if _is_run_state_mutation_target(target):
-                errors.append(
-                    _make_error(
-                        path,
-                        node.lineno,
-                        "AGW040",
-                        (
-                            "RunState structural fields may only be mutated inside "
-                            "agiwo/agent/engine/state.py; use RunState methods instead of "
-                            "assigning state.messages/state.termination_reason/etc."
                         ),
                     )
                 )
@@ -1084,6 +1057,25 @@ def _find_first_match_line(content: str, pattern: str) -> int | None:
     if match is None:
         return None
     return content.count("\n", 0, match.start()) + 1
+
+
+def _detect_agent_v2_text_errors(path: Path, content: str) -> list[GuardError]:
+    if path == Path("scripts/repo_guard.py"):
+        return []
+    line = _find_first_match_line(content, r"\bagiwo\.agent_v2\b")
+    if line is None:
+        return []
+    return [
+        _make_error(
+            path,
+            line,
+            "AGW036",
+            (
+                "Do not reference agiwo.agent_v2 in docs or code; the canonical "
+                "agent package is agiwo.agent."
+            ),
+        )
+    ]
 
 
 def _detect_agent_config_text_errors(path: Path, content: str) -> list[GuardError]:
@@ -1363,8 +1355,8 @@ def _detect_agent_runtime_text_errors(path: Path, content: str) -> list[GuardErr
                 line,
                 "AGW041",
                 (
-                    "Do not reintroduce RunRecorder.attach_state(); construct the "
-                    "recorder with RunState in a single execution phase."
+                    "Do not reintroduce recorder attach-state flows; keep run state, "
+                    "recorder setup, and execution ownership in one agent run phase."
                 ),
             )
         )
@@ -1377,8 +1369,9 @@ def _detect_agent_runtime_text_errors(path: Path, content: str) -> list[GuardErr
                 line,
                 "AGW042",
                 (
-                    "Do not reintroduce execution_bootstrap; keep state "
-                    "preparation inside agiwo.agent.engine.engine."
+                    "Do not reintroduce execution_bootstrap; keep run preparation "
+                    "inside agiwo.agent.agent/execute_run instead of reviving a "
+                    "separate bootstrap layer."
                 ),
             )
         )
@@ -1423,7 +1416,8 @@ def _detect_console_tool_catalog_text_errors(
 
 
 def _detect_text_guard_errors(path: Path, content: str) -> list[GuardError]:
-    errors = _detect_agent_config_text_errors(path, content)
+    errors = _detect_agent_v2_text_errors(path, content)
+    errors.extend(_detect_agent_config_text_errors(path, content))
     errors.extend(_detect_feishu_parser_text_errors(path, content))
     errors.extend(_detect_session_domain_text_errors(path, content))
     errors.extend(_detect_feishu_sdk_text_errors(path, content))

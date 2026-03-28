@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from agiwo.agent.input import ContentPart, ContentType, UserMessage
+from agiwo.agent import ContentPart, ContentType, UserMessage
 from agiwo.scheduler.models import AgentState, AgentStateStatus
 from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
 from server.channels.feishu.commands import build_feishu_command_registry
@@ -231,7 +231,7 @@ async def test_agents_command_handles_user_message_task() -> None:
     )
     await storage.save_state(state)
 
-    scheduler = SimpleNamespace(store=storage)
+    scheduler = SimpleNamespace(list_states=storage.list_states)
 
     ctx = _command_context()
     result = await _execute_agents(scheduler, ctx, "")
@@ -267,7 +267,7 @@ async def test_detail_command_handles_user_message_task() -> None:
     await storage.save_state(state)
 
     scheduler = SimpleNamespace(
-        store=storage,
+        list_states=storage.list_states,
         get_state=storage.get_state,
     )
 

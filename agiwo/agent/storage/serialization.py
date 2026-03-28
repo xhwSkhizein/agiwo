@@ -7,17 +7,9 @@ from typing import Any
 
 from pydantic import TypeAdapter
 
-from agiwo.agent.input_codec import (
-    deserialize_user_input,
-    normalize_to_message,
-    serialize_user_input,
-    to_message_content,
-)
-from agiwo.agent.runtime import (
-    MessageRole,
-    Run,
-    StepRecord,
-)
+from agiwo.agent.models.input import UserMessage
+from agiwo.agent.models.run import Run
+from agiwo.agent.models.step import StepRecord
 
 _RUN_FIELD_NAMES = {field.name for field in fields(Run)}
 _STEP_FIELD_NAMES = {field.name for field in fields(StepRecord)}
@@ -71,7 +63,7 @@ def _filter_storage_fields(
 def serialize_run_for_storage(run: Run) -> dict[str, Any]:
     data = _as_storage_dict(_normalize_storage_value(asdict(run)))
     data["status"] = run.status.value
-    data["user_input"] = serialize_user_input(run.user_input)
+    data["user_input"] = UserMessage.to_storage_value(run.user_input)
     if run.metrics is not None:
         data["metrics"] = _normalize_storage_value(run.metrics)
     return _as_storage_dict(_drop_none(data))
@@ -81,7 +73,7 @@ def serialize_step_for_storage(step: StepRecord) -> dict[str, Any]:
     data = _as_storage_dict(_normalize_storage_value(asdict(step)))
     data["role"] = step.role.value
     if step.user_input is not None:
-        data["user_input"] = serialize_user_input(step.user_input)
+        data["user_input"] = UserMessage.to_storage_value(step.user_input)
     if step.metrics is not None:
         data["metrics"] = _normalize_storage_value(step.metrics)
     if step.is_user_step() and step.user_input is not None:
@@ -91,26 +83,17 @@ def serialize_step_for_storage(step: StepRecord) -> dict[str, Any]:
 
 def deserialize_run_from_storage(data: dict[str, Any]) -> Run:
     run_data = _filter_storage_fields(data, _RUN_FIELD_NAMES)
-    if isinstance(run_data.get("user_input"), str):
-        run_data["user_input"] = deserialize_user_input(run_data["user_input"])
+    run_data["user_input"] = UserMessage.from_storage_value(run_data.get("user_input"))
     return _RUN_ADAPTER.validate_python(run_data)
 
 
 def deserialize_step_from_storage(data: dict[str, Any]) -> StepRecord:
     step_data = _filter_storage_fields(data, _STEP_FIELD_NAMES)
-    if isinstance(step_data.get("user_input"), str):
-        step_data["user_input"] = deserialize_user_input(step_data["user_input"])
+    step_data["user_input"] = UserMessage.from_storage_value(
+        step_data.get("user_input")
+    )
 
-    step = _STEP_ADAPTER.validate_python(step_data)
-
-    if (
-        step.role == MessageRole.USER
-        and step.user_input is not None
-        and step.content is None
-    ):
-        step.content = to_message_content(normalize_to_message(step.user_input).content)
-
-    return step
+    return _STEP_ADAPTER.validate_python(step_data)
 
 
 __all__ = [

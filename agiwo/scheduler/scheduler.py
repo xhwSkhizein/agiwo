@@ -8,26 +8,14 @@ delegated to SchedulerEngine.
 import asyncio
 from typing import Any, AsyncIterator
 
-from agiwo.agent.agent import Agent
-from agiwo.agent.input import UserInput
-from agiwo.agent.runtime import AgentStreamItem, RunOutput
-from agiwo.agent.scheduler_port import adapt_scheduler_agent
-from agiwo.scheduler.coordinator import SchedulerCoordinator
+from agiwo.agent import Agent
+from agiwo.agent import UserInput
+from agiwo.agent import AgentStreamItem, RunOutput
+from agiwo.scheduler.commands import RouteResult
 from agiwo.scheduler.engine import SchedulerEngine
 from agiwo.scheduler.guard import TaskGuard
-from agiwo.scheduler.models import AgentState, SchedulerConfig
-from agiwo.scheduler.runtime_tools import (
-    CancelAgentTool,
-    ListAgentsTool,
-    QuerySpawnedAgentTool,
-    SleepAndWaitTool,
-    SpawnAgentTool,
-)
-from agiwo.scheduler.runner import SchedulerRunner
-from agiwo.scheduler.state_ops import SchedulerStateOps
-from agiwo.scheduler.store import AgentStateStorage, create_agent_state_storage
-from agiwo.scheduler.tick_ops import SchedulerTickOps
-from agiwo.scheduler.tree_ops import SchedulerTreeOps
+from agiwo.scheduler.models import AgentState, PendingEvent, SchedulerConfig
+from agiwo.scheduler.store import create_agent_state_storage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -43,51 +31,14 @@ class Scheduler:
         self._guard = TaskGuard(self._config.task_limits, self._store)
         self._check_interval = self._config.check_interval
         self._semaphore = asyncio.Semaphore(self._config.max_concurrent)
-        self._coordinator = SchedulerCoordinator()
-        self._state_ops = SchedulerStateOps(
-            store=self._store,
-            coordinator=self._coordinator,
-        )
-        self._tree_ops = SchedulerTreeOps(
-            store=self._store,
-            coordinator=self._coordinator,
-            state_ops=self._state_ops,
-        )
-        self._runner = SchedulerRunner(
-            store=self._store,
-            coordinator=self._coordinator,
-            semaphore=self._semaphore,
-            state_ops=self._state_ops,
-        )
-        self._tick_ops = SchedulerTickOps(
-            config=self._config,
-            store=self._store,
-            guard=self._guard,
-            coordinator=self._coordinator,
-            runner=self._runner,
-            state_ops=self._state_ops,
-        )
         self._engine = SchedulerEngine(
             store=self._store,
-            coordinator=self._coordinator,
-            runner=self._runner,
-            state_ops=self._state_ops,
-            tree_ops=self._tree_ops,
-            tick_ops=self._tick_ops,
+            config=self._config,
+            guard=self._guard,
+            semaphore=self._semaphore,
         )
         self._running = False
         self._loop_task: asyncio.Task | None = None
-        self._scheduling_tools: list = self._create_scheduling_tools()
-        self._engine.set_scheduling_tools(self._scheduling_tools)
-
-    def _create_scheduling_tools(self) -> list:
-        return [
-            SpawnAgentTool(self._engine),
-            SleepAndWaitTool(self._engine),
-            QuerySpawnedAgentTool(self._engine),
-            CancelAgentTool(self._engine),
-            ListAgentsTool(self._engine),
-        ]
 
     async def start(self) -> None:
         if self._running:
@@ -99,18 +50,6 @@ class Scheduler:
     async def stop(self) -> None:
         self._running = False
 
-        if self._coordinator.active_tasks:
-            logger.info(
-                "scheduler_waiting_for_active_tasks",
-                count=len(self._coordinator.active_tasks),
-            )
-            _done, pending = await asyncio.wait(
-                self._coordinator.active_tasks,
-                timeout=self._config.graceful_shutdown_wait_seconds,
-            )
-            for task in pending:
-                task.cancel()
-
         if self._loop_task is not None:
             self._loop_task.cancel()
             try:
@@ -118,6 +57,21 @@ class Scheduler:
             except asyncio.CancelledError:
                 pass
             self._loop_task = None
+
+        active_tasks = set(self._engine._rt.active_tasks)
+        if active_tasks:
+            logger.info(
+                "scheduler_waiting_for_active_tasks",
+                count=len(active_tasks),
+            )
+            _done, pending = await asyncio.wait(
+                active_tasks,
+                timeout=self._config.graceful_shutdown_wait_seconds,
+            )
+            if pending:
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
 
         await self._store.close()
         logger.info("scheduler_stopped")
@@ -129,18 +83,8 @@ class Scheduler:
     async def __aexit__(self, *args: Any) -> None:
         await self.stop()
 
-    @property
-    def store(self) -> AgentStateStorage:
-        """Expose the underlying state storage for read-only external access."""
-        return self._store
-
     def get_registered_agent(self, state_id: str) -> Agent | None:
         return self._engine.get_registered_agent(state_id)
-
-    def _adapt_agent(self, agent: Agent | None):
-        if agent is None:
-            return None
-        return adapt_scheduler_agent(agent)
 
     async def run(
         self,
@@ -153,7 +97,7 @@ class Scheduler:
         persistent: bool = False,
     ) -> RunOutput:
         return await self._engine.run(
-            self._adapt_agent(agent),
+            agent,
             user_input,
             session_id=session_id,
             timeout=timeout,
@@ -172,7 +116,7 @@ class Scheduler:
         agent_config_id: str | None = None,
     ) -> str:
         return await self._engine.submit(
-            self._adapt_agent(agent),
+            agent,
             user_input,
             session_id=session_id,
             abort_signal=abort_signal,
@@ -190,7 +134,32 @@ class Scheduler:
         await self._engine.enqueue_input(
             state_id,
             user_input,
-            agent=self._adapt_agent(agent),
+            agent=agent,
+        )
+
+    async def route_root_input(
+        self,
+        user_input: UserInput,
+        *,
+        agent: Agent,
+        state_id: str | None = None,
+        session_id: str | None = None,
+        abort_signal: AbortSignal | None = None,
+        persistent: bool = True,
+        agent_config_id: str | None = None,
+        timeout: float | None = None,
+        include_child_events: bool = True,
+    ) -> RouteResult:
+        return await self._engine.route_root_input(
+            user_input,
+            agent=agent,
+            state_id=state_id,
+            session_id=session_id,
+            abort_signal=abort_signal,
+            persistent=persistent,
+            agent_config_id=agent_config_id,
+            timeout=timeout,
+            include_child_events=include_child_events,
         )
 
     async def stream(
@@ -208,7 +177,7 @@ class Scheduler:
     ) -> AsyncIterator[AgentStreamItem]:
         async for item in self._engine.stream(
             user_input,
-            agent=self._adapt_agent(agent),
+            agent=agent,
             state_id=state_id,
             session_id=session_id,
             abort_signal=abort_signal,
@@ -229,6 +198,39 @@ class Scheduler:
     async def get_state(self, state_id: str) -> AgentState | None:
         return await self._engine.get_state(state_id)
 
+    async def list_states(
+        self,
+        *,
+        statuses=None,
+        parent_id: str | None = None,
+        session_id: str | None = None,
+        signal_propagated: bool | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AgentState]:
+        return await self._engine.list_states(
+            statuses=statuses,
+            parent_id=parent_id,
+            session_id=session_id,
+            signal_propagated=signal_propagated,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def list_events(
+        self,
+        *,
+        target_agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> list[PendingEvent]:
+        return await self._engine.list_events(
+            target_agent_id=target_agent_id,
+            session_id=session_id,
+        )
+
+    async def get_stats(self) -> dict[str, int]:
+        return await self._engine.get_stats()
+
     async def cancel(self, state_id: str, reason: str = "Cancelled by user") -> bool:
         return await self._engine.cancel(state_id, reason=reason)
 
@@ -244,16 +246,23 @@ class Scheduler:
     async def shutdown(self, state_id: str) -> bool:
         return await self._engine.shutdown(state_id)
 
+    async def rebind_agent(self, state_id: str, agent: Agent) -> bool:
+        return await self._engine.rebind_agent(state_id, agent)
+
     async def _loop(self) -> None:
         logger.info("scheduler_loop_started")
+        failure_backoff = min(self._check_interval, 0.1)
         while self._running:
             try:
                 await self._engine.tick()
+                failure_backoff = min(self._check_interval, 0.1)
+                await self._engine.wait_for_nudge(self._check_interval)
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("scheduler_tick_error")
-            await asyncio.sleep(self._check_interval)
+                await asyncio.sleep(failure_backoff)
+                failure_backoff = min(max(failure_backoff * 2, 0.1), 5.0)
 
 
 __all__ = ["Scheduler"]

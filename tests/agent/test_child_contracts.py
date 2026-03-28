@@ -1,18 +1,34 @@
-from tests.utils.agent_context import build_agent_context
+from uuid import uuid4
+
+from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.session import InMemorySessionStorage
 
 
 def test_child_context_reuses_session_runtime_and_increments_depth() -> None:
-    parent = build_agent_context(
-        session_id="child-session",
+    parent = RunContext(
+        session_runtime=SessionRuntime(
+            session_id="child-session",
+            run_step_storage=InMemoryRunStepStorage(),
+            session_storage=InMemorySessionStorage(),
+        ),
         run_id="root-run",
         agent_id="root-agent",
         agent_name="root-agent",
         metadata={"scope": "root"},
     )
 
-    child = parent.new_child(
+    child = parent.__class__(
+        session_runtime=parent.session_runtime,
+        run_id=str(uuid4()),
         agent_id="child-agent",
         agent_name="child-agent",
+        user_id=parent.user_id,
+        depth=parent.depth + 1,
+        parent_run_id=parent.run_id,
+        timeout_at=parent.timeout_at,
+        metadata=dict(parent.metadata),
     )
 
     assert child.session_runtime is parent.session_runtime

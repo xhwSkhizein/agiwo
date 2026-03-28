@@ -15,27 +15,42 @@ Agiwo separates storage into three independent concerns: run/step persistence, s
 Records every agent execution with full step details:
 
 ```python
-from agiwo.agent.storage import create_run_step_storage
+from agiwo.agent import Agent, AgentConfig, AgentOptions, RunStepStorageConfig
+from agiwo.agent.storage.factory import create_run_step_storage
 
 # SQLite backend (default)
-storage = create_run_step_storage("sqlite", db_path="runs.db")
+storage = create_run_step_storage(
+    RunStepStorageConfig(storage_type="sqlite", config={"db_path": "runs.db"})
+)
 
 # Memory backend (for testing)
-storage = create_run_step_storage("memory")
+storage = create_run_step_storage(RunStepStorageConfig(storage_type="memory"))
 
 # MongoDB backend
-storage = create_run_step_storage("mongo", connection_string="mongodb://...")
+storage = create_run_step_storage(
+    RunStepStorageConfig(
+        storage_type="mongodb",
+        config={"mongo_uri": "mongodb://...", "db_name": "agiwo"},
+    )
+)
 ```
 
-Pass it to the Agent:
+Pass storage configuration through `AgentConfig.options`:
 
 ```python
-from agiwo.agent.options import AgentOptions
-
 agent = Agent(
-    config,
+    AgentConfig(
+        name="assistant",
+        description="...",
+        system_prompt="...",
+        options=AgentOptions(
+            run_step_storage=RunStepStorageConfig(
+                storage_type="sqlite",
+                config={"db_path": "runs.db"},
+            )
+        ),
+    ),
     model=model,
-    options=AgentOptions(run_step_storage=my_storage),
 )
 ```
 
@@ -50,9 +65,12 @@ agent = Agent(
 Manages session-level metadata:
 
 ```python
-from agiwo.agent.storage import create_session_storage
+from agiwo.agent import RunStepStorageConfig
+from agiwo.agent.storage.factory import create_session_storage
 
-storage = create_session_storage("sqlite", db_path="sessions.db")
+storage = create_session_storage(
+    RunStepStorageConfig(storage_type="sqlite", config={"db_path": "sessions.db"})
+)
 ```
 
 Sessions track:
@@ -65,25 +83,42 @@ Sessions track:
 Collects distributed traces for debugging and monitoring:
 
 ```python
+from agiwo.agent import Agent, AgentConfig, AgentOptions, TraceStorageConfig
 from agiwo.observability import create_trace_storage
 
 # SQLite
-trace_storage = create_trace_storage("sqlite", db_path="traces.db")
+trace_storage = create_trace_storage(
+    TraceStorageConfig(storage_type="sqlite", config={"db_path": "traces.db"})
+)
 
 # Memory
-trace_storage = create_trace_storage("memory")
+trace_storage = create_trace_storage(TraceStorageConfig(storage_type="memory"))
 
 # MongoDB
-trace_storage = create_trace_storage("mongo", connection_string="mongodb://...")
+trace_storage = create_trace_storage(
+    TraceStorageConfig(
+        storage_type="mongodb",
+        config={"mongo_uri": "mongodb://...", "db_name": "agiwo"},
+    )
+)
 ```
 
-Pass it to the Agent:
+Pass trace configuration through `AgentConfig.options`:
 
 ```python
 agent = Agent(
-    config,
+    AgentConfig(
+        name="assistant",
+        description="...",
+        system_prompt="...",
+        options=AgentOptions(
+            trace_storage=TraceStorageConfig(
+                storage_type="sqlite",
+                config={"db_path": "traces.db"},
+            )
+        ),
+    ),
     model=model,
-    options=AgentOptions(trace_storage=my_trace_storage),
 )
 ```
 
@@ -125,20 +160,24 @@ The `subscribe()` method enables real-time trace streaming to the Console UI.
 
 ## Configuration
 
-All storage backends support these common options:
+Storage constructors are config-driven:
 
 ```python
-# SQLite
-storage = create_run_step_storage(
-    "sqlite",
-    db_path="./data/runs.db",
+run_step_storage = create_run_step_storage(
+    RunStepStorageConfig(
+        storage_type="sqlite",
+        config={"db_path": "./data/runs.db"},
+    )
 )
 
-# MongoDB
-storage = create_run_step_storage(
-    "mongo",
-    connection_string="mongodb://localhost:27017",
-    database="agiwo",
+trace_storage = create_trace_storage(
+    TraceStorageConfig(
+        storage_type="mongodb",
+        config={
+            "mongo_uri": "mongodb://localhost:27017",
+            "db_name": "agiwo",
+        },
+    )
 )
 ```
 

@@ -9,7 +9,7 @@ from datetime import datetime
 
 import aiosqlite
 
-from agiwo.agent.compact_types import CompactMetadata
+from agiwo.agent.models.compact import CompactMetadata
 from agiwo.utils.storage_support.sqlite_runtime import (
     SQLiteConnectionRuntime,
     execute_statements,
