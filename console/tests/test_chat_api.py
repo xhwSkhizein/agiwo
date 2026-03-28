@@ -1,14 +1,14 @@
-"""Integration tests for the Chat API streaming endpoint."""
+"""Integration tests for the Chat API streaming endpoint (scheduler-mediated)."""
 
-from collections.abc import AsyncIterator
-from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
 
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.agent import StepDelta, StepDeltaEvent
+from agiwo.agent import RunCompletedEvent, StepDelta, StepDeltaEvent
+from agiwo.scheduler.models import AgentStateStorageConfig, SchedulerConfig
+from agiwo.scheduler.scheduler import Scheduler
 
 from server.app import create_app
 from server.config import ConsoleConfig
@@ -18,7 +18,6 @@ from server.dependencies import (
     clear_console_runtime,
     get_console_runtime_from_app,
 )
-from server.routers.chat import _stream_chat_events
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
@@ -40,6 +39,13 @@ async def client():
     trace_storage = create_trace_storage(config)
     registry = AgentRegistry(config)
     await registry.initialize()
+
+    scheduler_config = SchedulerConfig(
+        state_storage=AgentStateStorageConfig(storage_type="memory"),
+    )
+    scheduler = Scheduler(scheduler_config)
+    await scheduler.start()
+
     bind_console_runtime(
         app,
         ConsoleRuntime(
@@ -47,6 +53,7 @@ async def client():
             run_step_storage=run_step_storage,
             trace_storage=trace_storage,
             agent_registry=registry,
+            scheduler=scheduler,
         ),
     )
 
@@ -55,55 +62,17 @@ async def client():
         yield c
 
     clear_console_runtime(app)
+    await scheduler.stop()
     await registry.close()
     await run_step_storage.close()
 
 
-class FakeStreamingAgent:
-    def __init__(self, events: list[StepDeltaEvent]) -> None:
-        self._events = events
-        self.closed = False
-
-    class _Handle:
-        def __init__(self, events: list[StepDeltaEvent]) -> None:
-            self._events = events
-            self.done = False
-
-        async def wait(self):
-            self.done = True
-            return None
-
-        async def steer(self, message: str) -> bool:
-            del message
-            return False
-
-        def cancel(self, reason: str | None = None) -> None:
-            del reason
-            self.done = True
-
-        async def _iterate(self):
-            for event in self._events:
-                yield event
-            self.done = True
-
-        def stream(self):
-            return self._iterate()
-
-    def start(self, message: str, *, session_id: str, abort_signal=None):
-        assert message == "hello"
-        assert session_id == "session-1"
-        del abort_signal
-        return self._Handle(self._events)
-
-    async def close(self) -> None:
-        self.closed = True
-
-
 @pytest.mark.asyncio
-async def test_chat_streams_agent_events_and_closes_agent(
+async def test_chat_streams_scheduler_events(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The /api/chat endpoint now routes through the scheduler."""
     registry = _runtime(client).agent_registry
     await registry.create_agent(
         AgentConfigRecord(
@@ -114,24 +83,53 @@ async def test_chat_streams_agent_events_and_closes_agent(
         )
     )
 
-    fake_agent = FakeStreamingAgent(
-        [
-            StepDeltaEvent(
-                session_id="session-1",
-                run_id="run-1",
-                agent_id="agent-1",
-                parent_run_id=None,
-                depth=0,
-                step_id="step-1",
-                delta=StepDelta(content="hello"),
-                timestamp=datetime(2026, 3, 10),
-            )
-        ]
-    )
+    class FakeAgent:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    fake_agent = FakeAgent()
     monkeypatch.setattr(
         "server.services.chat_sse.build_agent",
         AsyncMock(return_value=fake_agent),
     )
+
+    scheduler = _runtime(client).scheduler
+    assert scheduler is not None
+
+    async def fake_stream(
+        message: str,
+        *,
+        agent,
+        session_id: str,
+        abort_signal,
+        timeout: int,
+    ):
+        assert agent is fake_agent
+        assert message == "hello"
+        assert timeout == 600
+        del abort_signal
+        yield StepDeltaEvent(
+            session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
+            parent_run_id=None,
+            depth=0,
+            step_id="step-1",
+            delta=StepDelta(content="hello"),
+        )
+        yield RunCompletedEvent(
+            session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
+            parent_run_id=None,
+            depth=0,
+            response="done",
+        )
+
+    monkeypatch.setattr(scheduler, "stream", fake_stream)
 
     async with client.stream(
         "POST",
@@ -142,66 +140,16 @@ async def test_chat_streams_agent_events_and_closes_agent(
         lines = [line async for line in response.aiter_lines()]
 
     assert any(line == "event: step_delta" for line in lines)
-    assert any('"run_id": "run-1"' in line for line in lines)
+    assert any(line == "event: run_completed" for line in lines)
+    assert any('"response": "done"' in line for line in lines)
     assert fake_agent.closed is True
 
 
-class _StubChatHandle:
-    def __init__(self, *, wait_error: BaseException | None = None) -> None:
-        self._wait_error = wait_error
-        self.cancel_reason: str | None = None
-
-    async def wait(self):
-        if self._wait_error is not None:
-            raise self._wait_error
-        raise AssertionError("wait() should not be called on the completed path")
-
-    def cancel(self, reason: str | None = None) -> None:
-        self.cancel_reason = reason
-
-    def stream(self) -> AsyncIterator[StepDeltaEvent]:
-        async def _stream() -> AsyncIterator[StepDeltaEvent]:
-            yield StepDeltaEvent(
-                session_id="session-1",
-                run_id="run-1",
-                agent_id="agent-1",
-                parent_run_id=None,
-                depth=0,
-                step_id="step-1",
-                delta=StepDelta(content="hello"),
-                timestamp=datetime(2026, 3, 10),
-            )
-
-        return _stream()
-
-
-class _StubChatAgent:
-    def __init__(self, handle: _StubChatHandle) -> None:
-        self._handle = handle
-
-    def start(self, message: str, *, session_id: str, abort_signal=None):
-        assert message == "hello"
-        assert session_id == "session-1"
-        del abort_signal
-        return self._handle
-
-
 @pytest.mark.asyncio
-async def test_stream_chat_events_close_propagates_non_cancelled_cleanup_errors() -> (
-    None
-):
-    handle = _StubChatHandle(wait_error=RuntimeError("boom"))
-    agent = _StubChatAgent(handle)
-
-    stream = _stream_chat_events(
-        _runtime=None,
-        agent=agent,  # type: ignore[arg-type]
-        message="hello",
-        session_id="session-1",
+async def test_chat_agent_not_found(client) -> None:
+    """Chat returns 404 when agent is not registered."""
+    resp = await client.post(
+        "/api/chat/nonexistent-agent",
+        json={"message": "hello"},
     )
-    await anext(stream)
-
-    with pytest.raises(RuntimeError, match="boom"):
-        await stream.aclose()
-
-    assert handle.cancel_reason == "SSE connection closed"
+    assert resp.status_code == 404
