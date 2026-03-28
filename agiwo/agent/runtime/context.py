@@ -118,10 +118,6 @@ class RunContext:
     def start_time(self) -> float:
         return self.ledger.start_time
 
-    @start_time.setter
-    def start_time(self, value: float) -> None:
-        self.ledger.start_time = value
-
     @property
     def termination_reason(self) -> TerminationReason | None:
         return self.ledger.termination_reason
@@ -130,81 +126,41 @@ class RunContext:
     def total_tokens(self) -> int:
         return self.ledger.total_tokens
 
-    @total_tokens.setter
-    def total_tokens(self, value: int) -> None:
-        self.ledger.total_tokens = value
-
     @property
     def input_tokens(self) -> int:
         return self.ledger.input_tokens
-
-    @input_tokens.setter
-    def input_tokens(self, value: int) -> None:
-        self.ledger.input_tokens = value
 
     @property
     def output_tokens(self) -> int:
         return self.ledger.output_tokens
 
-    @output_tokens.setter
-    def output_tokens(self, value: int) -> None:
-        self.ledger.output_tokens = value
-
     @property
     def cache_read_tokens(self) -> int:
         return self.ledger.cache_read_tokens
-
-    @cache_read_tokens.setter
-    def cache_read_tokens(self, value: int) -> None:
-        self.ledger.cache_read_tokens = value
 
     @property
     def cache_creation_tokens(self) -> int:
         return self.ledger.cache_creation_tokens
 
-    @cache_creation_tokens.setter
-    def cache_creation_tokens(self, value: int) -> None:
-        self.ledger.cache_creation_tokens = value
-
     @property
     def token_cost(self) -> float:
         return self.ledger.token_cost
-
-    @token_cost.setter
-    def token_cost(self, value: float) -> None:
-        self.ledger.token_cost = value
 
     @property
     def steps_count(self) -> int:
         return self.ledger.steps_count
 
-    @steps_count.setter
-    def steps_count(self, value: int) -> None:
-        self.ledger.steps_count = value
-
     @property
     def tool_calls_count(self) -> int:
         return self.ledger.tool_calls_count
-
-    @tool_calls_count.setter
-    def tool_calls_count(self, value: int) -> None:
-        self.ledger.tool_calls_count = value
 
     @property
     def assistant_steps_count(self) -> int:
         return self.ledger.assistant_steps_count
 
-    @assistant_steps_count.setter
-    def assistant_steps_count(self, value: int) -> None:
-        self.ledger.assistant_steps_count = value
-
     @property
     def response_content(self) -> str | None:
         return self.ledger.response_content
-
-    @response_content.setter
-    def response_content(self, value: str | None) -> None:
-        self.ledger.response_content = value
 
     @property
     def last_compact_metadata(self) -> CompactMetadata | None:

@@ -1,6 +1,5 @@
 """Step-scoped models for agent execution and LLM interaction."""
 
-import dataclasses
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -8,29 +7,16 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from agiwo.agent.models._serialization import fields_to_dict
 from agiwo.agent.models.input import (
     ChannelContext,
     MessageContent,
     UserInput,
     UserMessage,
 )
-from agiwo.utils.serialization import serialize_optional_datetime
 
 if TYPE_CHECKING:
     from agiwo.agent.runtime.context import RunContext
-
-
-def _fields_to_dict(obj: object) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for field_info in dataclasses.fields(obj):
-        value = getattr(obj, field_info.name)
-        if isinstance(value, datetime):
-            result[field_info.name] = serialize_optional_datetime(value)
-        elif isinstance(value, Enum):
-            result[field_info.name] = value.value
-        else:
-            result[field_info.name] = value
-    return result
 
 
 def _serialize_user_input_structured(
@@ -71,7 +57,7 @@ class StepDelta:
     usage: dict[str, int] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return _fields_to_dict(self)
+        return fields_to_dict(self)
 
 
 @dataclass
@@ -93,7 +79,7 @@ class StepMetrics:
     first_token_latency_ms: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return _fields_to_dict(self)
+        return fields_to_dict(self)
 
 
 @dataclass
@@ -157,7 +143,7 @@ class StepRecord:
         return None
 
     def to_dict(self) -> dict[str, Any]:
-        payload = _fields_to_dict(self)
+        payload = fields_to_dict(self)
         payload["user_input"] = _serialize_user_input_structured(self.user_input)
         payload["metrics"] = self.metrics.to_dict() if self.metrics else None
         return payload
