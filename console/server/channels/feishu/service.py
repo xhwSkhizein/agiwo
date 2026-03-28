@@ -63,6 +63,7 @@ class FeishuChannelService(BaseChannelService):
             session_service=components.session_service,
             agent_pool=components.agent_pool,
             executor=components.executor,
+            workspace_conversation=components.workspace_conversation,
             debounce_ms=config.feishu_debounce_ms,
             max_batch_window_ms=config.feishu_max_batch_window_ms,
         )

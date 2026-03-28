@@ -7,7 +7,7 @@ from server.channels.session.binding import (
     append_message_to_current_task,
     mark_session_task_started,
 )
-from server.channels.session.models import ChannelChatSessionStore, Session
+from server.channels.session.models import Session
 
 
 class RemoteWorkspaceConversationService:
@@ -26,14 +26,12 @@ class RemoteWorkspaceConversationService:
         )
 
     async def send_message_to_session(
-        self, *, agent, session: Session, user_message, store: ChannelChatSessionStore
+        self, *, agent, session: Session, user_message
     ):
         """Send a message to a known session (used by channel adapters that already resolved the session)."""
-        result = await self._send_to_session(
+        return await self._send_to_session(
             agent=agent, session=session, user_message=user_message
         )
-        await store.upsert_session(session)
-        return result
 
     async def _send_to_session(self, *, agent, session: Session, user_message):
         if session.current_task_id is None:
