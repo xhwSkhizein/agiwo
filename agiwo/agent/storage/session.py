@@ -101,7 +101,6 @@ class SQLiteSessionStorage(SessionStorage):
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
         self._conn = await self._runtime.ensure_connection(self._initialize_schema)
-        self._conn.row_factory = aiosqlite.Row
         return self._conn
 
     async def close(self) -> None:
@@ -110,6 +109,7 @@ class SQLiteSessionStorage(SessionStorage):
             self._conn = None
 
     async def _initialize_schema(self, connection: aiosqlite.Connection) -> None:
+        connection.row_factory = aiosqlite.Row
         await execute_statements(
             connection,
             [

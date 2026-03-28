@@ -229,7 +229,7 @@ class BaseTool(ABC):
             description=self.description,
             parameters=self.get_parameters(),
             is_concurrency_safe=self.is_concurrency_safe(),
-            timeout_seconds=self.timeout_seconds or 30,
+            timeout_seconds=self.timeout_seconds,
             cacheable=self.cacheable,
         )
 

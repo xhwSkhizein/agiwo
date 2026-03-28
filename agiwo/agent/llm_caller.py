@@ -66,38 +66,41 @@ async def stream_assistant_step(
     tool_calls_acc: dict[int, dict] = {}
 
     stream = model.arun_stream(messages, tools=tools_resolved)
-    while True:
-        try:
-            async with asyncio.timeout(_CHUNK_TIMEOUT_SECONDS):
-                chunk = await stream.__anext__()
-        except StopAsyncIteration:
-            break
-        except TimeoutError as exc:
-            raise TimeoutError(
-                f"LLM stream stalled: no chunk received for {_CHUNK_TIMEOUT_SECONDS}s"
-            ) from exc
+    try:
+        while True:
+            try:
+                async with asyncio.timeout(_CHUNK_TIMEOUT_SECONDS):
+                    chunk = await stream.__anext__()
+            except StopAsyncIteration:
+                break
+            except TimeoutError as exc:
+                raise TimeoutError(
+                    f"LLM stream stalled: no chunk received for {_CHUNK_TIMEOUT_SECONDS}s"
+                ) from exc
 
-        _check_abort(abort_signal)
-        delta, has_content, chunk_finish_reason = _apply_chunk_to_step(
-            step=step,
-            chunk=chunk,
-            tool_calls_acc=tool_calls_acc,
-        )
-
-        if has_content and not first_token_received:
-            first_token_received = True
-            if step.metrics:
-                step.metrics.first_token_latency_ms = (
-                    time.time() - step_start_time
-                ) * 1000
-
-        if chunk_finish_reason:
-            finish_reason = chunk_finish_reason
-
-        if has_content or delta.usage:
-            await state.session_runtime.publish(
-                StepDeltaEvent.from_context(state, step_id=step.id, delta=delta),
+            _check_abort(abort_signal)
+            delta, has_content, chunk_finish_reason = _apply_chunk_to_step(
+                step=step,
+                chunk=chunk,
+                tool_calls_acc=tool_calls_acc,
             )
+
+            if has_content and not first_token_received:
+                first_token_received = True
+                if step.metrics:
+                    step.metrics.first_token_latency_ms = (
+                        time.time() - step_start_time
+                    ) * 1000
+
+            if chunk_finish_reason:
+                finish_reason = chunk_finish_reason
+
+            if has_content or delta.usage:
+                await state.session_runtime.publish(
+                    StepDeltaEvent.from_context(state, step_id=step.id, delta=delta),
+                )
+    finally:
+        await stream.aclose()
 
     step.content = step.content or None
     step.reasoning_content = step.reasoning_content or None

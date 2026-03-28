@@ -15,8 +15,6 @@ from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_DEFAULT_TIMEOUT_SECONDS = 30
-
 
 def _build_tool_context(
     ctx: RunContext,
@@ -24,7 +22,7 @@ def _build_tool_context(
     *,
     tool_call_id: str = "",
 ) -> ToolContext:
-    tool_deadline = time.time() + (tool.timeout_seconds or _DEFAULT_TIMEOUT_SECONDS)
+    tool_deadline = time.time() + tool.timeout_seconds
     timeout_at = (
         min(ctx.timeout_at, tool_deadline)
         if ctx.timeout_at is not None

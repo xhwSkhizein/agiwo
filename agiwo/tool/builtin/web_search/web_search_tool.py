@@ -1,7 +1,7 @@
 """Web search tool backed by Serper."""
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from agiwo.config.settings import settings
@@ -240,7 +240,7 @@ To fetch full content from a search result, use web_reader with the result index
                     source=item.get("source"),
                     query=query,
                     index=start_index + offset,
-                    created_at=datetime.now(),
+                    created_at=datetime.now(timezone.utc),
                 )
             )
         return citation_sources

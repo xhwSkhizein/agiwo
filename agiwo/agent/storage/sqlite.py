@@ -95,6 +95,7 @@ class SQLiteRunStepStorage(RunStepStorage):
                     tool_calls TEXT,
                     tool_call_id TEXT,
                     name TEXT,
+                    is_error INTEGER DEFAULT 0,
                     metrics TEXT,
                     created_at TEXT NOT NULL,
                     parent_run_id TEXT,

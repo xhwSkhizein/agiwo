@@ -231,8 +231,6 @@ class InMemoryRunStepStorage(RunStepStorage):
             old = step_list[idx]
             if old.sequence != step.sequence:
                 step_list.pop(idx)
-                del id_idx[step.id]
-                del seq_idx[old.sequence]
                 self._rebuild_indexes(sid)
                 self._insert_new_step(sid, step)
             else:
