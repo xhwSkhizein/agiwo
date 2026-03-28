@@ -25,9 +25,7 @@ class RemoteWorkspaceConversationService:
             agent=agent, session=session, user_message=user_message
         )
 
-    async def send_message_to_session(
-        self, *, agent, session: Session, user_message
-    ):
+    async def send_message_to_session(self, *, agent, session: Session, user_message):
         """Send a message to a known session (used by channel adapters that already resolved the session)."""
         return await self._send_to_session(
             agent=agent, session=session, user_message=user_message

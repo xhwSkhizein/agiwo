@@ -56,7 +56,9 @@ async def list_agent_sessions(
 def _get_session_service(runtime: ConsoleRuntime) -> RemoteWorkspaceSessionService:
     """Build a RemoteWorkspaceSessionService from the console runtime."""
     if runtime.feishu_channel_service is not None:
-        return runtime.feishu_channel_service.session_service.as_remote_workspace_service()
+        return (
+            runtime.feishu_channel_service.session_service.as_remote_workspace_service()
+        )
     raise RuntimeError("Session service not available — Feishu channel not configured")
 
 

@@ -12,7 +12,9 @@ from server.services.remote_workspace_conversation import (
 )
 
 
-def _session(*, current_task_id: str | None = None, task_message_count: int = 0) -> Session:
+def _session(
+    *, current_task_id: str | None = None, task_message_count: int = 0
+) -> Session:
     now = datetime.now(timezone.utc)
     return Session(
         id="sess-1",

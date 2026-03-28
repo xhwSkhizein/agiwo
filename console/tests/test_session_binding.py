@@ -164,6 +164,9 @@ def test_fork_session_copies_lineage_but_resets_runtime_identity() -> None:
     assert mutation.current_session.id != source_session.id
     assert mutation.current_session.source_session_id == "sess-1"
     assert mutation.current_session.source_task_id == "task-1"
-    assert mutation.current_session.fork_context_summary == "Continue with follow-up task B"
+    assert (
+        mutation.current_session.fork_context_summary
+        == "Continue with follow-up task B"
+    )
     assert mutation.current_session.runtime_agent_id == ""
     assert mutation.current_session.scheduler_state_id == ""

@@ -14,7 +14,9 @@ def test_project_session_task_summary_uses_run_steps_as_source_of_truth() -> Non
         source_session_id=None,
     )
     run_steps = [
-        SimpleNamespace(session_id="sess-1", run_id="run-1", content_for_user="thinking"),
+        SimpleNamespace(
+            session_id="sess-1", run_id="run-1", content_for_user="thinking"
+        ),
         SimpleNamespace(session_id="sess-1", run_id="run-1", content_for_user="done"),
     ]
 

@@ -31,7 +31,9 @@ from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.channels.session import SessionContextService, SessionManager
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
-from server.services.remote_workspace_conversation import RemoteWorkspaceConversationService
+from server.services.remote_workspace_conversation import (
+    RemoteWorkspaceConversationService,
+)
 
 
 class FeishuServiceComponents:
