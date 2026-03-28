@@ -323,8 +323,7 @@ class Scheduler:
         if (
             current_state.is_root
             and current_state.is_persistent
-            and current_state.status
-            in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
+            and current_state.status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
         ):
             return await self._route_with_stream(
                 root_state_id=current_state.id,
@@ -844,9 +843,7 @@ class Scheduler:
             extra_tools=list(self._scheduling_tools),
         )
 
-    async def _rebind_registered_agent(
-        self, state_id: str, agent: Agent
-    ) -> None:
+    async def _rebind_registered_agent(self, state_id: str, agent: Agent) -> None:
         """Register prepared agent, closing any previous agent for the same state."""
         previous = self._rt.agents.get(state_id)
         self._rt.agents[state_id] = agent
