@@ -411,8 +411,20 @@ def load_settings(*, include_env_file: bool = False) -> AgiwoSettings:
     return AgiwoSettings(_env_file=None)
 
 
-# Global settings instance (singleton)
-settings = load_settings(include_env_file=True)
+_settings_instance: AgiwoSettings | None = None
 
 
-__all__ = ["AgiwoSettings", "load_settings", "settings"]
+def get_settings() -> AgiwoSettings:
+    """Get the global settings instance, loading lazily on first access."""
+    global _settings_instance
+    if _settings_instance is None:
+        _settings_instance = load_settings(include_env_file=True)
+    return _settings_instance
+
+
+# Eager singleton kept for backward compatibility.
+# New code should prefer `get_settings()` to avoid import-time side effects.
+settings = get_settings()
+
+
+__all__ = ["AgiwoSettings", "get_settings", "load_settings", "settings"]
