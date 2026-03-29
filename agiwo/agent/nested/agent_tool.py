@@ -57,6 +57,20 @@ class AgentTool(BaseTool):
             "required": ["task"],
         }
 
+    def build_context(self, run_context: Any, *, tool_call_id: str = "") -> ToolContext:
+        tool_deadline = time.time() + self.timeout_seconds
+        timeout_at = (
+            min(run_context.timeout_at, tool_deadline)
+            if run_context.timeout_at is not None
+            else tool_deadline
+        )
+        return AgentToolContext.from_run_context(
+            run_context,
+            timeout_at=timeout_at,
+            gate_checked=True,
+            tool_call_id=tool_call_id,
+        )
+
     def is_concurrency_safe(self) -> bool:
         return True
 

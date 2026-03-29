@@ -340,6 +340,7 @@ class AgiwoSettings(BaseSettings):
         return getattr(self, attr_name)
 
     def get_tool_model_provider(self) -> str:
+        """Deprecated: use settings.tool_default_model_provider directly."""
         return self.tool_default_model_provider
 
     def get_tool_model_name(self) -> str:
@@ -355,6 +356,7 @@ class AgiwoSettings(BaseSettings):
         )
 
     def get_tool_model_base_url(self) -> str | None:
+        """Deprecated: use settings.tool_default_model_base_url directly."""
         return self.tool_default_model_base_url
 
     def get_tool_model_api_key_env_name(self) -> str | None:
@@ -366,12 +368,15 @@ class AgiwoSettings(BaseSettings):
         return None
 
     def get_tool_model_temperature(self) -> float:
+        """Deprecated: use settings.tool_default_model_temperature directly."""
         return self.tool_default_model_temperature
 
     def get_tool_model_top_p(self) -> float:
+        """Deprecated: use settings.tool_default_model_top_p directly."""
         return self.tool_default_model_top_p
 
     def get_tool_model_max_tokens(self) -> int:
+        """Deprecated: use settings.tool_default_model_max_tokens directly."""
         return self.tool_default_model_max_tokens
 
     def get_embedding_api_key(self) -> str | None:
@@ -406,8 +411,21 @@ def load_settings(*, include_env_file: bool = False) -> AgiwoSettings:
     return AgiwoSettings(_env_file=None)
 
 
-# Global settings instance (singleton)
-settings = load_settings(include_env_file=True)
+_settings_instance: AgiwoSettings | None = None
 
 
-__all__ = ["AgiwoSettings", "load_settings", "settings"]
+def get_settings() -> AgiwoSettings:
+    """Get the global settings instance, loading lazily on first access."""
+    global _settings_instance
+    if _settings_instance is None:
+        _settings_instance = load_settings(include_env_file=True)
+    return _settings_instance
+
+
+# Eager singleton kept for backward compatibility with existing imports.
+# New code should prefer `get_settings()` so that modules can be imported
+# without triggering a settings load (useful for testing and lazy init).
+settings = get_settings()
+
+
+__all__ = ["AgiwoSettings", "get_settings", "load_settings", "settings"]

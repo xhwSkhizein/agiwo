@@ -88,6 +88,20 @@ class RunMetrics:
     first_token_latency: float | None = None
     response_latency: float | None = None
 
+    @classmethod
+    def from_ledger(cls, ledger: "RunLedger", *, elapsed_ms: float) -> "RunMetrics":
+        return cls(
+            duration_ms=elapsed_ms,
+            total_tokens=ledger.total_tokens,
+            input_tokens=ledger.input_tokens,
+            output_tokens=ledger.output_tokens,
+            cache_read_tokens=ledger.cache_read_tokens,
+            cache_creation_tokens=ledger.cache_creation_tokens,
+            token_cost=ledger.token_cost,
+            steps_count=ledger.steps_count,
+            tool_calls_count=ledger.tool_calls_count,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return fields_to_dict(self)
 

@@ -111,7 +111,7 @@ class AnthropicModel(Model):
         system_prompt, anthropic_messages = self._convert_messages(messages)
         anthropic_tools = convert_openai_tools_to_anthropic(tools)
 
-        actual_model = getattr(self, "model_name", None) or self.name
+        actual_model = self.name
         params = {
             "model": actual_model,
             "messages": anthropic_messages,
