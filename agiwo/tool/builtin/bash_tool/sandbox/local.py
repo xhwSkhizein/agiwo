@@ -4,14 +4,12 @@ Local sandbox for bash tool
 
 import asyncio
 import errno
-import fcntl
 import os
-import struct
 import tempfile
-import termios
 from pathlib import Path
 from typing import Literal
 
+from agiwo.tool.builtin.bash_tool.pty_utils import set_pty_size
 from agiwo.tool.builtin.bash_tool.registry import ProcessRegistry
 from agiwo.tool.builtin.bash_tool.types import (
     CommandResult,
@@ -126,7 +124,7 @@ class LocalSandbox(Sandbox):
                 exit_code=1,
             )
 
-        self._set_pty_size(slave_fd, cols=pty_cols, rows=pty_rows)
+        set_pty_size(slave_fd, cols=pty_cols, rows=pty_rows)
         os.set_blocking(master_fd, False)
 
         try:
@@ -324,16 +322,6 @@ class LocalSandbox(Sandbox):
         except ValueError:
             raise ValueError(f"Path escapes workspace: {path}") from None
         return target
-
-    @staticmethod
-    def _set_pty_size(fd: int, cols: int, rows: int) -> None:
-        if cols <= 0 or rows <= 0:
-            return
-        size = struct.pack("HHHH", rows, cols, 0, 0)
-        try:
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, size)
-        except OSError:
-            return
 
     async def cleanup(self) -> None:
         if self._temp_dir:
