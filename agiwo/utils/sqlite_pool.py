@@ -16,29 +16,23 @@ logger = get_logger(__name__)
 
 
 class SQLiteConnectionPool:
-    """
-    Singleton connection pool for SQLite databases.
+    """Connection pool for SQLite databases.
 
     Each unique db_path gets one shared connection.
     Thread-safe via asyncio.Lock.
+    Use the module-level ``get_sqlite_pool()`` factory to obtain the
+    global singleton instance.
     """
 
-    _instance: "SQLiteConnectionPool | None" = None
-    _lock: asyncio.Lock | None = None
+    def __init__(self) -> None:
+        self._connections: dict[str, aiosqlite.Connection] = {}
+        self._ref_counts: dict[str, int] = {}
+        self._lock: asyncio.Lock | None = None
 
-    def __new__(cls) -> "SQLiteConnectionPool":
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._connections: dict[str, aiosqlite.Connection] = {}
-            cls._instance._ref_counts: dict[str, int] = {}
-        return cls._instance
-
-    @classmethod
-    def _get_lock(cls) -> asyncio.Lock:
-        """Get or create the asyncio lock (must be called within event loop)."""
-        if cls._lock is None:
-            cls._lock = asyncio.Lock()
-        return cls._lock
+    def _get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def get_connection(self, db_path: str) -> aiosqlite.Connection:
         """
@@ -136,10 +130,17 @@ async def close_all_connections() -> None:
     await get_sqlite_pool().close_all()
 
 
+def reset_sqlite_pool() -> None:
+    """Reset the global pool instance (useful for testing)."""
+    global _pool
+    _pool = None
+
+
 __all__ = [
     "SQLiteConnectionPool",
     "get_sqlite_pool",
     "get_shared_connection",
     "release_shared_connection",
     "close_all_connections",
+    "reset_sqlite_pool",
 ]

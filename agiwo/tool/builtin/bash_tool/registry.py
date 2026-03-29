@@ -1,21 +1,19 @@
 """Process registry for managing long-running processes."""
 
+import errno
 import json
 import os
+import pty
 import signal
 import subprocess
 import threading
-import errno
-import fcntl
-import pty
-import struct
-import termios
-from datetime import datetime
 import uuid
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import IO, Any, Literal
 
+from .pty_utils import set_pty_size
 from .types import ProcessInfo, ProcessLogInfo, ProcessStatus
 
 
@@ -162,13 +160,17 @@ class ProcessRegistry:
     ) -> str:
         stdout_path = self.logs_dir / f"{process_id}.stdout"
         stderr_path = self.logs_dir / f"{process_id}.stderr"
-        stdout_fp = open(stdout_path, "w", encoding="utf-8")
-        stderr_fp = open(stderr_path, "w", encoding="utf-8")
         master_fd: int | None = None
         slave_fd: int | None = None
+        stdout_fp = open(stdout_path, "w", encoding="utf-8")
+        try:
+            stderr_fp = open(stderr_path, "w", encoding="utf-8")
+        except Exception:
+            stdout_fp.close()
+            raise
         try:
             master_fd, slave_fd = pty.openpty()
-            self._set_pty_size(slave_fd, cols=pty_cols, rows=pty_rows)
+            set_pty_size(slave_fd, cols=pty_cols, rows=pty_rows)
 
             process_env = {**os.environ, **env} if env else None
             process = subprocess.Popen(
@@ -500,16 +502,6 @@ class ProcessRegistry:
                 stdout_fp.flush()
             except Exception:  # noqa: BLE001
                 break
-
-    @staticmethod
-    def _set_pty_size(fd: int, cols: int, rows: int) -> None:
-        if cols <= 0 or rows <= 0:
-            return
-        size = struct.pack("HHHH", rows, cols, 0, 0)
-        try:
-            fcntl.ioctl(fd, termios.TIOCSWINSZ, size)
-        except OSError:
-            return
 
     def _is_same_process(self, record: ProcessRecord) -> bool:
         current_start = self._get_pid_start_time(record.pid)

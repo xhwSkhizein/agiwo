@@ -8,6 +8,8 @@ logger = get_logger(__name__)
 
 _TEMPLATE_FILENAMES = ("IDENTITY.md", "SOUL.md", "USER.md")
 _TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
+if not _TEMPLATES_DIR.is_dir():
+    logger.warning("templates_dir_missing", path=str(_TEMPLATES_DIR))
 
 
 class WorkspaceBootstrapper:

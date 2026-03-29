@@ -125,11 +125,7 @@ class SkillTool(BaseTool):
             )
 
         try:
-            # Load complete skill content
             skill_content = await self.loader.load_skill(skill_name)
-
-            # Resolve {baseDir} variable (already done in load_skill, but ensure)
-            resolved_body = self.loader.resolve_base_dir(skill_name, skill_content.body)
 
             logger.info(
                 "skill_activated",
@@ -141,7 +137,7 @@ class SkillTool(BaseTool):
                 tool_name=self.name,
                 tool_call_id=context.tool_call_id,
                 input_args=parameters,
-                content=resolved_body,  # Full skill content for LLM
+                content=skill_content.body,
                 content_for_user=f'The skill "{skill_name}" has been activated.',
                 output={
                     "skill_name": skill_name,

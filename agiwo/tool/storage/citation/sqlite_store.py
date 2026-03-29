@@ -82,10 +82,12 @@ class SQLiteCitationStore:
         )
         await connection.commit()
 
-    async def _ensure_connection(self) -> None:
-        """Ensure database connection is established."""
+    async def _ensure_connection(self) -> aiosqlite.Connection:
+        """Ensure database connection is established and return it."""
         if self._connection is None:
             await self.connect()
+        assert self._connection is not None
+        return self._connection
 
     def _serialize_citation(self, source: CitationSourceRaw) -> dict:
         """Serialize CitationSourceRaw to dict for database storage."""
@@ -122,7 +124,7 @@ class SQLiteCitationStore:
         sources: list[CitationSourceRaw],
     ) -> list[str]:
         """Store citation sources and return citation_id list."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         citation_ids = []
         for source in sources:
@@ -140,9 +142,7 @@ class SQLiteCitationStore:
                     VALUES ({placeholders})
                 """
 
-                if self._connection is None:
-                    raise RuntimeError("Database connection not established")
-                await self._connection.execute(query, values)
+                await conn.execute(query, values)
                 citation_ids.append(source.citation_id)
             except Exception as e:
                 logger.exception(
@@ -152,9 +152,7 @@ class SQLiteCitationStore:
                 )
                 raise
 
-        if self._connection is None:
-            raise RuntimeError("Database connection not established")
-        await self._connection.commit()
+        await conn.commit()
 
         logger.info(
             "citation_sources_stored",
@@ -169,12 +167,10 @@ class SQLiteCitationStore:
         session_id: str,
     ) -> CitationSourceRaw | None:
         """Get citation source by citation_id."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            async with self._connection.execute(
+            async with conn.execute(
                 "SELECT * FROM citation_sources WHERE citation_id = ? AND session_id = ?",
                 (citation_id, session_id),
             ) as cursor:
@@ -196,7 +192,7 @@ class SQLiteCitationStore:
         citation_ids: list[str],
     ) -> list[CitationSourceSimplified]:
         """Get simplified citation sources."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
             if not citation_ids:
@@ -212,10 +208,8 @@ class SQLiteCitationStore:
 
             params = list(citation_ids) + [session_id]
 
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
             simplified: list[CitationSourceSimplified] = []
-            async with self._connection.execute(query, params) as cursor:
+            async with conn.execute(query, params) as cursor:
                 async for row in cursor:
                     simplified.append(
                         CitationSourceSimplified.model_validate(dict(row))
@@ -234,7 +228,7 @@ class SQLiteCitationStore:
         session_id: str,
     ) -> list[CitationSourceSimplified]:
         """Get all citations for a session."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
             query = """
@@ -245,10 +239,8 @@ class SQLiteCitationStore:
                 ORDER BY created_at ASC
             """
 
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
             simplified: list[CitationSourceSimplified] = []
-            async with self._connection.execute(query, (session_id,)) as cursor:
+            async with conn.execute(query, (session_id,)) as cursor:
                 async for row in cursor:
                     simplified.append(
                         CitationSourceSimplified.model_validate(dict(row))
@@ -269,10 +261,9 @@ class SQLiteCitationStore:
         updates: dict[str, Any],
     ) -> bool:
         """Update citation source."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            # Convert complex fields to JSON strings
             update_data = {}
             for key, value in updates.items():
                 if key == "index":
@@ -296,10 +287,8 @@ class SQLiteCitationStore:
                 WHERE citation_id = ? AND session_id = ?
             """
 
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            cursor = await self._connection.execute(query, values)
-            await self._connection.commit()
+            cursor = await conn.execute(query, values)
+            await conn.commit()
 
             return cursor.rowcount > 0
         except Exception as e:
@@ -316,12 +305,10 @@ class SQLiteCitationStore:
         index: int,
     ) -> CitationSourceRaw | None:
         """Get citation source by index."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            async with self._connection.execute(
+            async with conn.execute(
                 f"SELECT * FROM citation_sources WHERE session_id = ? AND {_INDEX_COLUMN} = ?",
                 (session_id, index),
             ) as cursor:
@@ -340,16 +327,14 @@ class SQLiteCitationStore:
 
     async def cleanup_session(self, session_id: str) -> None:
         """Cleanup citations for a session."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            cursor = await self._connection.execute(
+            cursor = await conn.execute(
                 "DELETE FROM citation_sources WHERE session_id = ?",
                 (session_id,),
             )
-            await self._connection.commit()
+            await conn.commit()
 
             logger.info(
                 "citation_session_cleaned",

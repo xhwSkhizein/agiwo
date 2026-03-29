@@ -6,7 +6,6 @@ Provides core functionality for fetching web content using Playwright.
 
 import asyncio
 import time
-from typing import Any
 
 from playwright.async_api import Page
 
@@ -40,29 +39,6 @@ class PlaywrightCrawler:
         self._lease: BrowserLease | None = None
         self._start_lock = asyncio.Lock()
         self._started = False
-        self.site_configs: dict[str, dict[str, Any]] = {
-            "wechat": {
-                "login_url": "https://mp.weixin.qq.com/",
-                "content_selectors": ["#js_content", ".rich_media_content"],
-                "title_selectors": ["#activity-name", ".rich_media_title"],
-                "auth_indicators": [".user_info", ".account_meta_value"],
-                "name": "微信公众号",
-            },
-            "zhihu": {
-                "login_url": "https://www.zhihu.com/",
-                "content_selectors": [".RichContent-inner", ".Post-RichText"],
-                "title_selectors": [".QuestionHeader-title", ".Post-Title"],
-                "auth_indicators": [".AppHeader-userInfo", ".Avatar"],
-                "name": "知乎",
-            },
-            "weibo": {
-                "login_url": "https://weibo.com/",
-                "content_selectors": [".WB_text", ".WB_detail"],
-                "title_selectors": [".WB_text", ".WB_info"],
-                "auth_indicators": [".gn_name", ".username"],
-                "name": "微博",
-            },
-        }
 
         self.stats: dict[str, int | float | None] = {
             "total_requests": 0,

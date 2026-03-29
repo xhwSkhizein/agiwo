@@ -234,6 +234,17 @@ def _format_file_size(size_bytes: int) -> str:
     return f"{size_bytes / (1024 * 1024):.1f}MB"
 
 
+_CONTENT_TYPE_LABELS: dict[ContentType, str] = {
+    ContentType.IMAGE: "图片",
+    ContentType.AUDIO: "语音",
+    ContentType.VIDEO: "视频",
+    ContentType.FILE: "文件",
+}
+_DEFAULT_CONTENT_LABEL = "附件"
+_LOCAL_PATH_PREFIX = "本地路径"
+_FILE_PROCESSING_HINT = "如需处理此文件内容，请使用文件读取工具。"
+
+
 def _render_local_resource(part: ContentPart) -> str:
     name = (part.metadata or {}).get("name", "")
     size = (part.metadata or {}).get("size", 0)
@@ -242,18 +253,12 @@ def _render_local_resource(part: ContentPart) -> str:
         value for value in [mime_type, _format_file_size(size) if size else ""] if value
     ]
     meta_str = f" ({', '.join(meta_parts)})" if meta_parts else ""
-    type_labels = {
-        ContentType.IMAGE: "图片",
-        ContentType.AUDIO: "语音",
-        ContentType.VIDEO: "视频",
-        ContentType.FILE: "文件",
-    }
-    label = type_labels.get(part.type, "附件")
+    label = _CONTENT_TYPE_LABELS.get(part.type, _DEFAULT_CONTENT_LABEL)
     lines = [f"[{label}: {name}{meta_str}]"]
     if part.url:
-        lines.append(f"本地路径: {part.url}")
+        lines.append(f"{_LOCAL_PATH_PREFIX}: {part.url}")
     if part.type in (ContentType.AUDIO, ContentType.VIDEO, ContentType.FILE):
-        lines.append("如需处理此文件内容，请使用文件读取工具。")
+        lines.append(_FILE_PROCESSING_HINT)
     return "\n".join(lines)
 
 

@@ -1,9 +1,8 @@
 """Factory helpers for creating Model instances from configuration."""
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from typing import Any, Callable
-from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
 
@@ -12,6 +11,7 @@ from agiwo.llm.base import Model
 from agiwo.llm.bedrock_anthropic import BedrockAnthropicModel
 from agiwo.llm.config_policy import (
     sanitize_model_params_data,
+    validate_model_base_url,
     validate_provider_model_params,
 )
 from agiwo.llm.deepseek import DeepseekModel
@@ -80,9 +80,7 @@ def _require_absolute_base_url(provider: str, base_url: str | None) -> str:
     if not isinstance(base_url, str) or not base_url.strip():
         raise ValueError(f"{provider} models require an explicit base_url")
     normalized = base_url.strip()
-    parsed = urlparse(normalized)
-    if parsed.scheme not in {"http", "https"}:
-        raise ValueError(f"{provider} base_url must start with http:// or https://")
+    validate_model_base_url(normalized)
     return normalized
 
 
