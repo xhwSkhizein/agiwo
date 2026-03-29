@@ -70,8 +70,9 @@ async def _complete_run(state: RunContext, run: Run, result: RunOutput) -> None:
         else RunStatus.COMPLETED
     )
     run.response_content = result.response
-    run.updated_at = datetime.now(timezone.utc)
-    run.metrics.end_at = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(timezone.utc)
+    run.updated_at = now
+    run.metrics.end_at = now.timestamp()
     if result.metrics is not None:
         preserved_start_at = run.metrics.start_at
         preserved_end_at = run.metrics.end_at
@@ -96,8 +97,9 @@ async def _complete_run(state: RunContext, run: Run, result: RunOutput) -> None:
 
 async def _fail_run(state: RunContext, run: Run, error: Exception) -> None:
     run.status = RunStatus.FAILED
-    run.updated_at = datetime.now(timezone.utc)
-    run.metrics.end_at = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(timezone.utc)
+    run.updated_at = now
+    run.metrics.end_at = now.timestamp()
     await state.session_runtime.run_step_storage.save_run(run)
     if state.session_runtime.trace_runtime is not None:
         await state.session_runtime.trace_runtime.on_run_failed(
@@ -129,30 +131,18 @@ def _build_output(state: RunContext) -> RunOutput:
     )
 
 
-async def execute_run(
+async def _prepare_run_context(
     user_input: UserInput,
     *,
     context: RunContext,
     system_prompt: str,
-    model: Model,
     tools: tuple[BaseTool, ...],
-    options: AgentOptions | None = None,
-    hooks: AgentHooks | None = None,
-    pending_tool_calls: list[dict] | None = None,
-    abort_signal: AbortSignal | None = None,
-    root_path: str | None = None,
-) -> RunOutput:
-    """Execute a single agent run — the core entry point."""
-    options = options or AgentOptions()
-    hooks = hooks or AgentHooks()
-    context.config = options
-    context.hooks = hooks
-
+    model: Model,
+    options: AgentOptions,
+    hooks: AgentHooks,
+) -> tuple[dict[str, BaseTool], list[dict] | None, int, int, StepRecord, Run]:
+    """Build all state needed before the main loop starts."""
     tools_map = {tool.get_name(): tool for tool in tools}
-    max_input_tokens_per_call = resolve_max_input_tokens_per_call(
-        options.max_input_tokens_per_call,
-        model,
-    )
     tool_schemas = [
         {
             "type": "function",
@@ -164,7 +154,6 @@ async def execute_run(
         }
         for tool in tools
     ] or None
-    max_context_window = resolve_max_context_window(model)
 
     before_run_hook_result = None
     if hooks.on_before_run is not None:
@@ -206,6 +195,7 @@ async def execute_run(
     )
     set_tool_schemas(context, tool_schemas)
     record_compaction_metadata(context, last_compact)
+
     run = Run(
         id=context.run_id,
         agent_id=context.agent_id,
@@ -215,6 +205,84 @@ async def execute_run(
         parent_run_id=context.parent_run_id,
     )
     run.metrics.start_at = time.time()
+
+    max_input_tokens_per_call = resolve_max_input_tokens_per_call(
+        options.max_input_tokens_per_call,
+        model,
+    )
+    return (
+        tools_map,
+        tool_schemas,
+        max_input_tokens_per_call,
+        compact_start_seq,
+        user_step,
+        run,
+    )
+
+
+async def _finalize_run(
+    user_input: UserInput,
+    *,
+    context: RunContext,
+    run: Run,
+    options: AgentOptions,
+    hooks: AgentHooks,
+    model: Model,
+    abort_signal: AbortSignal | None,
+) -> RunOutput:
+    """Generate summary, build output, and complete the run."""
+    await maybe_generate_termination_summary(
+        state=context,
+        options=options,
+        model=model,
+        abort_signal=abort_signal,
+    )
+    result = _build_output(context)
+    if hooks.on_after_run:
+        await hooks.on_after_run(result, context)
+    if hooks.on_memory_write and result.response is not None:
+        await hooks.on_memory_write(user_input, result, context)
+    await _complete_run(context, run, result)
+    return result
+
+
+async def execute_run(
+    user_input: UserInput,
+    *,
+    context: RunContext,
+    system_prompt: str,
+    model: Model,
+    tools: tuple[BaseTool, ...],
+    options: AgentOptions | None = None,
+    hooks: AgentHooks | None = None,
+    pending_tool_calls: list[dict] | None = None,
+    abort_signal: AbortSignal | None = None,
+    root_path: str | None = None,
+) -> RunOutput:
+    """Execute a single agent run — the core entry point."""
+    options = options or AgentOptions()
+    hooks = hooks or AgentHooks()
+    context.config = options
+    context.hooks = hooks
+
+    (
+        tools_map,
+        _tool_schemas,
+        max_input_tokens_per_call,
+        compact_start_seq,
+        user_step,
+        run,
+    ) = await _prepare_run_context(
+        user_input,
+        context=context,
+        system_prompt=system_prompt,
+        tools=tools,
+        model=model,
+        options=options,
+        hooks=hooks,
+    )
+    max_context_window = resolve_max_context_window(model)
+
     await _start_run(context, run)
     try:
         await commit_step(context, user_step, append_message=False, track_state=False)
@@ -231,19 +299,15 @@ async def execute_run(
             abort_signal=abort_signal,
             root_path=root_path or settings.root_path,
         )
-        await maybe_generate_termination_summary(
-            state=context,
+        return await _finalize_run(
+            user_input,
+            context=context,
+            run=run,
             options=options,
+            hooks=hooks,
             model=model,
             abort_signal=abort_signal,
         )
-        result = _build_output(context)
-        if hooks.on_after_run:
-            await hooks.on_after_run(result, context)
-        if hooks.on_memory_write and result.response is not None:
-            await hooks.on_memory_write(user_input, result, context)
-        await _complete_run(context, run, result)
-        return result
     except Exception as error:
         await _fail_run(context, run, error)
         raise

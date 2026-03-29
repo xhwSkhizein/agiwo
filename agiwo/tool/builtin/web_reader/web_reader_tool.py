@@ -169,14 +169,14 @@ class WebReaderTool(BaseTool):
                     start_time=start_time,
                 )
 
-            self._content_processor._llm_model = self._llm_model
             processed_content = await self._content_processor.process(
                 content.raw_text or content.text or "",
                 summarize=summarize,
                 search_query=search_query,
                 abort_signal=abort_signal,
+                llm_model=self._llm_model,
             )
-            self._llm_model = self._content_processor._llm_model
+            self._llm_model = self._content_processor.llm_model
 
             if len(processed_content) > self.max_length:
                 processed_content = truncate_middle(processed_content, self.max_length)

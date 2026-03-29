@@ -11,6 +11,10 @@ class WebContentProcessor:
         self._max_length = max_length
         self._llm_model = None
 
+    @property
+    def llm_model(self):
+        return self._llm_model
+
     async def process(
         self,
         content: str,
@@ -18,7 +22,10 @@ class WebContentProcessor:
         summarize: bool,
         search_query: str | None,
         abort_signal: AbortSignal | None,
+        llm_model=None,
     ) -> str:
+        if llm_model is not None:
+            self._llm_model = llm_model
         if summarize or len(content) > self._max_length:
             return await self._summarize_content(
                 content,

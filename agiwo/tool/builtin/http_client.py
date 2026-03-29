@@ -63,16 +63,16 @@ class AsyncHttpClient:
             default_headers.update(headers)
 
         last_error = None
-        for attempt in range(self._max_retries):
-            try:
-                logger.debug(
-                    "http_request_attempt",
-                    url=url,
-                    attempt=attempt + 1,
-                    max_retries=self._max_retries,
-                )
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            for attempt in range(self._max_retries):
+                try:
+                    logger.debug(
+                        "http_request_attempt",
+                        url=url,
+                        attempt=attempt + 1,
+                        max_retries=self._max_retries,
+                    )
 
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
                     response = await client.post(
                         url,
                         json=data,
@@ -81,36 +81,34 @@ class AsyncHttpClient:
                     response.raise_for_status()
                     result = response.json()
 
-                logger.info(
-                    "http_request_success",
-                    url=url,
-                    status_code=response.status_code,
-                )
-                return result
+                    logger.info(
+                        "http_request_success",
+                        url=url,
+                        status_code=response.status_code,
+                    )
+                    return result
 
-            except httpx.HTTPError as e:
-                last_error = e
-                logger.warning(
-                    "http_request_failed",
-                    url=url,
-                    attempt=attempt + 1,
-                    error=str(e),
-                )
+                except httpx.HTTPError as e:
+                    last_error = e
+                    logger.warning(
+                        "http_request_failed",
+                        url=url,
+                        attempt=attempt + 1,
+                        error=str(e),
+                    )
 
-                # 如果不是最后一次尝试，等待后重试
-                if attempt < self._max_retries - 1:
-                    await asyncio.sleep(2**attempt)  # 指数退避
-                continue
+                    if attempt < self._max_retries - 1:
+                        await asyncio.sleep(2**attempt)
+                    continue
 
-            except Exception as e:
-                logger.error(
-                    "http_request_unexpected_error",
-                    url=url,
-                    error=str(e),
-                )
-                raise
+                except Exception as e:
+                    logger.error(
+                        "http_request_unexpected_error",
+                        url=url,
+                        error=str(e),
+                    )
+                    raise
 
-        # 所有重试都失败
         error_msg = (
             f"HTTP request failed after {self._max_retries} attempts: {last_error}"
         )
