@@ -55,7 +55,7 @@ async def execute_tool_batch(
     context: RunContext,
     abort_signal: AbortSignal | None = None,
 ) -> list[ToolResult]:
-    results: list[ToolResult | None] = [None] * len(tool_calls)
+    results: dict[int, ToolResult] = {}
     safe_indices: list[int] = []
     unsafe_indices: list[int] = []
 
@@ -90,7 +90,8 @@ async def execute_tool_batch(
             abort_signal=abort_signal,
         )
 
-    return results  # type: ignore[return-value]
+    assert len(results) == len(tool_calls), "All tool calls must produce a result"
+    return [results[i] for i in range(len(tool_calls))]
 
 
 async def _execute_tool_call(
