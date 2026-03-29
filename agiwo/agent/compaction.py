@@ -5,6 +5,7 @@ Merges compaction/runtime.py + messages.py + parser.py + prompt.py + transcript.
 """
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -207,6 +208,13 @@ def build_compacted_messages(
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class CompactResult:
+    metadata: CompactMetadata | None = None
+    failed: bool = False
+    error: str | None = None
+
+
 async def compact_if_needed(
     *,
     state: RunContext,
@@ -216,15 +224,15 @@ async def compact_if_needed(
     compact_prompt: str | None = None,
     compact_start_seq: int,
     root_path: str | None = None,
-) -> CompactMetadata | None:
+) -> CompactResult:
     if max_context_window is None:
-        return None
+        return CompactResult()
     _s = get_settings()
     metrics_resolver = ModelUsageEstimator(model)
     estimated_tokens = metrics_resolver.estimate_messages_tokens(state.copy_messages())
     threshold = int(max_context_window * _s.compact_threshold_ratio)
     if estimated_tokens < threshold:
-        return None
+        return CompactResult()
 
     resolved_root_path = root_path or _s.root_path
     retry_count = _s.compact_retry_count
@@ -248,7 +256,7 @@ async def compact_if_needed(
                 after_tokens=metadata.after_token_estimate,
                 attempt=attempt + 1,
             )
-            return metadata
+            return CompactResult(metadata=metadata)
         except Exception as error:  # noqa: BLE001 - compaction retries guard the runtime boundary
             last_error = error
             logger.warning(
@@ -266,7 +274,10 @@ async def compact_if_needed(
         run_id=state.run_id,
         error=str(last_error),
     )
-    return None
+    return CompactResult(
+        failed=True,
+        error=str(last_error) if last_error is not None else "unknown",
+    )
 
 
 async def _compact(
@@ -372,6 +383,7 @@ async def _compact(
 
 
 __all__ = [
+    "CompactResult",
     "compact_if_needed",
     "DEFAULT_ASSISTANT_RESPONSE",
     "DEFAULT_COMPACT_PROMPT",

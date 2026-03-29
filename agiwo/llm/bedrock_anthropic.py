@@ -11,7 +11,7 @@ try:
 except ImportError:
     raise ImportError("Please install boto3: pip install boto3") from None
 
-from agiwo.llm.base import Model, ModelConfig, StreamChunk
+from agiwo.llm.base import LLMConfig, Model, StreamChunk
 from agiwo.config.settings import get_settings
 from agiwo.llm.event_normalizer import (
     AnthropicStreamTranslator,
@@ -22,8 +22,24 @@ from agiwo.llm.message_converter import (
     convert_openai_tools_to_anthropic,
 )
 from agiwo.utils.logging import get_logger
+from agiwo.utils.retry import retry_async
 
 logger = get_logger(__name__)
+
+
+BEDROCK_RETRYABLE_ERROR_CODES = frozenset(
+    {
+        "ThrottlingException",
+        "ServiceUnavailableException",
+        "ModelTimeoutException",
+        "ModelStreamErrorException",
+        "InternalServerException",
+    }
+)
+
+
+class BedrockRetryableError(Exception):
+    pass
 
 
 class BedrockAnthropicModel(Model):
@@ -50,7 +66,7 @@ class BedrockAnthropicModel(Model):
         aws_profile: str | None = None,
         **model_kwargs: Any,
     ):
-        config = ModelConfig(
+        config = LLMConfig(
             id=id,
             name=name,
             api_key=api_key,
@@ -78,7 +94,8 @@ class BedrockAnthropicModel(Model):
             )
         return self._client
 
-    async def arun_stream(
+    @retry_async(exceptions=(BedrockRetryableError,))
+    async def arun_stream(  # noqa: C901
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
@@ -152,15 +169,16 @@ class BedrockAnthropicModel(Model):
             await reader_task
 
         except ClientError as e:
+            error_code = e.response["Error"]["Code"] if hasattr(e, "response") else None
             logger.error(
                 "bedrock_request_failed",
                 model=self.id,
                 error=str(e),
-                error_code=(
-                    e.response["Error"]["Code"] if hasattr(e, "response") else None
-                ),
+                error_code=error_code,
                 exc_info=True,
             )
+            if error_code in BEDROCK_RETRYABLE_ERROR_CODES:
+                raise BedrockRetryableError(str(e)) from e
             raise
         except Exception as e:
             logger.error(

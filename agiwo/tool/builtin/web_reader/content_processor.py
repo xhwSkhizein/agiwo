@@ -1,4 +1,4 @@
-from agiwo.llm import ModelConfig, create_model
+from agiwo.llm import ModelSpec, create_model
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -6,7 +6,7 @@ logger = get_logger(__name__)
 
 
 class WebContentProcessor:
-    def __init__(self, *, model_config: ModelConfig, max_length: int) -> None:
+    def __init__(self, *, model_config: ModelSpec, max_length: int) -> None:
         self._model_config = model_config
         self._max_length = max_length
         self._llm_model = None

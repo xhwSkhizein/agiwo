@@ -30,6 +30,7 @@ OnStepHook = Callable[[StepRecord], Awaitable[None]]
 
 MemoryWriteHook = Callable[[UserInput, RunOutput, "RunContext"], Awaitable[None]]
 MemoryRetrieveHook = Callable[[UserInput, "RunContext"], Awaitable[list[MemoryRecord]]]
+OnCompactionFailed = Callable[[str, str, int], Awaitable[None]]
 
 
 @dataclass
@@ -45,6 +46,7 @@ class AgentHooks:
     on_step: OnStepHook | None = None
     on_memory_write: MemoryWriteHook | None = None
     on_memory_retrieve: MemoryRetrieveHook | None = None
+    on_compaction_failed: OnCompactionFailed | None = None
 
 
 __all__ = [
@@ -57,5 +59,6 @@ __all__ = [
     "BeforeToolCallHook",
     "MemoryRetrieveHook",
     "MemoryWriteHook",
+    "OnCompactionFailed",
     "OnStepHook",
 ]

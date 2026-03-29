@@ -14,6 +14,7 @@ from agiwo.tool.builtin.bash_tool.types import (
     ProcessLogInfo,
     ProcessStatus,
 )
+from agiwo.utils.abort_signal import AbortSignal
 from tests.utils.agent_context import build_tool_context
 
 
@@ -37,6 +38,7 @@ class MockSandbox:
         pty_cols: int = 120,
         pty_rows: int = 40,
         stdin: str | None = None,
+        abort_signal: AbortSignal | None = None,
     ) -> CommandResult:
         self.executed_commands.append(command)
         self.execute_calls.append(
@@ -48,6 +50,7 @@ class MockSandbox:
                 "pty_cols": pty_cols,
                 "pty_rows": pty_rows,
                 "stdin": stdin,
+                "abort_signal": abort_signal,
             }
         )
 

@@ -12,6 +12,9 @@ from agiwo.agent.storage.session import SessionStorage
 from agiwo.agent.models.stream import AgentStreamItem
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.utils.abort_signal import AbortSignal
+from agiwo.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class SessionRuntime:
@@ -23,6 +26,7 @@ class SessionRuntime:
     """
 
     _SENTINEL = object()
+    _MAX_SUBSCRIBER_QUEUE_SIZE = 256
 
     def __init__(
         self,
@@ -65,7 +69,9 @@ class SessionRuntime:
         )
 
     def subscribe(self) -> AsyncIterator[AgentStreamItem]:
-        queue: asyncio.Queue[AgentStreamItem | object] = asyncio.Queue()
+        queue: asyncio.Queue[AgentStreamItem | object] = asyncio.Queue(
+            maxsize=self._MAX_SUBSCRIBER_QUEUE_SIZE
+        )
         if self._closed:
             queue.put_nowait(self._SENTINEL)
         self._subscribers.add(queue)
@@ -95,7 +101,15 @@ class SessionRuntime:
         if self._closed:
             return
         for subscriber in list(self._subscribers):
-            await subscriber.put(item)
+            try:
+                subscriber.put_nowait(item)
+            except asyncio.QueueFull:
+                self._subscribers.discard(subscriber)
+                try:
+                    subscriber.put_nowait(self._SENTINEL)
+                except asyncio.QueueFull:
+                    pass
+                logger.warning("subscriber_dropped_slow_consumer")
 
     async def close(self) -> None:
         if self._closed:
@@ -104,7 +118,10 @@ class SessionRuntime:
         if self.trace_runtime is not None:
             await self.trace_runtime.stop()
         for subscriber in list(self._subscribers):
-            await subscriber.put(self._SENTINEL)
+            try:
+                subscriber.put_nowait(self._SENTINEL)
+            except asyncio.QueueFull:
+                pass
 
 
 __all__ = ["SessionRuntime"]

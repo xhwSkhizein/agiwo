@@ -1,17 +1,13 @@
 """
 HybridSearcher - BM25 + Vector hybrid search with optional MMR and temporal decay.
-
-.. note::
-    This module uses synchronous ``sqlite3``.  A future migration to
-    ``aiosqlite`` is planned (see deferred item H-2) to align with
-    the project's async SQLite standard.
 """
 
 import json
 import math
 import re
-import sqlite3
 from dataclasses import dataclass
+
+import aiosqlite
 from datetime import datetime
 
 from agiwo.config.settings import get_settings
@@ -170,7 +166,7 @@ class HybridSearcher:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: aiosqlite.Connection,
         embedder: EmbeddingModel | None,
         vec_available: bool,
         *,
@@ -243,7 +239,7 @@ class HybridSearcher:
             logger.warning("vector_search_skipped", reason="no_embedder")
 
         bm25_start = datetime.now()
-        bm25_results = self._bm25_search(
+        bm25_results = await self._bm25_search(
             query, fetch_limit, use_expansion=not self._embedder
         )
         bm25_duration_ms = (datetime.now() - bm25_start).total_seconds() * 1000
@@ -289,7 +285,7 @@ class HybridSearcher:
         )
 
         if self._temporal_decay_enabled:
-            merged = self._apply_temporal_decay(merged)
+            merged = await self._apply_temporal_decay(merged)
             logger.debug("temporal_decay_applied")
 
         sorted_results = sorted(
@@ -297,7 +293,7 @@ class HybridSearcher:
         )
         sorted_results = sorted_results[: top_k * 2]
 
-        results = self._build_results(sorted_results)
+        results = await self._build_results(sorted_results)
         logger.debug("results_built", count=len(results))
 
         if self._mmr_enabled and len(results) > top_k:
@@ -336,17 +332,15 @@ class HybridSearcher:
 
         query_embedding = (await self._embedder.embed([query]))[0]
         if self._vec_available:
-            return self._vector_search_sqlite_vec(query_embedding, limit)
-        return self._vector_search_memory(query_embedding, limit)
+            return await self._vector_search_sqlite_vec(query_embedding, limit)
+        return await self._vector_search_memory(query_embedding, limit)
 
-    def _vector_search_sqlite_vec(
+    async def _vector_search_sqlite_vec(
         self, query_vec: list[float], limit: int
     ) -> dict[str, float]:
-        """Vector search using sqlite-vec extension."""
-        cursor = self._conn.cursor()
         vec_str = "[" + ",".join(str(value) for value in query_vec) + "]"
 
-        cursor.execute(
+        async with self._conn.execute(
             """
             SELECT chunk_id, vec_distance_cosine(embedding, ?) as distance
             FROM chunks_vec
@@ -354,10 +348,11 @@ class HybridSearcher:
             LIMIT ?
             """,
             (vec_str, limit),
-        )
+        ) as cursor:
+            rows = await cursor.fetchall()
 
         results = {}
-        for row in cursor.fetchall():
+        for row in rows:
             chunk_id, distance = row
             score = 1.0 - distance
             results[chunk_id] = max(0.0, min(1.0, score))
@@ -366,18 +361,17 @@ class HybridSearcher:
 
     _VECTOR_FALLBACK_MAX = 10_000
 
-    def _vector_search_memory(
+    async def _vector_search_memory(
         self, query_vec: list[float], limit: int
     ) -> dict[str, float]:
-        """Fallback vector search in memory (no sqlite-vec)."""
-        cursor = self._conn.cursor()
-        cursor.execute(
+        async with self._conn.execute(
             "SELECT chunk_id, embedding FROM chunks WHERE embedding != '' LIMIT ?",
             (self._VECTOR_FALLBACK_MAX,),
-        )
+        ) as cursor:
+            rows = await cursor.fetchall()
 
         results: list[tuple[str, float]] = []
-        for row in cursor.fetchall():
+        for row in rows:
             chunk_id, embedding_json = row
             if not embedding_json:
                 continue
@@ -402,12 +396,9 @@ class HybridSearcher:
             return 0.0
         return dot / (norm_a * norm_b)
 
-    def _bm25_search(
+    async def _bm25_search(
         self, query: str, limit: int, use_expansion: bool = False
     ) -> dict[str, float]:
-        """Search using FTS5 BM25."""
-        cursor = self._conn.cursor()
-
         if use_expansion:
             keywords = self._extract_keywords(query)
             if not keywords:
@@ -422,7 +413,7 @@ class HybridSearcher:
                 continue
 
             try:
-                cursor.execute(
+                async with self._conn.execute(
                     """
                     SELECT chunk_id, bm25(chunks_fts) as rank
                     FROM chunks_fts
@@ -431,12 +422,13 @@ class HybridSearcher:
                     LIMIT ?
                     """,
                     (safe_query, limit),
-                )
-            except sqlite3.OperationalError as exc:
+                ) as cursor:
+                    rows = await cursor.fetchall()
+            except aiosqlite.OperationalError as exc:
                 logger.warning("fts_search_failed", query=safe_query, error=str(exc))
                 continue
 
-            for row in cursor.fetchall():
+            for row in rows:
                 chunk_id = row[0]
                 rank = row[1]
                 score = 1.0 / (1.0 + abs(rank))
@@ -475,20 +467,18 @@ class HybridSearcher:
 
         return merged
 
-    def _apply_temporal_decay(
+    async def _apply_temporal_decay(
         self, merged: dict[str, dict[str, float]]
     ) -> dict[str, dict[str, float]]:
-        """Apply temporal decay based on file mtime."""
         if not merged:
             return merged
 
-        cursor = self._conn.cursor()
         now = datetime.now().timestamp()
         half_life_seconds = self._temporal_decay_half_life_days * 24 * 3600
 
         chunk_ids = list(merged.keys())
         placeholders = ",".join("?" * len(chunk_ids))
-        cursor.execute(
+        async with self._conn.execute(
             f"""
             SELECT c.chunk_id, f.mtime
             FROM chunks c
@@ -496,8 +486,9 @@ class HybridSearcher:
             WHERE c.chunk_id IN ({placeholders})
             """,
             chunk_ids,
-        )
-        mtime_map = {row[0]: row[1] for row in cursor.fetchall()}
+        ) as cursor:
+            rows = await cursor.fetchall()
+        mtime_map = {row[0]: row[1] for row in rows}
 
         for chunk_id, scores in merged.items():
             mtime = mtime_map.get(chunk_id)
@@ -508,25 +499,24 @@ class HybridSearcher:
 
         return merged
 
-    def _build_results(
+    async def _build_results(
         self, sorted_results: list[tuple[str, dict[str, float]]]
     ) -> list[SearchResult]:
-        """Build SearchResult objects from sorted scores."""
         if not sorted_results:
             return []
 
-        cursor = self._conn.cursor()
         chunk_ids = [cid for cid, _ in sorted_results]
         placeholders = ",".join("?" * len(chunk_ids))
-        cursor.execute(
+        async with self._conn.execute(
             f"""
             SELECT chunk_id, path, start_line, end_line, text
             FROM chunks
             WHERE chunk_id IN ({placeholders})
             """,
             chunk_ids,
-        )
-        chunk_data = {row[0]: row for row in cursor.fetchall()}
+        ) as cursor:
+            rows = await cursor.fetchall()
+        chunk_data = {row[0]: row for row in rows}
 
         results: list[SearchResult] = []
         for chunk_id, scores in sorted_results:

@@ -139,7 +139,6 @@ class BashTool(BaseTool):
         context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
-        del abort_signal
         tool_call_id = context.tool_call_id
 
         request = self._resolve_request(parameters, tool_call_id=tool_call_id)
@@ -163,6 +162,7 @@ class BashTool(BaseTool):
                 context=context,
                 use_pty=request.use_pty,
                 stdin=request.stdin,
+                abort_signal=abort_signal,
             )
         except TimeoutError:
             return self._formatter.error(
@@ -183,6 +183,7 @@ class BashTool(BaseTool):
         context: ToolContext,
         use_pty: bool,
         stdin: str | None,
+        abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         tool_call_id = context.tool_call_id
         shell_command = self._apply_before_hook(command)
@@ -227,6 +228,7 @@ class BashTool(BaseTool):
             timeout=timeout,
             use_pty=use_pty,
             stdin=stdin,
+            abort_signal=abort_signal,
         )
         result = self._apply_after_hook(foreground_command, result)
         return self._formatter.from_command_result(

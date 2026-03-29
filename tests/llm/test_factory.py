@@ -1,6 +1,6 @@
 import pytest
 
-from agiwo.llm import ModelConfig, create_model, create_model_from_dict
+from agiwo.llm import ModelSpec, create_model, create_model_from_dict
 from agiwo.llm.anthropic import AnthropicModel
 from agiwo.llm.deepseek import DeepseekModel
 from agiwo.llm.openai import OpenAIModel
@@ -8,7 +8,7 @@ from agiwo.llm.openai import OpenAIModel
 
 def test_create_model_builds_provider_specific_instance() -> None:
     model = create_model(
-        ModelConfig(
+        ModelSpec(
             provider="anthropic",
             model_name="claude-3-5-sonnet-20240620",
             temperature=0.1,

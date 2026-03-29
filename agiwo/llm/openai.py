@@ -11,7 +11,7 @@ try:
 except ImportError:
     raise ImportError("Please install openai package: pip install openai") from None
 
-from agiwo.llm.base import Model, ModelConfig, StreamChunk
+from agiwo.llm.base import LLMConfig, Model, StreamChunk
 from agiwo.llm.event_normalizer import normalize_usage_metrics
 from agiwo.config.settings import get_settings
 from agiwo.utils.retry import retry_async
@@ -47,7 +47,7 @@ class OpenAIModel(Model):
         output_price: float = 0.0,
         provider: str = "openai",
     ):
-        config = ModelConfig(
+        config = LLMConfig(
             id=id,
             name=name,
             api_key=api_key,
