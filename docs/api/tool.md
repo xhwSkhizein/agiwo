@@ -8,20 +8,20 @@ Abstract base class for all tools.
 class BaseTool(ABC):
     cacheable: bool = False
     timeout_seconds: int = 30
+    concurrency_safe: bool = True
 
+    @property
     @abstractmethod
-    def get_name(self) -> str: ...
+    def name(self) -> str: ...
 
+    @property
     @abstractmethod
-    def get_description(self) -> str: ...
+    def description(self) -> str: ...
 
     def get_short_description(self) -> str: ...
 
     @abstractmethod
     def get_parameters(self) -> dict[str, Any]: ...
-
-    @abstractmethod
-    def is_concurrency_safe(self) -> bool: ...
 
     @abstractmethod
     async def execute(
@@ -35,22 +35,22 @@ class BaseTool(ABC):
     def to_openai_schema(self) -> dict[str, object]: ...
 ```
 
-### Methods to Implement
+### What to Implement
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `get_name()` | `str` | Tool identifier (must be unique per agent) |
-| `get_description()` | `str` | Description shown to the LLM |
+| Member | Type | Description |
+|--------|------|-------------|
+| `name` | `str` (class attr or property) | Tool identifier (must be unique per agent) |
+| `description` | `str` (class attr or property) | Description shown to the LLM |
 | `get_parameters()` | `dict` | JSON Schema for parameters |
-| `is_concurrency_safe()` | `bool` | Can run in parallel with other tools |
 | `execute()` | `ToolResult` | Execute the tool |
 
-### Properties
+### Class Attributes
 
-| Property | Default | Description |
-|----------|---------|-------------|
+| Attribute | Default | Description |
+|-----------|---------|-------------|
 | `cacheable` | `False` | Enable session-scoped result caching |
 | `timeout_seconds` | `30` | Execution timeout |
+| `concurrency_safe` | `True` | Can run in parallel with other tools |
 
 ---
 

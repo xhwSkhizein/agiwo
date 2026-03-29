@@ -1,15 +1,54 @@
-"""Agent hook adapter for WorkspaceMemoryService-backed retrieval."""
+"""
+Agent lifecycle hooks for extensibility.
+
+Hooks allow SDK users to inject custom behavior at key execution points
+without subclassing the Agent. All hooks are optional and async.
+"""
+
+from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from agiwo.agent.models.input import UserInput, UserMessage
-from agiwo.agent.models.memory import MemoryRecord
-from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.models.run import MemoryRecord
 from agiwo.config.settings import get_settings
 from agiwo.memory import WorkspaceMemoryService
 from agiwo.utils.logging import get_logger
 
+if TYPE_CHECKING:
+    from agiwo.agent.runtime.context import RunContext
+
 logger = get_logger(__name__)
+
+BeforeRunHook = Callable[..., Awaitable[str | None]]
+AfterRunHook = Callable[..., Awaitable[None]]
+BeforeToolCallHook = Callable[..., Awaitable[dict[str, Any] | None]]
+AfterToolCallHook = Callable[..., Awaitable[None]]
+BeforeLLMCallHook = Callable[..., Awaitable[list[dict] | None]]
+AfterLLMCallHook = Callable[..., Awaitable[None]]
+OnStepHook = Callable[..., Awaitable[None]]
+
+MemoryWriteHook = Callable[..., Awaitable[None]]
+MemoryRetrieveHook = Callable[..., Awaitable[list[MemoryRecord]]]
+OnCompactionFailed = Callable[..., Awaitable[None]]
+
+
+@dataclass
+class AgentHooks:
+    """Lifecycle hooks for Agent execution."""
+
+    on_before_run: BeforeRunHook | None = None
+    on_after_run: AfterRunHook | None = None
+    on_before_tool_call: BeforeToolCallHook | None = None
+    on_after_tool_call: AfterToolCallHook | None = None
+    on_before_llm_call: BeforeLLMCallHook | None = None
+    on_after_llm_call: AfterLLMCallHook | None = None
+    on_step: OnStepHook | None = None
+    on_memory_write: MemoryWriteHook | None = None
+    on_memory_retrieve: MemoryRetrieveHook | None = None
+    on_compaction_failed: OnCompactionFailed | None = None
 
 
 def _text_similarity(a: str, b: str) -> float:
@@ -152,4 +191,18 @@ class DefaultMemoryHook:
         return records
 
 
-__all__ = ["DefaultMemoryHook", "filter_relevant_memories"]
+__all__ = [
+    "AfterLLMCallHook",
+    "AfterRunHook",
+    "AfterToolCallHook",
+    "AgentHooks",
+    "BeforeLLMCallHook",
+    "BeforeRunHook",
+    "BeforeToolCallHook",
+    "DefaultMemoryHook",
+    "MemoryRetrieveHook",
+    "MemoryWriteHook",
+    "OnCompactionFailed",
+    "OnStepHook",
+    "filter_relevant_memories",
+]

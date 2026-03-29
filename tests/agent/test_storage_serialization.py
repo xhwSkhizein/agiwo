@@ -12,7 +12,6 @@ from agiwo.agent.storage.serialization import (
     serialize_run_for_storage,
     serialize_step_for_storage,
 )
-from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.agent.models.stream import (
     StepCompletedEvent as InternalStepCompletedEvent,
 )
@@ -106,7 +105,6 @@ def _make_context():
         session_runtime=SessionRuntime(
             session_id="session-1",
             run_step_storage=InMemoryRunStepStorage(),
-            session_storage=InMemorySessionStorage(),
         ),
         run_id="run-1",
         agent_id="agent-1",

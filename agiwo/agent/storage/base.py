@@ -6,6 +6,7 @@ import asyncio
 import bisect
 from abc import ABC, abstractmethod
 
+from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.run import Run
 from agiwo.agent.models.step import StepRecord
 
@@ -143,6 +144,25 @@ class RunStepStorage(ABC):
                 return step
         return None
 
+    # --- Compact Metadata Operations ---
+
+    async def save_compact_metadata(
+        self, session_id: str, agent_id: str, metadata: CompactMetadata
+    ) -> None:
+        """Save compact metadata (append to history). Override in subclasses."""
+
+    async def get_latest_compact_metadata(
+        self, session_id: str, agent_id: str
+    ) -> CompactMetadata | None:
+        """Get the most recent compact metadata."""
+        return None
+
+    async def get_compact_history(
+        self, session_id: str, agent_id: str
+    ) -> list[CompactMetadata]:
+        """Get all compact metadata history (sorted by created_at ascending)."""
+        return []
+
 
 class InMemoryRunStepStorage(RunStepStorage):
     """
@@ -160,6 +180,8 @@ class InMemoryRunStepStorage(RunStepStorage):
         ] = {}  # session_id -> {sequence -> list_index}
         self._sequence_counters: dict[str, int] = {}  # session_id -> counter
         self._sequence_locks: dict[str, asyncio.Lock] = {}  # session_id -> lock
+        self._compact_history: dict[str, list[CompactMetadata]] = {}
+        self._compact_lock = asyncio.Lock()
 
     async def save_run(self, run: Run) -> None:
         self.runs[run.id] = run
@@ -337,6 +359,33 @@ class InMemoryRunStepStorage(RunStepStorage):
             # Increment and return
             self._sequence_counters[session_id] += 1
             return self._sequence_counters[session_id]
+
+    # --- Compact Metadata ---
+
+    def _compact_key(self, session_id: str, agent_id: str) -> str:
+        return f"{session_id}:{agent_id}"
+
+    async def save_compact_metadata(
+        self, session_id: str, agent_id: str, metadata: CompactMetadata
+    ) -> None:
+        async with self._compact_lock:
+            key = self._compact_key(session_id, agent_id)
+            if key not in self._compact_history:
+                self._compact_history[key] = []
+            self._compact_history[key].append(metadata)
+
+    async def get_latest_compact_metadata(
+        self, session_id: str, agent_id: str
+    ) -> CompactMetadata | None:
+        key = self._compact_key(session_id, agent_id)
+        history = self._compact_history.get(key, [])
+        return history[-1] if history else None
+
+    async def get_compact_history(
+        self, session_id: str, agent_id: str
+    ) -> list[CompactMetadata]:
+        key = self._compact_key(session_id, agent_id)
+        return list(self._compact_history.get(key, []))
 
 
 __all__ = ["RunStepStorage", "InMemoryRunStepStorage"]

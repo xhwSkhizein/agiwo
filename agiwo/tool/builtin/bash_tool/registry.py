@@ -148,6 +148,25 @@ class ProcessRegistry:
         self._save_registry()
         return process_id
 
+    @staticmethod
+    def _cleanup_pty_resources(
+        stdout_fp: Any,
+        stderr_fp: Any,
+        master_fd: int | None,
+        slave_fd: int | None,
+    ) -> None:
+        for fp in (stdout_fp, stderr_fp):
+            try:
+                fp.close()
+            except Exception:  # noqa: BLE001
+                pass
+        for fd in (master_fd, slave_fd):
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
     def _start_pty_process(
         self,
         process_id: str,
@@ -185,24 +204,7 @@ class ProcessRegistry:
                 close_fds=True,
             )
         except Exception:  # noqa: BLE001
-            try:
-                stdout_fp.close()
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                stderr_fp.close()
-            except Exception:  # noqa: BLE001
-                pass
-            if master_fd is not None:
-                try:
-                    os.close(master_fd)
-                except OSError:
-                    pass
-            if slave_fd is not None:
-                try:
-                    os.close(slave_fd)
-                except OSError:
-                    pass
+            self._cleanup_pty_resources(stdout_fp, stderr_fp, master_fd, slave_fd)
             raise
 
         if slave_fd is not None:

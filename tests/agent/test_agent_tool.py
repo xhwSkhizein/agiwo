@@ -8,7 +8,6 @@ from agiwo.agent.nested.context import AgentToolContext
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.tool.context import ToolContext
 
 
@@ -16,7 +15,6 @@ def _make_context(*, metadata: dict | None = None):
     session_runtime = SessionRuntime(
         session_id="sess-1",
         run_step_storage=InMemoryRunStepStorage(),
-        session_storage=InMemorySessionStorage(),
     )
     return RunContext(
         session_runtime=session_runtime,

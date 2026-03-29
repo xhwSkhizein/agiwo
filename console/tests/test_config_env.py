@@ -163,7 +163,7 @@ async def test_console_tool_catalog_builds_shared_web_tool_overrides() -> None:
         build_agent_tool=pytest.fail,
     )
 
-    assert [tool.get_name() for tool in tools] == ["web_search", "web_reader"]
+    assert [tool.name for tool in tools] == ["web_search", "web_reader"]
     assert tools[0]._citation_source_store is tools[1]._citation_source_store
 
 

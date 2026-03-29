@@ -17,22 +17,16 @@ class MockModel(Model):
 
 
 class DummyTool(BaseTool):
-    def get_name(self) -> str:
-        return "dummy_tool"
-
-    def get_description(self) -> str:
-        return "Dummy tool for definition contracts"
+    name = "dummy_tool"
+    description = "Dummy tool for definition contracts"
 
     def get_parameters(self) -> dict:
         return {"type": "object", "properties": {}}
 
-    def is_concurrency_safe(self) -> bool:
-        return True
-
     async def execute(self, parameters, context, abort_signal=None) -> ToolResult:
         del parameters, context, abort_signal
         return ToolResult.success(
-            tool_name=self.get_name(),
+            tool_name=self.name,
             content="ok",
             start_time=0.0,
         )
@@ -63,7 +57,7 @@ async def test_create_child_agent_applies_overrides() -> None:
         exclude_tool_names={"dummy_tool"},
     )
 
-    tool_names = {tool.get_name() for tool in clone.tools}
+    tool_names = {tool.name for tool in clone.tools}
     assert clone.id == "child-agent"
     assert "Handle only child work" in clone.config.system_prompt
     assert "dummy_tool" not in tool_names
@@ -83,8 +77,8 @@ async def test_create_child_agent_clones_runtime_configuration() -> None:
     assert clone.id == "child-agent"
     assert clone.config.system_prompt.startswith("Base prompt")
     assert "Same instruction" in clone.config.system_prompt
-    assert {tool.get_name() for tool in clone.tools} == {
-        tool.get_name() for tool in agent.tools if tool.get_name() != "dummy_tool"
+    assert {tool.name for tool in clone.tools} == {
+        tool.name for tool in agent.tools if tool.name != "dummy_tool"
     }
 
 
@@ -105,9 +99,7 @@ async def test_create_child_agent_and_child_resolution_stay_in_sync() -> None:
     )
 
     assert clone.config.system_prompt == resolved.config.system_prompt
-    assert {tool.get_name() for tool in clone.tools} == {
-        tool.get_name() for tool in resolved.tools
-    }
+    assert {tool.name for tool in clone.tools} == {tool.name for tool in resolved.tools}
     assert clone.config.options.enable_termination_summary is True
 
 
@@ -158,7 +150,7 @@ def test_agent_config_owns_disabled_sdk_tool_names_for_default_sdk_tools() -> No
         hooks=AgentHooks(),
     )
 
-    tool_names = {tool.get_name() for tool in agent.tools}
+    tool_names = {tool.name for tool in agent.tools}
 
     assert "bash" not in tool_names
     assert "bash_process" not in tool_names

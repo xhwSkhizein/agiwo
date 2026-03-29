@@ -221,7 +221,7 @@ class TestSchedulerPrepareAgent:
             assert registered is not None
             assert registered is not agent
 
-            tool_names = {t.get_name() for t in registered.tools}
+            tool_names = {t.name for t in registered.tools}
             assert "spawn_agent" in tool_names
             assert "sleep_and_wait" in tool_names
             assert "query_spawned_agent" in tool_names
@@ -237,7 +237,7 @@ class TestSchedulerPrepareAgent:
 
             await scheduler.submit(agent, "Hello")
 
-            tool_names = {t.get_name() for t in agent.tools}
+            tool_names = {t.name for t in agent.tools}
             assert "spawn_agent" not in tool_names
             assert "sleep_and_wait" not in tool_names
             assert "query_spawned_agent" not in tool_names
@@ -350,12 +350,11 @@ class TestSchedulerCreateChildAgent:
         assert child_agent.model is parent.model
         assert child_agent.hooks is not parent.hooks
         assert child_agent.run_step_storage is not parent.run_step_storage
-        assert child_agent.session_storage is not parent.session_storage
         assert child_agent.options.enable_termination_summary is True
         # Check child inherited parent's system prompt (get_effective_system_prompt triggers build)
         child_prompt = await child_agent.get_effective_system_prompt()
         assert "Be helpful" in child_prompt
-        child_tool_names = {t.get_name() for t in child_agent.tools}
+        child_tool_names = {t.name for t in child_agent.tools}
         assert "spawn_agent" not in child_tool_names
         assert "sleep_and_wait" in child_tool_names
         assert "query_spawned_agent" in child_tool_names
@@ -465,7 +464,7 @@ class TestSchedulerRunnerCleanup:
         prepared_agent = await agent.create_child_agent(
             child_id=agent.id,
             system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.get_name() for tool in agent.tools},
+            exclude_tool_names={tool.name for tool in agent.tools},
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent
@@ -731,7 +730,7 @@ class TestSchedulerQueuedMailbox:
         prepared_agent = await agent.create_child_agent(
             child_id=agent.id,
             system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.get_name() for tool in agent.tools},
+            exclude_tool_names={tool.name for tool in agent.tools},
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent

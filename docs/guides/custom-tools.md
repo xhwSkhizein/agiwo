@@ -11,11 +11,8 @@ from agiwo.tool import BaseTool, ToolContext, ToolResult
 
 
 class GreetTool(BaseTool):
-    def get_name(self) -> str:
-        return "greet"
-
-    def get_description(self) -> str:
-        return "Greet a person by name"
+    name = "greet"
+    description = "Greet a person by name"
 
     def get_parameters(self) -> dict:
         return {
@@ -26,9 +23,6 @@ class GreetTool(BaseTool):
             "required": ["name"],
         }
 
-    def is_concurrency_safe(self) -> bool:
-        return True
-
     async def execute(
         self,
         parameters: dict,
@@ -37,7 +31,7 @@ class GreetTool(BaseTool):
     ) -> ToolResult:
         name = parameters["name"]
         return ToolResult.success(
-            tool_name=self.get_name(),
+            tool_name=self.name,
             content=f"Hello, {name}!",
             content_for_user=f"Greeted {name}",
         )
@@ -51,10 +45,10 @@ Use `ToolResult.failed()` for expected errors:
 async def execute(self, parameters, context, abort_signal) -> ToolResult:
     try:
         result = await self._do_work(parameters)
-        return ToolResult.success(tool_name=self.get_name(), content=result)
+        return ToolResult.success(tool_name=self.name, content=result)
     except ExternalAPIError as e:
         return ToolResult.failed(
-            tool_name=self.get_name(),
+            tool_name=self.name,
             error=f"API error: {e}",
         )
 ```
@@ -67,7 +61,7 @@ Pass structured data via the `output` field:
 
 ```python
 return ToolResult.success(
-    tool_name=self.get_name(),
+    tool_name=self.name,
     content=f"Found {len(results)} results",
     output={"results": results, "count": len(results)},
 )
@@ -96,15 +90,15 @@ async def execute(self, parameters, context, abort_signal) -> ToolResult:
     for item in large_dataset:
         if abort_signal and abort_signal.is_cancelled():
             return ToolResult.aborted(
-                tool_name=self.get_name(),
+                tool_name=self.name,
             )
         await process(item)
-    return ToolResult.success(tool_name=self.get_name(), content="Done")
+    return ToolResult.success(tool_name=self.name, content="Done")
 ```
 
 ## Concurrency Safety
 
-Set `is_concurrency_safe()` based on your tool's behavior:
+Set `concurrency_safe` based on your tool's behavior:
 
 - **`True`** (default): Tool can run concurrently with other tools. Good for read-only operations, API calls, pure computations.
 - **`False`**: Tool must run alone. Use for tools that modify shared state, write to files, or have ordering dependencies.
@@ -134,7 +128,7 @@ For tools that need permission gating:
 async def execute(self, parameters, context, abort_signal) -> ToolResult:
     if not self._check_permission(parameters, context):
         return ToolResult.denied(
-            tool_name=self.get_name(),
+            tool_name=self.name,
             reason="Requires admin access",
         )
     # ...

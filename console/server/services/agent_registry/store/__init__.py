@@ -5,7 +5,6 @@ from typing import Protocol
 from server.config import ConsoleConfig
 from server.services.agent_registry.models import AgentConfigRecord
 from server.services.agent_registry.store.memory import InMemoryAgentRegistryStore
-from server.services.agent_registry.store.mongo import MongoAgentRegistryStore
 from server.services.agent_registry.store.sqlite import SqliteAgentRegistryStore
 
 
@@ -26,12 +25,7 @@ class AgentRegistryStore(Protocol):
 def create_agent_registry_store(config: ConsoleConfig) -> AgentRegistryStore:
     if config.metadata_storage_type == "sqlite":
         return SqliteAgentRegistryStore(db_path=config.sqlite_db_path)
-    if config.metadata_storage_type == "memory":
-        return InMemoryAgentRegistryStore()
-    return MongoAgentRegistryStore(
-        mongo_uri=config.mongodb_uri,
-        mongo_db_name=config.mongodb_db_name,
-    )
+    return InMemoryAgentRegistryStore()
 
 
 __all__ = [

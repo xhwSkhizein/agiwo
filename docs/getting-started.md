@@ -103,11 +103,8 @@ from agiwo.tool import ToolContext
 
 
 class CalculatorTool(BaseTool):
-    def get_name(self) -> str:
-        return "calculator"
-
-    def get_description(self) -> str:
-        return "Perform basic arithmetic"
+    name = "calculator"
+    description = "Perform basic arithmetic"
 
     def get_parameters(self) -> dict:
         return {
@@ -121,9 +118,6 @@ class CalculatorTool(BaseTool):
             "required": ["expression"],
         }
 
-    def is_concurrency_safe(self) -> bool:
-        return True
-
     async def execute(
         self,
         parameters: dict,
@@ -133,12 +127,12 @@ class CalculatorTool(BaseTool):
         try:
             result = eval(parameters["expression"], {"__builtins__": {}}, {})
             return ToolResult.success(
-                tool_name=self.get_name(),
+                tool_name=self.name,
                 content=str(result),
             )
         except Exception as e:
             return ToolResult.failed(
-                tool_name=self.get_name(),
+                tool_name=self.name,
                 error=str(e),
             )
 

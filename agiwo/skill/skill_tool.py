@@ -45,17 +45,12 @@ class SkillTool(BaseTool):
         self.registry = registry
         self.loader = loader
 
-    def get_name(self) -> str:
-        """Return the tool name."""
-        return "skill"
-
-    def get_description(self) -> str:
-        """Return the tool description."""
-        return (
-            "Activate an Agent Skill by loading its complete instructions. "
-            "Use this tool when a user task matches a skill's description or user explicitly requests a skill."
-            "After activation, follow the instructions in the skill's SKILL.md file."
-        )
+    name = "skill"
+    description = (
+        "Activate an Agent Skill by loading its complete instructions. "
+        "Use this tool when a user task matches a skill's description or user explicitly requests a skill."
+        "After activation, follow the instructions in the skill's SKILL.md file."
+    )
 
     def get_parameters(self) -> dict[str, Any]:
         """Return the JSON schema for tool parameters."""
@@ -69,10 +64,6 @@ class SkillTool(BaseTool):
             },
             "required": ["skill_name"],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        """Skill tool is concurrency safe."""
-        return True
 
     async def execute(
         self,

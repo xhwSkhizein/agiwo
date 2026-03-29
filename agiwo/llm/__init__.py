@@ -1,6 +1,5 @@
 from agiwo.llm.base import LLMConfig, Model, StreamChunk
 from agiwo.llm.factory import (
-    ModelConfig,
     ModelSpec,
     create_model,
     create_model_from_dict,
@@ -17,7 +16,6 @@ __all__ = [
     "Model",
     "StreamChunk",
     "ModelSpec",
-    "ModelConfig",
     "ModelProvider",
     "create_model",
     "create_model_from_dict",

@@ -40,6 +40,12 @@ class BashLogsRequest:
 class BashProcessTool(BaseTool, AgentProcessRegistry):
     """Manage background processes started by the bash tool."""
 
+    name = "bash_process"
+    description = (
+        "Manage background jobs started by the `bash` tool. "
+        "Choose an `action` to list jobs, inspect status, read logs, stop a job, "
+        "show log paths, or write stdin to a running PTY job."
+    )
     cacheable: bool = False
     timeout_seconds: int = 30
 
@@ -48,16 +54,6 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             sandbox=get_shared_local_sandbox(),
         )
         super().__init__()
-
-    def get_name(self) -> str:
-        return "bash_process"
-
-    def get_description(self) -> str:
-        return (
-            "Manage background jobs started by the `bash` tool. "
-            "Choose an `action` to list jobs, inspect status, read logs, stop a job, "
-            "show log paths, or write stdin to a running PTY job."
-        )
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -112,9 +108,6 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             },
             "required": ["action"],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     async def execute(
         self,

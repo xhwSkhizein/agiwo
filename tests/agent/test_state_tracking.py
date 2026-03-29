@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from agiwo.agent.models.compact import CompactMetadata
+from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.runtime.state_ops import (
@@ -12,7 +12,6 @@ from agiwo.agent.runtime.state_ops import (
     track_step_state,
 )
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.agent.types import (
     StepMetrics,
     StepRecord,
@@ -25,7 +24,6 @@ def _make_state() -> RunContext:
         session_runtime=SessionRuntime(
             session_id="session-1",
             run_step_storage=InMemoryRunStepStorage(),
-            session_storage=InMemorySessionStorage(),
         ),
         run_id="run-1",
         agent_id="agent-1",

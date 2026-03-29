@@ -23,21 +23,23 @@ class WebReaderApiConfig:
         default_factory=lambda: settings.web_reader_api_max_content_length
     )
     model_provider: str = field(
-        default_factory=lambda: settings.get_tool_model_provider()
+        default_factory=lambda: settings.tool_default_model_provider
     )
     model_name: str = field(default_factory=lambda: settings.get_tool_model_name())
     model_base_url: str | None = field(
-        default_factory=lambda: settings.get_tool_model_base_url()
+        default_factory=lambda: settings.tool_default_model_base_url
     )
     api_key_env_name: str | None = field(
         default_factory=lambda: settings.get_tool_model_api_key_env_name()
     )
     model_temperature: float = field(
-        default_factory=lambda: settings.get_tool_model_temperature()
+        default_factory=lambda: settings.tool_default_model_temperature
     )
-    model_top_p: float = field(default_factory=lambda: settings.get_tool_model_top_p())
+    model_top_p: float = field(
+        default_factory=lambda: settings.tool_default_model_top_p
+    )
     model_max_tokens: int = field(
-        default_factory=lambda: settings.get_tool_model_max_tokens()
+        default_factory=lambda: settings.tool_default_model_max_tokens
     )
     max_retries: int = 3
     headless: bool = False

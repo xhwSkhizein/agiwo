@@ -12,7 +12,7 @@ from typing import Any
 
 import aiofiles
 
-from agiwo.agent.models.compact import CompactMetadata
+from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.models.step import StepRecord
 from agiwo.agent.runtime.context import RunContext
@@ -373,7 +373,7 @@ async def _compact(
 
     replace_messages(state, compacted_messages)
     record_compaction_metadata(state, metadata)
-    await state.session_runtime.session_storage.save_compact_metadata(
+    await state.session_runtime.run_step_storage.save_compact_metadata(
         state.session_id,
         state.agent_id,
         metadata,

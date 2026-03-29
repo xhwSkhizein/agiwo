@@ -13,6 +13,7 @@ from agiwo.agent import Agent
 from agiwo.agent import (
     AgentConfig,
     AgentOptions,
+    AgentStorageOptions,
     RunStepStorageConfig,
     TraceStorageConfig,
 )
@@ -267,7 +268,9 @@ class TestAgentIntegration:
                 name="test-agent",
                 description="Test",
                 options=AgentOptions(
-                    trace_storage=TraceStorageConfig(storage_type="memory"),
+                    storage=AgentStorageOptions(
+                        trace_storage=TraceStorageConfig(storage_type="memory"),
+                    ),
                 ),
             ),
             model=None,  # type: ignore

@@ -63,7 +63,7 @@ async def _execute_context(
 
     prompt = await agent.get_effective_system_prompt()
     prompt_preview = _truncate(prompt, _PROMPT_PREVIEW_MAX_LEN)
-    tool_names = [tool.get_name() for tool in agent.tools]
+    tool_names = [tool.name for tool in agent.tools]
 
     lines = [
         f"Agent: {agent.name} (id: {agent.id})",

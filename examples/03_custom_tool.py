@@ -15,11 +15,8 @@ from agiwo.tool import BaseTool, ToolContext, ToolResult
 class WeatherTool(BaseTool):
     """Simulated weather lookup tool."""
 
-    def get_name(self) -> str:
-        return "get_weather"
-
-    def get_description(self) -> str:
-        return "Get the current weather for a city"
+    name = "get_weather"
+    description = "Get the current weather for a city"
 
     def get_parameters(self) -> dict:
         return {
@@ -39,9 +36,6 @@ class WeatherTool(BaseTool):
             "required": ["city"],
         }
 
-    def is_concurrency_safe(self) -> bool:
-        return True
-
     async def execute(
         self,
         parameters: dict,
@@ -56,7 +50,7 @@ class WeatherTool(BaseTool):
         unit_symbol = "°C" if unit == "celsius" else "°F"
 
         return ToolResult.success(
-            tool_name=self.get_name(),
+            tool_name=self.name,
             content=f"Weather in {city}: sunny, {temp}{unit_symbol}",
             content_for_user=f"{city}: sunny, {temp}{unit_symbol}",
             output={"city": city, "condition": "sunny", "temp": temp, "unit": unit},

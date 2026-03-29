@@ -7,23 +7,16 @@ from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.tool_executor import execute_tool_batch
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.tool.base import BaseTool, ToolGateDecision, ToolResult
 from agiwo.tool.context import ToolContext
 
 
 class EchoTool(BaseTool):
-    def get_name(self) -> str:
-        return "echo"
-
-    def get_description(self) -> str:
-        return "echo"
+    name = "echo"
+    description = "echo"
 
     def get_parameters(self) -> dict[str, object]:
         return {"type": "object"}
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     async def execute(
         self,
@@ -33,7 +26,7 @@ class EchoTool(BaseTool):
     ) -> ToolResult:
         del context, abort_signal
         return ToolResult.success(
-            tool_name=self.get_name(),
+            tool_name=self.name,
             tool_call_id=str(parameters.get("tool_call_id", "")),
             input_args=parameters,
             content="ok",
@@ -56,7 +49,6 @@ def build_context():
         session_runtime=SessionRuntime(
             session_id="session-1",
             run_step_storage=InMemoryRunStepStorage(),
-            session_storage=InMemorySessionStorage(),
         ),
         run_id="run-1",
         agent_id="agent-1",
@@ -94,7 +86,7 @@ async def test_tool_runtime_allows_default_gate() -> None:
                 "function": {"name": "echo", "arguments": "{}"},
             }
         ],
-        tools_map={tool.get_name(): tool},
+        tools_map={tool.name: tool},
         context=build_context(),
     )
     result = results[0]
@@ -116,7 +108,7 @@ async def test_tool_runtime_denies_immediately_when_gate_denies() -> None:
                 "function": {"name": "echo", "arguments": "{}"},
             }
         ],
-        tools_map={tool.get_name(): tool},
+        tools_map={tool.name: tool},
         context=build_context(),
     )
     result = results[0]

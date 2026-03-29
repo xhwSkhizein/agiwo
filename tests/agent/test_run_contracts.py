@@ -11,7 +11,6 @@ from agiwo.agent import AgentConfig
 from agiwo.agent import RunOutput
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -186,7 +185,6 @@ async def test_run_child_uses_agent_instance_id(
     session_runtime = SessionRuntime(
         session_id="sess-child",
         run_step_storage=InMemoryRunStepStorage(),
-        session_storage=InMemorySessionStorage(),
     )
 
     result = await agent.run_child(

@@ -35,19 +35,14 @@ class ConsoleConfig(BaseSettings):
 
     # Storage backend for run/step persistence
     # Note: when using sqlite, path comes from SDK settings (AGIWO_SQLITE_DB_PATH)
-    run_step_storage_type: Literal["memory", "sqlite", "mongodb"] = "sqlite"
+    run_step_storage_type: Literal["memory", "sqlite"] = "sqlite"
 
     # Storage backend for traces.
     # "none" is treated the same as "memory" for lightweight runtime-only tracing.
-    trace_storage_type: Literal["none", "memory", "sqlite", "mongodb"] = "sqlite"
+    trace_storage_type: Literal["none", "memory", "sqlite"] = "sqlite"
 
     # Storage backend for console metadata (agent registry, channel runtime, scheduler state).
-    metadata_storage_type: Literal["memory", "sqlite", "mongodb"] = "sqlite"
-
-    # MongoDB settings (used when any *_storage_type=mongodb)
-    mongodb_uri: str = "mongodb://localhost:27017"
-    mongodb_db_name: str = "agiwo"
-    mongodb_trace_collection: str = "traces"
+    metadata_storage_type: Literal["memory", "sqlite"] = "sqlite"
 
     # Default Agent Configuration
     default_agent_id: str = "default-console-agent"
@@ -100,7 +95,7 @@ class ConsoleConfig(BaseSettings):
         return sdk_settings.trace_collection_name or "agiwo_traces"
 
     @property
-    def effective_trace_storage_type(self) -> Literal["memory", "sqlite", "mongodb"]:
+    def effective_trace_storage_type(self) -> Literal["memory", "sqlite"]:
         """Normalized trace storage type."""
         if self.trace_storage_type == "none":
             return "memory"

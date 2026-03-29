@@ -5,14 +5,25 @@ This module owns the persisted scheduler state snapshot plus related enums and
 configuration models.
 """
 
+import copy
 from collections.abc import Collection, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum
+from types import MappingProxyType
 from typing import Any
 
 from agiwo.agent import UserInput
+
+
+def _deepcopy_mapping_proxy(
+    x: MappingProxyType, memo: dict[int, Any]
+) -> MappingProxyType:
+    return MappingProxyType(deepcopy(dict(x), memo))
+
+
+copy._deepcopy_dispatch[MappingProxyType] = _deepcopy_mapping_proxy
 
 
 class AgentStateStatus(str, Enum):
@@ -89,48 +100,17 @@ def to_seconds(value: float, unit: TimeUnit) -> float:
 
 
 def _freeze_value(value: object) -> object:
-    if isinstance(value, FrozenDict):
+    if isinstance(value, MappingProxyType):
         return value
     if isinstance(value, dict):
-        return FrozenDict(value)
-    if isinstance(value, list):
-        return tuple(_freeze_value(item) for item in value)
-    if isinstance(value, tuple):
+        return MappingProxyType({k: _freeze_value(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple)):
         return tuple(_freeze_value(item) for item in value)
     return deepcopy(value)
 
 
-class FrozenDict(dict[str, Any]):
-    """Shallowly immutable mapping with deepcopy support for frozen dataclasses."""
-
-    __slots__ = ()
-
-    def __init__(self, initial: Mapping[str, Any] | None = None) -> None:
-        super().__init__()
-        if initial is None:
-            return
-        for key, value in initial.items():
-            dict.__setitem__(self, key, _freeze_value(value))
-
-    def __deepcopy__(self, memo: dict[int, Any]) -> "FrozenDict":
-        return type(self)(
-            {deepcopy(key, memo): deepcopy(value, memo) for key, value in self.items()}
-        )
-
-    def _blocked(self, *_args: object, **_kwargs: object) -> None:
-        raise TypeError("FrozenDict is immutable")
-
-    __setitem__ = _blocked
-    __delitem__ = _blocked
-    clear = _blocked
-    pop = _blocked
-    popitem = _blocked
-    setdefault = _blocked
-    update = _blocked
-
-
 def thaw_value(value: object) -> object:
-    if isinstance(value, FrozenDict):
+    if isinstance(value, MappingProxyType):
         return {key: thaw_value(item) for key, item in value.items()}
     if isinstance(value, tuple):
         return [thaw_value(item) for item in value]
@@ -225,7 +205,9 @@ class AgentState:
     task: UserInput
     parent_id: str | None = None
     pending_input: UserInput | None = None
-    config_overrides: Mapping[str, Any] = field(default_factory=FrozenDict)
+    config_overrides: Mapping[str, Any] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     wake_condition: WakeCondition | None = None
     result_summary: str | None = None
     signal_propagated: bool = False
@@ -242,8 +224,8 @@ class AgentState:
             self,
             "config_overrides",
             self.config_overrides
-            if isinstance(self.config_overrides, FrozenDict)
-            else FrozenDict(self.config_overrides),
+            if isinstance(self.config_overrides, MappingProxyType)
+            else _freeze_value(self.config_overrides),
         )
 
     @property
@@ -401,12 +383,12 @@ class PendingEvent:
             self,
             "payload",
             self.payload
-            if isinstance(self.payload, FrozenDict)
-            else FrozenDict(self.payload),
+            if isinstance(self.payload, MappingProxyType)
+            else _freeze_value(self.payload),
         )
 
     def with_payload(self, payload: Mapping[str, Any]) -> "PendingEvent":
-        return replace(self, payload=FrozenDict(payload))
+        return replace(self, payload=_freeze_value(payload))
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,15 +396,15 @@ class AgentStateStorageConfig:
     """Configuration for AgentStateStorage."""
 
     storage_type: str = "memory"
-    config: Mapping[str, Any] = field(default_factory=FrozenDict)
+    config: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "config",
             self.config
-            if isinstance(self.config, FrozenDict)
-            else FrozenDict(self.config),
+            if isinstance(self.config, MappingProxyType)
+            else _freeze_value(self.config),
         )
 
 

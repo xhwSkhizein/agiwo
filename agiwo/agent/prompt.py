@@ -12,9 +12,9 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     distro = None
 
-from agiwo.agent.hooks.memory import filter_relevant_memories
+from agiwo.agent.hooks import filter_relevant_memories
 from agiwo.agent.models.input import ChannelContext, UserMessage
-from agiwo.agent.models.memory import MemoryRecord
+from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.step import StepRecord
 from agiwo.tool.base import BaseTool
 from agiwo.skill.prompt_catalog import SkillPromptProvider
@@ -261,10 +261,7 @@ async def build_system_prompt(
             current_date=current_dt.strftime("%Y-%m-%d"),
         ),
         _render_tools(
-            tuple(
-                (tool.get_name(), tool.get_short_description())
-                for tool in (tools or [])
-            )
+            tuple((tool.name, tool.get_short_description()) for tool in (tools or []))
         ),
         f"---\n\n{skills_section}".strip() if skills_section else "",
         _render_user(documents),

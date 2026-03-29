@@ -35,10 +35,12 @@ class AgentTool(BaseTool):
         self.max_depth = max_depth
         super().__init__()
 
-    def get_name(self) -> str:
+    @property
+    def name(self) -> str:
         return self._name
 
-    def get_description(self) -> str:
+    @property
+    def description(self) -> str:
         return self._description
 
     def get_parameters(self) -> dict[str, Any]:
@@ -66,12 +68,6 @@ class AgentTool(BaseTool):
             tool_call_id=tool_call_id,
         )
 
-    def is_concurrency_safe(self) -> bool:
-        return True
-
-    def get_short_description(self) -> str:
-        return self.get_description()
-
     async def execute(
         self,
         parameters: dict[str, Any],
@@ -81,7 +77,7 @@ class AgentTool(BaseTool):
         start_time = time.time()
         if not isinstance(context, AgentToolContext):
             return ToolResult.failed(
-                tool_name=self.get_name(),
+                tool_name=self.name,
                 error="AgentTool requires agent runtime context",
                 tool_call_id=context.tool_call_id,
                 input_args=parameters,
@@ -101,7 +97,7 @@ class AgentTool(BaseTool):
                 f"Current call chain: {' -> '.join(call_stack)} -> {child_id}"
             )
             return ToolResult.failed(
-                tool_name=self.get_name(),
+                tool_name=self.name,
                 error=error_msg,
                 tool_call_id=toolcall_id,
                 input_args=parameters,
@@ -114,7 +110,7 @@ class AgentTool(BaseTool):
                 f"Current call chain: {' -> '.join(call_stack)}"
             )
             return ToolResult.failed(
-                tool_name=self.get_name(),
+                tool_name=self.name,
                 error=error_msg,
                 tool_call_id=toolcall_id,
                 input_args=parameters,
@@ -150,7 +146,7 @@ class AgentTool(BaseTool):
         input_args = {"task": task, "context": extra_context}
         if error is not None:
             return ToolResult.failed(
-                tool_name=self.get_name(),
+                tool_name=self.name,
                 error=error,
                 tool_call_id=context.tool_call_id,
                 input_args=input_args,
@@ -160,7 +156,7 @@ class AgentTool(BaseTool):
             )
 
         return ToolResult.success(
-            tool_name=self.get_name(),
+            tool_name=self.name,
             tool_call_id=context.tool_call_id,
             input_args=input_args,
             content=response_text,

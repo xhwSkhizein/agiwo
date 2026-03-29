@@ -28,6 +28,22 @@ logger = get_logger(__name__)
 class WebSearchTool(BaseTool):
     """Search the web and store lightweight citations for follow-up reads."""
 
+    name = "web_search"
+    description = (
+        "This tool performs web searches and returns:\n"
+        "- Numbered search results (0, 1, 2...) with titles and snippets\n"
+        "- Publication dates (when available)\n"
+        "- Source information\n"
+        "\n"
+        "Use this tool when you need to:\n"
+        "- Find current information not in your training data\n"
+        "- Research topics or gather facts\n"
+        "- Discover relevant web resources\n"
+        "- Get multiple perspectives on a topic\n"
+        "\n"
+        "To fetch full content from a search result, use web_reader with the "
+        "result index: web_reader(index=0) => Fetch content from the first search result"
+    )
     cacheable = True
 
     def __init__(
@@ -49,23 +65,6 @@ class WebSearchTool(BaseTool):
             max_retries=settings.web_search_api_max_retries,
         )
 
-    def get_name(self) -> str:
-        return "web_search"
-
-    def get_description(self) -> str:
-        return """This tool performs web searches and returns:
-- Numbered search results (0, 1, 2...) with titles and snippets
-- Publication dates (when available)
-- Source information
-
-Use this tool when you need to:
-- Find current information not in your training data
-- Research topics or gather facts
-- Discover relevant web resources
-- Get multiple perspectives on a topic
-
-To fetch full content from a search result, use web_reader with the result index: web_reader(index=0) => Fetch content from the first search result"""
-
     def get_parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
@@ -77,9 +76,6 @@ To fetch full content from a search result, use web_reader with the result index
             },
             "required": ["query"],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     def _contains_chinese(self, text: str) -> bool:
         return any("\u4e00" <= char <= "\u9fff" for char in text)

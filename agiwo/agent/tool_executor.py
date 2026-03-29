@@ -28,7 +28,7 @@ async def execute_tool_batch(
     for index, tool_call in enumerate(tool_calls):
         tool_name = _get_tool_name(tool_call)
         tool = tools_map.get(tool_name) if tool_name else None
-        if tool is not None and not tool.is_concurrency_safe():
+        if tool is not None and not tool.concurrency_safe:
             unsafe_indices.append(index)
         else:
             safe_indices.append(index)

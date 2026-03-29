@@ -2,17 +2,14 @@
 Tests for Context Compact functionality.
 """
 
-from datetime import datetime
-
 import pytest
 
 from agiwo.agent.compaction import build_compacted_messages, compact_if_needed
-from agiwo.agent.models.compact import CompactMetadata
+from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -62,110 +59,6 @@ class TestCompactMetadata:
         assert metadata.get_summary() == ""
 
 
-class TestInMemorySessionStorage:
-    @pytest.fixture
-    def storage(self):
-        return InMemorySessionStorage()
-
-    @pytest.mark.asyncio
-    async def test_save_and_get_latest(self, storage):
-        metadata1 = CompactMetadata(
-            session_id="session-1",
-            agent_id="agent-1",
-            start_seq=0,
-            end_seq=5,
-            before_token_estimate=3000,
-            after_token_estimate=300,
-            message_count=5,
-            transcript_path="/path/1.jsonl",
-            analysis={"summary": "First summary"},
-            created_at=datetime(2024, 1, 1, 10, 0, 0),
-        )
-
-        metadata2 = CompactMetadata(
-            session_id="session-1",
-            agent_id="agent-1",
-            start_seq=6,
-            end_seq=10,
-            before_token_estimate=4000,
-            after_token_estimate=400,
-            message_count=5,
-            transcript_path="/path/2.jsonl",
-            analysis={"summary": "Second summary"},
-            created_at=datetime(2024, 1, 1, 11, 0, 0),
-        )
-
-        await storage.save_compact_metadata("session-1", "agent-1", metadata1)
-        await storage.save_compact_metadata("session-1", "agent-1", metadata2)
-
-        latest = await storage.get_latest_compact_metadata("session-1", "agent-1")
-        assert latest is not None
-        assert latest.get_summary() == "Second summary"
-
-    @pytest.mark.asyncio
-    async def test_get_latest_not_found(self, storage):
-        result = await storage.get_latest_compact_metadata("nonexistent", "agent")
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_compact_history(self, storage):
-        for i in range(3):
-            metadata = CompactMetadata(
-                session_id="session-1",
-                agent_id="agent-1",
-                start_seq=i * 5,
-                end_seq=(i + 1) * 5,
-                before_token_estimate=1000,
-                after_token_estimate=100,
-                message_count=5,
-                transcript_path=f"/path/{i}.jsonl",
-                analysis={"summary": f"Summary {i}"},
-            )
-            await storage.save_compact_metadata("session-1", "agent-1", metadata)
-
-        history = await storage.get_compact_history("session-1", "agent-1")
-        assert len(history) == 3
-        assert history[0].get_summary() == "Summary 0"
-        assert history[2].get_summary() == "Summary 2"
-
-    @pytest.mark.asyncio
-    async def test_isolation_by_agent_id(self, storage):
-        metadata1 = CompactMetadata(
-            session_id="session-1",
-            agent_id="agent-1",
-            start_seq=0,
-            end_seq=5,
-            before_token_estimate=1000,
-            after_token_estimate=100,
-            message_count=5,
-            transcript_path="/path/1.jsonl",
-            analysis={"summary": "Agent 1 summary"},
-        )
-
-        metadata2 = CompactMetadata(
-            session_id="session-1",
-            agent_id="agent-2",
-            start_seq=0,
-            end_seq=5,
-            before_token_estimate=1000,
-            after_token_estimate=100,
-            message_count=5,
-            transcript_path="/path/2.jsonl",
-            analysis={"summary": "Agent 2 summary"},
-        )
-
-        await storage.save_compact_metadata("session-1", "agent-1", metadata1)
-        await storage.save_compact_metadata("session-1", "agent-2", metadata2)
-
-        latest1 = await storage.get_latest_compact_metadata("session-1", "agent-1")
-        latest2 = await storage.get_latest_compact_metadata("session-1", "agent-2")
-
-        assert latest1 is not None
-        assert latest2 is not None
-        assert latest1.get_summary() == "Agent 1 summary"
-        assert latest2.get_summary() == "Agent 2 summary"
-
-
 class TestDefaultPrompt:
     def test_build_compacted_messages_includes_summary_and_default_response(self):
         messages = build_compacted_messages(
@@ -187,11 +80,9 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
     tmp_path,
 ):
     step_storage = InMemoryRunStepStorage()
-    session_storage = InMemorySessionStorage()
     session_runtime = SessionRuntime(
         session_id="sess-1",
         run_step_storage=step_storage,
-        session_storage=session_storage,
     )
     published = []
 
@@ -251,5 +142,5 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
     assert all(message.get("name") != "compact_request" for message in msgs)
     assert state.ledger.last_compact_metadata == metadata
 
-    persisted = await session_storage.get_latest_compact_metadata("sess-1", "agent-1")
+    persisted = await step_storage.get_latest_compact_metadata("sess-1", "agent-1")
     assert persisted == metadata

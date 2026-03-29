@@ -3,13 +3,14 @@ SQLite implementation of RunStepStorage.
 """
 
 import json
+from datetime import datetime
 
 import aiosqlite
 
+from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.run import Run
 from agiwo.agent.models.step import StepRecord
 from agiwo.agent.storage.base import RunStepStorage
-from agiwo.agent.storage._decorators import storage_op
 from agiwo.agent.storage.serialization import (
     deserialize_run_from_storage,
     deserialize_step_from_storage,
@@ -118,6 +119,27 @@ class SQLiteRunStepStorage(RunStepStorage):
                 "CREATE INDEX IF NOT EXISTS idx_steps_session_run_seq ON steps(session_id, run_id, sequence)",
                 "CREATE INDEX IF NOT EXISTS idx_steps_session_tool_call_id ON steps(session_id, tool_call_id)",
                 "CREATE INDEX IF NOT EXISTS idx_steps_created_at ON steps(created_at)",
+                """
+                CREATE TABLE IF NOT EXISTS compact_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    start_seq INTEGER NOT NULL,
+                    end_seq INTEGER NOT NULL,
+                    before_token_estimate INTEGER NOT NULL,
+                    after_token_estimate INTEGER NOT NULL,
+                    message_count INTEGER NOT NULL,
+                    transcript_path TEXT NOT NULL,
+                    analysis TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    compact_model TEXT NOT NULL,
+                    compact_tokens INTEGER NOT NULL
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS idx_compact_session_agent
+                ON compact_metadata (session_id, agent_id, created_at)
+                """,
             ],
         )
         await connection.commit()
@@ -161,7 +183,6 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     # --- Run Operations ---
 
-    @storage_op("save_run", run_id=lambda self, run: run.id)
     async def save_run(self, run: Run) -> None:
         """Save or update a run."""
         conn = await self._ensure_connection()
@@ -176,7 +197,6 @@ class SQLiteRunStepStorage(RunStepStorage):
         await conn.execute(query, values)
         await conn.commit()
 
-    @storage_op("get_run", run_id=lambda self, run_id: run_id)
     async def get_run(self, run_id: str) -> Run | None:
         """Get a run by ID."""
         conn = await self._ensure_connection()
@@ -186,7 +206,6 @@ class SQLiteRunStepStorage(RunStepStorage):
                 return self._deserialize_run(row)
             return None
 
-    @storage_op("list_runs")
     async def list_runs(
         self,
         user_id: str | None = None,
@@ -215,7 +234,6 @@ class SQLiteRunStepStorage(RunStepStorage):
                 runs.append(self._deserialize_run(row))
         return runs
 
-    @storage_op("delete_run", run_id=lambda self, run_id: run_id)
     async def delete_run(self, run_id: str) -> None:
         """Delete a run and its associated steps."""
         conn = await self._ensure_connection()
@@ -225,11 +243,6 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     # --- Step Operations ---
 
-    @storage_op(
-        "save_step",
-        step_id=lambda self, step: step.id,
-        session_id=lambda self, step: step.session_id,
-    )
     async def save_step(self, step: StepRecord) -> None:
         """Save or update a step."""
         conn = await self._ensure_connection()
@@ -244,7 +257,6 @@ class SQLiteRunStepStorage(RunStepStorage):
         await conn.execute(query, values)
         await conn.commit()
 
-    @storage_op("save_steps_batch", count=lambda self, steps: len(steps))
     async def save_steps_batch(self, steps: list[StepRecord]) -> None:
         """Batch save steps."""
         if not steps:
@@ -264,7 +276,6 @@ class SQLiteRunStepStorage(RunStepStorage):
         )
         await conn.commit()
 
-    @storage_op("get_steps", session_id=lambda self, session_id, *_, **__: session_id)
     async def get_steps(
         self,
         session_id: str,
@@ -301,7 +312,6 @@ class SQLiteRunStepStorage(RunStepStorage):
                 steps.append(self._deserialize_step(row))
         return steps
 
-    @storage_op("get_last_step", session_id=lambda self, session_id: session_id)
     async def get_last_step(self, session_id: str) -> StepRecord | None:
         """Get the last step of a session."""
         conn = await self._ensure_connection()
@@ -314,9 +324,6 @@ class SQLiteRunStepStorage(RunStepStorage):
                 return self._deserialize_step(row)
             return None
 
-    @storage_op(
-        "delete_steps", session_id=lambda self, session_id, *_, **__: session_id
-    )
     async def delete_steps(self, session_id: str, start_seq: int) -> int:
         """Delete steps from a sequence number onwards."""
         conn = await self._ensure_connection()
@@ -327,7 +334,6 @@ class SQLiteRunStepStorage(RunStepStorage):
         await conn.commit()
         return cursor.rowcount
 
-    @storage_op("get_step_count", session_id=lambda self, session_id: session_id)
     async def get_step_count(self, session_id: str) -> int:
         """Get total number of steps for a session."""
         conn = await self._ensure_connection()
@@ -337,7 +343,6 @@ class SQLiteRunStepStorage(RunStepStorage):
             row = await cursor.fetchone()
             return row[0] if row else 0
 
-    @storage_op("get_max_sequence", session_id=lambda self, session_id: session_id)
     async def get_max_sequence(self, session_id: str) -> int:
         """Get the maximum sequence number in the session.
 
@@ -351,7 +356,6 @@ class SQLiteRunStepStorage(RunStepStorage):
             row = await cursor.fetchone()
             return row[0] if row and row[0] is not None else 0
 
-    @storage_op("allocate_sequence", session_id=lambda self, session_id: session_id)
     async def allocate_sequence(self, session_id: str) -> int:
         """Atomically allocate next sequence number using SQLite transactions.
         Thread-safe and concurrent-safe operation.
@@ -390,10 +394,6 @@ class SQLiteRunStepStorage(RunStepStorage):
             await conn.rollback()
             raise
 
-    @storage_op(
-        "get_step_by_tool_call_id",
-        tool_call_id=lambda self, session_id, tool_call_id: tool_call_id,
-    )
     async def get_step_by_tool_call_id(
         self,
         session_id: str,
@@ -409,6 +409,85 @@ class SQLiteRunStepStorage(RunStepStorage):
             if row:
                 return self._deserialize_step(row)
             return None
+
+    # --- Compact Metadata ---
+
+    async def save_compact_metadata(
+        self, session_id: str, agent_id: str, metadata: CompactMetadata
+    ) -> None:
+        conn = await self._ensure_connection()
+        await conn.execute(
+            """
+            INSERT INTO compact_metadata (
+                session_id, agent_id, start_seq, end_seq,
+                before_token_estimate, after_token_estimate, message_count,
+                transcript_path, analysis, created_at, compact_model, compact_tokens
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                metadata.session_id,
+                metadata.agent_id,
+                metadata.start_seq,
+                metadata.end_seq,
+                metadata.before_token_estimate,
+                metadata.after_token_estimate,
+                metadata.message_count,
+                metadata.transcript_path,
+                self._dumps(metadata.analysis),
+                metadata.created_at.isoformat(),
+                metadata.compact_model,
+                metadata.compact_tokens,
+            ),
+        )
+        await conn.commit()
+
+    async def get_latest_compact_metadata(
+        self, session_id: str, agent_id: str
+    ) -> CompactMetadata | None:
+        conn = await self._ensure_connection()
+        async with conn.execute(
+            """
+            SELECT * FROM compact_metadata
+            WHERE session_id = ? AND agent_id = ?
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (session_id, agent_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return self._row_to_compact_metadata(row)
+
+    async def get_compact_history(
+        self, session_id: str, agent_id: str
+    ) -> list[CompactMetadata]:
+        conn = await self._ensure_connection()
+        async with conn.execute(
+            """
+            SELECT * FROM compact_metadata
+            WHERE session_id = ? AND agent_id = ?
+            ORDER BY created_at ASC
+            """,
+            (session_id, agent_id),
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [self._row_to_compact_metadata(row) for row in rows]
+
+    def _row_to_compact_metadata(self, row: aiosqlite.Row) -> CompactMetadata:
+        return CompactMetadata(
+            session_id=row["session_id"],
+            agent_id=row["agent_id"],
+            start_seq=row["start_seq"],
+            end_seq=row["end_seq"],
+            before_token_estimate=row["before_token_estimate"],
+            after_token_estimate=row["after_token_estimate"],
+            message_count=row["message_count"],
+            transcript_path=row["transcript_path"],
+            analysis=self._loads(row["analysis"]),
+            created_at=datetime.fromisoformat(row["created_at"]),
+            compact_model=row["compact_model"],
+            compact_tokens=row["compact_tokens"],
+        )
 
     @staticmethod
     def _dumps(value) -> str:

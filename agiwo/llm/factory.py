@@ -54,10 +54,6 @@ class ProviderSpec:
     include_aws_config: bool = False
 
 
-ModelConfig = ModelSpec
-""".. deprecated:: Use ``ModelSpec`` directly."""
-
-
 def _resolve_api_key(config: ModelSpec) -> str | None:
     if config.api_key_env_name:
         return os.getenv(config.api_key_env_name)
@@ -119,7 +115,7 @@ def _build_model_for_provider(
 
     model = spec.model_class(**model_kwargs)
     if spec.override_provider is not None:
-        model.provider = spec.override_provider
+        model.config.provider = spec.override_provider
     return model
 
 
@@ -195,7 +191,6 @@ def create_model_from_dict(
 __all__ = [
     "ModelProvider",
     "ModelSpec",
-    "ModelConfig",
     "create_model",
     "create_model_from_dict",
 ]

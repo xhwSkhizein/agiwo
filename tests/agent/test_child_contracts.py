@@ -3,7 +3,6 @@ from uuid import uuid4
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.storage.session import InMemorySessionStorage
 
 
 def test_child_context_reuses_session_runtime_and_increments_depth() -> None:
@@ -11,7 +10,6 @@ def test_child_context_reuses_session_runtime_and_increments_depth() -> None:
         session_runtime=SessionRuntime(
             session_id="child-session",
             run_step_storage=InMemoryRunStepStorage(),
-            session_storage=InMemorySessionStorage(),
         ),
         run_id="root-run",
         agent_id="root-agent",
