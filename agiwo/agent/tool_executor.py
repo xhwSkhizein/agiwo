@@ -4,8 +4,6 @@ import asyncio
 import time
 from typing import Any
 
-from agiwo.agent.nested.agent_tool import AgentTool
-from agiwo.agent.nested.context import AgentToolContext
 from agiwo.agent.runtime.context import RunContext
 from agiwo.llm.message_converter import parse_json_tool_args
 from agiwo.tool.base import BaseTool, ToolGateDecision, ToolResult
@@ -14,38 +12,6 @@ from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-def _build_tool_context(
-    ctx: RunContext,
-    tool: BaseTool,
-    *,
-    tool_call_id: str = "",
-) -> ToolContext:
-    tool_deadline = time.time() + tool.timeout_seconds
-    timeout_at = (
-        min(ctx.timeout_at, tool_deadline)
-        if ctx.timeout_at is not None
-        else tool_deadline
-    )
-    if isinstance(tool, AgentTool):
-        return AgentToolContext.from_run_context(
-            ctx,
-            timeout_at=timeout_at,
-            gate_checked=True,
-            tool_call_id=tool_call_id,
-        )
-    return ToolContext(
-        session_id=ctx.session_id,
-        agent_id=ctx.agent_id,
-        agent_name=ctx.agent_name,
-        user_id=ctx.user_id,
-        timeout_at=timeout_at,
-        depth=ctx.depth,
-        metadata=dict(ctx.metadata),
-        gate_checked=True,
-        tool_call_id=tool_call_id,
-    )
 
 
 async def execute_tool_batch(
@@ -181,7 +147,7 @@ async def _execute_prepared_tool_call(
     start_time: float,
 ) -> ToolResult:
     try:
-        tool_context = _build_tool_context(context, tool, tool_call_id=call_id)
+        tool_context = tool.build_context(context, tool_call_id=call_id)
         gate_decision = await _gate_tool_call(tool, args, tool_context)
         if gate_decision.action == "deny":
             return ToolResult.denied(

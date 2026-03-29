@@ -222,6 +222,31 @@ class BaseTool(ABC):
             ToolResult: Tool execution result
         """
 
+    def build_context(self, run_context: Any, *, tool_call_id: str = "") -> ToolContext:
+        """Build execution context from the agent run context.
+
+        Subclasses may override to return specialized context types.
+        """
+        import time as _time
+
+        tool_deadline = _time.time() + self.timeout_seconds
+        timeout_at = (
+            min(run_context.timeout_at, tool_deadline)
+            if run_context.timeout_at is not None
+            else tool_deadline
+        )
+        return ToolContext(
+            session_id=run_context.session_id,
+            agent_id=run_context.agent_id,
+            agent_name=run_context.agent_name,
+            user_id=run_context.user_id,
+            timeout_at=timeout_at,
+            depth=run_context.depth,
+            metadata=dict(run_context.metadata),
+            gate_checked=True,
+            tool_call_id=tool_call_id,
+        )
+
     def get_definition(self) -> ToolDefinition:
         """Construct a `ToolDefinition` for LLM-facing registration."""
         return ToolDefinition(
