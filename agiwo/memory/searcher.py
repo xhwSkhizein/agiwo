@@ -360,12 +360,17 @@ class HybridSearcher:
 
         return results
 
+    _VECTOR_FALLBACK_MAX = 10_000
+
     def _vector_search_memory(
         self, query_vec: list[float], limit: int
     ) -> dict[str, float]:
         """Fallback vector search in memory (no sqlite-vec)."""
         cursor = self._conn.cursor()
-        cursor.execute("SELECT chunk_id, embedding FROM chunks WHERE embedding != ''")
+        cursor.execute(
+            "SELECT chunk_id, embedding FROM chunks WHERE embedding != '' LIMIT ?",
+            (self._VECTOR_FALLBACK_MAX,),
+        )
 
         results: list[tuple[str, float]] = []
         for row in cursor.fetchall():
@@ -470,23 +475,29 @@ class HybridSearcher:
         self, merged: dict[str, dict[str, float]]
     ) -> dict[str, dict[str, float]]:
         """Apply temporal decay based on file mtime."""
+        if not merged:
+            return merged
+
         cursor = self._conn.cursor()
         now = datetime.now().timestamp()
         half_life_seconds = self._temporal_decay_half_life_days * 24 * 3600
 
+        chunk_ids = list(merged.keys())
+        placeholders = ",".join("?" * len(chunk_ids))
+        cursor.execute(
+            f"""
+            SELECT c.chunk_id, f.mtime
+            FROM chunks c
+            JOIN files f ON c.path = f.path
+            WHERE c.chunk_id IN ({placeholders})
+            """,
+            chunk_ids,
+        )
+        mtime_map = {row[0]: row[1] for row in cursor.fetchall()}
+
         for chunk_id, scores in merged.items():
-            cursor.execute(
-                """
-                SELECT f.mtime
-                FROM chunks c
-                JOIN files f ON c.path = f.path
-                WHERE c.chunk_id = ?
-                """,
-                (chunk_id,),
-            )
-            row = cursor.fetchone()
-            if row:
-                mtime = row[0]
+            mtime = mtime_map.get(chunk_id)
+            if mtime is not None:
                 age_seconds = now - mtime
                 decay = math.exp(-math.log(2) * age_seconds / half_life_seconds)
                 scores["score"] *= decay
@@ -497,27 +508,33 @@ class HybridSearcher:
         self, sorted_results: list[tuple[str, dict[str, float]]]
     ) -> list[SearchResult]:
         """Build SearchResult objects from sorted scores."""
-        cursor = self._conn.cursor()
-        results: list[SearchResult] = []
+        if not sorted_results:
+            return []
 
+        cursor = self._conn.cursor()
+        chunk_ids = [cid for cid, _ in sorted_results]
+        placeholders = ",".join("?" * len(chunk_ids))
+        cursor.execute(
+            f"""
+            SELECT chunk_id, path, start_line, end_line, text
+            FROM chunks
+            WHERE chunk_id IN ({placeholders})
+            """,
+            chunk_ids,
+        )
+        chunk_data = {row[0]: row for row in cursor.fetchall()}
+
+        results: list[SearchResult] = []
         for chunk_id, scores in sorted_results:
-            cursor.execute(
-                """
-                SELECT path, start_line, end_line, text
-                FROM chunks
-                WHERE chunk_id = ?
-                """,
-                (chunk_id,),
-            )
-            row = cursor.fetchone()
+            row = chunk_data.get(chunk_id)
             if row:
                 results.append(
                     SearchResult(
                         chunk_id=chunk_id,
-                        path=row[0],
-                        start_line=row[1],
-                        end_line=row[2],
-                        text=row[3],
+                        path=row[1],
+                        start_line=row[2],
+                        end_line=row[3],
+                        text=row[4],
                         score=scores["score"],
                         vector_score=scores["vector_score"],
                         bm25_score=scores["bm25_score"],
