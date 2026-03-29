@@ -47,6 +47,18 @@ def _resolve_usage_metric(
     return None
 
 
+_USAGE_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
+    "input_tokens": ("input_tokens", "prompt_tokens"),
+    "output_tokens": ("output_tokens", "completion_tokens"),
+    "cache_read_tokens": (
+        "cache_read_tokens",
+        "cache_read_input_tokens",
+        "cached_tokens",
+    ),
+    "cache_creation_tokens": ("cache_creation_tokens", "cache_creation_input_tokens"),
+}
+
+
 def _has_anthropic_cache_fields(usage_data: Any) -> bool:
     if usage_data is None:
         return False
@@ -74,20 +86,17 @@ def normalize_usage_metrics(
             "cache_creation_tokens": None,
         }
 
-    base_input = _resolve_usage_metric(usage_data, "input_tokens", "prompt_tokens")
+    base_input = _resolve_usage_metric(
+        usage_data, *_USAGE_METRIC_ALIASES["input_tokens"]
+    )
     output_tokens = _resolve_usage_metric(
-        usage_data, "output_tokens", "completion_tokens"
+        usage_data, *_USAGE_METRIC_ALIASES["output_tokens"]
     )
     cache_read_tokens = _resolve_usage_metric(
-        usage_data,
-        "cache_read_tokens",
-        "cache_read_input_tokens",
-        "cached_tokens",
+        usage_data, *_USAGE_METRIC_ALIASES["cache_read_tokens"]
     )
     cache_creation_tokens = _resolve_usage_metric(
-        usage_data,
-        "cache_creation_tokens",
-        "cache_creation_input_tokens",
+        usage_data, *_USAGE_METRIC_ALIASES["cache_creation_tokens"]
     )
 
     input_tokens = base_input
@@ -135,19 +144,7 @@ class AnthropicStreamTranslator:
         if not usage_obj:
             return
 
-        for key, names in {
-            "input_tokens": ("input_tokens", "prompt_tokens"),
-            "output_tokens": ("output_tokens", "completion_tokens"),
-            "cache_read_tokens": (
-                "cache_read_tokens",
-                "cache_read_input_tokens",
-                "cached_tokens",
-            ),
-            "cache_creation_tokens": (
-                "cache_creation_tokens",
-                "cache_creation_input_tokens",
-            ),
-        }.items():
+        for key, names in _USAGE_METRIC_ALIASES.items():
             value = _resolve_usage_metric(usage_obj, *names)
             if value is not None:
                 self._usage_info[key] = value

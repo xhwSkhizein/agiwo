@@ -121,10 +121,12 @@ class SQLiteRunStepStorage(RunStepStorage):
         )
         await connection.commit()
 
-    async def _ensure_connection(self) -> None:
-        """Ensure database connection is established."""
+    async def _ensure_connection(self) -> aiosqlite.Connection:
+        """Ensure database connection is established and return it."""
         if self._connection is None:
             await self.connect()
+        assert self._connection is not None
+        return self._connection
 
     def _serialize_model(self, model: Run | StepRecord) -> dict:
         data = (
@@ -160,12 +162,11 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     async def save_run(self, run: Run) -> None:
         """Save or update a run."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
             data = self._serialize_model(run)
 
-            # Build INSERT OR REPLACE query
             columns = ", ".join(data.keys())
             placeholders = ", ".join(["?" for _ in data])
             values = list(data.values())
@@ -175,20 +176,18 @@ class SQLiteRunStepStorage(RunStepStorage):
                 VALUES ({placeholders})
             """
 
-            await self._connection.execute(query, values)
-            await self._connection.commit()
+            await conn.execute(query, values)
+            await conn.commit()
         except Exception as e:
             logger.error("save_run_failed", error=str(e), run_id=run.id)
             raise
 
     async def get_run(self, run_id: str) -> Run | None:
         """Get a run by ID."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            async with self._connection.execute(
+            async with conn.execute(
                 "SELECT * FROM runs WHERE id = ?", (run_id,)
             ) as cursor:
                 row = await cursor.fetchone()
@@ -207,7 +206,7 @@ class SQLiteRunStepStorage(RunStepStorage):
         offset: int = 0,
     ) -> list[Run]:
         """List runs with filtering and pagination."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
             query = "SELECT * FROM runs WHERE agent_id IS NOT NULL"
@@ -223,10 +222,8 @@ class SQLiteRunStepStorage(RunStepStorage):
             query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
 
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
             runs = []
-            async with self._connection.execute(query, params) as cursor:
+            async with conn.execute(query, params) as cursor:
                 async for row in cursor:
                     runs.append(self._deserialize_run(row))
             return runs
@@ -236,17 +233,12 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     async def delete_run(self, run_id: str) -> None:
         """Delete a run and its associated steps."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            await self._connection.execute("DELETE FROM runs WHERE id = ?", (run_id,))
-            await self._connection.execute(
-                "DELETE FROM steps WHERE run_id = ?", (run_id,)
-            )
-
-            await self._connection.commit()
+            await conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+            await conn.execute("DELETE FROM steps WHERE run_id = ?", (run_id,))
+            await conn.commit()
         except Exception as e:
             logger.error("delete_run_failed", error=str(e), run_id=run_id)
             raise
@@ -255,12 +247,11 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     async def save_step(self, step: StepRecord) -> None:
         """Save or update a step."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
             data = self._serialize_model(step)
 
-            # Build INSERT OR REPLACE query
             columns = ", ".join(data.keys())
             placeholders = ", ".join(["?" for _ in data])
             values = list(data.values())
@@ -270,10 +261,8 @@ class SQLiteRunStepStorage(RunStepStorage):
                 VALUES ({placeholders})
             """
 
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            await self._connection.execute(query, values)
-            await self._connection.commit()
+            await conn.execute(query, values)
+            await conn.commit()
         except Exception as e:
             logger.error(
                 "save_step_failed",
@@ -289,7 +278,7 @@ class SQLiteRunStepStorage(RunStepStorage):
         if not steps:
             return
 
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
             serialized = [self._serialize_model(step) for step in steps]
@@ -300,11 +289,11 @@ class SQLiteRunStepStorage(RunStepStorage):
                 INSERT OR REPLACE INTO steps ({columns})
                 VALUES ({placeholders})
             """
-            await self._connection.executemany(
+            await conn.executemany(
                 query,
                 [tuple(item.get(k) for k in all_keys) for item in serialized],
             )
-            await self._connection.commit()
+            await conn.commit()
         except Exception as e:
             logger.error("save_steps_batch_failed", error=str(e), count=len(steps))
             raise
@@ -319,7 +308,7 @@ class SQLiteRunStepStorage(RunStepStorage):
         limit: int = 1000,
     ) -> list[StepRecord]:
         """Get steps for a session with optional filtering."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
             query = "SELECT * FROM steps WHERE session_id = ?"
@@ -341,10 +330,8 @@ class SQLiteRunStepStorage(RunStepStorage):
             query += " ORDER BY sequence ASC LIMIT ?"
             params.append(limit)
 
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
             steps = []
-            async with self._connection.execute(query, params) as cursor:
+            async with conn.execute(query, params) as cursor:
                 async for row in cursor:
                     steps.append(self._deserialize_step(row))
             return steps
@@ -354,12 +341,10 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     async def get_last_step(self, session_id: str) -> StepRecord | None:
         """Get the last step of a session."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            async with self._connection.execute(
+            async with conn.execute(
                 "SELECT * FROM steps WHERE session_id = ? ORDER BY sequence DESC LIMIT 1",
                 (session_id,),
             ) as cursor:
@@ -373,16 +358,14 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     async def delete_steps(self, session_id: str, start_seq: int) -> int:
         """Delete steps from a sequence number onwards."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            cursor = await self._connection.execute(
+            cursor = await conn.execute(
                 "DELETE FROM steps WHERE session_id = ? AND sequence >= ?",
                 (session_id, start_seq),
             )
-            await self._connection.commit()
+            await conn.commit()
             return cursor.rowcount
         except Exception as e:
             logger.error("delete_steps_failed", error=str(e), session_id=session_id)
@@ -390,12 +373,10 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     async def get_step_count(self, session_id: str) -> int:
         """Get total number of steps for a session."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            async with self._connection.execute(
+            async with conn.execute(
                 "SELECT COUNT(*) FROM steps WHERE session_id = ?", (session_id,)
             ) as cursor:
                 row = await cursor.fetchone()
@@ -411,12 +392,10 @@ class SQLiteRunStepStorage(RunStepStorage):
         Returns:
             Maximum sequence number, or 0 if no steps exist
         """
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            async with self._connection.execute(
+            async with conn.execute(
                 "SELECT MAX(sequence) FROM steps WHERE session_id = ?", (session_id,)
             ) as cursor:
                 row = await cursor.fetchone()
@@ -436,41 +415,35 @@ class SQLiteRunStepStorage(RunStepStorage):
         Returns:
             Next sequence number (starting from 1)
         """
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            # Use BEGIN IMMEDIATE to acquire write lock immediately
-            await self._connection.execute("BEGIN IMMEDIATE")
+            await conn.execute("BEGIN IMMEDIATE")
 
             try:
-                # Try to get existing counter
-                async with self._connection.execute(
+                async with conn.execute(
                     "SELECT sequence FROM counters WHERE session_id = ?", (session_id,)
                 ) as cursor:
                     row = await cursor.fetchone()
 
                     if row:
-                        # Increment existing counter
                         new_seq = row[0] + 1
-                        await self._connection.execute(
+                        await conn.execute(
                             "UPDATE counters SET sequence = ? WHERE session_id = ?",
                             (new_seq, session_id),
                         )
                     else:
-                        # Initialize counter from steps
                         max_seq = await self.get_max_sequence(session_id)
                         new_seq = max_seq + 1
-                        await self._connection.execute(
+                        await conn.execute(
                             "INSERT INTO counters (session_id, sequence) VALUES (?, ?)",
                             (session_id, new_seq),
                         )
 
-                    await self._connection.commit()
+                    await conn.commit()
                     return new_seq
             except Exception:
-                await self._connection.rollback()
+                await conn.rollback()
                 raise
         except Exception as e:
             logger.error(
@@ -484,12 +457,10 @@ class SQLiteRunStepStorage(RunStepStorage):
         tool_call_id: str,
     ) -> StepRecord | None:
         """Get a Tool Step by tool_call_id."""
-        await self._ensure_connection()
+        conn = await self._ensure_connection()
 
         try:
-            if self._connection is None:
-                raise RuntimeError("Database connection not established")
-            async with self._connection.execute(
+            async with conn.execute(
                 "SELECT * FROM steps WHERE session_id = ? AND tool_call_id = ?",
                 (session_id, tool_call_id),
             ) as cursor:

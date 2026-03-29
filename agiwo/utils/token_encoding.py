@@ -10,10 +10,15 @@ logger = get_logger(__name__)
 
 
 class _FallbackEncoding:
-    """Deterministic offline fallback when tiktoken resources are unavailable."""
+    """Approximate fallback when tiktoken resources are unavailable.
+
+    Uses ~4 characters per token as a rough estimate, which is a common
+    heuristic for English text with GPT-class tokenizers.
+    """
 
     def encode(self, text: str) -> list[int]:
-        return [ord(char) for char in text]
+        count = max(1, len(text) // 4)
+        return list(range(count))
 
 
 @lru_cache(maxsize=128)

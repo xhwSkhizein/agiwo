@@ -12,21 +12,15 @@ logger = get_logger(__name__)
 class MongoClientPool:
     """Process-wide shared AsyncIOMotorClient pool keyed by URI."""
 
-    _instance: "MongoClientPool | None" = None
-    _lock: asyncio.Lock | None = None
+    def __init__(self) -> None:
+        self._clients: dict[str, AsyncIOMotorClient] = {}
+        self._ref_counts: dict[str, int] = {}
+        self._lock: asyncio.Lock | None = None
 
-    def __new__(cls) -> "MongoClientPool":
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._clients: dict[str, AsyncIOMotorClient] = {}
-            cls._instance._ref_counts: dict[str, int] = {}
-        return cls._instance
-
-    @classmethod
-    def _get_lock(cls) -> asyncio.Lock:
-        if cls._lock is None:
-            cls._lock = asyncio.Lock()
-        return cls._lock
+    def _get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     async def get_client(self, mongo_uri: str) -> AsyncIOMotorClient:
         lock = self._get_lock()
@@ -89,10 +83,17 @@ async def close_all_mongo_clients() -> None:
     await get_mongo_pool().close_all()
 
 
+def reset_mongo_pool() -> None:
+    """Reset the global pool instance (useful for testing)."""
+    global _pool
+    _pool = None
+
+
 __all__ = [
     "MongoClientPool",
     "get_mongo_pool",
     "get_shared_mongo_client",
     "release_shared_mongo_client",
     "close_all_mongo_clients",
+    "reset_mongo_pool",
 ]

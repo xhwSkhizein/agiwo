@@ -25,6 +25,7 @@ from agiwo.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _CHUNK_TIMEOUT_SECONDS = 120
+_UNSET = object()
 
 
 async def stream_assistant_step(
@@ -33,11 +34,11 @@ async def stream_assistant_step(
     abort_signal: AbortSignal | None,
     *,
     messages: list[dict] | None = None,
-    tools: list[dict] | None = ...,
+    tools: list[dict] | None = _UNSET,  # type: ignore[assignment]
 ) -> tuple[StepRecord, LLMCallContext]:
     """Stream call LLM and build Step."""
     messages = messages if messages is not None else state.copy_messages()
-    tools_resolved = state.copy_tool_schemas() if tools is ... else tools
+    tools_resolved = state.copy_tool_schemas() if tools is _UNSET else tools
 
     metrics_resolver = ModelUsageEstimator(model)
     request_estimate = metrics_resolver.estimate_request(messages, tools_resolved)
