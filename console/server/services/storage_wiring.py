@@ -1,7 +1,5 @@
 """Console storage wiring — config builders."""
 
-from typing import Any, Callable, TypeVar
-
 from agiwo.agent import RunStepStorageConfig, TraceStorageConfig
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.factory import (
@@ -19,58 +17,42 @@ from server.config import ConsoleConfig
 
 logger = get_logger(__name__)
 
-T = TypeVar("T")
-
 
 # ── Storage config builders ──────────────────────────────────────────────────
-
-
-def _build_storage_config(
-    config_class: type[T],
-    storage_type: str,
-    sqlite_builder: Callable[[], dict[str, Any]] | None = None,
-) -> T:
-    if storage_type == "sqlite":
-        if sqlite_builder is None:
-            raise ValueError(f"{config_class.__name__} does not support sqlite storage")
-        return config_class(storage_type="sqlite", config=sqlite_builder())
-    if storage_type == "memory":
-        return config_class(storage_type="memory")
-    raise ValueError(
-        f"{config_class.__name__} does not support storage type: {storage_type}"
-    )
 
 
 def build_run_step_storage_config(
     console_config: ConsoleConfig,
 ) -> RunStepStorageConfig:
-    return _build_storage_config(
-        RunStepStorageConfig,
-        console_config.run_step_storage_type,
-        sqlite_builder=lambda: {"db_path": console_config.sqlite_db_path},
-    )
+    if console_config.run_step_storage_type == "sqlite":
+        return RunStepStorageConfig(
+            storage_type="sqlite",
+            config={"db_path": console_config.sqlite_db_path},
+        )
+    return RunStepStorageConfig(storage_type="memory")
 
 
 def build_trace_storage_config(console_config: ConsoleConfig) -> TraceStorageConfig:
-    effective_type = console_config.effective_trace_storage_type
-    return _build_storage_config(
-        TraceStorageConfig,
-        effective_type,
-        sqlite_builder=lambda: {
-            "db_path": console_config.sqlite_db_path,
-            "collection_name": console_config.sqlite_trace_collection,
-        },
-    )
+    if console_config.trace_storage_type == "sqlite":
+        return TraceStorageConfig(
+            storage_type="sqlite",
+            config={
+                "db_path": console_config.sqlite_db_path,
+                "collection_name": console_config.sqlite_trace_collection,
+            },
+        )
+    return TraceStorageConfig(storage_type="memory")
 
 
 def build_agent_state_storage_config(
     console_config: ConsoleConfig,
 ) -> AgentStateStorageConfig:
-    return _build_storage_config(
-        AgentStateStorageConfig,
-        console_config.metadata_storage_type,
-        sqlite_builder=lambda: {"db_path": console_config.sqlite_db_path},
-    )
+    if console_config.metadata_storage_type == "sqlite":
+        return AgentStateStorageConfig(
+            storage_type="sqlite",
+            config={"db_path": console_config.sqlite_db_path},
+        )
+    return AgentStateStorageConfig(storage_type="memory")
 
 
 def build_citation_store_config(console_config: ConsoleConfig) -> CitationStoreConfig:

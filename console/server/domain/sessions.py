@@ -7,10 +7,7 @@ from pydantic import BaseModel, Field
 
 from agiwo.agent import UserInput
 from agiwo.agent.models.run import Run
-from server.response_serialization import (
-    serialize_run_user_input_payload,
-    serialize_user_input_payload,
-)
+from agiwo.agent.models.input import UserMessage
 from agiwo.utils.serialization import serialize_optional_datetime
 
 from server.domain.run_metrics import RunMetricsSummary
@@ -41,7 +38,7 @@ class SessionSummaryData(BaseModel):
 def session_aggregate_to_summary_data(session: SessionAggregate) -> SessionSummaryData:
     last_run = session.last_run
     last_user_input = (
-        serialize_user_input_payload(last_run.user_input)
+        UserMessage.to_transport_payload(last_run.user_input)
         if last_run is not None
         else None
     )
@@ -62,21 +59,17 @@ def session_aggregate_to_summary_data(session: SessionAggregate) -> SessionSumma
     )
 
 
-def _format_last_input(last_run: Run | None) -> str | None:
-    if last_run is None:
-        return None
-    raw = serialize_run_user_input_payload(last_run.user_input)
-    if isinstance(raw, str) and raw:
-        return raw[:200]
-    return None
-
-
 def session_aggregate_to_chat_summary(session: SessionAggregate) -> dict[str, object]:
     summary = session_aggregate_to_summary_data(session)
+    last_input = None
+    if session.last_run is not None:
+        raw = UserMessage.to_storage_value(session.last_run.user_input)
+        if isinstance(raw, str) and raw:
+            last_input = raw[:200]
     return {
         "session_id": summary.session_id,
         "run_count": summary.run_count,
-        "last_input": _format_last_input(session.last_run),
+        "last_input": last_input,
         "last_response": summary.last_response,
         "updated_at": summary.updated_at,
     }

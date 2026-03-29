@@ -48,32 +48,10 @@ def get_console_runtime(request: Request) -> ConsoleRuntime:
     return get_console_runtime_from_app(request.app)
 
 
-def get_console_config(runtime: "ConsoleRuntimeDep") -> ConsoleConfig:
-    return runtime.config
-
-
-def get_run_step_storage(runtime: "ConsoleRuntimeDep") -> RunStepStorage:
-    return runtime.run_step_storage
-
-
-def get_trace_storage(runtime: "ConsoleRuntimeDep") -> BaseTraceStorage:
-    return runtime.trace_storage
-
-
-def get_agent_registry(runtime: "ConsoleRuntimeDep") -> AgentRegistry:
-    return runtime.agent_registry
-
-
 def get_scheduler(runtime: "ConsoleRuntimeDep") -> Scheduler:
     if runtime.scheduler is None:
         raise RuntimeError("Scheduler not initialized")
     return runtime.scheduler
-
-
-def get_feishu_channel_service(
-    runtime: "ConsoleRuntimeDep",
-) -> FeishuChannelService | None:
-    return runtime.feishu_channel_service
 
 
 ConsoleRuntimeDep = Annotated[ConsoleRuntime, Depends(get_console_runtime)]
@@ -86,12 +64,7 @@ __all__ = [
     "SchedulerDep",
     "bind_console_runtime",
     "clear_console_runtime",
-    "get_agent_registry",
-    "get_console_config",
     "get_console_runtime",
     "get_console_runtime_from_app",
-    "get_feishu_channel_service",
     "get_scheduler",
-    "get_run_step_storage",
-    "get_trace_storage",
 ]

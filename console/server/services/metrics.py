@@ -1,9 +1,9 @@
 """Run metrics aggregation — for sessions, scheduler states, and standalone runs."""
 
 from collections.abc import AsyncIterator
-from typing import Protocol
 
 from agiwo.agent import Run, RunStatus
+from agiwo.agent.storage.base import RunStepStorage
 from agiwo.scheduler.models import AgentState
 
 from server.domain.run_metrics import RunMetricsSummary
@@ -11,17 +11,6 @@ from server.domain.sessions import SessionAggregate
 
 
 RUN_METRICS_PAGE_SIZE = 500
-
-
-class RunStoragePort(Protocol):
-    async def list_runs(
-        self,
-        *,
-        user_id: str | None = None,
-        session_id: str | None = None,
-        limit: int = 20,
-        offset: int = 0,
-    ) -> list[Run]: ...
 
 
 # ── Core accumulator ────────────────────────────────────────────────────────
@@ -49,7 +38,7 @@ def add_run_to_summary(summary: RunMetricsSummary, run: Run) -> None:
 
 
 async def iter_runs_paginated(
-    run_storage: RunStoragePort,
+    run_storage: RunStepStorage,
     *,
     user_id: str | None = None,
     session_id: str | None = None,
@@ -72,7 +61,7 @@ async def iter_runs_paginated(
 
 
 async def summarize_runs_paginated(
-    run_storage: RunStoragePort,
+    run_storage: RunStepStorage,
     *,
     user_id: str | None = None,
     session_id: str | None = None,
@@ -131,7 +120,7 @@ def _merge_run_into_session(
 # no dedicated session table. For large datasets, consider adding a persistent
 # session index or pushing pagination into the storage layer.
 async def collect_session_aggregates(
-    run_storage: RunStoragePort,
+    run_storage: RunStepStorage,
     *,
     agent_id: str | None = None,
     user_id: str | None = None,
@@ -160,7 +149,7 @@ async def collect_session_aggregates(
 
 async def build_metrics_by_state(
     states: list[AgentState],
-    run_storage: RunStoragePort,
+    run_storage: RunStepStorage,
 ) -> dict[tuple[str, str], RunMetricsSummary]:
     if not states:
         return {}

@@ -3,6 +3,7 @@ Feishu channel service factory — dependency injection and component wiring.
 """
 
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from agiwo.scheduler.engine import Scheduler
@@ -14,7 +15,6 @@ from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.connection import FeishuConnection
 from server.channels.feishu.delivery_service import FeishuDeliveryService
 from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
-from server.channels.feishu.inbound_handler import FeishuInboundHandler
 from server.channels.feishu.message_builder import (
     FeishuAttachmentResolver,
     FeishuUserMessageBuilder,
@@ -31,44 +31,25 @@ from server.channels.runtime_agent_pool import RuntimeAgentPool
 from server.channels.session import SessionContextService
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
-from server.services.remote_workspace_conversation import (
-    RemoteWorkspaceConversationService,
-)
 
 
+@dataclass
 class FeishuServiceComponents:
     """Container for all Feishu channel service components."""
 
-    def __init__(
-        self,
-        *,
-        api: FeishuApiClient,
-        store: FeishuChannelStoreBackend,
-        parser: FeishuMessageParser,
-        connection: FeishuConnection,
-        session_service: SessionContextService,
-        agent_pool: RuntimeAgentPool,
-        executor: AgentExecutor,
-        tmp_dir: Path,
-        message_builder: FeishuUserMessageBuilder,
-        delivery_service: FeishuDeliveryService,
-        inbound_handler: FeishuInboundHandler,
-        bot_open_id: str,
-        workspace_conversation: RemoteWorkspaceConversationService | None = None,
-    ) -> None:
-        self.api = api
-        self.store = store
-        self.parser = parser
-        self.connection = connection
-        self.session_service = session_service
-        self.agent_pool = agent_pool
-        self.executor = executor
-        self.tmp_dir = tmp_dir
-        self.message_builder = message_builder
-        self.delivery_service = delivery_service
-        self.inbound_handler = inbound_handler
-        self.bot_open_id = bot_open_id
-        self.workspace_conversation = workspace_conversation
+    api: FeishuApiClient
+    store: FeishuChannelStoreBackend
+    parser: FeishuMessageParser
+    connection: FeishuConnection
+    session_service: SessionContextService
+    agent_pool: RuntimeAgentPool
+    executor: AgentExecutor
+    tmp_dir: Path
+    message_builder: FeishuUserMessageBuilder
+    delivery_service: FeishuDeliveryService
+    content_extractor: FeishuContentExtractor
+    group_history_store: FeishuGroupHistoryStore
+    bot_open_id: str
 
 
 class FeishuServiceFactory:
@@ -150,24 +131,6 @@ class FeishuServiceFactory:
             truncate_for_log=truncate_for_log,
         )
 
-        inbound_handler = FeishuInboundHandler(
-            channel_instance_id=config.feishu_channel_instance_id,
-            default_agent_name=config.feishu_default_agent_name,
-            whitelist_open_ids=set(config.feishu_whitelist_open_ids),
-            parser=parser,
-            content_extractor=content_extractor,
-            group_history_store=group_history_store,
-            store=store,
-            session_service=session_service,
-            delivery_service=delivery_service,
-            truncate_for_log=truncate_for_log,
-        )
-
-        workspace_conversation = RemoteWorkspaceConversationService(
-            session_service=session_service,
-            executor=executor,
-        )
-
         return FeishuServiceComponents(
             api=api,
             store=store,
@@ -179,9 +142,9 @@ class FeishuServiceFactory:
             tmp_dir=tmp_dir,
             message_builder=message_builder,
             delivery_service=delivery_service,
-            inbound_handler=inbound_handler,
+            content_extractor=content_extractor,
+            group_history_store=group_history_store,
             bot_open_id=config.feishu_bot_open_id,
-            workspace_conversation=workspace_conversation,
         )
 
 

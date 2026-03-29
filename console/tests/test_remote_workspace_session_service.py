@@ -1,19 +1,20 @@
-"""Unit tests for RemoteWorkspaceSessionService."""
+"""Unit tests for SessionContextService session management (fork, switch, create, list)."""
 
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 
 from server.channels.session.binding import SessionMutationPlan
+from server.channels.session.context_service import SessionContextService
 from server.channels.session.models import ChannelChatContext, Session
-from server.services.remote_workspace_session import RemoteWorkspaceSessionService
+from server.services.agent_registry import AgentRegistry
 
 
 class InMemorySessionStore:
     def __init__(self) -> None:
         now = datetime.now(timezone.utc)
         self.chat_context = ChannelChatContext(
-            id="ctx-1",
             scope_id="scope-1",
             channel_instance_id="console-web",
             chat_id="chat-1",
@@ -27,7 +28,7 @@ class InMemorySessionStore:
         self.sessions: dict[str, Session] = {
             "sess-1": Session(
                 id="sess-1",
-                chat_context_id="ctx-1",
+                chat_context_scope_id="scope-1",
                 base_agent_id="agent-1",
                 runtime_agent_id="runtime-1",
                 scheduler_state_id="state-1",
@@ -47,18 +48,13 @@ class InMemorySessionStore:
     async def get_session(self, session_id: str) -> Session | None:
         return self.sessions.get(session_id)
 
-    async def get_chat_context_by_id(
-        self, chat_context_id: str
-    ) -> ChannelChatContext | None:
-        if self.chat_context and self.chat_context.id == chat_context_id:
-            return self.chat_context
-        return None
-
     async def list_sessions_by_chat_context(
-        self, chat_context_id: str
+        self, chat_context_scope_id: str
     ) -> list[Session]:
         return [
-            s for s in self.sessions.values() if s.chat_context_id == chat_context_id
+            s
+            for s in self.sessions.values()
+            if s.chat_context_scope_id == chat_context_scope_id
         ]
 
     async def apply_session_mutation(self, mutation: SessionMutationPlan) -> None:
@@ -67,11 +63,31 @@ class InMemorySessionStore:
         if mutation.previous_session is not None:
             self.sessions[mutation.previous_session.id] = mutation.previous_session
 
+    async def upsert_chat_context(self, chat_context: ChannelChatContext) -> None:
+        self.chat_context = chat_context
+
+    async def upsert_session(self, session: Session) -> None:
+        self.sessions[session.id] = session
+
+    async def list_sessions_by_user(self, user_open_id: str):
+        return []
+
+
+def _make_service(store: InMemorySessionStore) -> SessionContextService:
+    registry = AsyncMock(spec=AgentRegistry)
+    registry.get_agent_by_name = AsyncMock(return_value=None)
+    registry.get_agent = AsyncMock(return_value=None)
+    return SessionContextService(
+        store=store,
+        agent_registry=registry,
+        default_agent_name="",
+    )
+
 
 @pytest.mark.asyncio
 async def test_fork_session_creates_new_current_session_with_weak_lineage() -> None:
     store = InMemorySessionStore()
-    service = RemoteWorkspaceSessionService(store=store)
+    service = _make_service(store)
 
     result = await service.fork_session(
         chat_context_scope_id="scope-1",
@@ -91,7 +107,7 @@ async def test_switch_session_keeps_task_metadata_intact() -> None:
     now = datetime.now(timezone.utc)
     store.sessions["sess-2"] = Session(
         id="sess-2",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
         runtime_agent_id="runtime-2",
         scheduler_state_id="state-2",
@@ -101,7 +117,7 @@ async def test_switch_session_keeps_task_metadata_intact() -> None:
         current_task_id="task-2",
         task_message_count=3,
     )
-    service = RemoteWorkspaceSessionService(store=store)
+    service = _make_service(store)
 
     result = await service.switch_session(
         chat_context_scope_id="scope-1",
@@ -117,9 +133,9 @@ async def test_switch_session_keeps_task_metadata_intact() -> None:
 async def test_create_session_establishes_new_chat_context_when_none_exists() -> None:
     store = InMemorySessionStore()
     store.chat_context = None  # type: ignore[assignment]
-    service = RemoteWorkspaceSessionService(store=store)
+    service = _make_service(store)
 
-    result = await service.create_session(
+    result = await service.create_new_session(
         chat_context_scope_id="scope-new",
         channel_instance_id="console-web",
         chat_id="scope-new",
@@ -137,9 +153,9 @@ async def test_create_session_establishes_new_chat_context_when_none_exists() ->
 @pytest.mark.asyncio
 async def test_create_session_adds_to_existing_chat_context() -> None:
     store = InMemorySessionStore()
-    service = RemoteWorkspaceSessionService(store=store)
+    service = _make_service(store)
 
-    result = await service.create_session(
+    result = await service.create_new_session(
         chat_context_scope_id="scope-1",
         channel_instance_id="console-web",
         chat_id="scope-1",
@@ -156,7 +172,7 @@ async def test_create_session_adds_to_existing_chat_context() -> None:
 @pytest.mark.asyncio
 async def test_list_sessions_returns_empty_for_unknown_scope() -> None:
     store = InMemorySessionStore()
-    service = RemoteWorkspaceSessionService(store=store)
+    service = _make_service(store)
 
     result = await service.list_sessions(chat_context_scope_id="unknown-scope")
     assert result == []
@@ -165,7 +181,7 @@ async def test_list_sessions_returns_empty_for_unknown_scope() -> None:
 @pytest.mark.asyncio
 async def test_list_sessions_returns_all_sessions_for_scope() -> None:
     store = InMemorySessionStore()
-    service = RemoteWorkspaceSessionService(store=store)
+    service = _make_service(store)
 
     result = await service.list_sessions(chat_context_scope_id="scope-1")
     assert len(result) == 1
@@ -175,7 +191,7 @@ async def test_list_sessions_returns_all_sessions_for_scope() -> None:
 @pytest.mark.asyncio
 async def test_fork_session_by_id() -> None:
     store = InMemorySessionStore()
-    service = RemoteWorkspaceSessionService(store=store)
+    service = _make_service(store)
 
     result = await service.fork_session_by_id(
         session_id="sess-1",
@@ -192,7 +208,7 @@ async def test_fork_session_by_id() -> None:
 @pytest.mark.asyncio
 async def test_fork_session_by_id_raises_for_missing_session() -> None:
     store = InMemorySessionStore()
-    service = RemoteWorkspaceSessionService(store=store)
+    service = _make_service(store)
 
     with pytest.raises(RuntimeError, match="Session not found"):
         await service.fork_session_by_id(

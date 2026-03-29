@@ -1,65 +1,13 @@
 """Channel session management: models, binding, context service, and batching."""
 
-from server.channels.exceptions import BaseAgentNotFoundError
-from server.channels.session.binding import (
-    ChatContextNotFoundError,
-    SessionContextError,
-    SessionMutationPlan,
-    SessionNotFoundError,
-    SessionNotInChatContextError,
-    assign_runtime_identity,
-    assign_scheduler_state,
-    open_initial_session,
-    open_new_session,
-    repair_missing_base_agent,
-    switch_session,
-    sync_chat_context_base_agent,
-)
 from server.channels.session.context_service import (
     SessionContextResolution,
     SessionContextService,
 )
 from server.channels.session.manager import SessionManager
-from server.channels.session.models import (
-    Attachment,
-    BatchContext,
-    BatchPayload,
-    ChannelChatContext,
-    ChannelChatSessionStore,
-    InboundMessage,
-    Session,
-    SessionCreateResult,
-    SessionSwitchResult,
-    SessionWithContext,
-    UserSessionItem,
-)
 
 __all__ = [
-    "Attachment",
-    "BaseAgentNotFoundError",
-    "BatchContext",
-    "BatchPayload",
-    "ChannelChatContext",
-    "ChannelChatSessionStore",
-    "ChatContextNotFoundError",
-    "InboundMessage",
-    "Session",
-    "SessionContextError",
     "SessionContextResolution",
     "SessionContextService",
-    "SessionCreateResult",
     "SessionManager",
-    "SessionMutationPlan",
-    "SessionNotFoundError",
-    "SessionNotInChatContextError",
-    "SessionSwitchResult",
-    "SessionWithContext",
-    "UserSessionItem",
-    "assign_runtime_identity",
-    "assign_scheduler_state",
-    "open_initial_session",
-    "open_new_session",
-    "repair_missing_base_agent",
-    "switch_session",
-    "sync_chat_context_base_agent",
 ]

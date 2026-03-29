@@ -32,12 +32,12 @@ class SessionNotFoundError(SessionContextError):
 
 
 class SessionNotInChatContextError(SessionContextError):
-    def __init__(self, session_id: str, chat_context_id: str) -> None:
+    def __init__(self, session_id: str, scope_id: str) -> None:
         super().__init__(
-            f"Session '{session_id}' does not belong to chat context '{chat_context_id}'"
+            f"Session '{session_id}' does not belong to chat context '{scope_id}'"
         )
         self.session_id = session_id
-        self.chat_context_id = chat_context_id
+        self.scope_id = scope_id
 
 
 def open_initial_session(
@@ -51,10 +51,8 @@ def open_initial_session(
     created_by: str,
     now: datetime,
 ) -> SessionMutationPlan:
-    chat_context_id = str(uuid4())
     session_id = str(uuid4())
     chat_context = ChannelChatContext(
-        id=chat_context_id,
         scope_id=chat_context_scope_id,
         channel_instance_id=channel_instance_id,
         chat_id=chat_id,
@@ -67,7 +65,7 @@ def open_initial_session(
     )
     session = Session(
         id=session_id,
-        chat_context_id=chat_context_id,
+        chat_context_scope_id=chat_context_scope_id,
         base_agent_id=base_agent_id,
         runtime_agent_id="",
         scheduler_state_id="",
@@ -90,7 +88,7 @@ def open_new_session(
 ) -> SessionMutationPlan:
     session = Session(
         id=str(uuid4()),
-        chat_context_id=chat_context.id,
+        chat_context_scope_id=chat_context.scope_id,
         base_agent_id=base_agent_id,
         runtime_agent_id="",
         scheduler_state_id="",
@@ -188,7 +186,7 @@ def fork_session(
     """Create a forked session with weak lineage from the source."""
     session = Session(
         id=str(uuid4()),
-        chat_context_id=chat_context.id,
+        chat_context_scope_id=chat_context.scope_id,
         base_agent_id=source_session.base_agent_id,
         runtime_agent_id="",
         scheduler_state_id="",

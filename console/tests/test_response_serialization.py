@@ -10,7 +10,7 @@ from agiwo.agent import (
     UserMessage,
 )
 from agiwo.scheduler.models import AgentState, AgentStateStatus
-from server.domain.agent_configs import (
+from server.schemas import (
     AgentOptionsInput,
     ModelParamsInput,
     sanitize_agent_options_data,

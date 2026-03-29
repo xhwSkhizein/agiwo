@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from agiwo.agent import Agent
 from agiwo.agent import UserInput
@@ -10,7 +11,11 @@ from agiwo.scheduler.commands import RouteResult
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
-from server.channels.session.binding import assign_scheduler_state
+from server.channels.session.binding import (
+    append_message_to_current_task,
+    assign_scheduler_state,
+    mark_session_task_started,
+)
 from server.channels.session.models import ChannelChatSessionStore, Session
 
 logger = get_logger(__name__)
@@ -39,6 +44,10 @@ class AgentExecutor:
         session: Session,
         user_input: UserInput,
     ) -> RouteResult:
+        if session.current_task_id is None:
+            mark_session_task_started(session, task_id=str(uuid4()))
+        append_message_to_current_task(session)
+
         result = await self._scheduler.route_root_input(
             user_input,
             agent=agent,

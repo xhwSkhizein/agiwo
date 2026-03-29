@@ -8,9 +8,14 @@ import pytest
 from agiwo.scheduler.commands import RouteResult
 from agiwo.agent import RunCompletedEvent, RunOutput, TerminationReason
 from server.channels.agent_executor import AgentExecutor
-from server.channels.base import BaseChannelService
+from server.channels.base import (
+    extract_stream_text,
+    safe_close_all,
+    split_text_into_chunks,
+)
+from server.channels.deferred_reply import DeferredReplyManager
 from server.channels.runtime_agent_pool import RuntimeAgentPool
-from server.channels.session import SessionContextService
+from server.channels.session import SessionContextService, SessionManager
 from server.channels.session.binding import SessionMutationPlan
 from server.channels.session.models import (
     BatchContext,
@@ -26,7 +31,6 @@ from server.services.agent_registry import AgentConfigRecord
 class FakeChannelChatSessionStore:
     def __init__(self) -> None:
         self.chat_contexts: dict[str, ChannelChatContext] = {}
-        self.chat_context_ids: dict[str, str] = {}
         self.sessions: dict[str, Session] = {}
         self.upserted_chat_contexts: list[ChannelChatContext] = []
         self.upserted_sessions: list[Session] = []
@@ -35,18 +39,8 @@ class FakeChannelChatSessionStore:
     async def get_chat_context(self, scope_id: str) -> ChannelChatContext | None:
         return self.chat_contexts.get(scope_id)
 
-    async def get_chat_context_by_id(
-        self,
-        chat_context_id: str,
-    ) -> ChannelChatContext | None:
-        scope_id = self.chat_context_ids.get(chat_context_id)
-        if scope_id is None:
-            return None
-        return self.chat_contexts.get(scope_id)
-
     async def upsert_chat_context(self, chat_context: ChannelChatContext) -> None:
         self.chat_contexts[chat_context.scope_id] = chat_context
-        self.chat_context_ids[chat_context.id] = chat_context.scope_id
         self.upserted_chat_contexts.append(chat_context)
 
     async def get_session(self, session_id: str) -> Session | None:
@@ -59,7 +53,7 @@ class FakeChannelChatSessionStore:
         session = self.sessions.get(session_id)
         if session is None:
             return None
-        chat_context = await self.get_chat_context_by_id(session.chat_context_id)
+        chat_context = self.chat_contexts.get(session.chat_context_scope_id)
         if chat_context is None:
             return None
         return SessionWithContext(session=session, chat_context=chat_context)
@@ -78,19 +72,19 @@ class FakeChannelChatSessionStore:
     ) -> list[SessionWithContext]:
         items: list[SessionWithContext] = []
         for session in self.sessions.values():
-            chat_context = await self.get_chat_context_by_id(session.chat_context_id)
+            chat_context = self.chat_contexts.get(session.chat_context_scope_id)
             if chat_context is None or chat_context.user_open_id != user_open_id:
                 continue
             items.append(SessionWithContext(session=session, chat_context=chat_context))
         return items
 
     async def list_sessions_by_chat_context(
-        self, chat_context_id: str
+        self, chat_context_scope_id: str
     ) -> list[Session]:
         return [
             session
             for session in self.sessions.values()
-            if session.chat_context_id == chat_context_id
+            if session.chat_context_scope_id == chat_context_scope_id
         ]
 
 
@@ -103,21 +97,30 @@ class FakeAgent:
         self.closed = True
 
 
-class _TestChannelService(BaseChannelService):
+class _TestChannelService:
+    """Lightweight test stub replicating the channel message pipeline."""
+
     def __init__(self, *, session_service, agent_pool, executor) -> None:
         self.reply_calls: list[tuple[BatchContext, str]] = []
         self.message_calls: list[tuple[BatchContext, str]] = []
-        super().__init__(
-            session_service=session_service,
-            agent_pool=agent_pool,
+        self._session_service = session_service
+        self._agent_pool = agent_pool
+        self._executor = executor
+        self._deferred_replies = DeferredReplyManager(
             executor=executor,
+            session_service=session_service,
+            deliver_chunked=self._deliver_message,
+        )
+        self._session_mgr = SessionManager(
+            on_batch_ready=lambda *a: None,
             debounce_ms=1,
             max_batch_window_ms=1,
         )
 
-    async def _build_user_message(self, context, messages):
-        del context, messages
-        return "hello"
+    async def close_base(self) -> None:
+        await safe_close_all(
+            self._deferred_replies, self._session_mgr, self._agent_pool
+        )
 
     async def _deliver_reply(self, context: BatchContext, text: str) -> None:
         self.reply_calls.append((context, text))
@@ -125,8 +128,104 @@ class _TestChannelService(BaseChannelService):
     async def _deliver_message(self, context: BatchContext, text: str) -> None:
         self.message_calls.append((context, text))
 
-    def _to_user_facing_error(self, error: Exception) -> str:
-        return str(error)
+    async def _execute_batch(self, batch: BatchPayload) -> None:
+        session, agent = await self._prepare_batch_runtime(batch)
+        dispatch = await self._executor.execute(agent, session, batch.user_message)
+        if dispatch.action == "steered":
+            await self._handle_steered_dispatch(batch, session)
+            return
+        had_output = await self._consume_dispatch_stream(
+            batch, session, dispatch.stream
+        )
+        await self._finalize_dispatch(batch, session, had_output)
+
+    async def _prepare_batch_runtime(self, batch):
+        resolution = await self._session_service.get_or_create_current_session(
+            batch.context
+        )
+        if resolution.retired_runtime_agent_id is not None:
+            await self._agent_pool.close_runtime_agent(
+                resolution.retired_runtime_agent_id
+            )
+        session = resolution.session
+        agent = await self._agent_pool.get_or_create_runtime_agent(session)
+        return session, agent
+
+    async def _handle_steered_dispatch(self, batch, session):
+        if await self._can_deliver_target(batch.context, session):
+            await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
+        await self._arm_deferred_reply_if_active(batch, session)
+
+    async def _consume_dispatch_stream(self, batch, session, stream):
+        if stream is None:
+            return False
+        had_output = False
+        async for item in stream:
+            if not await self._can_deliver_target(batch.context, session):
+                continue
+            text = extract_stream_text(item)
+            if text is None:
+                continue
+            had_output = await self._deliver_stream_text(
+                batch.context, text, had_output=had_output
+            )
+        return had_output
+
+    async def _finalize_dispatch(self, batch, session, had_output):
+        state = await self._executor.get_state(session.scheduler_state_id)
+        if await self._arm_deferred_reply_if_active(batch, session, state=state):
+            return
+        if not await self._can_deliver_target(batch.context, session):
+            return
+        if had_output:
+            return
+        if state is not None and state.result_summary:
+            await self._deliver_stream_text(
+                batch.context, state.result_summary, had_output=False
+            )
+            return
+        await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
+
+    async def _arm_deferred_reply_if_active(self, batch, session, *, state=None):
+        resolved_state = state
+        if resolved_state is None:
+            resolved_state = await self._executor.get_state(session.scheduler_state_id)
+        if resolved_state is None or not resolved_state.is_active():
+            return False
+        if not await self._can_deliver_target(batch.context, session):
+            return False
+        self._deferred_replies.arm(session=session, context=batch.context)
+        return True
+
+    async def _deliver_stream_text(self, context, text, *, had_output):
+        chunks = split_text_into_chunks(text)
+        for index, chunk in enumerate(chunks):
+            if not had_output and index == 0:
+                await self._deliver_reply(context, chunk)
+                had_output = True
+                continue
+            await self._deliver_message(context, chunk)
+            had_output = True
+        return had_output
+
+    async def _can_deliver_target(self, context, session):
+        return await self._can_deliver_session(
+            context, session_id=session.id, state_id=session.scheduler_state_id
+        )
+
+    async def _can_deliver_session(self, context, *, session_id, state_id):
+        (
+            _,
+            current_session,
+        ) = await self._session_service.get_chat_context_and_current_session(
+            context.chat_context_scope_id
+        )
+        if current_session is None:
+            return False
+        return (
+            current_session.id == session_id
+            and current_session.scheduler_state_id == state_id
+        )
 
 
 class _DeferredExecutor:
@@ -151,7 +250,6 @@ class _DeferredExecutor:
 async def test_session_service_returns_retired_agent_id_on_rebind() -> None:
     store = FakeChannelChatSessionStore()
     chat_context = ChannelChatContext(
-        id="ctx-1",
         scope_id="scope-1",
         channel_instance_id="feishu-main",
         chat_id="chat-1",
@@ -164,7 +262,7 @@ async def test_session_service_returns_retired_agent_id_on_rebind() -> None:
     )
     session = Session(
         id="sess-1",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="missing-base",
         runtime_agent_id="runtime-old",
         scheduler_state_id="runtime-old",
@@ -213,7 +311,6 @@ async def test_session_service_create_new_session_honors_explicit_base_agent() -
     store = FakeChannelChatSessionStore()
     now = datetime.now(timezone.utc)
     existing_context = ChannelChatContext(
-        id="ctx-1",
         scope_id="scope-1",
         channel_instance_id="feishu-main",
         chat_id="chat-1",
@@ -279,7 +376,7 @@ async def test_runtime_agent_pool_assigns_runtime_identity_and_persists_session(
     )
     session = Session(
         id="sess-1",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="base-agent",
         runtime_agent_id="",
         scheduler_state_id="",
@@ -332,7 +429,7 @@ async def test_runtime_agent_pool_defers_refresh_while_state_running(
     pool._runtime_agent_config_fingerprints["runtime-1"] = "stale-fingerprint"
     session = Session(
         id="sess-1",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="base-agent",
         runtime_agent_id="runtime-1",
         scheduler_state_id="runtime-1",
@@ -366,7 +463,7 @@ async def test_agent_executor_steers_running_state_and_returns_steered_dispatch(
     )
     session = Session(
         id="sess-1",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="base-agent",
         runtime_agent_id="runtime-1",
         scheduler_state_id="runtime-1",
@@ -395,7 +492,7 @@ async def test_base_channel_service_delivers_deferred_reply_for_active_state() -
     now = datetime.now(timezone.utc)
     session = Session(
         id="sess-1",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="base-agent",
         runtime_agent_id="runtime-1",
         scheduler_state_id="runtime-1",
@@ -475,7 +572,7 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
     now = datetime.now(timezone.utc)
     current_session = Session(
         id="sess-current",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="base-agent",
         runtime_agent_id="runtime-current",
         scheduler_state_id="runtime-current",
@@ -485,7 +582,7 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
     )
     stale_session = Session(
         id="sess-stale",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="base-agent",
         runtime_agent_id="runtime-stale",
         scheduler_state_id="runtime-stale",

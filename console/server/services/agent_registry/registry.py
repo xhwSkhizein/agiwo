@@ -3,8 +3,7 @@
 from datetime import datetime
 
 from server.config import ConsoleConfig
-from server.domain.agent_configs import AgentConfigInput
-from server.domain.tool_references import serialize_tool_references
+from server.schemas import AgentConfigPayload, AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry.models import AgentConfigRecord
 from server.services.agent_registry.store import (
     AgentRegistryStore,
@@ -13,20 +12,20 @@ from server.services.agent_registry.store import (
 
 
 def _validate_agent_config_record(record: AgentConfigRecord) -> AgentConfigRecord:
-    normalized_input = AgentConfigInput(
+    payload = AgentConfigPayload(
         name=record.name,
         description=record.description,
         model_provider=record.model_provider,
         model_name=record.model_name,
         system_prompt=record.system_prompt,
         tools=record.tools,
-        options=record.options,
-        model_params=record.model_params,
+        options=AgentOptionsInput.model_validate(record.options or {}),
+        model_params=ModelParamsInput.model_validate(record.model_params or {}),
     )
     return AgentConfigRecord.model_validate(
         {
             **record.model_dump(mode="python"),
-            "tools": serialize_tool_references(normalized_input.tools),
+            "tools": payload.tools,
         }
     )
 

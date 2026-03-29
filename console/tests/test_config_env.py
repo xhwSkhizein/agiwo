@@ -6,7 +6,7 @@ from agiwo.config.settings import settings
 from agiwo.llm.openai import OpenAIModel
 from server.app import _build_default_agent_config
 from server.config import ConsoleConfig
-from server.domain.agent_configs import AgentOptionsInput
+from server.schemas import AgentOptionsInput
 from server.schemas import AgentConfigPayload, AgentConfigReplace
 from server.services.agent_lifecycle import (
     build_agent_options,
@@ -18,7 +18,7 @@ from server.domain.tool_references import (
     InvalidToolReferenceError,
     parse_tool_references,
 )
-from server.tools import AgentToolRef, BuiltinToolRef, build_tools
+from server.tools import build_tools
 
 
 def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,10 +137,7 @@ def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
 def test_console_tool_catalog_parses_builtin_and_agent_refs() -> None:
     refs = parse_tool_references(["web_search", "agent:child-1"])
 
-    assert refs == [
-        BuiltinToolRef(name="web_search"),
-        AgentToolRef(agent_id="child-1"),
-    ]
+    assert refs == ["web_search", "agent:child-1"]
 
     with pytest.raises(InvalidToolReferenceError):
         parse_tool_references(["missing"])

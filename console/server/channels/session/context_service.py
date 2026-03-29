@@ -4,7 +4,6 @@ Session and chat-context coordination for channel runtime flows.
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 
 from agiwo.utils.logging import get_logger
 
@@ -14,6 +13,7 @@ from server.channels.session.binding import (
     SessionMutationPlan,
     SessionNotFoundError,
     SessionNotInChatContextError,
+    fork_session as _fork_session_binding,
     open_initial_session,
     open_new_session,
     repair_missing_base_agent,
@@ -30,9 +30,6 @@ from server.channels.session.models import (
     UserSessionItem,
 )
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-
-if TYPE_CHECKING:
-    from server.services.remote_workspace_session import RemoteWorkspaceSessionService
 
 logger = get_logger(__name__)
 
@@ -176,8 +173,8 @@ class SessionContextService:
         target = await self._store.get_session(target_session_id)
         if target is None:
             raise SessionNotFoundError(target_session_id)
-        if target.chat_context_id != chat_context.id:
-            raise SessionNotInChatContextError(target_session_id, chat_context.id)
+        if target.chat_context_scope_id != chat_context.scope_id:
+            raise SessionNotInChatContextError(target_session_id, chat_context.scope_id)
 
         previous = await self._store.get_session(chat_context.current_session_id)
         mutation = switch_session(
@@ -216,7 +213,7 @@ class SessionContextService:
                     is_current=session.id == chat_context.current_session_id,
                     in_current_context=(
                         current_chat_context is not None
-                        and chat_context.id == current_chat_context.id
+                        and chat_context.scope_id == current_chat_context.scope_id
                     ),
                 )
             )
@@ -302,9 +299,66 @@ class SessionContextService:
             retired_runtime_agent_id=mutation.retired_runtime_agent_id,
         )
 
-    def as_remote_workspace_service(self) -> "RemoteWorkspaceSessionService":
-        from server.services.remote_workspace_session import (  # noqa: PLC0415
-            RemoteWorkspaceSessionService,
+    async def fork_session(
+        self,
+        *,
+        chat_context_scope_id: str,
+        context_summary: str,
+        created_by: str,
+    ) -> SessionCreateResult:
+        chat_context = await self._store.get_chat_context(chat_context_scope_id)
+        if chat_context is None:
+            raise ChatContextNotFoundError(chat_context_scope_id)
+        source = await self._store.get_session(chat_context.current_session_id)
+        if source is None:
+            raise SessionNotFoundError(chat_context.current_session_id)
+        mutation = _fork_session_binding(
+            chat_context,
+            source,
+            created_by=created_by,
+            context_summary=context_summary,
+            now=datetime.now(timezone.utc),
+        )
+        await self._store.apply_session_mutation(mutation)
+        return SessionCreateResult(
+            chat_context=mutation.chat_context,
+            session=mutation.current_session,
         )
 
-        return RemoteWorkspaceSessionService(store=self._store)
+    async def fork_session_by_id(
+        self,
+        *,
+        session_id: str,
+        context_summary: str,
+        created_by: str,
+    ) -> SessionCreateResult:
+        """Fork from a specific session ID (for Console API where scope is not directly available)."""
+        source = await self._store.get_session(session_id)
+        if source is None:
+            raise SessionNotFoundError(session_id)
+        chat_context = await self._store.get_chat_context(source.chat_context_scope_id)
+        if chat_context is None:
+            raise ChatContextNotFoundError(source.chat_context_scope_id)
+        mutation = _fork_session_binding(
+            chat_context,
+            source,
+            created_by=created_by,
+            context_summary=context_summary,
+            now=datetime.now(timezone.utc),
+        )
+        await self._store.apply_session_mutation(mutation)
+        return SessionCreateResult(
+            chat_context=mutation.chat_context,
+            session=mutation.current_session,
+        )
+
+    async def list_sessions(
+        self,
+        *,
+        chat_context_scope_id: str,
+    ) -> list[Session]:
+        """List all sessions for a given chat context scope."""
+        chat_context = await self._store.get_chat_context(chat_context_scope_id)
+        if chat_context is None:
+            return []
+        return await self._store.list_sessions_by_chat_context(chat_context.scope_id)

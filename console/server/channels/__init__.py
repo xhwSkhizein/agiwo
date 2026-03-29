@@ -1,3 +1,3 @@
-from server.channels.base import BaseChannelService
+from server.channels.feishu.service import FeishuChannelService
 
-__all__ = ["BaseChannelService"]
+__all__ = ["FeishuChannelService"]
