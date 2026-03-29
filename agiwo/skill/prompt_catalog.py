@@ -29,14 +29,14 @@ class SkillPromptCatalog:
             "Use the Skill tool to activate it when needed."
         )
         lines.append("")
-        lines.append("<avaliable_skills>")
+        lines.append("<available_skills>")
         for metadata in metadata_items:
             lines.append("  <skill>")
             lines.append(f"    <name>{metadata.name}</name>")
             lines.append(f"    <description>{metadata.description}</description>")
             lines.append(f"    <location>{metadata.path}</location>")
             lines.append("  </skill>")
-        lines.append("</avaliable_skills>")
+        lines.append("</available_skills>")
         lines.append("")
         lines.append("### How to use skills:")
         lines.append(
