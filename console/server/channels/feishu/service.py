@@ -26,6 +26,7 @@ from server.channels.exceptions import (
     DefaultAgentNameNotFoundError,
     PreviousTaskRunningError,
 )
+from server.channels.feishu.commands import build_feishu_command_registry
 from server.channels.feishu.factory import FeishuServiceFactory
 from server.channels.feishu.message_parser import FeishuInboundEnvelope
 from server.channels.session.models import BatchContext, InboundMessage
@@ -69,6 +70,14 @@ class FeishuChannelService(BaseChannelService):
         )
 
         self._inbound_handler._session_mgr = self._session_mgr
+        self._inbound_handler._command_registry = build_feishu_command_registry(
+            session_service=components.session_service,
+            agent_pool=components.agent_pool,
+            session_manager=self._session_mgr,
+            scheduler=scheduler,
+            agent_registry=agent_registry,
+            console_config=config,
+        )
         self._verbose_mode: Literal["full", "lite", "off"] = config.feishu_verbose_mode
         self._closed = False
 

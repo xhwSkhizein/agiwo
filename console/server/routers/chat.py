@@ -1,14 +1,15 @@
 """Chat API router — real-time Agent conversation via SSE."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
-from server.dependencies import ConsoleRuntime, ConsoleRuntimeDep
+from server.dependencies import ConsoleRuntime, ConsoleRuntimeDep, SchedulerDep
 from server.domain.sessions import session_aggregate_to_chat_summary
 from server.schemas import (
     ChatRequest,
     CreateSessionRequest,
     ForkSessionRequest,
+    SchedulerChatCancelRequest,
     SwitchSessionRequest,
 )
 from server.services.remote_workspace_session import RemoteWorkspaceSessionService
@@ -37,6 +38,23 @@ async def chat(
         stream_scheduler_events,
         unexpected_error_builder=scheduler_error_message,
     )
+
+
+@router.post("/{agent_id}/cancel")
+async def cancel_orchestration(
+    agent_id: str,
+    body: SchedulerChatCancelRequest,
+    scheduler: SchedulerDep,
+):
+    """Cancel a running scheduler orchestration."""
+    del agent_id
+    success = await scheduler.cancel(body.state_id)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No active orchestration found for state_id={body.state_id}",
+        )
+    return {"ok": True, "state_id": body.state_id}
 
 
 @router.get("/{agent_id}/sessions")

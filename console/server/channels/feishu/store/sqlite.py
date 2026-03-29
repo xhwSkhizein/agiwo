@@ -274,6 +274,7 @@ class SqliteFeishuChannelStore:
             )
             """
         )
+        # Migration cleanup: feishu_session_runtime was replaced by feishu_session
         await conn.execute("DROP TABLE IF EXISTS feishu_session_runtime")
         await conn.execute(
             """
@@ -291,7 +292,6 @@ class SqliteFeishuChannelStore:
             )
             """
         )
-        await conn.execute("DROP TABLE IF EXISTS feishu_session")
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS feishu_session (

@@ -46,11 +46,6 @@ class BuiltinToolSpec:
     needs_citation_store: bool = False
 
 
-@dataclass(frozen=True)
-class ConsoleToolBuildContext:
-    citation_store_config: CitationStoreConfig
-
-
 BUILTIN_TOOL_SPECS: dict[str, BuiltinToolSpec] = {
     "bash": BuiltinToolSpec(
         description="Execute shell commands in a terminal-style sandbox",
@@ -106,13 +101,11 @@ async def build_tools(
     console_config: ConsoleConfig,
     build_agent_tool: Callable[[AgentToolRef], Awaitable[BaseTool | None]],
 ) -> list[BaseTool]:
-    build_context = ConsoleToolBuildContext(
-        citation_store_config=build_citation_store_config(console_config),
-    )
+    citation_store_config = build_citation_store_config(console_config)
     tools: list[BaseTool] = []
     for ref in parse_tool_references(list(tool_refs)):
         if isinstance(ref, BuiltinToolRef):
-            tools.append(_build_builtin_tool(ref, build_context))
+            tools.append(_build_builtin_tool(ref, citation_store_config))
             continue
         agent_tool = await build_agent_tool(ref)
         if agent_tool is not None:
@@ -126,13 +119,13 @@ def build_agent_tool(_ref: AgentToolRef, agent: Agent) -> BaseTool:
 
 def _build_builtin_tool(
     ref: BuiltinToolRef,
-    build_context: ConsoleToolBuildContext,
+    citation_store_config: CitationStoreConfig,
 ) -> BaseTool:
     tool_cls = BUILTIN_TOOLS[ref.name]
     kwargs: dict[str, object] = {}
     spec = BUILTIN_TOOL_SPECS.get(ref.name)
     if spec is not None and spec.needs_citation_store:
-        kwargs["citation_store_config"] = build_context.citation_store_config
+        kwargs["citation_store_config"] = citation_store_config
     return tool_cls(**kwargs)
 
 
