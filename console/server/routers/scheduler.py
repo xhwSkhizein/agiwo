@@ -217,7 +217,10 @@ async def create_persistent_agent(
             status_code=404, detail=f"Agent config '{config_id}' not found"
         )
 
-    agent = await build_agent(config, runtime.config, runtime.agent_registry)
+    instance_id = f"{config.id}--{uuid4()}"
+    agent = await build_agent(
+        config, runtime.config, runtime.agent_registry, id=instance_id
+    )
     state_id = await scheduler.submit(
         agent,
         body.initial_task or "",

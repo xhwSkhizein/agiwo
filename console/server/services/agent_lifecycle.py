@@ -123,7 +123,7 @@ async def build_agent(
         agent_config,
         model=model,
         tools=tools or None,
-        id=id,
+        id=id or config.id,
     )
 
 
