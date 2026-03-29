@@ -90,9 +90,7 @@ def plan_tick(
                 DispatchAction(
                     state=state,
                     reason=DispatchReason.ROOT_QUEUED_INPUT,
-                    input_override=build_mailbox_input(
-                        state.pending_input, mailbox
-                    ),
+                    input_override=build_mailbox_input(state.pending_input, mailbox),
                     events=mailbox,
                 )
             )

@@ -38,7 +38,9 @@ async def stream_assistant_step(
 ) -> tuple[StepRecord, LLMCallContext]:
     """Stream call LLM and build Step."""
     messages = messages if messages is not None else state.copy_messages()
-    tools_resolved = state.copy_tool_schemas() if use_state_tools and tools is None else tools
+    tools_resolved = (
+        state.copy_tool_schemas() if use_state_tools and tools is None else tools
+    )
 
     metrics_resolver = ModelUsageEstimator(model)
     request_estimate = metrics_resolver.estimate_request(messages, tools_resolved)

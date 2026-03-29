@@ -4,7 +4,7 @@ Global settings from environment variables.
 
 import os
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Any, Literal, cast, get_args
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -442,7 +442,7 @@ class _LazySettingsProxy:
             object.__setattr__(self, "_instance", inst)
         return inst
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._resolve(), name)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -452,7 +452,7 @@ class _LazySettingsProxy:
         return repr(self._resolve())
 
 
-settings: AgiwoSettings = _LazySettingsProxy()  # type: ignore[assignment]
+settings: AgiwoSettings = cast(AgiwoSettings, _LazySettingsProxy())
 
 
 __all__ = ["AgiwoSettings", "get_settings", "load_settings", "settings"]

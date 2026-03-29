@@ -281,7 +281,7 @@ def compose_child_system_prompt(
     """Build the system prompt for a child / nested agent run."""
     if system_prompt_override is not None:
         return system_prompt_override
-    if not instruction:
+    if instruction is None or not instruction.strip():
         return base_prompt
     instruction_block = (
         f"<system-instruction>\n{instruction.strip()}\n</system-instruction>"

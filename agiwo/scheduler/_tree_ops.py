@@ -63,9 +63,7 @@ def abort_runtime_state(sched: Scheduler, state_id: str, reason: str) -> None:
 async def shutdown_running_state(sched: Scheduler, state: AgentState) -> None:
     if state.is_root and state.is_persistent:
         sched._rt.shutdown_requested.add(state.id)
-        await sched._save_state(
-            state.with_queued(pending_input=SHUTDOWN_SUMMARY_TASK)
-        )
+        await sched._save_state(state.with_queued(pending_input=SHUTDOWN_SUMMARY_TASK))
         return
     await sched._save_state(state.with_failed("Shutdown before completion"))
 
@@ -75,9 +73,7 @@ async def shutdown_passive_state(sched: Scheduler, state: AgentState) -> None:
         AgentStateStatus.WAITING,
         AgentStateStatus.IDLE,
     ):
-        await sched._save_state(
-            state.with_queued(pending_input=SHUTDOWN_SUMMARY_TASK)
-        )
+        await sched._save_state(state.with_queued(pending_input=SHUTDOWN_SUMMARY_TASK))
         return
 
     if state.status in (

@@ -295,7 +295,9 @@ async def execute_run(
 
     await _start_run(context, prepared.run)
     try:
-        await commit_step(context, prepared.user_step, append_message=False, track_state=False)
+        await commit_step(
+            context, prepared.user_step, append_message=False, track_state=False
+        )
         loop_state = RunLoopState(
             model=model,
             tools_map=prepared.tools_map,
@@ -481,7 +483,9 @@ async def _run_assistant_turn(
 ) -> tuple[StepRecord, LLMCallContext]:
     replace_messages(
         state,
-        apply_steering_messages(state.copy_messages(), state.session_runtime.steering_queue),
+        apply_steering_messages(
+            state.copy_messages(), state.session_runtime.steering_queue
+        ),
     )
     if state.hooks.on_before_llm_call:
         modified = await state.hooks.on_before_llm_call(state.copy_messages())

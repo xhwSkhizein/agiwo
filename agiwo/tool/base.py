@@ -1,13 +1,10 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
-
-if TYPE_CHECKING:
-    from agiwo.agent.models.run import TerminationReason
 
 
 @dataclass
@@ -56,7 +53,7 @@ class ToolResult:
     )
     error: str | None = None
     is_success: bool = True
-    termination_reason: "TerminationReason | None" = None
+    termination_reason: Any = None
 
     @classmethod
     def success(
@@ -68,7 +65,7 @@ class ToolResult:
         start_time: float | None = None,
         output: Any = None,
         content_for_user: str | None = None,
-        termination_reason: "TerminationReason | None" = None,
+        termination_reason: Any = None,
     ) -> "ToolResult":
         """Create a ToolResult representing a successful operation."""
         now = time.time()

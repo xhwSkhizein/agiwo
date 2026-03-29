@@ -70,12 +70,18 @@ class Model(ABC):
     config: LLMConfig
 
     def __init__(self, config: LLMConfig | None = None, **kwargs: Any) -> None:
+        if config is not None and kwargs:
+            raise TypeError(
+                "Pass either a config object or keyword arguments, not both"
+            )
         if config is not None:
             self.config = config
         elif kwargs:
             self.config = LLMConfig(**kwargs)
         else:
-            raise TypeError("Model requires either a config argument or keyword arguments")
+            raise TypeError(
+                "Model requires either a config argument or keyword arguments"
+            )
 
     # Backward-compatible property accessors
     @property
@@ -121,6 +127,10 @@ class Model(ABC):
     @property
     def provider(self) -> str:
         return self.config.provider
+
+    @provider.setter
+    def provider(self, value: str) -> None:
+        self.config.provider = value
 
     @property
     def cache_hit_price(self) -> float:

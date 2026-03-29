@@ -198,7 +198,7 @@ class MongoRunStepStorage(RunStepStorage):
         if operations:
             await self.steps_collection.bulk_write(operations)
 
-    @storage_op("get_steps", session_id=lambda self, session_id, **kw: session_id)
+    @storage_op("get_steps", session_id=lambda self, session_id, *_, **__: session_id)
     async def get_steps(
         self,
         session_id: str,
@@ -244,7 +244,9 @@ class MongoRunStepStorage(RunStepStorage):
             return self._deserialize_step(doc)
         return None
 
-    @storage_op("delete_steps", session_id=lambda self, session_id, *a: session_id)
+    @storage_op(
+        "delete_steps", session_id=lambda self, session_id, *_, **__: session_id
+    )
     async def delete_steps(self, session_id: str, start_seq: int) -> int:
         """Delete steps from a sequence number onwards."""
         await self._ensure_connection()
@@ -257,9 +259,7 @@ class MongoRunStepStorage(RunStepStorage):
     async def get_step_count(self, session_id: str) -> int:
         """Get total number of steps for a session."""
         await self._ensure_connection()
-        return await self.steps_collection.count_documents(
-            {"session_id": session_id}
-        )
+        return await self.steps_collection.count_documents({"session_id": session_id})
 
     @storage_op("get_max_sequence", session_id=lambda self, session_id: session_id)
     async def get_max_sequence(self, session_id: str) -> int:

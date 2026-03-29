@@ -63,7 +63,10 @@ def check_post_llm_limits(
         )
         return TerminationReason.MAX_INPUT_TOKENS_PER_CALL
 
-    if options.max_run_cost is not None and state.ledger.token_cost >= options.max_run_cost:
+    if (
+        options.max_run_cost is not None
+        and state.ledger.token_cost >= options.max_run_cost
+    ):
         logger.warning(
             "limit_hit_max_run_cost",
             token_cost=state.ledger.token_cost,

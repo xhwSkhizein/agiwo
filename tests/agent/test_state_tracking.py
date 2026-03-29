@@ -127,7 +127,9 @@ def test_ledger_fields_not_exposed_directly_on_run_context() -> None:
         "tool_calls_count",
     ]
     for attr in removed_attrs:
-        assert not hasattr(state, attr), f"RunContext should not expose '{attr}' directly"
+        assert not hasattr(state, attr), (
+            f"RunContext should not expose '{attr}' directly"
+        )
 
     replace_messages(state, [{"role": "assistant", "content": "summary"}])
     snapshot = state.copy_messages()

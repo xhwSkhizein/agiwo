@@ -180,9 +180,7 @@ class SQLiteRunStepStorage(RunStepStorage):
     async def get_run(self, run_id: str) -> Run | None:
         """Get a run by ID."""
         conn = await self._ensure_connection()
-        async with conn.execute(
-            "SELECT * FROM runs WHERE id = ?", (run_id,)
-        ) as cursor:
+        async with conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)) as cursor:
             row = await cursor.fetchone()
             if row:
                 return self._deserialize_run(row)
@@ -201,10 +199,10 @@ class SQLiteRunStepStorage(RunStepStorage):
         query = "SELECT * FROM runs WHERE agent_id IS NOT NULL"
         params = []
 
-        if user_id:
+        if user_id is not None:
             query += " AND user_id = ?"
             params.append(user_id)
-        if session_id:
+        if session_id is not None:
             query += " AND session_id = ?"
             params.append(session_id)
 
@@ -266,7 +264,7 @@ class SQLiteRunStepStorage(RunStepStorage):
         )
         await conn.commit()
 
-    @storage_op("get_steps", session_id=lambda self, session_id, **kw: session_id)
+    @storage_op("get_steps", session_id=lambda self, session_id, *_, **__: session_id)
     async def get_steps(
         self,
         session_id: str,
@@ -316,7 +314,9 @@ class SQLiteRunStepStorage(RunStepStorage):
                 return self._deserialize_step(row)
             return None
 
-    @storage_op("delete_steps", session_id=lambda self, session_id, *a: session_id)
+    @storage_op(
+        "delete_steps", session_id=lambda self, session_id, *_, **__: session_id
+    )
     async def delete_steps(self, session_id: str, start_seq: int) -> int:
         """Delete steps from a sequence number onwards."""
         conn = await self._ensure_connection()
