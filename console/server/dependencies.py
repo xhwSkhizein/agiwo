@@ -10,6 +10,7 @@ from agiwo.observability.base import BaseTraceStorage
 from agiwo.scheduler.engine import Scheduler
 
 from server.channels.feishu import FeishuChannelService
+from server.channels.session.models import ChannelChatSessionStore
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
 
@@ -24,6 +25,7 @@ class ConsoleRuntime:
     agent_registry: AgentRegistry
     scheduler: Scheduler | None = None
     feishu_channel_service: FeishuChannelService | None = None
+    session_store: ChannelChatSessionStore | None = None
 
 
 def bind_console_runtime(app: FastAPI, runtime: ConsoleRuntime) -> None:

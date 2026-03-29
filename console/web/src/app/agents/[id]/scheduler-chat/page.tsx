@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -14,50 +14,52 @@ import {
   Play,
   ChevronDown,
   ChevronRight,
+  PanelRight,
 } from "lucide-react";
 import {
   getAgent,
-  parseStreamEventPayload,
   schedulerChatStreamUrl,
   cancelSchedulerChat,
   getAgentStateChildren,
+  getSessionSteps,
 } from "@/lib/api";
 import { ChatInputBar } from "@/components/chat-input-bar";
 import { ChatMessageItem } from "@/components/chat-message";
 import { PillBadge } from "@/components/pill-badge";
 import { EmptyStateMessage, FullPageMessage } from "@/components/state-message";
 import { UserInputCompact } from "@/components/user-input-detail";
+import { SessionPanel } from "@/components/session-panel/session-panel";
+import { useChatStream } from "@/hooks/use-chat-stream";
+import type { ChatMessage } from "@/lib/chat-types";
+import { genMessageId } from "@/lib/chat-types";
 import type {
   AgentConfig,
   AgentStateListItem,
-  SchedulerFailedEventPayload,
-  StepResponse,
+  RunCompletedEventPayload,
   StreamEventPayload,
-  ToolCallPayload,
+  StepResponse,
 } from "@/lib/api";
 
-function genId(): string {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
+type OrchestrationStatus =
+  | "idle"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant" | "tool" | "system";
-  content: string;
-  name?: string;
-  tool_calls?: ToolCallPayload[];
-  reasoning_content?: string;
-  isStreaming?: boolean;
-  agentId?: string;
-}
-
-type OrchestrationStatus = "idle" | "running" | "waiting" | "completed" | "failed" | "cancelled";
-
-const statusConfig: Record<OrchestrationStatus, { icon: typeof Play; color: string; label: string }> = {
+const statusConfig: Record<
+  OrchestrationStatus,
+  { icon: typeof Play; color: string; label: string }
+> = {
   idle: { icon: Clock, color: "text-zinc-500", label: "Idle" },
   running: { icon: Loader2, color: "text-blue-400", label: "Running" },
   waiting: { icon: Moon, color: "text-yellow-400", label: "Waiting" },
-  completed: { icon: CheckCircle2, color: "text-green-400", label: "Completed" },
+  completed: {
+    icon: CheckCircle2,
+    color: "text-green-400",
+    label: "Completed",
+  },
   failed: { icon: AlertCircle, color: "text-red-400", label: "Failed" },
   cancelled: { icon: XCircle, color: "text-zinc-400", label: "Cancelled" },
 };
@@ -72,44 +74,83 @@ const childStatusBadge: Record<string, string> = {
   failed: "bg-red-900/50 text-red-400",
 };
 
+function stepsToMessages(steps: StepResponse[]): ChatMessage[] {
+  const msgs: ChatMessage[] = [];
+  for (const step of steps) {
+    if (step.role === "user" && step.user_input) {
+      const text =
+        typeof step.user_input === "string"
+          ? step.user_input
+          : JSON.stringify(step.user_input);
+      if (text) msgs.push({ id: genMessageId(), role: "user", content: text });
+    } else if (step.role === "assistant") {
+      const content =
+        typeof step.content === "string"
+          ? step.content
+          : step.content
+            ? JSON.stringify(step.content)
+            : "";
+      if (content || (step.tool_calls && step.tool_calls.length > 0)) {
+        msgs.push({
+          id: genMessageId(),
+          role: "assistant",
+          content: content || "",
+          tool_calls: step.tool_calls ?? undefined,
+          reasoning_content: step.reasoning_content ?? undefined,
+        });
+      }
+    } else if (step.role === "tool") {
+      const content =
+        typeof step.content === "string"
+          ? step.content
+          : JSON.stringify(step.content);
+      msgs.push({
+        id: genMessageId(),
+        role: "tool",
+        content,
+        name: step.name || undefined,
+      });
+    }
+  }
+  return msgs;
+}
+
 export default function SchedulerChatPage() {
   const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const agentId = params.id as string;
 
   const [agent, setAgent] = useState<AgentConfig | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [isStreaming, setIsStreaming] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(
+    searchParams.get("session"),
+  );
   const [loading, setLoading] = useState(true);
-  const [orchestrationStatus, setOrchestrationStatus] = useState<OrchestrationStatus>("idle");
+  const [orchestrationStatus, setOrchestrationStatus] =
+    useState<OrchestrationStatus>("idle");
   const [stateId, setStateId] = useState<string | null>(null);
   const [children, setChildren] = useState<AgentStateListItem[]>([]);
-  const [expandedChildren, setExpandedChildren] = useState<Set<string>>(new Set());
-  const [childMessages, setChildMessages] = useState<Record<string, ChatMessage[]>>({});
+  const [expandedChildren, setExpandedChildren] = useState<Set<string>>(
+    new Set(),
+  );
+  const [childMessages, setChildMessages] = useState<
+    Record<string, ChatMessage[]>
+  >({});
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [showSessionPanel, setShowSessionPanel] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => {
-    getAgent(agentId)
-      .then(setAgent)
-      .catch(() => setAgent(null))
-      .finally(() => setLoading(false));
-  }, [agentId]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  useEffect(() => {
-    if (!startTime || orchestrationStatus === "completed" || orchestrationStatus === "failed") return;
-    const timer = setInterval(() => {
-      setElapsed(((Date.now() - startTime) / 1000));
-    }, 100);
-    return () => clearInterval(timer);
-  }, [startTime, orchestrationStatus]);
+  const updateSessionUrl = useCallback(
+    (sid: string) => {
+      const url = new URL(window.location.href);
+      url.searchParams.set("session", sid);
+      router.replace(url.pathname + url.search);
+    },
+    [router],
+  );
 
   const pollChildren = useCallback((sid: string) => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -117,9 +158,7 @@ export default function SchedulerChatPage() {
       try {
         const result = await getAgentStateChildren(sid);
         setChildren(result);
-      } catch {
-        // ignore polling errors
-      }
+      } catch {}
     }, 2000);
   }, []);
 
@@ -134,19 +173,179 @@ export default function SchedulerChatPage() {
     return stopPolling;
   }, [stopPolling]);
 
+  const handleChildEvent = useCallback(
+    (childAgentId: string, data: StreamEventPayload) => {
+      const type = data.type;
+      if (type === "step_delta" && "delta" in data && data.delta) {
+        const delta = data.delta;
+        if (delta.content) {
+          setChildMessages((prev) => {
+            const msgs = prev[childAgentId] || [];
+            const last = msgs[msgs.length - 1];
+            if (last && last.role === "assistant" && last.isStreaming) {
+              return {
+                ...prev,
+                [childAgentId]: msgs.map((m, i) =>
+                  i === msgs.length - 1
+                    ? { ...m, content: m.content + delta.content }
+                    : m,
+                ),
+              };
+            }
+            return {
+              ...prev,
+              [childAgentId]: [
+                ...msgs,
+                {
+                  id: genMessageId(),
+                  role: "assistant" as const,
+                  content: delta.content ?? "",
+                  isStreaming: true,
+                  agentId: childAgentId,
+                },
+              ],
+            };
+          });
+        }
+      }
+      if (type === "step_completed" && "step" in data && data.step) {
+        const step = data.step as StepResponse;
+        if (step.role === "tool") {
+          setChildMessages((prev) => ({
+            ...prev,
+            [childAgentId]: [
+              ...(prev[childAgentId] || []),
+              {
+                id: genMessageId(),
+                role: "tool" as const,
+                content:
+                  typeof step.content === "string"
+                    ? step.content
+                    : JSON.stringify(step.content),
+                name: step.name || undefined,
+                agentId: childAgentId,
+              },
+            ],
+          }));
+        }
+        if (step.role === "assistant" && step.tool_calls?.length) {
+          for (const call of step.tool_calls) {
+            if (call.function?.name === "sleep_and_wait") {
+              setOrchestrationStatus("waiting");
+            }
+          }
+        }
+      }
+      if (type === "run_completed") {
+        setChildMessages((prev) => {
+          const msgs = prev[childAgentId] || [];
+          return {
+            ...prev,
+            [childAgentId]: msgs.map((m) =>
+              m.isStreaming ? { ...m, isStreaming: false } : m,
+            ),
+          };
+        });
+      }
+    },
+    [],
+  );
+
+  const {
+    messages,
+    isStreaming,
+    sendMessage,
+    clearMessages,
+    loadHistoryMessages,
+  } = useChatStream(schedulerChatStreamUrl(agentId), {
+    onSessionCaptured: (sid) => {
+      if (!sessionId) {
+        setSessionId(sid);
+        updateSessionUrl(sid);
+      }
+    },
+    onRootAgentCaptured: (aid) => {
+      setStateId(aid);
+      pollChildren(aid);
+    },
+    onChildEvent: handleChildEvent,
+    onSchedulerFailed: (error) => {
+      setOrchestrationStatus("failed");
+      stopPolling();
+    },
+    onRunStarted: () => {
+      setOrchestrationStatus("running");
+    },
+    onRunCompleted: (event: RunCompletedEventPayload) => {
+      if (event.depth === 0) {
+        if (event.termination_reason === "sleeping") {
+          setOrchestrationStatus("waiting");
+        } else {
+          setOrchestrationStatus("completed");
+          stopPolling();
+          if (stateId) {
+            getAgentStateChildren(stateId)
+              .then(setChildren)
+              .catch(() => {});
+          }
+        }
+      }
+    },
+  });
+
+  useEffect(() => {
+    getAgent(agentId)
+      .then(setAgent)
+      .catch(() => setAgent(null))
+      .finally(() => setLoading(false));
+  }, [agentId]);
+
+  useEffect(() => {
+    if (sessionId && messages.length === 0 && !isStreaming) {
+      getSessionSteps(sessionId)
+        .then((steps) => {
+          const history = stepsToMessages(steps);
+          if (history.length > 0) loadHistoryMessages(history);
+        })
+        .catch(() => {});
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  useEffect(() => {
+    if (
+      !startTime ||
+      orchestrationStatus === "completed" ||
+      orchestrationStatus === "failed"
+    )
+      return;
+    const timer = setInterval(() => {
+      setElapsed((Date.now() - startTime) / 1000);
+    }, 100);
+    return () => clearInterval(timer);
+  }, [startTime, orchestrationStatus]);
+
+  const handleSend = () => {
+    const text = input.trim();
+    if (!text || isStreaming) return;
+    setInput("");
+    setOrchestrationStatus("running");
+    setStartTime(Date.now());
+    setChildren([]);
+    setChildMessages({});
+    sendMessage(text, sessionId);
+  };
+
   const handleCancel = async () => {
     if (!stateId) return;
     try {
       await cancelSchedulerChat(agentId, stateId);
       setOrchestrationStatus("cancelled");
       stopPolling();
-      setMessages((prev) => [
-        ...prev,
-        { id: genId(), role: "system", content: "Orchestration cancelled by user." },
-      ]);
-    } catch (err) {
-      console.error("Cancel failed:", err);
-    }
+    } catch {}
   };
 
   const toggleChild = (childId: string) => {
@@ -158,304 +357,38 @@ export default function SchedulerChatPage() {
     });
   };
 
-  const sendMessage = async () => {
-    const text = input.trim();
-    if (!text || isStreaming) return;
-
-    setInput("");
-    setIsStreaming(true);
-    setOrchestrationStatus("running");
-    setStartTime(Date.now());
+  const handleSessionSwitch = async (targetSessionId: string) => {
+    setSessionId(targetSessionId);
+    updateSessionUrl(targetSessionId);
+    clearMessages();
+    setOrchestrationStatus("idle");
     setChildren([]);
     setChildMessages({});
-
-    const userMsg: ChatMessage = { id: genId(), role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
-
-    const assistantMsg: ChatMessage = {
-      id: genId(),
-      role: "assistant",
-      content: "",
-      isStreaming: true,
-    };
-    setMessages((prev) => [...prev, assistantMsg]);
-
-    let currentAssistantContent = "";
-    let currentReasoningContent = "";
-    let rootAgentId: string | null = null;
-
+    setStateId(null);
     try {
-      const res = await fetch(schedulerChatStreamUrl(agentId), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session_id: sessionId }),
-      });
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      if (!reader) throw new Error("No response body");
-
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data:")) continue;
-          const dataStr = line.slice(5).trim();
-          if (!dataStr) continue;
-
-          try {
-            const data = parseStreamEventPayload(dataStr);
-            if (!data) {
-              continue;
-            }
-            if (data.type === "scheduler_failed") {
-              const event = data as SchedulerFailedEventPayload;
-              setOrchestrationStatus("failed");
-              stopPolling();
-              setMessages((prev) => [
-                ...prev.filter((m) => !(m.role === "assistant" && !m.content && !m.tool_calls)),
-                { id: genId(), role: "system", content: `Orchestration failed: ${event.error || "Unknown error"}` },
-              ]);
-              continue;
-            }
-            const eventAgentId =
-              "agent_id" in data && typeof data.agent_id === "string"
-                ? data.agent_id
-                : null;
-
-            if (data.type === "run_started" && data.session_id) {
-              const capturedSessionId = data.session_id;
-              if (!sessionId) setSessionId(capturedSessionId);
-              if (!rootAgentId) {
-                rootAgentId = eventAgentId;
-                setStateId(eventAgentId);
-                if (eventAgentId) pollChildren(eventAgentId);
-              }
-            }
-
-            const isChildEvent = rootAgentId && eventAgentId && eventAgentId !== rootAgentId;
-
-            if (isChildEvent) {
-              handleChildEvent(eventAgentId, data);
-              continue;
-            }
-
-            if (data.type === "step_delta" && "delta" in data && data.delta) {
-              if (data.delta.content) {
-                currentAssistantContent += data.delta.content;
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantMsg.id
-                      ? { ...m, content: currentAssistantContent, reasoning_content: currentReasoningContent || undefined }
-                      : m
-                  )
-                );
-              }
-              if (data.delta.reasoning_content) {
-                currentReasoningContent += data.delta.reasoning_content;
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantMsg.id
-                      ? { ...m, reasoning_content: currentReasoningContent }
-                      : m
-                  )
-                );
-              }
-            }
-
-            if (data.type === "step_completed" && "step" in data && data.step) {
-              const step = data.step;
-              if (step.role === "assistant") {
-                const tc = step.tool_calls;
-                if (tc && tc.length > 0) {
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === assistantMsg.id
-                        ? { ...m, tool_calls: tc, isStreaming: false }
-                        : m
-                    )
-                  );
-
-                  for (const call of tc) {
-                    const toolName = call.function?.name;
-                    if (toolName === "sleep_and_wait") {
-                      setOrchestrationStatus("waiting");
-                    }
-                  }
-                }
-              }
-              if (step.role === "tool") {
-                const toolMsg: ChatMessage = {
-                  id: genId(),
-                  role: "tool",
-                  content: typeof step.content === "string" ? step.content : JSON.stringify(step.content),
-                  name: step.name || undefined,
-                };
-                setMessages((prev) => [...prev, toolMsg]);
-
-                const nextAssistant: ChatMessage = {
-                  id: genId(),
-                  role: "assistant",
-                  content: "",
-                  isStreaming: true,
-                };
-                assistantMsg.id = nextAssistant.id;
-                currentAssistantContent = "";
-                currentReasoningContent = "";
-                setMessages((prev) => [...prev, nextAssistant]);
-              }
-            }
-
-            if (data.type === "run_completed") {
-              setMessages((prev) =>
-                prev
-                  .map((m) =>
-                    m.id === assistantMsg.id ? { ...m, isStreaming: false } : m
-                  )
-                  .filter((m) => !(m.role === "assistant" && !m.content && !m.tool_calls && !m.isStreaming))
-              );
-              if (data.depth === 0) {
-                if (data.termination_reason === "sleeping") {
-                  setOrchestrationStatus("waiting");
-                } else {
-                  setOrchestrationStatus("completed");
-                  stopPolling();
-                  if (stateId) {
-                    try {
-                      const finalChildren = await getAgentStateChildren(stateId);
-                      setChildren(finalChildren);
-                    } catch {
-                      // ignore final poll failures
-                    }
-                  }
-                }
-              }
-            }
-
-            if (data.type === "run_failed" && data.depth === 0) {
-              setOrchestrationStatus("failed");
-              stopPolling();
-              setMessages((prev) => [
-                ...prev.filter((m) => !(m.role === "assistant" && !m.content && !m.tool_calls)),
-                { id: genId(), role: "system", content: `Orchestration failed: ${data.error || "Unknown error"}` },
-              ]);
-            }
-
-            if (data.type === "run_started" && rootAgentId && eventAgentId === rootAgentId) {
-              setOrchestrationStatus("running");
-              if (!currentAssistantContent && assistantMsg.id) {
-                // woke up, start fresh assistant message
-                const wakeMsg: ChatMessage = {
-                  id: genId(),
-                  role: "system",
-                  content: "Agent woke up — resuming execution",
-                };
-                const nextAssistant: ChatMessage = {
-                  id: genId(),
-                  role: "assistant",
-                  content: "",
-                  isStreaming: true,
-                };
-                assistantMsg.id = nextAssistant.id;
-                currentAssistantContent = "";
-                currentReasoningContent = "";
-                setMessages((prev) => [
-                  ...prev.filter((m) => !(m.role === "assistant" && !m.content && !m.tool_calls)),
-                  wakeMsg,
-                  nextAssistant,
-                ]);
-              }
-            }
-
-          } catch {
-            // skip non-JSON lines
-          }
-        }
-      }
-    } catch (err) {
-      setOrchestrationStatus("failed");
-      stopPolling();
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsg.id
-            ? { ...m, content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`, isStreaming: false }
-            : m
-        )
-      );
-    } finally {
-      setIsStreaming(false);
-    }
+      const steps = await getSessionSteps(targetSessionId);
+      loadHistoryMessages(stepsToMessages(steps));
+    } catch {}
   };
 
-  const handleChildEvent = (childAgentId: string, data: StreamEventPayload) => {
-    const type = data.type;
-    if (type === "step_delta" && data.delta) {
-      const delta = data.delta;
-      if (delta.content) {
-        setChildMessages((prev) => {
-          const msgs = prev[childAgentId] || [];
-          const last = msgs[msgs.length - 1];
-          if (last && last.role === "assistant" && last.isStreaming) {
-            return {
-              ...prev,
-              [childAgentId]: msgs.map((m, i) =>
-                i === msgs.length - 1
-                  ? { ...m, content: m.content + delta.content }
-                  : m
-              ),
-            };
-          }
-          return {
-            ...prev,
-            [childAgentId]: [
-              ...msgs,
-              {
-                id: genId(),
-                role: "assistant" as const,
-                content: delta.content ?? "",
-                isStreaming: true,
-                agentId: childAgentId,
-              },
-            ],
-          };
-        });
-      }
-    }
-    if (type === "step_completed" && data.step) {
-      const step = data.step as StepResponse;
-      if (step.role === "tool") {
-        const toolMsg: ChatMessage = {
-          id: genId(),
-          role: "tool",
-          content: typeof step.content === "string" ? step.content : JSON.stringify(step.content),
-          name: step.name || undefined,
-          agentId: childAgentId,
-        };
-        setChildMessages((prev) => ({
-          ...prev,
-          [childAgentId]: [...(prev[childAgentId] || []), toolMsg],
-        }));
-      }
-    }
-    if (type === "run_completed") {
-      setChildMessages((prev) => {
-        const msgs = prev[childAgentId] || [];
-        return {
-          ...prev,
-          [childAgentId]: msgs.map((m) =>
-            m.isStreaming ? { ...m, isStreaming: false } : m
-          ),
-        };
-      });
-    }
+  const handleSessionCreated = (newSessionId: string) => {
+    setSessionId(newSessionId);
+    updateSessionUrl(newSessionId);
+    clearMessages();
+    setOrchestrationStatus("idle");
+    setChildren([]);
+    setChildMessages({});
+    setStateId(null);
+  };
+
+  const handleSessionForked = (forkedSessionId: string) => {
+    setSessionId(forkedSessionId);
+    updateSessionUrl(forkedSessionId);
+    clearMessages();
+    setOrchestrationStatus("idle");
+    setChildren([]);
+    setChildMessages({});
+    setStateId(null);
   };
 
   if (loading) {
@@ -472,10 +405,12 @@ export default function SchedulerChatPage() {
     <div className="flex h-full">
       {/* Left: Chat */}
       <div className="flex flex-col flex-1 min-w-0">
-        {/* Header */}
         <div className="shrink-0 px-5 py-3 border-b border-zinc-800 flex items-center justify-between bg-zinc-900/50">
           <div className="flex items-center gap-3">
-            <Link href="/agents" className="p-1.5 rounded hover:bg-zinc-800 transition-colors">
+            <Link
+              href="/agents"
+              className="p-1.5 rounded hover:bg-zinc-800 transition-colors"
+            >
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div>
@@ -487,22 +422,38 @@ export default function SchedulerChatPage() {
               </div>
               <p className="text-xs text-zinc-500">
                 {agent.model_provider}/{agent.model_name}
-                {sessionId && <span className="ml-2 font-mono">{sessionId.slice(0, 8)}</span>}
+                {sessionId && (
+                  <span className="ml-2 font-mono">
+                    {sessionId.slice(0, 8)}
+                  </span>
+                )}
               </p>
             </div>
           </div>
-          {isStreaming && (
+          <div className="flex items-center gap-2">
+            {isStreaming && (
+              <button
+                onClick={handleCancel}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/30 text-red-400 text-xs font-medium hover:bg-red-900/50 transition-colors"
+              >
+                <XCircle className="w-3.5 h-3.5" />
+                Cancel
+              </button>
+            )}
             <button
-              onClick={handleCancel}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/30 text-red-400 text-xs font-medium hover:bg-red-900/50 transition-colors"
+              onClick={() => setShowSessionPanel((v) => !v)}
+              className={`p-1.5 rounded transition-colors ${
+                showSessionPanel
+                  ? "bg-zinc-700 text-white"
+                  : "hover:bg-zinc-800 text-zinc-500"
+              }`}
+              title="Toggle session panel"
             >
-              <XCircle className="w-3.5 h-3.5" />
-              Cancel
+              <PanelRight className="w-4 h-4" />
             </button>
-          )}
+          </div>
         </div>
 
-        {/* Messages */}
         <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
           {messages.length === 0 && (
             <EmptyStateMessage className="flex items-center justify-center h-full text-zinc-600 text-sm">
@@ -516,27 +467,43 @@ export default function SchedulerChatPage() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
         <div className="shrink-0 px-5 py-3 border-t border-zinc-800 bg-zinc-900/50">
           <ChatInputBar
             value={input}
             onChange={setInput}
-            onSubmit={sendMessage}
+            onSubmit={handleSend}
             disabled={isStreaming}
           />
         </div>
       </div>
 
+      {/* Middle: Session Panel (togglable) */}
+      {showSessionPanel && (
+        <div className="w-72 shrink-0 border-l border-zinc-800 bg-zinc-950/50">
+          <SessionPanel
+            agentId={agentId}
+            scopeId={agentId}
+            currentSessionId={sessionId}
+            onSwitch={handleSessionSwitch}
+            onCreated={handleSessionCreated}
+            onForked={handleSessionForked}
+          />
+        </div>
+      )}
+
       {/* Right: Orchestration Panel */}
       <div className="w-80 shrink-0 border-l border-zinc-800 flex flex-col overflow-hidden bg-zinc-950/50">
-        {/* Status */}
         <div className="px-4 py-3 border-b border-zinc-800">
-          <h2 className="text-xs font-medium text-zinc-400 uppercase mb-2">Orchestration</h2>
+          <h2 className="text-xs font-medium text-zinc-400 uppercase mb-2">
+            Orchestration
+          </h2>
           <div className="flex items-center gap-2">
             <StatusIcon
               className={`w-4 h-4 ${statusConfig[orchestrationStatus].color} ${orchestrationStatus === "running" ? "animate-spin" : ""}`}
             />
-            <span className={`text-sm font-medium ${statusConfig[orchestrationStatus].color}`}>
+            <span
+              className={`text-sm font-medium ${statusConfig[orchestrationStatus].color}`}
+            >
               {statusConfig[orchestrationStatus].label}
             </span>
             {startTime && (
@@ -552,7 +519,6 @@ export default function SchedulerChatPage() {
           )}
         </div>
 
-        {/* Children */}
         <div className="flex-1 overflow-auto">
           <div className="px-4 py-3">
             <h2 className="text-xs font-medium text-zinc-400 uppercase mb-2">
@@ -572,7 +538,10 @@ export default function SchedulerChatPage() {
 
             <div className="space-y-2">
               {children.map((child) => (
-                <div key={child.id} className="rounded-lg bg-zinc-900/50 border border-zinc-800">
+                <div
+                  key={child.id}
+                  className="rounded-lg bg-zinc-900/50 border border-zinc-800"
+                >
                   <button
                     onClick={() => toggleChild(child.id)}
                     className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-zinc-800/50 transition-colors rounded-lg"
@@ -589,7 +558,9 @@ export default function SchedulerChatPage() {
                             ? "..." + child.id.slice(-16)
                             : child.id}
                         </span>
-                        <PillBadge className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${childStatusBadge[child.status] || "bg-zinc-700 text-zinc-300"}`}>
+                        <PillBadge
+                          className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${childStatusBadge[child.status] || "bg-zinc-700 text-zinc-300"}`}
+                        >
                           {child.status}
                         </PillBadge>
                       </div>
@@ -601,7 +572,9 @@ export default function SchedulerChatPage() {
                     <div className="px-3 pb-2 border-t border-zinc-800">
                       {child.result_summary && (
                         <div className="mt-2 text-xs text-zinc-400 whitespace-pre-wrap max-h-32 overflow-auto">
-                          <span className="text-zinc-500 font-medium">Result: </span>
+                          <span className="text-zinc-500 font-medium">
+                            Result:{" "}
+                          </span>
                           {child.result_summary.slice(0, 500)}
                         </div>
                       )}
@@ -609,20 +582,29 @@ export default function SchedulerChatPage() {
                         <div className="mt-2 space-y-1.5 max-h-48 overflow-auto">
                           {(childMessages[child.id] || []).map((cm) => (
                             <div key={cm.id} className="text-[11px]">
-                              <span className={`font-medium ${cm.role === "assistant" ? "text-green-400" : cm.role === "tool" ? "text-amber-400" : "text-zinc-400"}`}>
-                                {cm.role}{cm.name ? ` — ${cm.name}` : ""}:
+                              <span
+                                className={`font-medium ${cm.role === "assistant" ? "text-green-400" : cm.role === "tool" ? "text-amber-400" : "text-zinc-400"}`}
+                              >
+                                {cm.role}
+                                {cm.name ? ` — ${cm.name}` : ""}:
                               </span>{" "}
                               <span className="text-zinc-400 whitespace-pre-wrap">
-                                {cm.content.slice(0, 300)}{cm.content.length > 300 ? "..." : ""}
+                                {cm.content.slice(0, 300)}
+                                {cm.content.length > 300 ? "..." : ""}
                               </span>
-                              {cm.isStreaming && <Loader2 className="inline w-2.5 h-2.5 ml-1 animate-spin text-zinc-500" />}
+                              {cm.isStreaming && (
+                                <Loader2 className="inline w-2.5 h-2.5 ml-1 animate-spin text-zinc-500" />
+                              )}
                             </div>
                           ))}
                         </div>
                       )}
-                      {!child.result_summary && (childMessages[child.id] || []).length === 0 && (
-                        <p className="mt-2 text-[10px] text-zinc-600">No output yet</p>
-                      )}
+                      {!child.result_summary &&
+                        (childMessages[child.id] || []).length === 0 && (
+                          <p className="mt-2 text-[10px] text-zinc-600">
+                            No output yet
+                          </p>
+                        )}
                     </div>
                   )}
                 </div>

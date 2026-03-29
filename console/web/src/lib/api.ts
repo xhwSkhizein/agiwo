@@ -505,6 +505,70 @@ export function getSchedulerStats() {
   return fetchJSON<SchedulerStats>(`/api/scheduler/stats`);
 }
 
+// ── Chat Sessions ──────────────────────────────────────────────────────
+
+export interface ChatSessionItem {
+  session_id: string;
+  run_count: number;
+  last_input: string | null;
+  last_response: string | null;
+  updated_at: string | null;
+  current_task_id?: string | null;
+  task_message_count?: number;
+  source_session_id?: string | null;
+  fork_context_summary?: string | null;
+}
+
+export interface SessionActionResult {
+  session_id: string;
+  task_id: string | null;
+  source_session_id: string | null;
+  previous_session_id?: string | null;
+}
+
+export function listAgentChatSessions(agentId: string) {
+  return fetchJSON<ChatSessionItem[]>(`/api/chat/${agentId}/sessions`);
+}
+
+export function createAgentSession(agentId: string, scopeId: string) {
+  return fetchJSON<SessionActionResult>(`/api/chat/${agentId}/sessions/create`, {
+    method: "POST",
+    body: JSON.stringify({
+      chat_context_scope_id: scopeId,
+      channel_instance_id: "console-web",
+      user_open_id: "console-user",
+    }),
+  });
+}
+
+export function switchAgentSession(
+  agentId: string,
+  scopeId: string,
+  targetSessionId: string,
+) {
+  return fetchJSON<SessionActionResult>(`/api/chat/${agentId}/sessions/switch`, {
+    method: "POST",
+    body: JSON.stringify({
+      chat_context_scope_id: scopeId,
+      target_session_id: targetSessionId,
+    }),
+  });
+}
+
+export function forkAgentSession(
+  agentId: string,
+  sessionId: string,
+  contextSummary: string,
+) {
+  return fetchJSON<SessionActionResult>(
+    `/api/chat/${agentId}/sessions/${sessionId}/fork`,
+    {
+      method: "POST",
+      body: JSON.stringify({ context_summary: contextSummary }),
+    },
+  );
+}
+
 // ── Chat ───────────────────────────────────────────────────────────────
 
 export function chatStreamUrl(agentId: string) {
