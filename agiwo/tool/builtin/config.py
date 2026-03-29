@@ -39,6 +39,7 @@ class WebReaderApiConfig:
     model_max_tokens: int = field(
         default_factory=lambda: settings.get_tool_model_max_tokens()
     )
+    max_retries: int = 3
     headless: bool = False
     wait_strategy: str = "domcontentloaded"
     max_browsers: int = 1

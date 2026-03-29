@@ -115,7 +115,7 @@ class AnthropicModel(Model):
         params = {
             "model": actual_model,
             "messages": anthropic_messages,
-            "max_tokens": self.max_output_tokens or self.max_tokens_to_sample,
+            "max_tokens": self.max_output_tokens,
             "temperature": self.temperature,
             "stream": True,
         }

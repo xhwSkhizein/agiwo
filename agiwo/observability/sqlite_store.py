@@ -3,6 +3,7 @@ SQLite implementation of TraceStorage.
 """
 
 import json
+import re
 from typing import Any
 
 import aiosqlite
@@ -23,11 +24,18 @@ class SQLiteTraceStorage(BaseTraceStorage):
     SQLite implementation of TraceStorage.
     """
 
+    _VALID_TABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
     def __init__(
         self,
         db_path: str,
         collection_name: str,
     ) -> None:
+        if not self._VALID_TABLE_NAME.match(collection_name):
+            raise ValueError(
+                f"Invalid collection name '{collection_name}': "
+                "must contain only alphanumeric characters and underscores"
+            )
         self.db_path = db_path
         self.collection_name = collection_name
         self._connection: aiosqlite.Connection | None = None
