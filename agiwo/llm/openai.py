@@ -13,7 +13,7 @@ except ImportError:
 
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.llm.event_normalizer import normalize_usage_metrics
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.utils.retry import retry_async
 from agiwo.utils.logging import get_logger
 
@@ -68,15 +68,17 @@ class OpenAIModel(Model):
     def _resolve_api_key(self) -> str | None:
         if self.api_key:
             return self.api_key
-        if self.allow_env_fallback and settings.openai_api_key:
-            return settings.openai_api_key.get_secret_value()
+        if self.allow_env_fallback:
+            _s = get_settings()
+            if _s.openai_api_key:
+                return _s.openai_api_key.get_secret_value()
         return None
 
     def _resolve_base_url(self) -> str | None:
         if self.base_url:
             return self.base_url
         if self.allow_env_fallback:
-            return settings.openai_base_url
+            return get_settings().openai_base_url
         return None
 
     def _create_client(self) -> AsyncOpenAI:

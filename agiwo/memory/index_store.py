@@ -8,7 +8,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.embedding import EmbeddingError, EmbeddingFactory, EmbeddingModel
 from agiwo.memory.chunker import MemoryChunk, MemoryChunker
 from agiwo.memory.searcher import HybridSearcher, SearchResult
@@ -37,18 +37,19 @@ class MemoryIndexStore:
         self._memory_dir = self._workspace_dir / "MEMORY"
         self._db_path = self._workspace_dir / "memory.db"
 
-        self._embedding_provider = embedding_provider or settings.embedding_provider
-        self._embedding_model = embedding_model or settings.embedding_model
+        _s = get_settings()
+        self._embedding_provider = embedding_provider or _s.embedding_provider
+        self._embedding_model = embedding_model or _s.embedding_model
         self._embedding_dims = (
             embedding_dims
             if embedding_dims is not None
-            else settings.embedding_dimensions
+            else _s.embedding_dimensions
         )
         self._embedding_api_key = (
-            embedding_api_key or settings.get_embedding_api_key() or ""
+            embedding_api_key or _s.get_embedding_api_key() or ""
         )
         self._embedding_api_base = (
-            embedding_api_base or settings.embedding_base_url or ""
+            embedding_api_base or _s.embedding_base_url or ""
         )
         self._top_k = top_k
 
@@ -61,12 +62,12 @@ class MemoryIndexStore:
             chunk_tokens=(
                 chunk_tokens
                 if chunk_tokens is not None
-                else settings.memory_chunk_tokens
+                else _s.memory_chunk_tokens
             ),
             overlap_tokens=(
                 chunk_overlap_tokens
                 if chunk_overlap_tokens is not None
-                else settings.memory_chunk_overlap
+                else _s.memory_chunk_overlap
             ),
         )
 

@@ -22,7 +22,7 @@ from agiwo.agent.runtime.state_ops import (
 from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -86,7 +86,7 @@ async def save_transcript(
     root_path: str | None = None,
 ) -> str:
     """Persist compacted source messages to a transcript file."""
-    root = root_path or settings.root_path
+    root = root_path or get_settings().root_path
     transcript_dir = Path(root) / "compaction" / "transcripts" / agent_id / session_id
     transcript_dir.mkdir(parents=True, exist_ok=True)
 
@@ -181,7 +181,7 @@ def build_compacted_messages(
 ) -> list[dict[str, Any]]:
     """Build the compacted message list after compaction."""
     assistant_response = (
-        settings.compact_assistant_response or DEFAULT_ASSISTANT_RESPONSE
+        get_settings().compact_assistant_response or DEFAULT_ASSISTANT_RESPONSE
     )
 
     compacted_messages: list[dict[str, Any]] = []
@@ -219,14 +219,15 @@ async def compact_if_needed(
 ) -> CompactMetadata | None:
     if max_context_window is None:
         return None
+    _s = get_settings()
     metrics_resolver = ModelUsageEstimator(model)
     estimated_tokens = metrics_resolver.estimate_messages_tokens(state.copy_messages())
-    threshold = int(max_context_window * settings.compact_threshold_ratio)
+    threshold = int(max_context_window * _s.compact_threshold_ratio)
     if estimated_tokens < threshold:
         return None
 
-    resolved_root_path = root_path or settings.root_path
-    retry_count = settings.compact_retry_count
+    resolved_root_path = root_path or _s.root_path
+    retry_count = _s.compact_retry_count
     last_error: Exception | None = None
     for attempt in range(retry_count + 1):
         try:

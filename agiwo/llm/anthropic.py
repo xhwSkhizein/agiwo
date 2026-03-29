@@ -20,7 +20,7 @@ from agiwo.llm.message_converter import (
     convert_openai_messages_to_anthropic,
     convert_openai_tools_to_anthropic,
 )
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.utils.retry import retry_async
 from agiwo.utils.logging import get_logger
 
@@ -62,19 +62,20 @@ class AnthropicModel(Model):
             if hasattr(self.api_key, "get_secret_value"):
                 return self.api_key.get_secret_value()
             return self.api_key
+        _s = get_settings()
         if (
             self.allow_env_fallback
-            and hasattr(settings, "anthropic_api_key")
-            and settings.anthropic_api_key
+            and hasattr(_s, "anthropic_api_key")
+            and _s.anthropic_api_key
         ):
-            return settings.anthropic_api_key.get_secret_value()
+            return _s.anthropic_api_key.get_secret_value()
         return None
 
     def _resolve_base_url(self) -> str | None:
         if self.base_url:
             return self.base_url
         if self.allow_env_fallback:
-            return settings.anthropic_base_url
+            return get_settings().anthropic_base_url
         return None
 
     def _create_client(self) -> AsyncAnthropic:
