@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from agiwo.utils.abort_signal import AbortSignal
+
 
 @dataclass
 class CommandResult:
@@ -64,6 +66,7 @@ class Sandbox(Protocol):
         pty_cols: int = 120,
         pty_rows: int = 40,
         stdin: str | None = None,
+        abort_signal: AbortSignal | None = None,
     ) -> CommandResult:
         """
         Execute a command in the sandbox.

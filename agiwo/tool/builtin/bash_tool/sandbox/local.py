@@ -19,6 +19,7 @@ from agiwo.tool.builtin.bash_tool.types import (
     Sandbox,
     WriteFileSpec,
 )
+from agiwo.utils.abort_signal import AbortSignal
 
 
 class LocalSandbox(Sandbox):
@@ -39,9 +40,76 @@ class LocalSandbox(Sandbox):
         logs_dir = self.workspace / ".bash_tool" / "logs"
         self._registry = ProcessRegistry(logs_dir)
 
+    async def _graceful_terminate_process(
+        self, process: asyncio.subprocess.Process
+    ) -> None:
+        if process.returncode is not None:
+            return
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=3.0)
+        except asyncio.TimeoutError:
+            process.kill()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass
+
     @property
     def workspace_path(self) -> Path:
         return self.workspace
+
+    async def _cancel_gather_tasks(self, pending: set[asyncio.Task[object]]) -> None:
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _pipe_communicate_with_abort(
+        self,
+        process: asyncio.subprocess.Process,
+        command: str,
+        timeout: float | None,
+        abort_signal: AbortSignal | None,
+    ) -> CommandResult | tuple[bytes, bytes]:
+        if abort_signal is None:
+            if timeout is None:
+                return await process.communicate()
+            return await asyncio.wait_for(process.communicate(), timeout=timeout)
+        communicate_task = asyncio.create_task(process.communicate())
+        waiters: set[asyncio.Task[object]] = {communicate_task}
+        abort_task = asyncio.create_task(abort_signal.wait())
+        waiters.add(abort_task)
+        if timeout is not None:
+            waiters.add(asyncio.create_task(asyncio.sleep(timeout)))
+        done, pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+        if communicate_task in done:
+            await self._cancel_gather_tasks(pending)
+            return communicate_task.result()
+        if abort_task in done:
+            communicate_task.cancel()
+            try:
+                await communicate_task
+            except asyncio.CancelledError:
+                pass
+            await self._cancel_gather_tasks(pending)
+            await self._graceful_terminate_process(process)
+            reason = abort_signal.reason or "Operation cancelled"
+            return CommandResult(stdout="", stderr=reason, exit_code=1)
+        communicate_task.cancel()
+        try:
+            await communicate_task
+        except asyncio.CancelledError:
+            pass
+        await self._cancel_gather_tasks(pending)
+        process.kill()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            pass
+        raise TimeoutError(
+            f"Command timed out after {timeout} seconds: {command}"
+        ) from None
 
     async def execute_command(
         self,
@@ -52,6 +120,7 @@ class LocalSandbox(Sandbox):
         pty_cols: int = 120,
         pty_rows: int = 40,
         stdin: str | None = None,
+        abort_signal: AbortSignal | None = None,
     ) -> CommandResult:
         working_dir = self.workspace if not cwd else self.workspace / cwd
         working_dir = working_dir.resolve()
@@ -68,6 +137,7 @@ class LocalSandbox(Sandbox):
                 pty_cols=pty_cols,
                 pty_rows=pty_rows,
                 stdin=stdin,
+                abort_signal=abort_signal,
             )
 
         try:
@@ -78,10 +148,12 @@ class LocalSandbox(Sandbox):
                 cwd=str(working_dir),
             )
             try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=timeout,
+                outcome = await self._pipe_communicate_with_abort(
+                    process, command, timeout, abort_signal
                 )
+                if isinstance(outcome, CommandResult):
+                    return outcome
+                stdout_bytes, stderr_bytes = outcome
             except asyncio.TimeoutError:
                 process.kill()
                 try:
@@ -114,6 +186,7 @@ class LocalSandbox(Sandbox):
         pty_cols: int,
         pty_rows: int,
         stdin: str | None,
+        abort_signal: AbortSignal | None = None,
     ) -> CommandResult:
         try:
             master_fd, slave_fd = os.openpty()
@@ -158,6 +231,9 @@ class LocalSandbox(Sandbox):
 
         chunks: list[bytes] = []
         start = asyncio.get_running_loop().time()
+        abort_task: asyncio.Task[None] | None = None
+        if abort_signal is not None:
+            abort_task = asyncio.create_task(abort_signal.wait())
 
         try:
             while True:
@@ -181,6 +257,12 @@ class LocalSandbox(Sandbox):
                 if timeout is not None:
                     elapsed = asyncio.get_running_loop().time() - start
                     if elapsed >= timeout:
+                        if abort_task is not None and not abort_task.done():
+                            abort_task.cancel()
+                            try:
+                                await abort_task
+                            except asyncio.CancelledError:
+                                pass
                         process.kill()
                         try:
                             await asyncio.wait_for(process.wait(), timeout=5.0)
@@ -190,9 +272,51 @@ class LocalSandbox(Sandbox):
                             f"Command timed out after {timeout} seconds: {command}"
                         )
 
+                if abort_task is not None:
+                    wait_proc = asyncio.create_task(
+                        asyncio.wait_for(process.wait(), timeout=0.05)
+                    )
+                    done_ap, _ = await asyncio.wait(
+                        {abort_task, wait_proc},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if abort_task in done_ap:
+                        wait_proc.cancel()
+                        try:
+                            await wait_proc
+                        except (asyncio.CancelledError, asyncio.TimeoutError):
+                            pass
+                        await self._graceful_terminate_process(process)
+                        for _ in range(3):
+                            try:
+                                chunk = os.read(master_fd, 4096)
+                            except (BlockingIOError, OSError):
+                                break
+                            if not chunk:
+                                break
+                            chunks.append(chunk)
+                        assert abort_signal is not None
+                        reason = abort_signal.reason or "Operation cancelled"
+                        return CommandResult(
+                            stdout=b"".join(chunks).decode("utf-8", errors="replace"),
+                            stderr=reason,
+                            exit_code=1,
+                        )
+                    try:
+                        await wait_proc
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=0.05)
+                    except asyncio.TimeoutError:
+                        pass
+
+            if abort_task is not None and not abort_task.done():
+                abort_task.cancel()
                 try:
-                    await asyncio.wait_for(process.wait(), timeout=0.05)
-                except asyncio.TimeoutError:
+                    await abort_task
+                except asyncio.CancelledError:
                     pass
 
             for _ in range(3):

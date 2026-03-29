@@ -11,7 +11,7 @@ try:
 except ImportError:
     raise ImportError("Please install anthropic package: uv add anthropic") from None
 
-from agiwo.llm.base import Model, ModelConfig, StreamChunk
+from agiwo.llm.base import LLMConfig, Model, StreamChunk
 from agiwo.llm.event_normalizer import (
     AnthropicStreamTranslator,
     normalize_anthropic_sdk_event,
@@ -45,7 +45,7 @@ class AnthropicModel(Model):
         allow_env_fallback: bool = True,
         **model_kwargs: Any,
     ):
-        config = ModelConfig(
+        config = LLMConfig(
             id=id,
             name=name,
             api_key=api_key,

@@ -54,9 +54,6 @@ class LLMConfig:
             raise ValueError("token prices must be non-negative")
 
 
-ModelConfig = LLMConfig  # backward-compat alias
-
-
 class Model(ABC):
     """Abstract base for all LLM model implementations.
 
@@ -158,4 +155,4 @@ class Model(ABC):
             await self.client.close()
 
 
-__all__ = ["LLMConfig", "Model", "ModelConfig", "StreamChunk"]
+__all__ = ["LLMConfig", "Model", "StreamChunk"]

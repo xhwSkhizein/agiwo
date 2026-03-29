@@ -89,7 +89,7 @@ class TestMemoryIndexStore:
         await store.sync_files()
         results = await store.search("test")
         assert results == []
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_index_single_file(self, temp_workspace):
@@ -109,7 +109,7 @@ class TestMemoryIndexStore:
         results = await store.search("SQLite storage")
         assert len(results) >= 1
         assert "SQLite" in results[0].text
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_incremental_sync(self, temp_workspace):
@@ -138,7 +138,7 @@ class TestMemoryIndexStore:
         results3 = await store.search("Python")
         assert len(results3) == 0 or "Python" not in results3[0].text
 
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_file_deletion_removes_from_index(self, temp_workspace):
@@ -163,7 +163,7 @@ class TestMemoryIndexStore:
         results2 = await store.search("Redis")
         assert len(results2) == 0
 
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_bm25_only_mode(self, temp_workspace):
@@ -186,7 +186,7 @@ class TestMemoryIndexStore:
         assert results[0].bm25_score > 0
         assert results[0].vector_score == 0.0
 
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_search_returns_line_numbers(self, temp_workspace):
@@ -207,7 +207,7 @@ class TestMemoryIndexStore:
         assert results[0].start_line >= 1
         assert results[0].end_line >= results[0].start_line
 
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_multiple_files(self, temp_workspace):
@@ -231,4 +231,4 @@ class TestMemoryIndexStore:
         assert len(results2) >= 1
         assert "file2.md" in results2[0].path
 
-        store.close()
+        await store.close()

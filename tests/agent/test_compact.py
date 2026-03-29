@@ -217,7 +217,7 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
         ],
     )
 
-    metadata = await compact_if_needed(
+    result = await compact_if_needed(
         state=state,
         model=_CompactModel(
             id="compact-model", name="compact-model", provider="openai"
@@ -237,7 +237,8 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
         "step_completed",
         "step_completed",
     ]
-    assert metadata is not None
+    assert result.metadata is not None
+    metadata = result.metadata
     assert metadata.get_summary() == "compressed"
     msgs = state.ledger.messages
     assert msgs[0] == {"role": "system", "content": "sys"}

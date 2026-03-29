@@ -218,7 +218,7 @@ We decided to use PostgreSQL for the following reasons:
         assert len(results) >= 1
         assert any("Alice" in r.text or "Bob" in r.text for r in results)
 
-        store.close()
+        await store.close()
 
     @skip_without_openai
     @pytest.mark.asyncio
@@ -279,7 +279,7 @@ FastAPI was selected for the backend:
         found_cicd = any("CI/CD" in r.text for r in results)
         assert found_cicd, "Should find CI/CD in project notes"
 
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_incremental_indexing(self, temp_workspace):
@@ -304,7 +304,7 @@ FastAPI was selected for the backend:
         python_found = any("Python" in r.text for r in results)
         assert not python_found, "Old content should be replaced"
 
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_file_deletion_handling(self, temp_workspace):
@@ -325,7 +325,7 @@ FastAPI was selected for the backend:
         results = await store.search("Redis caching")
         assert len(results) == 0
 
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_chinese_content_retrieval(self, temp_workspace):
@@ -358,7 +358,7 @@ FastAPI was selected for the backend:
         results = await store.search("微服务 Docker")
         assert len(results) >= 1
 
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_multiple_files_ranking(self, temp_workspace):
@@ -395,7 +395,7 @@ Machine learning applications are everywhere.
             "Gardening should not rank high"
         )
 
-        store.close()
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_line_number_accuracy(self, temp_workspace):
@@ -422,4 +422,4 @@ Machine learning applications are everywhere.
         assert results[0].start_line >= 1
         assert results[0].end_line >= results[0].start_line
 
-        store.close()
+        await store.close()

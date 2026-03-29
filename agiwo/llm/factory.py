@@ -24,8 +24,8 @@ from agiwo.config.settings import (
 )
 
 
-class ModelConfig(BaseModel):
-    """Serializable model construction config."""
+class ModelSpec(BaseModel):
+    """Serializable model construction spec for creating Model instances."""
 
     model_config = ConfigDict(extra="ignore")
 
@@ -54,13 +54,17 @@ class ProviderSpec:
     include_aws_config: bool = False
 
 
-def _resolve_api_key(config: ModelConfig) -> str | None:
+ModelConfig = ModelSpec
+""".. deprecated:: Use ``ModelSpec`` directly."""
+
+
+def _resolve_api_key(config: ModelSpec) -> str | None:
     if config.api_key_env_name:
         return os.getenv(config.api_key_env_name)
     return None
 
 
-def _build_shared_params(config: ModelConfig) -> dict[str, Any]:
+def _build_shared_params(config: ModelSpec) -> dict[str, Any]:
     return {
         "id": config.model_name,
         "name": config.model_name,
@@ -87,7 +91,7 @@ def _require_absolute_base_url(provider: str, base_url: str | None) -> str:
 def _build_model_for_provider(
     provider: ModelProvider,
     spec: ProviderSpec,
-    config: ModelConfig,
+    config: ModelSpec,
     resolved_api_key: str | None,
     shared_params: dict[str, Any],
 ) -> Model:
@@ -145,7 +149,7 @@ if _missing_provider_specs:
     raise RuntimeError(f"Missing provider specs for: {sorted(_missing_provider_specs)}")
 
 
-def create_model(config: ModelConfig) -> Model:
+def create_model(config: ModelSpec) -> Model:
     """Create a concrete Model from config."""
     provider = config.provider
     resolved_api_key = _resolve_api_key(config)
@@ -162,12 +166,12 @@ def create_model(config: ModelConfig) -> Model:
     )
 
 
-MODEL_CONFIG_FIELD_NAMES = set(ModelConfig.model_fields.keys())
+MODEL_SPEC_FIELD_NAMES = set(ModelSpec.model_fields.keys())
 
 
 def _filter_model_config_fields(params: dict[str, Any]) -> dict[str, Any]:
     return {
-        key: value for key, value in params.items() if key in MODEL_CONFIG_FIELD_NAMES
+        key: value for key, value in params.items() if key in MODEL_SPEC_FIELD_NAMES
     }
 
 
@@ -180,7 +184,7 @@ def create_model_from_dict(
     """Create a concrete Model from provider/name plus loose params."""
     normalized = sanitize_model_params_data(dict(params or {}))
     valid_params = _filter_model_config_fields(normalized)
-    model_config = ModelConfig(
+    model_config = ModelSpec(
         provider=provider,  # type: ignore[arg-type]
         model_name=model_name,
         **valid_params,
@@ -188,4 +192,10 @@ def create_model_from_dict(
     return create_model(model_config)
 
 
-__all__ = ["ModelProvider", "ModelConfig", "create_model", "create_model_from_dict"]
+__all__ = [
+    "ModelProvider",
+    "ModelSpec",
+    "ModelConfig",
+    "create_model",
+    "create_model_from_dict",
+]

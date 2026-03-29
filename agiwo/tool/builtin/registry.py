@@ -8,14 +8,9 @@ Usage:
     @builtin_tool("my_tool")
     class MyTool(BaseTool):
         ...
-
-External packages can register tools via entry points in pyproject.toml:
-    [project.entry-points."agiwo.tools"]
-    my_tool = "my_package.tools:MyCustomTool"
 """
 
 import importlib
-import importlib.metadata
 import pkgutil
 from typing import Type
 
@@ -28,7 +23,6 @@ BUILTIN_TOOLS: dict[str, Type[BaseTool]] = {}
 DEFAULT_TOOLS: dict[str, Type[BaseTool]] = {}
 _BUILTIN_TOOLS_LOADED = False
 
-_ENTRY_POINT_GROUP = "agiwo.tools"
 _BUILTIN_PACKAGE = "agiwo.tool.builtin"
 
 
@@ -119,27 +113,3 @@ def ensure_builtin_tools_loaded() -> None:
         return
     load_builtin_tools()
     _BUILTIN_TOOLS_LOADED = True
-
-
-def discover_entry_point_tools() -> None:
-    """Scan 'agiwo.tools' entry points and register external tools."""
-    eps = importlib.metadata.entry_points()
-    group = (
-        eps.select(group=_ENTRY_POINT_GROUP)
-        if hasattr(eps, "select")
-        else eps.get(_ENTRY_POINT_GROUP, [])
-    )
-    for ep in group:
-        try:
-            cls = ep.load()
-            if not (isinstance(cls, type) and issubclass(cls, BaseTool)):
-                logger.warning("entry_point_not_a_tool", name=ep.name, value=ep.value)
-                continue
-            if ep.name in BUILTIN_TOOLS:
-                logger.warning("entry_point_name_conflict", name=ep.name)
-                continue
-            BUILTIN_TOOLS[ep.name] = cls
-            cls._builtin_name = ep.name
-            logger.info("entry_point_tool_registered", name=ep.name)
-        except Exception as error:  # noqa: BLE001 - third-party entry point boundary
-            logger.warning("entry_point_load_failed", name=ep.name, error=str(error))

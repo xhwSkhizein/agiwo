@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from agiwo.agent.compaction import compact_if_needed
+from agiwo.agent.compaction import CompactResult, compact_if_needed
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.models.input import UserInput, UserMessage
@@ -449,7 +449,7 @@ async def _run_compaction_cycle(
     state: RunContext,
     loop: RunLoopState,
 ) -> tuple[int, bool]:
-    compact_metadata = await compact_if_needed(
+    result: CompactResult = await compact_if_needed(
         state=state,
         model=loop.model,
         abort_signal=loop.abort_signal,
@@ -458,6 +458,23 @@ async def _run_compaction_cycle(
         compact_start_seq=loop.compact_start_seq,
         root_path=loop.root_path,
     )
+    if result.failed:
+        state.ledger.compaction_failure_count += 1
+        failure_count = state.ledger.compaction_failure_count
+        err = result.error or ""
+        if state.hooks.on_compaction_failed:
+            await state.hooks.on_compaction_failed(state.run_id, err, failure_count)
+        logger.warning(
+            "compaction_failed",
+            run_id=state.run_id,
+            error=err,
+            failure_count=failure_count,
+        )
+        if failure_count >= 3:
+            set_termination_reason(state, TerminationReason.MAX_INPUT_TOKENS_PER_CALL)
+        return loop.compact_start_seq, False
+
+    compact_metadata = result.metadata
     if compact_metadata is None:
         return loop.compact_start_seq, False
 

@@ -3,7 +3,7 @@
 import time
 from typing import Any
 
-from agiwo.llm import ModelConfig
+from agiwo.llm import ModelSpec
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.config import WebReaderApiConfig
@@ -41,7 +41,7 @@ class WebReaderTool(BaseTool):
         self.timeout_seconds = self._config.timeout_seconds
         self.max_length = self._config.max_content_length
         self._citation_source_store = create_citation_store(citation_store_config)
-        self._model_config = ModelConfig(
+        self._model_config = ModelSpec(
             provider=self._config.model_provider,  # type: ignore[arg-type]
             model_name=self._config.model_name,
             base_url=self._config.model_base_url,

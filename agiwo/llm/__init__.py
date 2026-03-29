@@ -1,5 +1,10 @@
-from agiwo.llm.base import Model, StreamChunk
-from agiwo.llm.factory import ModelConfig, create_model, create_model_from_dict
+from agiwo.llm.base import LLMConfig, Model, StreamChunk
+from agiwo.llm.factory import (
+    ModelConfig,
+    ModelSpec,
+    create_model,
+    create_model_from_dict,
+)
 from agiwo.llm.openai import OpenAIModel
 from agiwo.llm.anthropic import AnthropicModel
 from agiwo.llm.bedrock_anthropic import BedrockAnthropicModel
@@ -8,8 +13,10 @@ from agiwo.llm.nvidia import NvidiaModel
 from agiwo.config.settings import ModelProvider
 
 __all__ = [
+    "LLMConfig",
     "Model",
     "StreamChunk",
+    "ModelSpec",
     "ModelConfig",
     "ModelProvider",
     "create_model",

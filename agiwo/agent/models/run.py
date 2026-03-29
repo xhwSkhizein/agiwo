@@ -10,6 +10,7 @@ from typing import Any
 from agiwo.agent.models._serialization import fields_to_dict
 from agiwo.agent.models.compact import CompactMetadata
 from agiwo.agent.models.input import UserInput
+from agiwo.config.termination import TerminationReason
 
 
 class RunStatus(str, Enum):
@@ -20,22 +21,6 @@ class RunStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
-
-
-class TerminationReason(str, Enum):
-    """Reason why the agent execution terminated."""
-
-    COMPLETED = "completed"
-    MAX_STEPS = "max_steps"
-    TIMEOUT = "timeout"
-    MAX_OUTPUT_TOKENS = "max_output_tokens"
-    MAX_INPUT_TOKENS_PER_CALL = "max_input_tokens_per_call"
-    MAX_RUN_COST = "max_run_cost"
-    ERROR = "error"
-    ERROR_WITH_CONTEXT = "error_with_context"
-    CANCELLED = "cancelled"
-    TOOL_LIMIT = "tool_limit"
-    SLEEPING = "sleeping"
 
 
 @dataclass
@@ -67,6 +52,7 @@ class RunLedger:
     assistant_steps_count: int = 0
     response_content: str | None = None
     last_compact_metadata: CompactMetadata | None = None
+    compaction_failure_count: int = 0
 
 
 @dataclass

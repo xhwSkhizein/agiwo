@@ -3,7 +3,8 @@ from dataclasses import dataclass
 import time
 from typing import Any, Literal
 
-from agiwo.tool.context import ToolContext
+from agiwo.config.termination import TerminationReason
+from agiwo.tool.context import RunContextLike, ToolContext
 from agiwo.utils.abort_signal import AbortSignal
 
 
@@ -53,7 +54,7 @@ class ToolResult:
     )
     error: str | None = None
     is_success: bool = True
-    termination_reason: Any = None
+    termination_reason: TerminationReason | None = None
 
     @classmethod
     def success(
@@ -65,7 +66,7 @@ class ToolResult:
         start_time: float | None = None,
         output: Any = None,
         content_for_user: str | None = None,
-        termination_reason: Any = None,
+        termination_reason: TerminationReason | None = None,
     ) -> "ToolResult":
         """Create a ToolResult representing a successful operation."""
         now = time.time()
@@ -234,7 +235,9 @@ class BaseTool(ABC):
             ToolResult: Tool execution result
         """
 
-    def build_context(self, run_context: Any, *, tool_call_id: str = "") -> ToolContext:
+    def build_context(
+        self, run_context: RunContextLike, *, tool_call_id: str = ""
+    ) -> ToolContext:
         """Build execution context from the agent run context.
 
         Subclasses may override to return specialized context types.
