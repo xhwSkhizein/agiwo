@@ -1,5 +1,10 @@
 """
 MemoryIndexStore - SQLite-based memory indexing and retrieval.
+
+.. note::
+    This module uses synchronous ``sqlite3``.  A future migration to
+    ``aiosqlite`` is planned (see deferred item H-2) to avoid blocking
+    the event loop on I/O-heavy indexing operations.
 """
 
 import hashlib

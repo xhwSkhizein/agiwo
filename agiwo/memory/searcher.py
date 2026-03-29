@@ -1,5 +1,10 @@
 """
 HybridSearcher - BM25 + Vector hybrid search with optional MMR and temporal decay.
+
+.. note::
+    This module uses synchronous ``sqlite3``.  A future migration to
+    ``aiosqlite`` is planned (see deferred item H-2) to align with
+    the project's async SQLite standard.
 """
 
 import json
