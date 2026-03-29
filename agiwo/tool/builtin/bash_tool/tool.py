@@ -57,6 +57,7 @@ class BashExecutionRequest:
 class BashTool(BaseTool):
     """Single tool entry that behaves like a terminal command line."""
 
+    name = "bash"
     cacheable: bool = False
     timeout_seconds: int = 30
 
@@ -71,10 +72,8 @@ class BashTool(BaseTool):
         self._formatter = BashResultFormatter("bash", config.max_output_length)
         self._safety_validator = CommandSafetyValidator()
 
-    def get_name(self) -> str:
-        return "bash"
-
-    def get_description(self) -> str:
+    @property
+    def description(self) -> str:
         lines = (
             "Terminal-style bash tool. Pass one shell command via `command`. "
             "Set `background=true` to start a background job. "
@@ -117,9 +116,6 @@ class BashTool(BaseTool):
             },
             "required": ["command"],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     async def gate(
         self,

@@ -2,7 +2,6 @@
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
-from typing import Protocol
 from uuid import uuid4
 
 from agiwo.scheduler.commands import (
@@ -25,24 +24,6 @@ from agiwo.scheduler.runtime_state import RuntimeState
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.codec import serialize_child_agent_config_overrides
 from agiwo.tool.process import AgentProcessRegistry
-
-
-class SchedulerToolPort(Protocol):
-    """Minimal interface that scheduling tools need from the scheduler."""
-
-    async def spawn_child(self, request: SpawnChildRequest) -> AgentState: ...
-    async def sleep_current_agent(self, request: SleepRequest) -> SleepResult: ...
-    async def get_child_state(self, target_id: str) -> AgentState | None: ...
-    async def list_child_states(
-        self, *, caller_id: str | None, session_id: str
-    ) -> list[AgentState]: ...
-    async def inspect_child_processes(
-        self, target_id: str
-    ) -> list[dict[str, object]]: ...
-    async def cancel_child(self, request: CancelChildRequest) -> CancelChildResult: ...
-    def age_seconds(
-        self, timestamp: datetime, *, now: datetime | None = None
-    ) -> int: ...
 
 
 class SchedulerToolControl:
@@ -252,4 +233,4 @@ class SchedulerToolControl:
         return completed_ids
 
 
-__all__ = ["SchedulerToolControl", "SchedulerToolPort"]
+__all__ = ["SchedulerToolControl"]

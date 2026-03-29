@@ -23,7 +23,7 @@ class LLMConfig:
 
     .. note::
 
-       Not to be confused with ``agiwo.llm.factory.ModelConfig`` (Pydantic),
+       Not to be confused with ``agiwo.llm.factory.ModelSpec`` (Pydantic),
        which is the *construction spec* used to create a ``Model`` instance.
        ``LLMConfig`` is the runtime config held by the model after creation.
     """
@@ -60,8 +60,8 @@ class Model(ABC):
     Subclasses compose an ``LLMConfig`` via the ``config`` attribute and
     implement ``arun_stream()`` to provide streaming responses.
 
-    All configuration fields from ``LLMConfig`` are available as direct
-    properties for backward compatibility.
+    Configuration fields on ``LLMConfig`` are exposed on the model instance
+    via ``__getattr__`` delegation to ``config``.
     """
 
     config: LLMConfig
@@ -80,66 +80,14 @@ class Model(ABC):
                 "Model requires either a config argument or keyword arguments"
             )
 
-    # Backward-compatible property accessors
-    @property
-    def id(self) -> str:
-        return self.config.id
-
-    @property
-    def name(self) -> str:
-        return self.config.name
-
-    @property
-    def temperature(self) -> float:
-        return self.config.temperature
-
-    @property
-    def top_p(self) -> float:
-        return self.config.top_p
-
-    @property
-    def max_output_tokens(self) -> int:
-        return self.config.max_output_tokens
-
-    @property
-    def max_context_window(self) -> int:
-        return self.config.max_context_window
-
-    @property
-    def frequency_penalty(self) -> float:
-        return self.config.frequency_penalty
-
-    @property
-    def presence_penalty(self) -> float:
-        return self.config.presence_penalty
-
-    @property
-    def api_key(self) -> str | None:
-        return self.config.api_key
-
-    @property
-    def base_url(self) -> str | None:
-        return self.config.base_url
-
-    @property
-    def provider(self) -> str:
-        return self.config.provider
-
-    @provider.setter
-    def provider(self, value: str) -> None:
-        self.config.provider = value
-
-    @property
-    def cache_hit_price(self) -> float:
-        return self.config.cache_hit_price
-
-    @property
-    def input_price(self) -> float:
-        return self.config.input_price
-
-    @property
-    def output_price(self) -> float:
-        return self.config.output_price
+    def __getattr__(self, name: str) -> Any:
+        try:
+            config = object.__getattribute__(self, "config")
+        except AttributeError:
+            raise AttributeError(name) from None
+        if hasattr(config, name):
+            return getattr(config, name)
+        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
 
     @abstractmethod
     async def arun_stream(

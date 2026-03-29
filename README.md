@@ -100,11 +100,8 @@ from agiwo.tool import ToolContext
 
 
 class WeatherTool(BaseTool):
-    def get_name(self) -> str:
-        return "get_weather"
-
-    def get_description(self) -> str:
-        return "Get the current weather for a city"
+    name = "get_weather"
+    description = "Get the current weather for a city"
 
     def get_parameters(self) -> dict:
         return {
@@ -115,9 +112,6 @@ class WeatherTool(BaseTool):
             "required": ["city"],
         }
 
-    def is_concurrency_safe(self) -> bool:
-        return True
-
     async def execute(
         self,
         parameters: dict,
@@ -127,7 +121,7 @@ class WeatherTool(BaseTool):
         city = parameters["city"]
         del context, abort_signal
         return ToolResult.success(
-            tool_name=self.get_name(),
+            tool_name=self.name,
             tool_call_id=parameters.get("tool_call_id", ""),
             input_args=parameters,
             content=f"Weather in {city}: sunny, 25C",

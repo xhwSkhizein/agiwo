@@ -4,7 +4,7 @@ Tools give agents the ability to interact with the external world — run shell 
 
 ## Tool Interface
 
-Every tool extends `BaseTool` and implements five methods:
+Every tool extends `BaseTool` and implements a few attributes and methods:
 
 ```python
 from agiwo.tool import BaseTool, ToolResult
@@ -12,11 +12,8 @@ from agiwo.tool import ToolContext
 
 
 class MyTool(BaseTool):
-    def get_name(self) -> str:
-        return "my_tool"
-
-    def get_description(self) -> str:
-        return "Does something useful"
+    name = "my_tool"
+    description = "Does something useful"
 
     def get_parameters(self) -> dict:
         return {
@@ -27,9 +24,6 @@ class MyTool(BaseTool):
             "required": ["input"],
         }
 
-    def is_concurrency_safe(self) -> bool:
-        return True
-
     async def execute(
         self,
         parameters: dict,
@@ -38,7 +32,7 @@ class MyTool(BaseTool):
     ) -> ToolResult:
         # Your logic here
         return ToolResult.success(
-            tool_name=self.get_name(),
+            tool_name=self.name,
             content="Result for LLM",
         )
 ```
@@ -87,7 +81,7 @@ class SlowTool(BaseTool):
 
 ### Concurrency
 
-`is_concurrency_safe()` tells the runtime whether this tool can run alongside other tools in the same batch. Return `False` if your tool has side effects that conflict with concurrent execution (e.g., writing to a shared file).
+`concurrency_safe` tells the runtime whether this tool can run alongside other tools in the same batch. Set to `False` if your tool has side effects that conflict with concurrent execution (e.g., writing to a shared file).
 
 ## ToolContext
 

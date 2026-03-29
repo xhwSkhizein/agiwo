@@ -11,7 +11,7 @@ from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.llm_caller import stream_assistant_step
-from agiwo.agent.models.memory import MemoryRecord
+from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.prompt import apply_steering_messages, assemble_run_messages
 from agiwo.agent.models.run import (
     Run,
@@ -160,7 +160,7 @@ async def _prepare_run_context(
     hooks: AgentHooks,
 ) -> PreparedRunContext:
     """Build all state needed before the main loop starts."""
-    tools_map = {tool.get_name(): tool for tool in tools}
+    tools_map = {tool.name: tool for tool in tools}
     tool_schemas = [
         {
             "type": "function",
@@ -180,14 +180,13 @@ async def _prepare_run_context(
     if hooks.on_memory_retrieve is not None and user_input is not None:
         memories = await hooks.on_memory_retrieve(user_input, context)
 
-    session_storage = context.session_runtime.session_storage
     run_step_storage = context.session_runtime.run_step_storage
     user_step = StepRecord.user(
         context,
         sequence=await context.session_runtime.allocate_sequence(),
         user_input=user_input,
     )
-    last_compact = await session_storage.get_latest_compact_metadata(
+    last_compact = await run_step_storage.get_latest_compact_metadata(
         context.session_id,
         context.agent_id,
     )

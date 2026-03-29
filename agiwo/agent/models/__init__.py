@@ -1,6 +1,5 @@
 """Agent domain models grouped by runtime semantics."""
 
-from agiwo.agent.models.compact import CompactMetadata
 from agiwo.agent.models.config import (
     AgentConfig,
     AgentOptions,
@@ -16,8 +15,9 @@ from agiwo.agent.models.input import (
     UserInput,
     UserMessage,
 )
-from agiwo.agent.models.memory import MemoryRecord
 from agiwo.agent.models.run import (
+    CompactMetadata,
+    MemoryRecord,
     Run,
     RunIdentity,
     RunLedger,

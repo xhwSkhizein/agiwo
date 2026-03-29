@@ -9,7 +9,7 @@ import copy
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from agiwo.agent.models.compact import CompactMetadata
+from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import StepRecord
 from agiwo.agent.runtime.context import RunContext

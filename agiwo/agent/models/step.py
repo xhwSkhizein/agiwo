@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from agiwo.agent.models._serialization import fields_to_dict
+from agiwo.agent.models.run import fields_to_dict
 from agiwo.agent.models.input import (
     ChannelContext,
     MessageContent,

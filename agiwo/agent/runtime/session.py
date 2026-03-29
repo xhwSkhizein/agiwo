@@ -3,12 +3,11 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from agiwo.agent.models.compact import CompactMetadata
+from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.models.run import Run
 from agiwo.agent.models.step import StepRecord
 from agiwo.agent.storage.base import RunStepStorage
-from agiwo.agent.storage.session import SessionStorage
 from agiwo.agent.models.stream import AgentStreamItem
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.utils.abort_signal import AbortSignal
@@ -33,14 +32,12 @@ class SessionRuntime:
         *,
         session_id: str,
         run_step_storage: RunStepStorage,
-        session_storage: SessionStorage,
         trace_runtime: AgentTraceCollector | None = None,
         abort_signal: AbortSignal | None = None,
         steering_queue: asyncio.Queue[object] | None = None,
     ) -> None:
         self.session_id = session_id
         self.run_step_storage = run_step_storage
-        self.session_storage = session_storage
         self.trace_runtime = trace_runtime
         self.abort_signal = abort_signal or AbortSignal()
         self.steering_queue = steering_queue or asyncio.Queue()
@@ -64,7 +61,7 @@ class SessionRuntime:
         self, agent_id: str
     ) -> CompactMetadata | None:
         """Retrieve the latest compact metadata for the given agent."""
-        return await self.session_storage.get_latest_compact_metadata(
+        return await self.run_step_storage.get_latest_compact_metadata(
             self.session_id, agent_id
         )
 

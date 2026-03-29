@@ -14,12 +14,11 @@ def test_transport_serialization_removed_from_sdk_layer() -> None:
     assert importlib.util.find_spec("agiwo.agent.transport") is None
 
 
-def test_hooks_are_grouped_under_hooks_package() -> None:
+def test_hooks_module_exposes_agent_hooks_and_memory_defaults() -> None:
     hooks_module = importlib.import_module("agiwo.agent.hooks")
-    memory_module = importlib.import_module("agiwo.agent.hooks.memory")
 
     assert hasattr(hooks_module, "AgentHooks")
-    assert hasattr(memory_module, "DefaultMemoryHook")
+    assert hasattr(hooks_module, "DefaultMemoryHook")
 
 
 def test_runtime_modules_expose_context_session_and_step_helpers() -> None:

@@ -15,7 +15,6 @@ from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.storage.session import InMemorySessionStorage
 from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
 from agiwo.agent import Run, RunMetrics, RunStatus, StepRecord
 
@@ -120,7 +119,6 @@ class TestSQLiteUserInputStorage:
             session_runtime=SessionRuntime(
                 session_id="test-session",
                 run_step_storage=InMemoryRunStepStorage(),
-                session_storage=InMemorySessionStorage(),
             ),
             run_id="test-run",
             agent_id="test-agent",

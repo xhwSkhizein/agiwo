@@ -4,8 +4,7 @@ from dataclasses import dataclass, replace as dataclass_replace
 from typing import TYPE_CHECKING
 
 from agiwo.agent.models.config import AgentConfig
-from agiwo.agent.hooks import AgentHooks
-from agiwo.agent.hooks.memory import DefaultMemoryHook
+from agiwo.agent.hooks import AgentHooks, DefaultMemoryHook
 from agiwo.agent.prompt import compose_child_system_prompt
 from agiwo.config.settings import get_settings
 from agiwo.skill.config import SkillDiscoveryConfig, normalize_skill_dirs
@@ -97,9 +96,7 @@ def resolve_child_definition(
     extra_tools: list[BaseTool] | None = None,
 ) -> ResolvedChildDefinition:
     tool_names_to_skip = normalize_disabled_sdk_tool_names(exclude_tool_names)
-    child_tools = [
-        tool for tool in agent.tools if tool.get_name() not in tool_names_to_skip
-    ]
+    child_tools = [tool for tool in agent.tools if tool.name not in tool_names_to_skip]
     if extra_tools:
         child_tools.extend(extra_tools)
     child_disabled_tool_names = normalize_disabled_sdk_tool_names(

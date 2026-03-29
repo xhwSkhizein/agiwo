@@ -28,7 +28,7 @@ from agiwo.agent.models.input import (
     UserInput,
     UserMessage,
 )
-from agiwo.agent.models.memory import MemoryRecord
+from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.run import (
     Run,
     RunMetrics,

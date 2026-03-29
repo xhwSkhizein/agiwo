@@ -6,7 +6,6 @@ from agiwo.agent.types import TerminationReason
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.storage.session import InMemorySessionStorage
 
 
 def test_termination_modules_expose_prompt_and_summary_helpers() -> None:
@@ -58,7 +57,6 @@ def _make_context() -> RunContext:
         session_runtime=SessionRuntime(
             session_id="session-1",
             run_step_storage=InMemoryRunStepStorage(),
-            session_storage=InMemorySessionStorage(),
         ),
         run_id="run-1",
         agent_id="agent-1",

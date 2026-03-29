@@ -353,5 +353,5 @@ class TestBashProcessToolHttpServerScenario:
 class TestBashProcessToolDefaultConstruction:
     async def test_no_args_construction(self):
         tool = BashProcessTool()
-        assert tool.get_name() == "bash_process"
-        assert "background jobs" in tool.get_description()
+        assert tool.name == "bash_process"
+        assert "background jobs" in tool.description

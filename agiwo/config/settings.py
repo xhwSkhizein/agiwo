@@ -339,25 +339,17 @@ class AgiwoSettings(BaseSettings):
             return None
         return getattr(self, attr_name)
 
-    def get_tool_model_provider(self) -> str:
-        """Deprecated: use settings.tool_default_model_provider directly."""
-        return self.tool_default_model_provider
-
     def get_tool_model_name(self) -> str:
         if self.tool_default_model_name:
             return self.tool_default_model_name
 
-        provider = self.get_tool_model_provider()
+        provider = self.tool_default_model_provider
         default_name = self.get_default_model_name_for_provider(provider)
         if default_name:
             return default_name
         raise ValueError(
             f"No default tool model_name configured for provider '{provider}'"
         )
-
-    def get_tool_model_base_url(self) -> str | None:
-        """Deprecated: use settings.tool_default_model_base_url directly."""
-        return self.tool_default_model_base_url
 
     def get_tool_model_api_key_env_name(self) -> str | None:
         if (
@@ -366,18 +358,6 @@ class AgiwoSettings(BaseSettings):
         ):
             return self.tool_default_model_api_key_env_name.strip()
         return None
-
-    def get_tool_model_temperature(self) -> float:
-        """Deprecated: use settings.tool_default_model_temperature directly."""
-        return self.tool_default_model_temperature
-
-    def get_tool_model_top_p(self) -> float:
-        """Deprecated: use settings.tool_default_model_top_p directly."""
-        return self.tool_default_model_top_p
-
-    def get_tool_model_max_tokens(self) -> int:
-        """Deprecated: use settings.tool_default_model_max_tokens directly."""
-        return self.tool_default_model_max_tokens
 
     def get_embedding_api_key(self) -> str | None:
         if self.embedding_api_key:

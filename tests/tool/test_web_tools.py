@@ -60,21 +60,19 @@ def test_web_tool_schemas_and_descriptions_match_runtime_support() -> None:
         search_tool = WebSearchTool(
             citation_store_config=CitationStoreConfig(
                 storage_type="memory",
-                collection_name="test-web-schema-search",
             ),
         )
     reader_tool = WebReaderTool(
         config=WebReaderApiConfig(),
         citation_store_config=CitationStoreConfig(
             storage_type="memory",
-            collection_name="test-web-schema-reader",
         ),
     )
 
     assert search_tool.get_parameters()["properties"]["query"]["type"] == "string"
     assert reader_tool.get_parameters()["properties"]["url"]["type"] == "string"
-    assert "web_fetch" not in search_tool.get_description()
-    assert "web_reader" in search_tool.get_description()
+    assert "web_fetch" not in search_tool.description
+    assert "web_reader" in search_tool.description
 
 
 @pytest.mark.asyncio
@@ -91,7 +89,6 @@ async def test_web_search_without_api_key_returns_runtime_error() -> None:
         tool = WebSearchTool(
             citation_store_config=CitationStoreConfig(
                 storage_type="memory",
-                collection_name="test-web-no-key",
             ),
         )
 
@@ -107,7 +104,6 @@ async def test_web_reader_summarize_uses_internal_model() -> None:
     tool = WebReaderTool(
         citation_store_config=CitationStoreConfig(
             storage_type="memory",
-            collection_name="test-web-reader-summary",
         )
     )
     stub_model = StubToolModel(["summary result"])
@@ -132,7 +128,6 @@ async def test_web_reader_search_query_uses_internal_model() -> None:
     tool = WebReaderTool(
         citation_store_config=CitationStoreConfig(
             storage_type="memory",
-            collection_name="test-web-reader-query",
         )
     )
     stub_model = StubToolModel(["filtered result"])
@@ -166,7 +161,6 @@ async def test_web_reader_model_init_failure_falls_back_to_original_text(
         ),
         citation_store_config=CitationStoreConfig(
             storage_type="memory",
-            collection_name="test-web-reader-no-key",
         ),
     )
     tool._curl_cffi_client.fetch = AsyncMock(
@@ -186,7 +180,6 @@ async def test_web_reader_model_init_failure_falls_back_to_original_text(
 async def test_web_search_and_reader_share_citations_via_config() -> None:
     citation_config = CitationStoreConfig(
         storage_type="memory",
-        collection_name="test-web-shared-citations",
     )
     with patch(
         "agiwo.tool.builtin.web_search.web_search_tool.settings"

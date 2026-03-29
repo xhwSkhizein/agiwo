@@ -10,8 +10,8 @@ import pytest
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig
 from agiwo.agent import AgentHooks
-from agiwo.agent.hooks.memory import DefaultMemoryHook, filter_relevant_memories
-from agiwo.agent.models.memory import MemoryRecord
+from agiwo.agent.hooks import DefaultMemoryHook, filter_relevant_memories
+from agiwo.agent.models.run import MemoryRecord
 from agiwo.llm.base import Model
 
 

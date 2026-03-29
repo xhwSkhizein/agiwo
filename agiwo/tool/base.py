@@ -175,37 +175,26 @@ def resolve_timeout(timeout_at: float | None, timeout_seconds: float) -> float:
 class BaseTool(ABC):
     """Common interface that every concrete tool must implement."""
 
-    # Override to enable caching for expensive operations
-    # Cached results are reused within the same session for identical arguments
     cacheable: bool = False
     timeout_seconds: int = 30
+    concurrency_safe: bool = True
 
     @property
+    @abstractmethod
     def name(self) -> str:
-        return self.get_name()
+        """The tool name."""
 
     @property
+    @abstractmethod
     def description(self) -> str:
-        return self.get_description()
-
-    @abstractmethod
-    def get_name(self) -> str:
-        """Return the tool name."""
-
-    @abstractmethod
-    def get_description(self) -> str:
-        """Return the tool description used for prompting."""
+        """The tool description used for prompting."""
 
     def get_short_description(self) -> str:
-        return self.get_description()
+        return self.description
 
     @abstractmethod
     def get_parameters(self) -> dict[str, Any]:
         """Return the JSON schema describing `execute` parameters."""
-
-    @abstractmethod
-    def is_concurrency_safe(self) -> bool:
-        """Whether the tool can be executed concurrently."""
 
     async def gate(
         self,
@@ -261,18 +250,19 @@ class BaseTool(ABC):
             name=self.name,
             description=self.description,
             parameters=self.get_parameters(),
-            is_concurrency_safe=self.is_concurrency_safe(),
+            is_concurrency_safe=self.concurrency_safe,
             timeout_seconds=self.timeout_seconds,
             cacheable=self.cacheable,
         )
 
     def to_openai_schema(self) -> dict[str, object]:
         """Convert to OpenAI function calling format."""
+        defn = self.get_definition()
         return {
             "type": "function",
             "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": self.get_parameters(),
+                "name": defn.name,
+                "description": defn.description,
+                "parameters": defn.parameters,
             },
         }

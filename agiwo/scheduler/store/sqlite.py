@@ -12,6 +12,7 @@ from agiwo.scheduler.models import (
     PendingEvent,
     SchedulerEventType,
     normalize_statuses,
+    thaw_value,
 )
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.codec import (
@@ -204,7 +205,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                     if state.pending_input is not None
                     else None
                 ),
-                json.dumps(state.config_overrides),
+                json.dumps(thaw_value(state.config_overrides)),
                 *wake_values,
                 state.result_summary,
                 1 if state.signal_propagated else 0,
@@ -285,7 +286,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 event.target_agent_id,
                 event.session_id,
                 event.event_type.value,
-                json.dumps(event.payload),
+                json.dumps(thaw_value(event.payload)),
                 event.source_agent_id,
                 event.created_at.isoformat(),
             ),

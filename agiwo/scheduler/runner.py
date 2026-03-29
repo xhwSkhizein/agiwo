@@ -124,7 +124,7 @@ class SchedulerRunner:
             extra_tools=[
                 tool
                 for tool in self._ctx.scheduling_tools
-                if tool.get_name() != "spawn_agent"
+                if tool.name != "spawn_agent"
             ],
         )
         self._ctx.rt.agents[state.id] = child

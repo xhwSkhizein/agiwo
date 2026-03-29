@@ -5,7 +5,6 @@ from typing import Any, Protocol
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.memory_store import InMemoryTraceStorage
 from agiwo.observability.sqlite_store import SQLiteTraceStorage
-from agiwo.observability.store import MongoTraceStorage
 from agiwo.utils.storage_factory import create_storage
 
 
@@ -25,18 +24,9 @@ def _make_sqlite_trace(cfg: dict[str, Any]) -> BaseTraceStorage:
     )
 
 
-def _make_mongo_trace(cfg: dict[str, Any]) -> BaseTraceStorage:
-    return MongoTraceStorage(
-        mongo_uri=cfg.get("mongo_uri"),
-        db_name=cfg.get("db_name", "agiwo"),
-        collection_name=cfg.get("collection_name", "traces"),
-    )
-
-
 _TRACE_BACKENDS: dict[str, Any] = {
     "memory": _make_memory_trace,
     "sqlite": _make_sqlite_trace,
-    "mongodb": _make_mongo_trace,
 }
 
 

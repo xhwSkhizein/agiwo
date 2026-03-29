@@ -27,11 +27,11 @@ def test_tool_model_settings_support_global_defaults(monkeypatch) -> None:
 
     settings = load_settings(include_env_file=False)
 
-    assert settings.get_tool_model_provider() == "openai"
+    assert settings.tool_default_model_provider == "openai"
     assert settings.get_tool_model_name() == "gpt-4o-mini"
     assert settings.get_tool_model_api_key_env_name() == "TOOL_DEFAULT_API_KEY"
-    assert settings.get_tool_model_max_tokens() == 1024
-    assert settings.get_tool_model_temperature() == 0.15
+    assert settings.tool_default_model_max_tokens == 1024
+    assert settings.tool_default_model_temperature == 0.15
 
 
 def test_tool_model_name_falls_back_to_provider_default(monkeypatch) -> None:
@@ -40,7 +40,7 @@ def test_tool_model_name_falls_back_to_provider_default(monkeypatch) -> None:
 
     settings = load_settings(include_env_file=False)
 
-    assert settings.get_tool_model_provider() == "deepseek"
+    assert settings.tool_default_model_provider == "deepseek"
     assert settings.get_tool_model_name() == "deepseek-reasoner"
 
 
@@ -68,5 +68,5 @@ def test_tool_model_name_allows_explicit_name_for_compatible_provider(
 
     settings = load_settings(include_env_file=False)
 
-    assert settings.get_tool_model_provider() == "openai-compatible"
+    assert settings.tool_default_model_provider == "openai-compatible"
     assert settings.get_tool_model_name() == "MiniMax-M2.5"

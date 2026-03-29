@@ -10,7 +10,6 @@ from .models import (
     CitationSourceSimplified,
     CitationSourceType,
 )
-from .mongo_store import MongoCitationStore
 from .protocols import (
     CitationSourceRepository,
 )
@@ -28,6 +27,5 @@ __all__ = [
     "create_citation_store",
     "generate_citation_id",
     "InMemoryCitationStore",
-    "MongoCitationStore",
     "SQLiteCitationStore",
 ]

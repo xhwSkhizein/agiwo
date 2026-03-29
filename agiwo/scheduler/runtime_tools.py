@@ -15,7 +15,7 @@ from agiwo.scheduler.formatting import (
     summarize_text,
 )
 from agiwo.scheduler.models import TimeUnit, WaitMode, WakeType
-from agiwo.scheduler.tool_control import SchedulerToolPort
+from agiwo.scheduler.tool_control import SchedulerToolControl
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
@@ -24,22 +24,19 @@ from agiwo.utils.abort_signal import AbortSignal
 class SpawnAgentTool(BaseTool):
     """Spawn a child agent to handle a sub-task."""
 
-    def __init__(self, port: SchedulerToolPort) -> None:
+    name = "spawn_agent"
+    description = (
+        "Spawn a child agent to handle a truly independent sub-task asynchronously. "
+        "ONLY use this when the task genuinely requires parallel execution or delegation "
+        "(e.g., concurrent data fetching, parallel analysis). "
+        "Do NOT spawn a child agent just to perform a simple action you can do directly. "
+        "**IMPORTANT: The spawned child agent will NOT be able to spawn further child agents.**"
+        "After spawning, call sleep_and_wait to wait for the child to complete if needed."
+    )
+
+    def __init__(self, port: SchedulerToolControl) -> None:
         self._port = port
         super().__init__()
-
-    def get_name(self) -> str:
-        return "spawn_agent"
-
-    def get_description(self) -> str:
-        return (
-            "Spawn a child agent to handle a truly independent sub-task asynchronously. "
-            "ONLY use this when the task genuinely requires parallel execution or delegation "
-            "(e.g., concurrent data fetching, parallel analysis). "
-            "Do NOT spawn a child agent just to perform a simple action you can do directly. "
-            "**IMPORTANT: The spawned child agent will NOT be able to spawn further child agents.**"
-            "After spawning, call sleep_and_wait to wait for the child to complete if needed."
-        )
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -60,9 +57,6 @@ class SpawnAgentTool(BaseTool):
             },
             "required": ["task"],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     async def execute(
         self,
@@ -119,20 +113,18 @@ class SpawnAgentTool(BaseTool):
 class SleepAndWaitTool(BaseTool):
     """Put the current agent to sleep until a wake condition is met."""
 
-    def __init__(self, port: SchedulerToolPort) -> None:
+    name = "sleep_and_wait"
+    description = (
+        "Put the current agent to sleep and wait for a condition. "
+        "Use 'waitset' to wait for spawned child agents to finish. "
+        "Use 'timer' to sleep for a fixed duration. "
+        "Use 'periodic' to periodically wake up and check."
+    )
+    concurrency_safe = False
+
+    def __init__(self, port: SchedulerToolControl) -> None:
         self._port = port
         super().__init__()
-
-    def get_name(self) -> str:
-        return "sleep_and_wait"
-
-    def get_description(self) -> str:
-        return (
-            "Put the current agent to sleep and wait for a condition. "
-            "Use 'waitset' to wait for spawned child agents to finish. "
-            "Use 'timer' to sleep for a fixed duration. "
-            "Use 'periodic' to periodically wake up and check."
-        )
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -173,9 +165,6 @@ class SleepAndWaitTool(BaseTool):
             },
             "required": ["wake_type"],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return False
 
     async def execute(
         self,
@@ -263,18 +252,15 @@ class SleepAndWaitTool(BaseTool):
 class QuerySpawnedAgentTool(BaseTool):
     """Query the status and result of a spawned child agent."""
 
-    def __init__(self, port: SchedulerToolPort) -> None:
+    name = "query_spawned_agent"
+    description = (
+        "Query the current status and result of a spawned child agent. "
+        "Use this after waking up to check what the child agents have accomplished."
+    )
+
+    def __init__(self, port: SchedulerToolControl) -> None:
         self._port = port
         super().__init__()
-
-    def get_name(self) -> str:
-        return "query_spawned_agent"
-
-    def get_description(self) -> str:
-        return (
-            "Query the current status and result of a spawned child agent. "
-            "Use this after waking up to check what the child agents have accomplished."
-        )
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -287,9 +273,6 @@ class QuerySpawnedAgentTool(BaseTool):
             },
             "required": ["agent_id"],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     async def execute(
         self,
@@ -346,19 +329,16 @@ class QuerySpawnedAgentTool(BaseTool):
 class CancelAgentTool(BaseTool):
     """Cancel a child agent, optionally forcing termination even with running processes."""
 
-    def __init__(self, port: SchedulerToolPort) -> None:
+    name = "cancel_agent"
+    description = (
+        "Cancel a spawned child agent and its entire subtree. "
+        "Use force=false first to check for running processes; "
+        "if confirmed safe, use force=true to terminate."
+    )
+
+    def __init__(self, port: SchedulerToolControl) -> None:
         self._port = port
         super().__init__()
-
-    def get_name(self) -> str:
-        return "cancel_agent"
-
-    def get_description(self) -> str:
-        return (
-            "Cancel a spawned child agent and its entire subtree. "
-            "Use force=false first to check for running processes; "
-            "if confirmed safe, use force=true to terminate."
-        )
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -380,9 +360,6 @@ class CancelAgentTool(BaseTool):
             },
             "required": ["agent_id"],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     async def execute(
         self,
@@ -488,18 +465,15 @@ class CancelAgentTool(BaseTool):
 class ListAgentsTool(BaseTool):
     """List all direct child agents of the calling agent with detailed status information."""
 
-    def __init__(self, port: SchedulerToolPort) -> None:
+    name = "list_agents"
+    description = (
+        "List all direct child agents with their status, task, and results. "
+        "Use this to get an overview of all spawned agents and decide on next steps."
+    )
+
+    def __init__(self, port: SchedulerToolControl) -> None:
         self._port = port
         super().__init__()
-
-    def get_name(self) -> str:
-        return "list_agents"
-
-    def get_description(self) -> str:
-        return (
-            "List all direct child agents with their status, task, and results. "
-            "Use this to get an overview of all spawned agents and decide on next steps."
-        )
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -507,9 +481,6 @@ class ListAgentsTool(BaseTool):
             "properties": {},
             "required": [],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     async def execute(
         self,

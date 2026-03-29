@@ -21,6 +21,9 @@ logger = get_logger(__name__)
 class MemoryRetrievalTool(BaseTool):
     """Tool for searching memories in MEMORY directory using hybrid search."""
 
+    name = "memory_retrieval"
+    description = "Search your MEMORY directory for relevant past notes, decisions, and knowledge. Use this before answering questions about prior work, preferences, or historical context."
+
     def __init__(
         self,
         *,
@@ -33,12 +36,6 @@ class MemoryRetrievalTool(BaseTool):
         self._memory_service = WorkspaceMemoryService(
             embedding_provider=embedding_provider,
         )
-
-    def get_name(self) -> str:
-        return "memory_retrieval"
-
-    def get_description(self) -> str:
-        return "Search your MEMORY directory for relevant past notes, decisions, and knowledge. Use this before answering questions about prior work, preferences, or historical context."
 
     def get_parameters(self) -> dict[str, Any]:
         return {
@@ -56,9 +53,6 @@ class MemoryRetrievalTool(BaseTool):
             },
             "required": ["query"],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     async def execute(
         self,

@@ -2,7 +2,12 @@
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from agiwo.agent import AgentOptions, RunStepStorageConfig, TraceStorageConfig
+from agiwo.agent import (
+    AgentOptions,
+    AgentStorageOptions,
+    RunStepStorageConfig,
+    TraceStorageConfig,
+)
 from agiwo.config.settings import ModelProvider, settings
 from agiwo.llm.config_policy import (
     sanitize_model_params_data,
@@ -50,9 +55,14 @@ class AgentOptionsInput(AgentOptions):
         trace_storage: TraceStorageConfig,
     ) -> AgentOptions:
         data = self.model_dump(exclude_none=True)
-        data["run_step_storage"] = run_step_storage
-        data["trace_storage"] = trace_storage
-        return AgentOptions(**data)
+        data.pop("storage", None)
+        return AgentOptions(
+            **data,
+            storage=AgentStorageOptions(
+                run_step_storage=run_step_storage,
+                trace_storage=trace_storage,
+            ),
+        )
 
 
 class ModelParamsInput(BaseModel):

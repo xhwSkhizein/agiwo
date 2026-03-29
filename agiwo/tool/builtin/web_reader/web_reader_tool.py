@@ -27,6 +27,18 @@ from agiwo.utils.abort_signal import AbortSignal
 class WebReaderTool(BaseTool):
     """Fetch and optionally post-process web content for the agent."""
 
+    name = "web_reader"
+    description = (
+        "Fetch web content into text only format.\n"
+        "**Usage modes:**\n"
+        "1. **By search index**: `index=0` (recommended, uses web_search results)\n"
+        '2. **By direct URL**: `url="https://..."` (backward compatible)\n'
+        "\n"
+        "**Content processing options:**\n"
+        "- `search_query`: if provided, return content relevant to your specific query\n"
+        "- `summarize`: if provided, generate concise summary of main content\n"
+        "- Note: These options are mutually exclusive"
+    )
     cacheable = True
 
     def __init__(
@@ -65,21 +77,6 @@ class WebReaderTool(BaseTool):
             citation_source_store=self._citation_source_store
         )
 
-    def get_name(self) -> str:
-        return "web_reader"
-
-    def get_description(self) -> str:
-        return """Fetch web content into text only format.
-**Usage modes:**
-1. **By search index**: `index=0` (recommended, uses web_search results)
-2. **By direct URL**: `url="https://..."` (backward compatible)
-
-**Content processing options:**
-- `search_query`: if provided, return content relevant to your specific query
-- `summarize`: if provided, generate concise summary of main content
-- Note: These options are mutually exclusive
-"""
-
     def get_parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
@@ -114,9 +111,6 @@ class WebReaderTool(BaseTool):
                 {"required": ["url"]},
             ],
         }
-
-    def is_concurrency_safe(self) -> bool:
-        return True
 
     async def execute(
         self,

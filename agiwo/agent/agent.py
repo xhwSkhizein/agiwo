@@ -24,11 +24,7 @@ from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.models.stream import AgentStreamItem
 from agiwo.agent.storage.base import RunStepStorage
-from agiwo.agent.storage.factory import (
-    create_run_step_storage,
-    create_session_storage,
-)
-from agiwo.agent.storage.session import SessionStorage
+from agiwo.agent.storage.factory import create_run_step_storage
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.tool.base import BaseTool
 from agiwo.llm.base import Model
@@ -110,11 +106,10 @@ class Agent:
         self._tools = resolved_definition.tools
         self._workspace = resolved_definition.workspace
         self._run_step_storage = create_run_step_storage(
-            self._config.options.run_step_storage
+            self._config.options.storage.run_step_storage
         )
-        self._trace_storage = create_trace_storage(self._config.options.trace_storage)
-        self._session_storage = create_session_storage(
-            self._config.options.run_step_storage
+        self._trace_storage = create_trace_storage(
+            self._config.options.storage.trace_storage
         )
         self._active_executions: dict[str, tuple[Task[RunOutput], AbortSignal]] = {}
         self._closing = False
@@ -162,10 +157,6 @@ class Agent:
     @property
     def trace_storage(self) -> BaseTraceStorage | None:
         return self._trace_storage
-
-    @property
-    def session_storage(self) -> SessionStorage:
-        return self._session_storage
 
     @property
     def tools(self) -> tuple[BaseTool, ...]:
@@ -299,7 +290,6 @@ class Agent:
         session_runtime = SessionRuntime(
             session_id=resolved_session_id,
             run_step_storage=self._run_step_storage,
-            session_storage=self._session_storage,
             trace_runtime=trace_runtime,
             abort_signal=resolved_abort_signal,
         )
@@ -453,10 +443,9 @@ class Agent:
                     *[task for task, _ in active],
                     return_exceptions=True,
                 )
-            storage_names = ["run_step_storage", "session_storage"]
+            storage_names = ["run_step_storage"]
             close_coros = [
                 self._run_step_storage.close(),
-                self._session_storage.close(),
             ]
             if self._trace_storage is not None:
                 storage_names.append("trace_storage")

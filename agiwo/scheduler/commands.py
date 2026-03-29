@@ -3,17 +3,18 @@
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+from types import MappingProxyType
 from typing import Literal
 
 from agiwo.agent import AgentStreamItem, UserInput
 from agiwo.scheduler.models import (
     AgentState,
-    FrozenDict,
     PendingEvent,
     TimeUnit,
     WaitMode,
     WakeCondition,
     WakeType,
+    _freeze_value,
 )
 
 CancelChildOutcome = Literal[
@@ -89,7 +90,7 @@ class CancelChildResult:
             self,
             "running_processes",
             tuple(
-                proc if isinstance(proc, FrozenDict) else FrozenDict(proc)
+                proc if isinstance(proc, MappingProxyType) else _freeze_value(proc)
                 for proc in self.running_processes
             ),
         )

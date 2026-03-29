@@ -1,5 +1,6 @@
 """Run-scoped models and enums for agent execution."""
 
+import dataclasses
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -7,10 +8,22 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from agiwo.agent.models._serialization import fields_to_dict
-from agiwo.agent.models.compact import CompactMetadata
 from agiwo.agent.models.input import UserInput
 from agiwo.config.termination import TerminationReason
+from agiwo.utils.serialization import serialize_optional_datetime
+
+
+def fields_to_dict(obj: object) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for field_info in dataclasses.fields(obj):
+        value = getattr(obj, field_info.name)
+        if isinstance(value, datetime):
+            result[field_info.name] = serialize_optional_datetime(value)
+        elif isinstance(value, Enum):
+            result[field_info.name] = value.value
+        else:
+            result[field_info.name] = value
+    return result
 
 
 class RunStatus(str, Enum):
@@ -21,6 +34,35 @@ class RunStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+
+@dataclass
+class MemoryRecord:
+    content: str
+    relevance_score: float | None = None
+    source: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CompactMetadata:
+    """Metadata for a single compact operation."""
+
+    session_id: str
+    agent_id: str
+    start_seq: int
+    end_seq: int
+    before_token_estimate: int
+    after_token_estimate: int
+    message_count: int
+    transcript_path: str
+    analysis: dict[str, Any]
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    compact_model: str = ""
+    compact_tokens: int = 0
+
+    def get_summary(self) -> str:
+        return self.analysis.get("summary", "")
 
 
 @dataclass
@@ -123,6 +165,8 @@ class RunOutput:
 
 
 __all__ = [
+    "CompactMetadata",
+    "MemoryRecord",
     "Run",
     "RunIdentity",
     "RunLedger",
@@ -130,4 +174,5 @@ __all__ = [
     "RunOutput",
     "RunStatus",
     "TerminationReason",
+    "fields_to_dict",
 ]
