@@ -1,4 +1,9 @@
-"""Mutable run-state helpers for messages, counters, and termination state."""
+"""Mutable run-state helpers for messages, counters, and termination state.
+
+Ownership rule: ``RunLedger.messages`` is exclusively mutated by the helpers
+in this module.  Callers that hand off a message list must not retain a
+mutable reference they intend to modify later.
+"""
 
 import copy
 from collections.abc import Mapping, Sequence
@@ -11,7 +16,12 @@ from agiwo.agent.runtime.context import RunContext
 
 
 def replace_messages(state: RunContext, messages: Sequence[dict[str, Any]]) -> None:
-    state.ledger.messages = copy.deepcopy(list(messages))
+    """Replace the ledger message list.
+
+    Performs a shallow copy only -- callers must ensure individual message
+    dicts are freshly created or will not be mutated after this call.
+    """
+    state.ledger.messages = list(messages)
 
 
 def append_message(state: RunContext, message: Mapping[str, Any]) -> None:
@@ -96,7 +106,7 @@ def track_step_state(
     _track_step_metrics(state, step)
     _track_assistant_step(state, step)
     if append_message:
-        state.ledger.messages.append(copy.deepcopy(step.to_message()))
+        state.ledger.messages.append(step.to_message())
 
 
 __all__ = [

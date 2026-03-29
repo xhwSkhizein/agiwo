@@ -4,6 +4,7 @@ from agiwo.agent.agent import Agent, AgentExecutionHandle
 from agiwo.agent.models.config import (
     AgentConfig,
     AgentOptions,
+    AgentStorageOptions,
     RunStepStorageConfig,
     TraceStorageConfig,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "AgentConfig",
     "AgentHooks",
     "AgentOptions",
+    "AgentStorageOptions",
     "AgentStreamItem",
     "AgentStreamItemBase",
     "AfterLLMCallHook",

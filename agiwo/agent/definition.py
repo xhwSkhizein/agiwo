@@ -6,13 +6,16 @@ from typing import TYPE_CHECKING
 from agiwo.agent.models.config import AgentConfig
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.hooks.memory import DefaultMemoryHook
+from agiwo.agent.prompt import compose_child_system_prompt
 from agiwo.config.settings import get_settings
 from agiwo.skill.config import SkillDiscoveryConfig, normalize_skill_dirs
 from agiwo.skill.manager import SkillManager
 from agiwo.tool.base import BaseTool
-from agiwo.tool.builtin import ensure_builtin_tools_loaded
-from agiwo.tool.builtin.bash_tool import ensure_bash_tool_pair
-from agiwo.tool.builtin.registry import DEFAULT_TOOLS
+from agiwo.tool.registry import (
+    build_agent_tools,
+    exact_tool_disable_set,
+    normalize_disabled_sdk_tool_names,
+)
 from agiwo.workspace import AgentWorkspace, build_agent_workspace
 
 if TYPE_CHECKING:
@@ -56,58 +59,6 @@ def build_skill_manager(config: AgentConfig) -> SkillManager | None:
             root_path=config.options.get_effective_root_path(),
         )
     )
-
-
-def normalize_disabled_sdk_tool_names(names: set[str] | None) -> set[str]:
-    normalized = set(names or set())
-    if "bash" in normalized:
-        normalized.add("bash_process")
-    if "bash_process" in normalized:
-        normalized.add("bash")
-    return normalized
-
-
-def exact_tool_disable_set() -> set[str]:
-    return {"skill", *DEFAULT_TOOLS.keys()}
-
-
-def build_agent_tools(
-    *,
-    tools: list[BaseTool] | None,
-    disabled_sdk_tool_names: set[str] | None,
-    skill_manager: SkillManager | None,
-) -> tuple[BaseTool, ...]:
-    ensure_builtin_tools_loaded()
-    disabled_names = normalize_disabled_sdk_tool_names(disabled_sdk_tool_names)
-    provided_tools = list(tools or [])
-    base_tool_names = {tool.get_name() for tool in provided_tools}
-    default_tools: list[BaseTool] = []
-    for name, tool_cls in DEFAULT_TOOLS.items():
-        if name in disabled_names or name in base_tool_names:
-            continue
-        default_tools.append(tool_cls())
-
-    resolved_base_tools = ensure_bash_tool_pair([*provided_tools, *default_tools])
-    if skill_manager is not None and "skill" not in disabled_names:
-        if all(tool.get_name() != "skill" for tool in resolved_base_tools):
-            resolved_base_tools.append(skill_manager.get_skill_tool())
-    return tuple(resolved_base_tools)
-
-
-def compose_child_system_prompt(
-    *,
-    base_prompt: str,
-    system_prompt_override: str | None,
-    instruction: str | None,
-) -> str:
-    if system_prompt_override is not None:
-        return system_prompt_override
-    if not instruction:
-        return base_prompt
-    instruction_block = (
-        f"<system-instruction>\n{instruction.strip()}\n</system-instruction>"
-    )
-    return f"{base_prompt}\n\n{instruction_block}".strip()
 
 
 def resolve_agent_definition(
@@ -182,11 +133,7 @@ __all__ = [
     "ResolvedAgentDefinition",
     "ResolvedChildDefinition",
     "build_agent_hooks",
-    "build_agent_tools",
     "build_skill_manager",
-    "compose_child_system_prompt",
-    "exact_tool_disable_set",
-    "normalize_disabled_sdk_tool_names",
     "resolve_agent_definition",
     "resolve_child_definition",
 ]

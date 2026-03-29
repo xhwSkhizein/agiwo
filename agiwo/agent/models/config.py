@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agiwo.config.settings import settings
 
@@ -43,20 +43,42 @@ class TraceStorageConfig:
     config: dict[str, Any] = field(default_factory=dict)
 
 
+class AgentStorageOptions(BaseModel):
+    """Infrastructure / persistence configuration, separated from runtime behaviour."""
+
+    model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
+
+    run_step_storage: RunStepStorageConfig = Field(default_factory=RunStepStorageConfig)
+    trace_storage: TraceStorageConfig = Field(default_factory=TraceStorageConfig)
+
+
 class AgentOptions(BaseModel):
-    """
-    Configuration for Agent execution behavior.
+    """Configuration for Agent execution behavior.
 
     All fields are pure configuration - no side effects in construction.
-
-    Storage Configuration:
-        run_step_storage: Configuration for run/step persistence.
-            Defaults to in-memory storage. Use sqlite or mongodb for persistence.
-        trace_storage: Configuration for trace/observability persistence.
-            Defaults to None (tracing disabled). Enable for observability features.
+    Storage configuration lives in ``storage``.
     """
 
     model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_storage_fields(cls, data: Any) -> Any:
+        """Accept legacy top-level storage kwargs and nest them into ``storage``."""
+        if not isinstance(data, dict):
+            return data
+        storage = data.get("storage") or {}
+        if isinstance(storage, AgentStorageOptions):
+            storage = {
+                "run_step_storage": storage.run_step_storage,
+                "trace_storage": storage.trace_storage,
+            }
+        for key in ("run_step_storage", "trace_storage"):
+            if key in data and key not in storage:
+                storage[key] = data.pop(key)
+        if storage:
+            data["storage"] = storage
+        return data
 
     config_root: str = ""
     max_steps: int = 50
@@ -70,8 +92,16 @@ class AgentOptions(BaseModel):
     relevant_memory_max_token: int = 2048
     stream_cleanup_timeout: float = 300.0
     compact_prompt: str = ""
-    run_step_storage: RunStepStorageConfig = Field(default_factory=RunStepStorageConfig)
-    trace_storage: TraceStorageConfig = Field(default_factory=TraceStorageConfig)
+    storage: AgentStorageOptions = Field(default_factory=AgentStorageOptions)
+
+    # Deprecated shims -- remove after one release cycle
+    @property
+    def run_step_storage(self) -> RunStepStorageConfig:
+        return self.storage.run_step_storage
+
+    @property
+    def trace_storage(self) -> TraceStorageConfig:
+        return self.storage.trace_storage
 
     def get_effective_root_path(self) -> str:
         if self.config_root:

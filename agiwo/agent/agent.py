@@ -36,6 +36,7 @@ from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.factory import create_trace_storage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
+from agiwo.workspace import WorkspaceBootstrapper, WorkspaceDocumentStore
 
 
 def _generate_default_id(name: str) -> str:
@@ -179,6 +180,8 @@ class Agent:
             workspace=self._workspace,
             tools=list(self._tools),
             skill_manager=self._skill_manager,
+            bootstrapper=WorkspaceBootstrapper(),
+            document_store=WorkspaceDocumentStore(),
         )
 
     def as_tool(

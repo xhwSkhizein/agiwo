@@ -18,9 +18,9 @@ class NvidiaModel(OpenAIModel):
             name=name,
             api_key=api_key,
             base_url=base_url,
+            provider="nvidia",
             **model_kwargs,
         )
-        self.provider = "nvidia"
 
     def _resolve_api_key(self) -> str | None:
         if self.api_key:

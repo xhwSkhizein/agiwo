@@ -4,7 +4,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from agiwo.agent.nested.context import AgentToolContext
-from agiwo.tool.base import BaseTool, ToolDefinition, ToolGateDecision, ToolResult
+from agiwo.tool.base import BaseTool, ToolResult, resolve_timeout
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
 
@@ -58,12 +58,7 @@ class AgentTool(BaseTool):
         }
 
     def build_context(self, run_context: Any, *, tool_call_id: str = "") -> ToolContext:
-        tool_deadline = time.time() + self.timeout_seconds
-        timeout_at = (
-            min(run_context.timeout_at, tool_deadline)
-            if run_context.timeout_at is not None
-            else tool_deadline
-        )
+        timeout_at = resolve_timeout(run_context.timeout_at, self.timeout_seconds)
         return AgentToolContext.from_run_context(
             run_context,
             timeout_at=timeout_at,
@@ -76,24 +71,6 @@ class AgentTool(BaseTool):
 
     def get_short_description(self) -> str:
         return self.get_description()
-
-    def get_definition(self) -> ToolDefinition:
-        return ToolDefinition(
-            name=self.get_name(),
-            description=self.get_description(),
-            parameters=self.get_parameters(),
-            is_concurrency_safe=self.is_concurrency_safe(),
-            timeout_seconds=self.timeout_seconds,
-            cacheable=self.cacheable,
-        )
-
-    async def gate(
-        self,
-        parameters: dict[str, Any],
-        context: ToolContext,
-    ) -> ToolGateDecision:
-        del parameters, context
-        return ToolGateDecision.allow()
 
     async def execute(
         self,

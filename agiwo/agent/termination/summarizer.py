@@ -26,7 +26,7 @@ async def maybe_generate_termination_summary(
 ) -> None:
     if not options.enable_termination_summary:
         return
-    if state.termination_reason not in TERMINATION_SUMMARY_REASONS:
+    if state.ledger.termination_reason not in TERMINATION_SUMMARY_REASONS:
         return
 
     prompt_template = (
@@ -34,7 +34,7 @@ async def maybe_generate_termination_summary(
     )
     user_prompt = render_termination_summary_prompt(
         prompt_template,
-        state.termination_reason,
+        state.ledger.termination_reason,
     )
 
     sequence = await state.session_runtime.allocate_sequence()
@@ -52,7 +52,7 @@ async def maybe_generate_termination_summary(
             state,
             abort_signal,
             messages=state.copy_messages(),
-            tools=None,
+            use_state_tools=False,
         )
         step.name = "summary"
         await commit_step(state, step, llm=llm_context, append_message=False)
@@ -65,7 +65,7 @@ async def maybe_generate_termination_summary(
         logger.warning(
             "summary_generation_failed",
             run_id=state.run_id,
-            termination_reason=state.termination_reason,
+            termination_reason=state.ledger.termination_reason,
             exc_info=True,
         )
 

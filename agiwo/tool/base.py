@@ -1,10 +1,13 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import time
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
+
+if TYPE_CHECKING:
+    from agiwo.agent.models.run import TerminationReason
 
 
 @dataclass
@@ -53,7 +56,7 @@ class ToolResult:
     )
     error: str | None = None
     is_success: bool = True
-    termination_reason: Any = None
+    termination_reason: "TerminationReason | None" = None
 
     @classmethod
     def success(
@@ -65,7 +68,7 @@ class ToolResult:
         start_time: float | None = None,
         output: Any = None,
         content_for_user: str | None = None,
-        termination_reason: Any = None,
+        termination_reason: "TerminationReason | None" = None,
     ) -> "ToolResult":
         """Create a ToolResult representing a successful operation."""
         now = time.time()
@@ -163,6 +166,14 @@ class ToolResult:
         )
 
 
+def resolve_timeout(timeout_at: float | None, timeout_seconds: float) -> float:
+    """Compute effective deadline from a run-level timeout and a per-tool budget."""
+    tool_deadline = time.time() + timeout_seconds
+    if timeout_at is not None:
+        return min(timeout_at, tool_deadline)
+    return tool_deadline
+
+
 class BaseTool(ABC):
     """Common interface that every concrete tool must implement."""
 
@@ -231,12 +242,7 @@ class BaseTool(ABC):
 
         Subclasses may override to return specialized context types.
         """
-        tool_deadline = time.time() + self.timeout_seconds
-        timeout_at = (
-            min(run_context.timeout_at, tool_deadline)
-            if run_context.timeout_at is not None
-            else tool_deadline
-        )
+        timeout_at = resolve_timeout(run_context.timeout_at, self.timeout_seconds)
         return ToolContext(
             session_id=run_context.session_id,
             agent_id=run_context.agent_id,

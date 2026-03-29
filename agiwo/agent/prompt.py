@@ -235,11 +235,9 @@ async def build_system_prompt(
     workspace: AgentWorkspace,
     tools: list[BaseTool] | None = None,
     skill_manager: SkillPromptProvider | None = None,
-    bootstrapper: WorkspaceBootstrapper | None = None,
-    document_store: WorkspaceDocumentStore | None = None,
+    bootstrapper: WorkspaceBootstrapper,
+    document_store: WorkspaceDocumentStore,
 ) -> str:
-    bootstrapper = bootstrapper or WorkspaceBootstrapper()
-    document_store = document_store or WorkspaceDocumentStore()
     await bootstrapper.ensure_prompt_ready(workspace)
     if skill_manager is not None:
         await skill_manager.initialize()
@@ -274,8 +272,26 @@ async def build_system_prompt(
     return "\n\n".join(filter(None, sections))
 
 
+def compose_child_system_prompt(
+    *,
+    base_prompt: str,
+    system_prompt_override: str | None,
+    instruction: str | None,
+) -> str:
+    """Build the system prompt for a child / nested agent run."""
+    if system_prompt_override is not None:
+        return system_prompt_override
+    if not instruction:
+        return base_prompt
+    instruction_block = (
+        f"<system-instruction>\n{instruction.strip()}\n</system-instruction>"
+    )
+    return f"{base_prompt}\n\n{instruction_block}".strip()
+
+
 __all__ = [
     "apply_steering_messages",
     "assemble_run_messages",
     "build_system_prompt",
+    "compose_child_system_prompt",
 ]

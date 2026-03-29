@@ -249,12 +249,25 @@ class InMemoryRunStepStorage(RunStepStorage):
         self._insert_new_step(sid, step)
 
     def _insert_new_step(self, sid: str, step: StepRecord) -> None:
-        """Bisect-insert a brand-new step and rebuild indexes."""
+        """Bisect-insert a brand-new step with incremental index update."""
         step_list = self.steps[sid]
+        id_idx = self._id_index[sid]
+        seq_idx = self._seq_index[sid]
+
         sequences = [s.sequence for s in step_list]
         pos = bisect.bisect_left(sequences, step.sequence)
         step_list.insert(pos, step)
-        self._rebuild_indexes(sid)
+
+        for existing_id, existing_pos in list(id_idx.items()):
+            if existing_pos >= pos:
+                id_idx[existing_id] = existing_pos + 1
+        for existing_seq, existing_pos in list(seq_idx.items()):
+            if existing_pos >= pos:
+                seq_idx[existing_seq] = existing_pos + 1
+
+        id_idx[step.id] = pos
+        seq_idx[step.sequence] = pos
+
         current = self._sequence_counters.get(sid)
         if current is not None and step.sequence > current:
             self._sequence_counters[sid] = step.sequence

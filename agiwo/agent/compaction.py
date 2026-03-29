@@ -284,8 +284,8 @@ async def _compact(
 
     prompt_template = compact_prompt or DEFAULT_COMPACT_PROMPT
     previous_summary = ""
-    if state.last_compact_metadata:
-        previous_summary = state.last_compact_metadata.get_summary()
+    if state.ledger.last_compact_metadata:
+        previous_summary = state.ledger.last_compact_metadata.get_summary()
     compact_prompt_content = prompt_template.format(
         previous_summary=previous_summary or "None",
     )
@@ -308,7 +308,7 @@ async def _compact(
         state,
         abort_signal,
         messages=state.copy_messages(),
-        tools=None,
+        use_state_tools=False,
     )
     step.name = "compact"
     await commit_step(state, step, llm=llm_context, append_message=False)

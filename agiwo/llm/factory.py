@@ -115,7 +115,7 @@ def _build_model_for_provider(
 
     model = spec.model_class(**model_kwargs)
     if spec.override_provider is not None:
-        model.provider = spec.override_provider
+        model.config.provider = spec.override_provider
     return model
 
 
