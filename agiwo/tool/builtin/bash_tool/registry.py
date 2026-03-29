@@ -160,10 +160,14 @@ class ProcessRegistry:
     ) -> str:
         stdout_path = self.logs_dir / f"{process_id}.stdout"
         stderr_path = self.logs_dir / f"{process_id}.stderr"
-        stdout_fp = open(stdout_path, "w", encoding="utf-8")
-        stderr_fp = open(stderr_path, "w", encoding="utf-8")
         master_fd: int | None = None
         slave_fd: int | None = None
+        stdout_fp = open(stdout_path, "w", encoding="utf-8")
+        try:
+            stderr_fp = open(stderr_path, "w", encoding="utf-8")
+        except Exception:
+            stdout_fp.close()
+            raise
         try:
             master_fd, slave_fd = pty.openpty()
             set_pty_size(slave_fd, cols=pty_cols, rows=pty_rows)
