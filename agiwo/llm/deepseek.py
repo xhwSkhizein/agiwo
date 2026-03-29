@@ -3,7 +3,7 @@ import uuid
 from typing import Any, AsyncIterator
 import json
 
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.llm.base import StreamChunk
 from agiwo.llm.openai import OpenAIModel
 
@@ -90,12 +90,17 @@ class DeepseekModel(OpenAIModel):
     def _resolve_api_key(self) -> str | None:
         if self.api_key:
             return self.api_key
-        if settings.deepseek_api_key:
-            return settings.deepseek_api_key.get_secret_value()
+        _s = get_settings()
+        if _s.deepseek_api_key:
+            return _s.deepseek_api_key.get_secret_value()
         return None
 
     def _resolve_base_url(self) -> str | None:
-        return self.base_url or settings.deepseek_base_url or "https://api.deepseek.com"
+        return (
+            self.base_url
+            or get_settings().deepseek_base_url
+            or "https://api.deepseek.com"
+        )
 
     def _preprocess_messages_for_thinking_mode(
         self, messages: list[dict]

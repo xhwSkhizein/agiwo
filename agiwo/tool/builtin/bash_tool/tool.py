@@ -71,12 +71,10 @@ class BashTool(BaseTool):
         self._formatter = BashResultFormatter("bash", config.max_output_length)
         self._safety_validator = CommandSafetyValidator()
 
-    @property
-    def name(self) -> str:
+    def get_name(self) -> str:
         return "bash"
 
-    @property
-    def description(self) -> str:
+    def get_description(self) -> str:
         lines = (
             "Terminal-style bash tool. Pass one shell command via `command`. "
             "Set `background=true` to start a background job. "
@@ -87,16 +85,6 @@ class BashTool(BaseTool):
         if self.config.extra_instructions:
             lines += " " + self.config.extra_instructions
         return lines
-
-    @property
-    def parameters(self) -> dict[str, Any]:
-        return self.get_parameters()
-
-    def get_name(self) -> str:
-        return self.name
-
-    def get_description(self) -> str:
-        return self.description
 
     def get_parameters(self) -> dict[str, Any]:
         return {

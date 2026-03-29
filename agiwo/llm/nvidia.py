@@ -1,6 +1,6 @@
 from typing import Any
 
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.llm.openai import OpenAIModel
 
 
@@ -25,14 +25,15 @@ class NvidiaModel(OpenAIModel):
     def _resolve_api_key(self) -> str | None:
         if self.api_key:
             return self.api_key
-        if settings.nvidia_api_key:
-            return settings.nvidia_api_key.get_secret_value()
+        _s = get_settings()
+        if _s.nvidia_api_key:
+            return _s.nvidia_api_key.get_secret_value()
         return None
 
     def _resolve_base_url(self) -> str | None:
         return (
             self.base_url
-            or settings.nvidia_base_url
+            or get_settings().nvidia_base_url
             or "https://integrate.api.nvidia.com/v1"
         )
 

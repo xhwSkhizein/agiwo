@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.utils.logging import get_logger
 
 from .memory_store import InMemoryCitationStore
@@ -27,14 +27,15 @@ def _get_default_config() -> "CitationStoreConfig":
 
 
 def _default_storage_type() -> Literal["memory", "sqlite", "mongodb"]:
-    storage_type = settings.default_session_store
+    storage_type = get_settings().default_session_store
     if storage_type in {"memory", "sqlite", "mongodb"}:
         return storage_type
     return "memory"
 
 
 def _default_sqlite_db_path() -> str:
-    resolved = settings.resolve_path(settings.sqlite_db_path)
+    _s = get_settings()
+    resolved = _s.resolve_path(_s.sqlite_db_path)
     if resolved is None:
         return "agiwo.db"
     return str(resolved)
@@ -48,9 +49,9 @@ class CitationStoreConfig:
         default_factory=_default_storage_type
     )
     sqlite_db_path: str = field(default_factory=_default_sqlite_db_path)
-    mongo_uri: str | None = field(default_factory=lambda: settings.mongo_uri)
+    mongo_uri: str | None = field(default_factory=lambda: get_settings().mongo_uri)
     mongo_db_name: str = field(
-        default_factory=lambda: settings.mongo_db_name or "agiwo"
+        default_factory=lambda: get_settings().mongo_db_name or "agiwo"
     )
     collection_name: str = "citation_sources"
 

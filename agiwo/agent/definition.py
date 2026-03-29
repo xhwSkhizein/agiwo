@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from agiwo.agent.models.config import AgentConfig
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.hooks.memory import DefaultMemoryHook
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.skill.config import SkillDiscoveryConfig, normalize_skill_dirs
 from agiwo.skill.manager import SkillManager
 from agiwo.tool.base import BaseTool
@@ -52,7 +52,7 @@ def build_skill_manager(config: AgentConfig) -> SkillManager | None:
     return SkillManager(
         SkillDiscoveryConfig(
             configured_dirs=normalize_skill_dirs(config.options.skills_dirs),
-            env_dirs=list(settings.skills_dirs or []),
+            env_dirs=list(get_settings().skills_dirs or []),
             root_path=config.options.get_effective_root_path(),
         )
     )
