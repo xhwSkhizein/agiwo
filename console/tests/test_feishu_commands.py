@@ -43,7 +43,7 @@ def _session(session_id: str) -> Session:
     now = datetime.now(timezone.utc)
     return Session(
         id=session_id,
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
         runtime_agent_id="runtime-1",
         scheduler_state_id="state-1",
@@ -115,12 +115,11 @@ def test_build_feishu_command_registry_includes_expected_commands() -> None:
 @pytest.mark.asyncio
 async def test_switch_command_maps_known_errors_from_session_service() -> None:
     session_manager = SimpleNamespace(reset_chat_context=Mock())
-    workspace_service = SimpleNamespace(
-        switch_session=AsyncMock(side_effect=RuntimeError("Session not found: sess-2")),
-    )
     registry = build_feishu_command_registry(
         session_service=SimpleNamespace(
-            as_remote_workspace_service=lambda: workspace_service,
+            switch_session=AsyncMock(
+                side_effect=RuntimeError("Session not found: sess-2")
+            ),
         ),
         agent_pool=SimpleNamespace(
             runtime_agents={}, get_or_create_runtime_agent=AsyncMock()

@@ -33,8 +33,8 @@ class FeishuInboundHandler:
         group_history_store: FeishuGroupHistoryStore,
         store: FeishuChannelStoreBackend,
         session_service: SessionContextService,
-        session_manager: SessionManager | None = None,
-        command_registry: CommandRegistry | None = None,
+        session_manager: SessionManager,
+        command_registry: CommandRegistry,
         delivery_service: FeishuDeliveryService,
         truncate_for_log: Callable[[str], str],
     ) -> None:

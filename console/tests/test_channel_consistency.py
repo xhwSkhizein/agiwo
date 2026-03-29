@@ -1,24 +1,21 @@
 """Regression tests for Console and Feishu channel consistency.
 
 Both entrypoints must produce equivalent session/task semantics
-when using the shared remote workspace services.
+when using the shared AgentExecutor.
 """
 
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from server.channels.agent_executor import AgentExecutor
 from server.channels.session.binding import (
     append_message_to_current_task,
     fork_session,
     mark_session_task_started,
 )
 from server.channels.session.models import ChannelChatContext, Session
-from server.services.remote_workspace_conversation import (
-    RemoteWorkspaceConversationService,
-)
 
 
 def _session(
@@ -29,7 +26,7 @@ def _session(
     now = datetime.now(timezone.utc)
     return Session(
         id="sess-1",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
         runtime_agent_id="runtime-1",
         scheduler_state_id="state-1",
@@ -44,7 +41,6 @@ def _session(
 def _chat_context() -> ChannelChatContext:
     now = datetime.now(timezone.utc)
     return ChannelChatContext(
-        id="ctx-1",
         scope_id="scope-1",
         channel_instance_id="console-web",
         chat_id="chat-1",
@@ -107,24 +103,19 @@ def test_fork_lineage_is_consistent_across_channels() -> None:
 
 
 @pytest.mark.asyncio
-async def test_conversation_service_applies_task_semantics_uniformly() -> None:
-    """The shared conversation service applies the same task logic regardless of entry channel."""
+async def test_executor_applies_task_semantics_uniformly() -> None:
+    """AgentExecutor applies the same task logic regardless of entry channel."""
     session = _session()
-    session_service = SimpleNamespace(
-        resolve_current_session=AsyncMock(return_value=(None, session)),
+    scheduler = AsyncMock()
+    scheduler.route_root_input = AsyncMock(
+        return_value=AsyncMock(action="stream", stream=None, state_id="state-1")
     )
-    executor = SimpleNamespace(
-        execute=AsyncMock(return_value=SimpleNamespace(action="stream", stream=None)),
-    )
-    service = RemoteWorkspaceConversationService(
-        session_service=session_service,
-        executor=executor,
-    )
+    store = AsyncMock()
+    store.upsert_session = AsyncMock()
+    executor = AgentExecutor(scheduler=scheduler, store=store, timeout=60)
 
-    await service.send_message(
-        agent=object(),
-        chat_context_scope_id="scope-1",
-        user_message="hello from console",
+    await executor.execute(
+        agent=AsyncMock(), session=session, user_input="hello from console"
     )
 
     task_id_after_console = session.current_task_id
@@ -132,10 +123,8 @@ async def test_conversation_service_applies_task_semantics_uniformly() -> None:
     assert task_id_after_console is not None
     assert count_after_console == 1
 
-    await service.send_message(
-        agent=object(),
-        chat_context_scope_id="scope-1",
-        user_message="hello from feishu",
+    await executor.execute(
+        agent=AsyncMock(), session=session, user_input="hello from feishu"
     )
 
     assert session.current_task_id == task_id_after_console

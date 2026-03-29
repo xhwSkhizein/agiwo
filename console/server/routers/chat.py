@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
+from server.channels.session import SessionContextService
 from server.dependencies import ConsoleRuntime, ConsoleRuntimeDep, SchedulerDep
 from server.domain.sessions import session_aggregate_to_chat_summary
 from server.schemas import (
@@ -12,7 +13,6 @@ from server.schemas import (
     SchedulerChatCancelRequest,
     SwitchSessionRequest,
 )
-from server.services.remote_workspace_session import RemoteWorkspaceSessionService
 from server.services.chat_sse import (
     create_conversation_response,
     scheduler_error_message,
@@ -71,11 +71,15 @@ async def list_agent_sessions(
 # ── Session Management ──────────────────────────────────────────────────
 
 
-def _get_session_service(runtime: ConsoleRuntime) -> RemoteWorkspaceSessionService:
-    """Build a RemoteWorkspaceSessionService from the console runtime."""
-    if runtime.session_store is not None:
-        return RemoteWorkspaceSessionService(store=runtime.session_store)
-    raise RuntimeError("Session store not available")
+def _get_session_service(runtime: ConsoleRuntime) -> SessionContextService:
+    """Build a SessionContextService from the console runtime."""
+    if runtime.session_store is None:
+        raise RuntimeError("Session store not available")
+    return SessionContextService(
+        store=runtime.session_store,
+        agent_registry=runtime.agent_registry,
+        default_agent_name=runtime.config.default_agent_name,
+    )
 
 
 @router.post("/{agent_id}/sessions/create")
@@ -86,7 +90,7 @@ async def create_session(
 ):
     """Create a new session for an agent."""
     service = _get_session_service(runtime)
-    result = await service.create_session(
+    result = await service.create_new_session(
         chat_context_scope_id=body.chat_context_scope_id,
         channel_instance_id=body.channel_instance_id,
         chat_id=body.chat_context_scope_id,

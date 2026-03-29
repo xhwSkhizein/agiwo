@@ -1,4 +1,4 @@
-"""Tests for Feishu session commands using RemoteWorkspaceSessionService."""
+"""Tests for Feishu session commands using SessionContextService."""
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -11,9 +11,9 @@ from server.channels.feishu.commands.session import build_session_command_specs
 from server.channels.session.models import (
     ChannelChatContext,
     Session,
+    SessionCreateResult,
     SessionSwitchResult,
 )
-from server.services.remote_workspace_session import WorkspaceForkResult
 
 
 def _ctx(*, current_session: Session | None = None) -> CommandContext:
@@ -34,7 +34,7 @@ def _session(session_id: str = "sess-1") -> Session:
     now = datetime.now(timezone.utc)
     return Session(
         id=session_id,
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
         runtime_agent_id="runtime-1",
         scheduler_state_id="state-1",
@@ -49,7 +49,6 @@ def _session(session_id: str = "sess-1") -> Session:
 def _chat_context() -> ChannelChatContext:
     now = datetime.now(timezone.utc)
     return ChannelChatContext(
-        id="ctx-1",
         scope_id="scope-1",
         channel_instance_id="feishu-main",
         chat_id="chat-1",
@@ -69,10 +68,10 @@ def _build_specs(service, session_manager=None, scheduler=None):
 
 
 @pytest.mark.asyncio
-async def test_new_command_uses_workspace_session_service() -> None:
+async def test_new_command_uses_session_context_service() -> None:
     service = SimpleNamespace(
-        create_session=AsyncMock(
-            return_value=WorkspaceForkResult(
+        create_new_session=AsyncMock(
+            return_value=SessionCreateResult(
                 chat_context=_chat_context(),
                 session=_session("sess-new"),
             )
@@ -82,11 +81,11 @@ async def test_new_command_uses_workspace_session_service() -> None:
     result = await specs["new"].execute(_ctx(), "")
 
     assert "sess-new" in result.text
-    service.create_session.assert_awaited_once()
+    service.create_new_session.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_switch_command_uses_workspace_session_service() -> None:
+async def test_switch_command_uses_session_context_service() -> None:
     service = SimpleNamespace(
         switch_session=AsyncMock(
             return_value=SessionSwitchResult(
@@ -109,7 +108,7 @@ async def test_fork_command_creates_forked_session() -> None:
     forked.source_session_id = "sess-1"
     service = SimpleNamespace(
         fork_session=AsyncMock(
-            return_value=WorkspaceForkResult(
+            return_value=SessionCreateResult(
                 chat_context=_chat_context(),
                 session=forked,
             )

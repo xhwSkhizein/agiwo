@@ -96,6 +96,16 @@ def _disable_auto_reconnect(client: object | None) -> None:
 
 logger = get_logger(__name__)
 
+
+def _deep_getattr(obj: object, *attrs: str) -> object:
+    """Safely traverse a chain of attributes, returning None if any is missing."""
+    for attr in attrs:
+        obj = getattr(obj, attr, None)
+        if obj is None:
+            return None
+    return obj
+
+
 OnEnvelopeCallback = Callable[[FeishuInboundEnvelope], Awaitable[object]]
 
 
@@ -258,28 +268,18 @@ class FeishuConnection:
         self,
         data: object,
     ) -> FeishuInboundEnvelope | None:
-        event = getattr(data, "event", None)
-        header = getattr(data, "header", None)
-        message = getattr(event, "message", None)
-        sender = getattr(event, "sender", None)
-        sender_id = getattr(sender, "sender_id", None)
+        header = _deep_getattr(data, "header")
+        message = _deep_getattr(data, "event", "message")
 
-        message_id = getattr(message, "message_id", None)
-        chat_id = getattr(message, "chat_id", None)
-        chat_type = getattr(message, "chat_type", None)
-        message_type = getattr(message, "message_type", None)
-        sender_open_id = getattr(sender_id, "open_id", None)
+        message_id = _deep_getattr(message, "message_id")
+        chat_id = _deep_getattr(message, "chat_id")
+        chat_type = _deep_getattr(message, "chat_type")
+        message_type = _deep_getattr(message, "message_type")
+        sender_open_id = _deep_getattr(data, "event", "sender", "sender_id", "open_id")
 
-        if not isinstance(message_id, str) or not message_id:
-            return None
-        if not isinstance(chat_id, str) or not chat_id:
-            return None
-        if not isinstance(chat_type, str) or not chat_type:
-            return None
-        if not isinstance(message_type, str) or not message_type:
-            return None
-        if not isinstance(sender_open_id, str) or not sender_open_id:
-            return None
+        for field in (message_id, chat_id, chat_type, message_type, sender_open_id):
+            if not isinstance(field, str) or not field:
+                return None
 
         mentions = self._extract_mentions(message)
         content = self._read_message_content(message)
@@ -311,13 +311,10 @@ class FeishuConnection:
 
     def _extract_mentions(self, message: object) -> list[FeishuMention]:
         mentions: list[FeishuMention] = []
-        raw_mentions = getattr(message, "mentions", None) or []
-        for mention in raw_mentions:
-            mention_id = getattr(mention, "id", None)
-            mention_open_id = getattr(mention_id, "open_id", None)
-            if not isinstance(mention_open_id, str) or not mention_open_id:
-                continue
-            mentions.append(FeishuMention(open_id=mention_open_id))
+        for mention in getattr(message, "mentions", None) or []:
+            open_id = _deep_getattr(mention, "id", "open_id")
+            if isinstance(open_id, str) and open_id:
+                mentions.append(FeishuMention(open_id=open_id))
         return mentions
 
     def _read_message_content(self, message: object) -> str:

@@ -155,51 +155,41 @@ class FeishuDeliveryService:
         inbound: InboundMessage,
         post_content: dict,
     ) -> None:
-        """Send command response as rich-text (post) message."""
-        try:
-            await self._api.reply_post(inbound.message_id, post_content)
-            logger.info(
-                "feishu_command_response_post_sent",
-                channel="feishu",
-                chat_id=inbound.chat_id,
-                message_id=inbound.message_id,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "feishu_command_response_post_failed",
-                message_id=inbound.message_id,
-                error=str(exc),
-            )
-            # Fallback to creating a new post in the chat
-            title = post_content.get("zh_cn", {}).get("title", "响应")
+        """Send command response as rich-text (post) message with fallback chain."""
+        title = post_content.get("zh_cn", {}).get("title", "响应")
+        plain_text = f"[{title}] (富文本发送失败)"
+
+        attempts: list[tuple[str, object]] = [
+            (
+                "reply_post",
+                lambda: self._api.reply_post(inbound.message_id, post_content),
+            ),
+            (
+                "create_post",
+                lambda: self._api.create_post_message(inbound.chat_id, post_content),
+            ),
+            (
+                "create_text",
+                lambda: self._api.create_text_message(inbound.chat_id, plain_text),
+            ),
+        ]
+        for label, send in attempts:
             try:
-                await self._api.create_post_message(inbound.chat_id, post_content)
+                await send()
                 logger.info(
-                    "feishu_command_response_post_created",
+                    f"feishu_command_response_{label}_sent",
                     channel="feishu",
                     chat_id=inbound.chat_id,
+                    message_id=inbound.message_id,
                 )
-            except Exception as exc2:  # noqa: BLE001
+                return
+            except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "feishu_command_response_create_post_failed",
+                    f"feishu_command_response_{label}_failed",
                     chat_id=inbound.chat_id,
-                    error=str(exc2),
+                    message_id=inbound.message_id,
+                    error=str(exc),
                 )
-                # Final fallback to plain text
-                plain_text = f"[{title}] (富文本发送失败)"
-                try:
-                    await self._api.create_text_message(inbound.chat_id, plain_text)
-                    logger.info(
-                        "feishu_command_response_text_created",
-                        channel="feishu",
-                        chat_id=inbound.chat_id,
-                    )
-                except Exception as exc3:  # noqa: BLE001
-                    logger.warning(
-                        "feishu_command_response_text_failed",
-                        chat_id=inbound.chat_id,
-                        error=str(exc3),
-                    )
 
     def _format_group_reply(
         self,

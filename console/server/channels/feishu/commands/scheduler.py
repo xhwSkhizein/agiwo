@@ -23,7 +23,10 @@ from server.channels.feishu.commands.post_builder import (
     separator_line,
     text_element,
 )
-from server.channels.feishu.commands.status_text import format_scheduler_status
+from server.channels.feishu.commands.status_text import (
+    format_scheduler_status,
+    status_to_emoji,
+)
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
 from server.services.agent_lifecycle import resume_persistent_agent
@@ -82,7 +85,7 @@ async def _execute_agents(
 
     for i, state in enumerate(states, 1):
         status_label = format_scheduler_status(state.status)
-        status_emoji = _status_to_emoji(status_label)
+        status_emoji = status_to_emoji(status_label)
         persistent = "📌" if state.is_persistent else ""
         depth_indent = "  " * (state.depth if state.depth > 0 else 0)
 
@@ -165,7 +168,7 @@ async def _execute_detail(
         return CommandResult(text=f"未找到 Agent: {state_id}")
 
     status_label = format_scheduler_status(state.status)
-    status_emoji = _status_to_emoji(status_label)
+    status_emoji = status_to_emoji(status_label)
 
     content: list[list[dict]] = []
 
@@ -339,24 +342,6 @@ def _parse_state_message_args(
     if len(parts) < 2:
         return CommandResult(text=usage_text)
     return (parts[0], parts[1])
-
-
-def _status_to_emoji(status: str) -> str:
-    """Convert scheduler status text to emoji."""
-    status_map = {
-        "运行中": "🟢",
-        "等待中": "⏳",
-        "队列中": "📋",
-        "闲置": "⚪",
-        "已完成": "✅",
-        "失败": "❌",
-        "取消": "🚫",
-        "未启动": "⚪",
-    }
-    for key, emoji in status_map.items():
-        if key in status:
-            return emoji
-    return "⚪"
 
 
 def _user_input_to_string(user_input: UserInput) -> str:

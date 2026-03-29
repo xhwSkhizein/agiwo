@@ -20,14 +20,16 @@ from server.channels.feishu.commands.post_builder import (
     separator_line,
     text_element,
 )
-from server.channels.feishu.commands.status_text import format_scheduler_status
-from server.channels.session import SessionManager
+from server.channels.feishu.commands.status_text import (
+    format_scheduler_status,
+    status_to_emoji,
+)
+from server.channels.session import SessionContextService, SessionManager
 from server.channels.session.models import Session
-from server.services.remote_workspace_session import RemoteWorkspaceSessionService
 
 
 def build_session_command_specs(
-    workspace_session_service: RemoteWorkspaceSessionService,
+    session_context_service: SessionContextService,
     session_manager: SessionManager,
     scheduler: Scheduler,
 ) -> list[CommandSpec]:
@@ -37,7 +39,7 @@ def build_session_command_specs(
             description="创建新会话，重置当前对话上下文",
             execute=partial(
                 _execute_new_session,
-                workspace_session_service,
+                session_context_service,
                 session_manager,
             ),
         ),
@@ -46,7 +48,7 @@ def build_session_command_specs(
             description="列出历史会话和概览",
             execute=partial(
                 _execute_list_sessions,
-                workspace_session_service,
+                session_context_service,
                 scheduler,
             ),
         ),
@@ -55,7 +57,7 @@ def build_session_command_specs(
             description="切换当前会话 — /switch <session_id>",
             execute=partial(
                 _execute_switch_session,
-                workspace_session_service,
+                session_context_service,
                 session_manager,
             ),
         ),
@@ -64,7 +66,7 @@ def build_session_command_specs(
             description="从当前会话分叉新会话 — /fork <上下文描述>",
             execute=partial(
                 _execute_fork_session,
-                workspace_session_service,
+                session_context_service,
                 session_manager,
             ),
         ),
@@ -72,7 +74,7 @@ def build_session_command_specs(
 
 
 async def _execute_new_session(
-    service: RemoteWorkspaceSessionService,
+    service: SessionContextService,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
@@ -84,7 +86,7 @@ async def _execute_new_session(
             text="默认 Agent 不存在，无法创建会话。请先检查默认 Agent 配置。"
         )
 
-    result = await service.create_session(
+    result = await service.create_new_session(
         chat_context_scope_id=ctx.chat_context_scope_id,
         channel_instance_id=ctx.channel_instance_id,
         chat_id=ctx.chat_id,
@@ -100,7 +102,7 @@ async def _execute_new_session(
 
 
 async def _execute_switch_session(
-    service: RemoteWorkspaceSessionService,
+    service: SessionContextService,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
@@ -127,7 +129,7 @@ async def _execute_switch_session(
 
 
 async def _execute_fork_session(
-    service: RemoteWorkspaceSessionService,
+    service: SessionContextService,
     session_manager: SessionManager,
     ctx: CommandContext,
     args: str,
@@ -160,7 +162,7 @@ async def _execute_fork_session(
 
 
 async def _execute_list_sessions(
-    service: RemoteWorkspaceSessionService,
+    service: SessionContextService,
     scheduler: Scheduler,
     ctx: CommandContext,
     args: str,
@@ -183,7 +185,7 @@ async def _execute_list_sessions(
 
     for i, session in enumerate(sessions, 1):
         status_text = await _resolve_status_text(scheduler, session)
-        status_emoji = _status_to_emoji(status_text)
+        status_emoji = status_to_emoji(status_text)
 
         header_parts: list[dict] = [bold(f"{i}. ")]
         if session.id == current_session_id:
@@ -239,23 +241,6 @@ async def _execute_list_sessions(
 
     post_content = build_post_content("会话列表", content)
     return CommandResult(post_content=post_content)
-
-
-def _status_to_emoji(status: str) -> str:
-    status_map = {
-        "运行中": "🟢",
-        "等待中": "⏳",
-        "队列中": "📋",
-        "闲置": "⚪",
-        "已完成": "✅",
-        "失败": "❌",
-        "取消": "🚫",
-        "未启动": "⚪",
-    }
-    for key, emoji in status_map.items():
-        if key in status:
-            return emoji
-    return "⚪"
 
 
 async def _resolve_status_text(

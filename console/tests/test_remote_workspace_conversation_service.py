@@ -1,15 +1,16 @@
-"""Unit tests for RemoteWorkspaceConversationService."""
+"""Unit tests for AgentExecutor task-tracking integration.
+
+These tests verify that AgentExecutor.execute() handles implicit task
+creation and message counting (previously in RemoteWorkspaceConversationService).
+"""
 
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
+from server.channels.agent_executor import AgentExecutor
 from server.channels.session.models import Session
-from server.services.remote_workspace_conversation import (
-    RemoteWorkspaceConversationService,
-)
 
 
 def _session(
@@ -18,7 +19,7 @@ def _session(
     now = datetime.now(timezone.utc)
     return Session(
         id="sess-1",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
         runtime_agent_id="runtime-1",
         scheduler_state_id="state-1",
@@ -30,50 +31,33 @@ def _session(
     )
 
 
-@pytest.mark.asyncio
-async def test_send_message_creates_implicit_task_before_first_dispatch() -> None:
-    session = _session()
-    session_service = SimpleNamespace(
-        resolve_current_session=AsyncMock(return_value=(None, session)),
+def _make_executor() -> AgentExecutor:
+    scheduler = AsyncMock()
+    scheduler.route_root_input = AsyncMock(
+        return_value=AsyncMock(action="stream", stream=None, state_id="state-1")
     )
-    executor = SimpleNamespace(
-        execute=AsyncMock(return_value=SimpleNamespace(action="stream", stream=None)),
-    )
-    service = RemoteWorkspaceConversationService(
-        session_service=session_service,
-        executor=executor,
-    )
+    store = AsyncMock()
+    store.upsert_session = AsyncMock()
+    return AgentExecutor(scheduler=scheduler, store=store, timeout=60)
 
-    dispatch = await service.send_message(
-        agent=object(),
-        chat_context_scope_id="scope-1",
-        user_message="hello",
-    )
+
+@pytest.mark.asyncio
+async def test_execute_creates_implicit_task_before_first_dispatch() -> None:
+    session = _session()
+    executor = _make_executor()
+
+    await executor.execute(agent=AsyncMock(), session=session, user_input="hello")
 
     assert session.current_task_id is not None
     assert session.task_message_count == 1
-    assert dispatch.action == "stream"
 
 
 @pytest.mark.asyncio
-async def test_send_message_reuses_current_task_for_follow_up_message() -> None:
+async def test_execute_reuses_current_task_for_follow_up_message() -> None:
     session = _session(current_task_id="task-1", task_message_count=1)
-    session_service = SimpleNamespace(
-        resolve_current_session=AsyncMock(return_value=(None, session)),
-    )
-    executor = SimpleNamespace(
-        execute=AsyncMock(return_value=SimpleNamespace(action="stream", stream=None)),
-    )
-    service = RemoteWorkspaceConversationService(
-        session_service=session_service,
-        executor=executor,
-    )
+    executor = _make_executor()
 
-    await service.send_message(
-        agent=object(),
-        chat_context_scope_id="scope-1",
-        user_message="follow up",
-    )
+    await executor.execute(agent=AsyncMock(), session=session, user_input="follow up")
 
     assert session.current_task_id == "task-1"
     assert session.task_message_count == 2

@@ -16,7 +16,6 @@ from server.channels.session.models import ChannelChatContext, Session
 def _chat_context() -> ChannelChatContext:
     now = datetime.now(timezone.utc)
     return ChannelChatContext(
-        id="ctx-1",
         scope_id="scope-1",
         channel_instance_id="feishu-main",
         chat_id="chat-1",
@@ -33,7 +32,7 @@ def _session() -> Session:
     now = datetime.now(timezone.utc)
     return Session(
         id="sess-1",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
         runtime_agent_id="runtime-1",
         scheduler_state_id="runtime-1",
@@ -115,7 +114,7 @@ def test_switch_session_returns_updated_binding() -> None:
     previous_session = _session()
     target_session = Session(
         id="sess-2",
-        chat_context_id="ctx-1",
+        chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
         runtime_agent_id="runtime-2",
         scheduler_state_id="state-2",

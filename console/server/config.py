@@ -38,8 +38,7 @@ class ConsoleConfig(BaseSettings):
     run_step_storage_type: Literal["memory", "sqlite"] = "sqlite"
 
     # Storage backend for traces.
-    # "none" is treated the same as "memory" for lightweight runtime-only tracing.
-    trace_storage_type: Literal["none", "memory", "sqlite"] = "sqlite"
+    trace_storage_type: Literal["memory", "sqlite"] = "sqlite"
 
     # Storage backend for console metadata (agent registry, channel runtime, scheduler state).
     metadata_storage_type: Literal["memory", "sqlite"] = "sqlite"
@@ -94,12 +93,12 @@ class ConsoleConfig(BaseSettings):
         """Trace collection name from SDK settings."""
         return sdk_settings.trace_collection_name or "agiwo_traces"
 
-    @property
-    def effective_trace_storage_type(self) -> Literal["memory", "sqlite"]:
-        """Normalized trace storage type."""
-        if self.trace_storage_type == "none":
+    @field_validator("trace_storage_type", mode="before")
+    @classmethod
+    def _normalize_trace_storage_type(cls, value: object) -> str:
+        if value == "none":
             return "memory"
-        return self.trace_storage_type
+        return value  # type: ignore[return-value]
 
     @field_validator("default_agent_model_params", mode="before")
     @classmethod

@@ -43,7 +43,6 @@ class InboundMessage:
 
 @dataclass
 class ChannelChatContext:
-    id: str
     scope_id: str
     channel_instance_id: str
     chat_id: str
@@ -58,7 +57,7 @@ class ChannelChatContext:
 @dataclass
 class Session:
     id: str
-    chat_context_id: str
+    chat_context_scope_id: str
     base_agent_id: str
     runtime_agent_id: str
     scheduler_state_id: str
@@ -119,10 +118,6 @@ class BatchPayload:
 
 class ChannelChatSessionStore(Protocol):
     async def get_chat_context(self, scope_id: str) -> ChannelChatContext | None: ...
-    async def get_chat_context_by_id(
-        self,
-        chat_context_id: str,
-    ) -> ChannelChatContext | None: ...
     async def upsert_chat_context(self, chat_context: ChannelChatContext) -> None: ...
     async def get_session(self, session_id: str) -> Session | None: ...
     async def get_session_with_context(
@@ -138,5 +133,5 @@ class ChannelChatSessionStore(Protocol):
         self, user_open_id: str
     ) -> list[SessionWithContext]: ...
     async def list_sessions_by_chat_context(
-        self, chat_context_id: str
+        self, chat_context_scope_id: str
     ) -> list[Session]: ...

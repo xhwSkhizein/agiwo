@@ -8,6 +8,7 @@ from server.channels.session.models import InboundMessage
 
 _GROUP_HISTORY_MAX_ITEMS = 20
 _GROUP_HISTORY_WINDOW_MS = 15 * 60 * 1000
+_GROUP_HISTORY_MAX_GROUPS = 200
 
 
 @dataclass
@@ -24,9 +25,11 @@ class FeishuGroupHistoryStore:
         *,
         max_items: int = _GROUP_HISTORY_MAX_ITEMS,
         window_ms: int = _GROUP_HISTORY_WINDOW_MS,
+        max_groups: int = _GROUP_HISTORY_MAX_GROUPS,
     ) -> None:
         self._max_items = max_items
         self._window_ms = window_ms
+        self._max_groups = max_groups
         self._group_recent_messages: dict[str, deque[_GroupRecentMessage]] = {}
 
     def record_message(
@@ -48,6 +51,7 @@ class FeishuGroupHistoryStore:
             )
         )
         self._trim_history(history)
+        self._evict_stale_groups()
 
     def get_history_lines(
         self,
@@ -76,6 +80,17 @@ class FeishuGroupHistoryStore:
             len(history) > self._max_items or history[0].event_time_ms < cutoff_ms
         ):
             history.popleft()
+
+    def _evict_stale_groups(self) -> None:
+        if len(self._group_recent_messages) <= self._max_groups:
+            return
+        groups = sorted(
+            self._group_recent_messages.items(),
+            key=lambda kv: kv[1][-1].event_time_ms if kv[1] else 0,
+        )
+        while len(self._group_recent_messages) > self._max_groups and groups:
+            chat_id, _ = groups.pop(0)
+            del self._group_recent_messages[chat_id]
 
     def _cutoff_ms(self) -> int:
         return int(time.time() * 1000) - self._window_ms

@@ -381,8 +381,8 @@ async def test_inbound_handler_acknowledges_and_enqueues_non_command_messages() 
 
 
 @pytest.mark.asyncio
-async def test_feishu_batch_uses_shared_conversation_service() -> None:
-    """Verify that the workspace conversation service is wired through the Feishu factory."""
+async def test_feishu_service_components_can_be_constructed() -> None:
+    """Verify that FeishuServiceComponents can be created with required fields."""
     components = FeishuServiceComponents(
         api=Mock(),
         store=Mock(),
@@ -394,8 +394,8 @@ async def test_feishu_batch_uses_shared_conversation_service() -> None:
         tmp_dir=Path("/tmp/test"),
         message_builder=Mock(),
         delivery_service=Mock(),
-        inbound_handler=Mock(),
+        content_extractor=Mock(),
+        group_history_store=Mock(),
         bot_open_id="bot-1",
-        workspace_conversation=Mock(),
     )
-    assert components.workspace_conversation is not None
+    assert components.executor is not None
