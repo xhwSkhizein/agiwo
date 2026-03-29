@@ -50,7 +50,11 @@ def _resolve_usage_metric(
 _USAGE_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
     "input_tokens": ("input_tokens", "prompt_tokens"),
     "output_tokens": ("output_tokens", "completion_tokens"),
-    "cache_read_tokens": ("cache_read_tokens", "cache_read_input_tokens", "cached_tokens"),
+    "cache_read_tokens": (
+        "cache_read_tokens",
+        "cache_read_input_tokens",
+        "cached_tokens",
+    ),
     "cache_creation_tokens": ("cache_creation_tokens", "cache_creation_input_tokens"),
 }
 
@@ -82,10 +86,18 @@ def normalize_usage_metrics(
             "cache_creation_tokens": None,
         }
 
-    base_input = _resolve_usage_metric(usage_data, *_USAGE_METRIC_ALIASES["input_tokens"])
-    output_tokens = _resolve_usage_metric(usage_data, *_USAGE_METRIC_ALIASES["output_tokens"])
-    cache_read_tokens = _resolve_usage_metric(usage_data, *_USAGE_METRIC_ALIASES["cache_read_tokens"])
-    cache_creation_tokens = _resolve_usage_metric(usage_data, *_USAGE_METRIC_ALIASES["cache_creation_tokens"])
+    base_input = _resolve_usage_metric(
+        usage_data, *_USAGE_METRIC_ALIASES["input_tokens"]
+    )
+    output_tokens = _resolve_usage_metric(
+        usage_data, *_USAGE_METRIC_ALIASES["output_tokens"]
+    )
+    cache_read_tokens = _resolve_usage_metric(
+        usage_data, *_USAGE_METRIC_ALIASES["cache_read_tokens"]
+    )
+    cache_creation_tokens = _resolve_usage_metric(
+        usage_data, *_USAGE_METRIC_ALIASES["cache_creation_tokens"]
+    )
 
     input_tokens = base_input
     if _has_anthropic_cache_fields(usage_data) and input_tokens is not None:
