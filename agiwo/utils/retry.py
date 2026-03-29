@@ -21,10 +21,29 @@ T = TypeVar("T")
 
 logger = get_logger(__name__)
 
-# Common retryable exceptions for LLM APIs
-# We will catch generic Exception for now or specific ones if we import them from openai
-# Ideally we should catch openai.RateLimitError, openai.APIError, openai.Timeout
-RETRYABLE_EXCEPTIONS = (Exception,)
+RETRYABLE_EXCEPTIONS: tuple[type[Exception], ...] = (
+    ConnectionError,
+    TimeoutError,
+    OSError,
+)
+
+try:
+    from openai import APIConnectionError as _OAIConn, APITimeoutError as _OAITimeout, RateLimitError as _OAIRate  # noqa: E501
+    RETRYABLE_EXCEPTIONS = (*RETRYABLE_EXCEPTIONS, _OAIConn, _OAITimeout, _OAIRate)
+except ImportError:
+    pass
+
+try:
+    from anthropic import APIConnectionError as _AConn, APITimeoutError as _ATimeout, RateLimitError as _ARate  # noqa: E501
+    RETRYABLE_EXCEPTIONS = (*RETRYABLE_EXCEPTIONS, _AConn, _ATimeout, _ARate)
+except ImportError:
+    pass
+
+try:
+    from httpx import ConnectError as _HConn, ReadTimeout as _HRead
+    RETRYABLE_EXCEPTIONS = (*RETRYABLE_EXCEPTIONS, _HConn, _HRead)
+except ImportError:
+    pass
 
 
 def retry_async(

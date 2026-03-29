@@ -183,11 +183,14 @@ class AgentTraceCollector:
 
     PREVIEW_LENGTH = 500
 
+    _SAVE_EVERY_N_STEPS = 5
+
     def __init__(self, store: BaseTraceStorage | None = None) -> None:
         self.store = store
         self._trace: Trace | None = None
         self._run_spans: dict[str, Span] = {}
         self._assistant_cache: OrderedDict[str, StepRecord] = OrderedDict()
+        self._step_count_since_save: int = 0
 
     @property
     def trace_id(self) -> str | None:
@@ -264,7 +267,10 @@ class AgentTraceCollector:
                     fallback,
                 )
             )
-        await self._save_trace()
+        self._step_count_since_save += 1
+        if self._step_count_since_save >= self._SAVE_EVERY_N_STEPS:
+            self._step_count_since_save = 0
+            await self._save_trace()
 
     async def on_run_completed(self, output: RunOutput, *, run_id: str) -> None:
         trace = self._require_trace()

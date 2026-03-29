@@ -1,6 +1,8 @@
 """AWS Bedrock Anthropic model implementation."""
 
+import asyncio
 import json
+import queue as _queue
 from typing import Any, AsyncIterator
 
 try:
@@ -115,20 +117,37 @@ class BedrockAnthropicModel(Model):
 
         try:
             client = self._get_client()
-            response = client.invoke_model_with_response_stream(
+            response = await asyncio.to_thread(
+                client.invoke_model_with_response_stream,
                 modelId=self.id,
                 body=json.dumps(body),
             )
 
             translator = AnthropicStreamTranslator(include_reasoning=False)
 
-            for event in response["body"]:
-                chunk = json.loads(event["chunk"]["bytes"].decode())
+            sync_queue: _queue.SimpleQueue[dict | None] = _queue.SimpleQueue()
+
+            def _read_stream() -> None:
+                try:
+                    for event in response["body"]:
+                        sync_queue.put(json.loads(event["chunk"]["bytes"].decode()))
+                finally:
+                    sync_queue.put(None)
+
+            loop = asyncio.get_running_loop()
+            reader_task = loop.run_in_executor(None, _read_stream)
+
+            while True:
+                chunk_data = await loop.run_in_executor(None, sync_queue.get)
+                if chunk_data is None:
+                    break
                 stream_chunk = translator.process(
-                    normalize_bedrock_anthropic_event(chunk)
+                    normalize_bedrock_anthropic_event(chunk_data)
                 )
                 if stream_chunk is not None:
                     yield stream_chunk
+
+            await reader_task
 
         except ClientError as e:
             logger.error(
