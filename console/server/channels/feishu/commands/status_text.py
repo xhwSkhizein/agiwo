@@ -12,15 +12,14 @@ _STATUS_LABELS = {
     AgentStateStatus.FAILED: "已失败",
 }
 
-_STATUS_EMOJI_MAP = {
-    "运行中": "🟢",
-    "等待中": "⏳",
-    "队列中": "📋",
-    "闲置": "⚪",
-    "已完成": "✅",
-    "失败": "❌",
-    "取消": "🚫",
-    "未启动": "⚪",
+_STATUS_EMOJI = {
+    AgentStateStatus.PENDING: "⏳",
+    AgentStateStatus.RUNNING: "🟢",
+    AgentStateStatus.WAITING: "⏳",
+    AgentStateStatus.IDLE: "⚪",
+    AgentStateStatus.QUEUED: "📋",
+    AgentStateStatus.COMPLETED: "✅",
+    AgentStateStatus.FAILED: "❌",
 }
 
 
@@ -29,12 +28,11 @@ def format_scheduler_status(status: AgentStateStatus) -> str:
     return _STATUS_LABELS.get(status, status.value)
 
 
-def status_to_emoji(status: str) -> str:
-    """Convert scheduler status text to an emoji indicator."""
-    for key, emoji in _STATUS_EMOJI_MAP.items():
-        if key in status:
-            return emoji
-    return "⚪"
+def status_to_emoji(status: AgentStateStatus | None) -> str:
+    """Return the emoji indicator for a scheduler status."""
+    if status is None:
+        return "⚪"
+    return _STATUS_EMOJI.get(status, "⚪")
 
 
 __all__ = ["format_scheduler_status", "status_to_emoji"]

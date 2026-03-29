@@ -96,11 +96,7 @@ class FeishuInboundHandler:
             )
             return {"msg": "ignored_not_trigger"}
 
-        command_result = await self._try_handle_command(inbound)
-        if command_result is not None:
-            return command_result
-
-        # Resolve default agent before ACK to catch config errors early
+        # Resolve default agent before ACK/command to catch config errors early
         try:
             default_agent = await self._session_service.resolve_default_agent_config()
             if default_agent is None and self._default_agent_name:
@@ -114,6 +110,10 @@ class FeishuInboundHandler:
                     "请检查 AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME 配置。"
                 ),
             }
+
+        command_result = await self._try_handle_command(inbound, default_agent)
+        if command_result is not None:
+            return command_result
 
         await self._delivery_service.send_ack(inbound)
         await self._enqueue_message(inbound, default_agent)
@@ -137,6 +137,7 @@ class FeishuInboundHandler:
     async def _try_handle_command(
         self,
         inbound: InboundMessage,
+        default_agent: Any,
     ) -> dict[str, Any] | None:
         parsed = self._command_registry.try_parse(inbound.text)
         if parsed is None:
@@ -152,7 +153,7 @@ class FeishuInboundHandler:
             sender=inbound.sender_name,
         )
 
-        ctx = await self._build_command_context(inbound)
+        ctx = await self._build_command_context(inbound, default_agent)
         try:
             result = await handler.execute(ctx, args)
         except Exception as exc:  # noqa: BLE001
@@ -173,8 +174,9 @@ class FeishuInboundHandler:
         await self._delivery_service.send_command_response(inbound, result_text)
         return {"msg": "command_executed"}
 
-    async def _build_command_context(self, inbound: InboundMessage) -> CommandContext:
-        default_agent = await self._session_service.resolve_default_agent_config()
+    async def _build_command_context(
+        self, inbound: InboundMessage, default_agent: Any
+    ) -> CommandContext:
         chat_context_scope_id = self._build_chat_context_scope_id(inbound)
         (
             chat_context,

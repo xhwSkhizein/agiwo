@@ -5,6 +5,7 @@ Runtime agent cache and lifecycle management for channel sessions.
 import asyncio
 import hashlib
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from agiwo.agent import Agent
@@ -21,6 +22,12 @@ from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 logger = get_logger(__name__)
 
 
+@dataclass(slots=True)
+class _CachedAgent:
+    agent: Agent
+    config_fingerprint: str
+
+
 class RuntimeAgentPool:
     def __init__(
         self,
@@ -34,12 +41,11 @@ class RuntimeAgentPool:
         self._agent_registry = agent_registry
         self._console_config = console_config
         self._store = store
-        self._runtime_agents: dict[str, Agent] = {}
-        self._runtime_agent_config_fingerprints: dict[str, str] = {}
+        self._cache: dict[str, _CachedAgent] = {}
 
     @property
     def runtime_agents(self) -> dict[str, Agent]:
-        return self._runtime_agents
+        return {k: v.agent for k, v in self._cache.items()}
 
     async def get_or_create_runtime_agent(self, session: Session) -> Agent:
         base_config = await self._agent_registry.get_agent(session.base_agent_id)
@@ -47,13 +53,10 @@ class RuntimeAgentPool:
             raise BaseAgentNotFoundError(session.base_agent_id)
 
         expected_fingerprint = self._build_runtime_config_fingerprint(base_config)
-        existing = self._runtime_agents.get(session.runtime_agent_id)
-        if existing is not None:
-            current_fingerprint = self._runtime_agent_config_fingerprints.get(
-                session.runtime_agent_id
-            )
-            if current_fingerprint == expected_fingerprint:
-                return existing
+        cached = self._cache.get(session.runtime_agent_id)
+        if cached is not None:
+            if cached.config_fingerprint == expected_fingerprint:
+                return cached.agent
             logger.info(
                 "runtime_agent_refresh_on_config_change",
                 runtime_agent_id=session.runtime_agent_id,
@@ -63,21 +66,21 @@ class RuntimeAgentPool:
         previous_runtime_id = session.runtime_agent_id
         # Capture the pre-assignment runtime id; after _assign_runtime_identity()
         # session.runtime_agent_id points at the new agent id, so this is the key
-        # we must remove from the old runtime caches.
+        # we must remove from the old runtime cache.
         agent = await build_agent(
             base_config,
             self._console_config,
             self._agent_registry,
             id=previous_runtime_id or None,
         )
-        self._assign_runtime_identity(session, agent)
+        assign_runtime_identity(session, agent.id)
 
         if previous_runtime_id:
             rebound = await self._scheduler.rebind_agent(
                 session.scheduler_state_id or previous_runtime_id,
                 agent,
             )
-            if not rebound and existing is not None:
+            if not rebound and cached is not None:
                 logger.info(
                     "runtime_agent_refresh_deferred",
                     runtime_agent_id=previous_runtime_id,
@@ -85,37 +88,31 @@ class RuntimeAgentPool:
                     reason="state_active",
                 )
                 await agent.close()
-                return existing
+                return cached.agent
 
-        retired = self._runtime_agents.pop(previous_runtime_id, None)
-        self._runtime_agent_config_fingerprints.pop(previous_runtime_id, None)
-        if retired is not None and retired is not agent:
-            await retired.close()
+        retired = self._cache.pop(previous_runtime_id, None)
+        if retired is not None and retired.agent is not agent:
+            await retired.agent.close()
 
         session.updated_at = datetime.now(timezone.utc)
         await self._store.upsert_session(session)
 
-        self._runtime_agents[session.runtime_agent_id] = agent
-        self._runtime_agent_config_fingerprints[session.runtime_agent_id] = (
-            expected_fingerprint
+        self._cache[session.runtime_agent_id] = _CachedAgent(
+            agent=agent,
+            config_fingerprint=expected_fingerprint,
         )
         return agent
 
     async def close_runtime_agent(self, agent_id: str) -> None:
-        cached = self._runtime_agents.pop(agent_id, None)
-        self._runtime_agent_config_fingerprints.pop(agent_id, None)
-        if cached is not None:
-            await cached.close()
+        retired = self._cache.pop(agent_id, None)
+        if retired is not None:
+            await retired.agent.close()
 
     async def close(self) -> None:
-        close_tasks = [agent.close() for agent in self._runtime_agents.values()]
+        close_tasks = [c.agent.close() for c in self._cache.values()]
         if close_tasks:
             await asyncio.gather(*close_tasks, return_exceptions=True)
-        self._runtime_agents.clear()
-        self._runtime_agent_config_fingerprints.clear()
-
-    def _assign_runtime_identity(self, session: Session, agent: Agent) -> None:
-        assign_runtime_identity(session, agent.id)
+        self._cache.clear()
 
     def _build_runtime_config_fingerprint(self, base_config: AgentConfigRecord) -> str:
         payload = {

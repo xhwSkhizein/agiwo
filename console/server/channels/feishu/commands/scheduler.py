@@ -85,7 +85,7 @@ async def _execute_agents(
 
     for i, state in enumerate(states, 1):
         status_label = format_scheduler_status(state.status)
-        status_emoji = status_to_emoji(status_label)
+        status_emoji = status_to_emoji(state.status)
         persistent = "📌" if state.is_persistent else ""
         depth_indent = "  " * (state.depth if state.depth > 0 else 0)
 
@@ -168,7 +168,7 @@ async def _execute_detail(
         return CommandResult(text=f"未找到 Agent: {state_id}")
 
     status_label = format_scheduler_status(state.status)
-    status_emoji = status_to_emoji(status_label)
+    status_emoji = status_to_emoji(state.status)
 
     content: list[list[dict]] = []
 
@@ -238,7 +238,6 @@ async def _execute_detail(
     content.append([bold("🔹 任务")])
 
     if state.task is not None:
-        # Show full task without truncation
         task_text = _user_input_to_string(state.task)
         content.append([text_element(task_text)])
     else:
@@ -247,7 +246,6 @@ async def _execute_detail(
     if state.result_summary:
         content.append(new_line())
         content.append([bold("🔹 结果摘要")])
-        # Show full summary without truncation
         content.append([text_element(state.result_summary)])
 
     # Wake condition

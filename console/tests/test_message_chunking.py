@@ -2,7 +2,7 @@
 
 import re
 
-from server.channels.base import split_text_into_chunks
+from server.channels.utils import split_text_into_chunks
 
 
 def test_split_text_short_message():

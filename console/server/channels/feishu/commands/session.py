@@ -6,6 +6,7 @@ from datetime import datetime
 from functools import partial
 
 from agiwo.scheduler.engine import Scheduler
+from agiwo.scheduler.models import AgentStateStatus
 
 from server.channels.feishu.commands.base import (
     CommandContext,
@@ -184,8 +185,8 @@ async def _execute_list_sessions(
     content.append(new_line())
 
     for i, session in enumerate(sessions, 1):
-        status_text = await _resolve_status_text(scheduler, session)
-        status_emoji = status_to_emoji(status_text)
+        status_text, status_enum = await _resolve_status(scheduler, session)
+        status_emoji = status_to_emoji(status_enum)
 
         header_parts: list[dict] = [bold(f"{i}. ")]
         if session.id == current_session_id:
@@ -243,16 +244,16 @@ async def _execute_list_sessions(
     return CommandResult(post_content=post_content)
 
 
-async def _resolve_status_text(
+async def _resolve_status(
     scheduler: Scheduler,
     session: Session,
-) -> str:
+) -> tuple[str, AgentStateStatus | None]:
     if not session.scheduler_state_id:
-        return "未启动"
+        return "未启动", None
     state = await scheduler.get_state(session.scheduler_state_id)
     if state is None:
-        return "未启动"
-    return format_scheduler_status(state.status)
+        return "未启动", None
+    return format_scheduler_status(state.status), state.status
 
 
 def _format_time(dt: datetime) -> str:

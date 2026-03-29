@@ -16,7 +16,7 @@ from server.dependencies import (
     bind_console_runtime,
     clear_console_runtime,
 )
-from server.channels.base import safe_close_all
+from server.channels.utils import safe_close_all
 from server.channels.feishu import FeishuChannelService
 from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
 from server.services.agent_registry import AgentRegistry, AgentConfigRecord
