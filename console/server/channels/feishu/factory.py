@@ -8,8 +8,8 @@ from pathlib import Path
 from agiwo.scheduler.engine import Scheduler
 
 from server.channels.agent_executor import AgentExecutor
+from server.channels.base import truncate_for_log
 from server.channels.feishu.api_client import FeishuApiClient
-from server.channels.feishu.commands import build_feishu_command_registry
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.connection import FeishuConnection
 from server.channels.feishu.delivery_service import FeishuDeliveryService
@@ -28,7 +28,7 @@ from server.channels.feishu.store import (
     create_feishu_channel_store,
 )
 from server.channels.runtime_agent_pool import RuntimeAgentPool
-from server.channels.session import SessionContextService, SessionManager
+from server.channels.session import SessionContextService
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
 from server.services.remote_workspace_conversation import (
@@ -49,7 +49,6 @@ class FeishuServiceComponents:
         session_service: SessionContextService,
         agent_pool: RuntimeAgentPool,
         executor: AgentExecutor,
-        session_manager: SessionManager,
         tmp_dir: Path,
         message_builder: FeishuUserMessageBuilder,
         delivery_service: FeishuDeliveryService,
@@ -64,7 +63,6 @@ class FeishuServiceComponents:
         self.session_service = session_service
         self.agent_pool = agent_pool
         self.executor = executor
-        self.session_manager = session_manager
         self.tmp_dir = tmp_dir
         self.message_builder = message_builder
         self.delivery_service = delivery_service
@@ -133,12 +131,6 @@ class FeishuServiceFactory:
             timeout=config.feishu_scheduler_wait_timeout,
         )
 
-        session_manager = SessionManager(
-            on_batch_ready=None,  # Will be set by BaseChannelService
-            debounce_ms=config.feishu_debounce_ms,
-            max_batch_window_ms=config.feishu_max_batch_window_ms,
-        )
-
         tmp_dir = Path(tempfile.mkdtemp(prefix="feishu_attachments_"))
 
         attachment_resolver = FeishuAttachmentResolver(
@@ -155,18 +147,7 @@ class FeishuServiceFactory:
         delivery_service = FeishuDeliveryService(
             api=api,
             config=config,
-            truncate_for_log=lambda x: (
-                x[:1200] + "...[truncated]" if len(x) > 1200 else x
-            ),
-        )
-
-        command_registry = build_feishu_command_registry(
-            session_service=session_service,
-            agent_pool=agent_pool,
-            session_manager=session_manager,
-            scheduler=scheduler,
-            agent_registry=agent_registry,
-            console_config=config,
+            truncate_for_log=truncate_for_log,
         )
 
         inbound_handler = FeishuInboundHandler(
@@ -178,12 +159,8 @@ class FeishuServiceFactory:
             group_history_store=group_history_store,
             store=store,
             session_service=session_service,
-            session_manager=session_manager,
-            command_registry=command_registry,
             delivery_service=delivery_service,
-            truncate_for_log=lambda x: (
-                x[:1200] + "...[truncated]" if len(x) > 1200 else x
-            ),
+            truncate_for_log=truncate_for_log,
         )
 
         workspace_conversation = RemoteWorkspaceConversationService(
@@ -199,7 +176,6 @@ class FeishuServiceFactory:
             session_service=session_service,
             agent_pool=agent_pool,
             executor=executor,
-            session_manager=session_manager,
             tmp_dir=tmp_dir,
             message_builder=message_builder,
             delivery_service=delivery_service,

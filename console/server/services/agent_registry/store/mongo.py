@@ -1,17 +1,24 @@
 """MongoDB backend for agent registry."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from agiwo.utils.mongo_pool import (
     get_shared_mongo_client,
     release_shared_mongo_client,
 )
 from server.services.agent_registry.models import AgentConfigRecord
 
+if TYPE_CHECKING:
+    from motor.motor_asyncio import AsyncIOMotorCollection
+
 
 class MongoAgentRegistryStore:
     def __init__(self, mongo_uri: str, mongo_db_name: str) -> None:
         self._mongo_uri = mongo_uri
         self._mongo_db_name = mongo_db_name
-        self._collection: object | None = None
+        self._collection: AsyncIOMotorCollection | None = None
 
     async def connect(self) -> None:
         if self._collection is not None:
@@ -71,7 +78,7 @@ class MongoAgentRegistryStore:
         result = await collection.delete_one({"id": agent_id})
         return result.deleted_count > 0
 
-    async def _require_collection(self) -> object:
+    async def _require_collection(self) -> AsyncIOMotorCollection:
         if self._collection is None:
             await self.connect()
         assert self._collection is not None

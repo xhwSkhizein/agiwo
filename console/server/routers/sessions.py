@@ -47,7 +47,11 @@ async def list_sessions(
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> list[SessionSummaryData]:
-    """List sessions by aggregating runs."""
+    """List sessions by aggregating runs.
+
+    .. note:: Pagination is applied in-memory after fetching all aggregates.
+       See ``collect_session_aggregates`` for performance considerations.
+    """
     storage = runtime.run_step_storage
     sessions = await collect_session_aggregates(storage)
     page = sessions[offset : offset + limit]

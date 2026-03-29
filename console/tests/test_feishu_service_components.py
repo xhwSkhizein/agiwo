@@ -391,7 +391,6 @@ async def test_feishu_batch_uses_shared_conversation_service() -> None:
         session_service=Mock(),
         agent_pool=Mock(),
         executor=Mock(),
-        session_manager=Mock(),
         tmp_dir=Path("/tmp/test"),
         message_builder=Mock(),
         delivery_service=Mock(),

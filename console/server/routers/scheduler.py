@@ -4,8 +4,6 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
-from sse_starlette.sse import EventSourceResponse
 
 from agiwo.scheduler.models import AgentStateStatus
 
@@ -19,7 +17,6 @@ from server.schemas import (
     AgentStateListItem,
     AgentStateResponse,
     CancelRequest,
-    ChatRequest,
     CreateAgentRequest,
     PendingEventResponse,
     ResumeRequest,
@@ -32,18 +29,9 @@ from server.services.agent_lifecycle import (
     build_agent,
     resume_persistent_agent,
 )
-from server.services.chat_sse import (
-    create_conversation_response,
-    scheduler_error_message,
-    stream_scheduler_events,
-)
 from server.services.metrics import build_metrics_by_state
 
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
-
-
-class SchedulerChatCancelRequest(BaseModel):
-    state_id: str
 
 
 # ── State Queries ────────────────────────────────────────────────────────────
@@ -229,40 +217,3 @@ async def create_persistent_agent(
         agent_config_id=config_id,
     )
     return {"ok": True, "state_id": state_id}
-
-
-# ── Scheduler Chat SSE ──────────────────────────────────────────────────────
-
-
-@router.post("/chat/{agent_id}")
-async def scheduler_chat(
-    agent_id: str,
-    body: ChatRequest,
-    runtime: ConsoleRuntimeDep,
-) -> EventSourceResponse:
-    """Send a message to an agent via the Scheduler and stream SSE events."""
-    return await create_conversation_response(
-        agent_id,
-        body.message,
-        body.session_id,
-        runtime,
-        stream_scheduler_events,
-        unexpected_error_builder=scheduler_error_message,
-    )
-
-
-@router.post("/chat/{agent_id}/cancel")
-async def cancel_orchestration(
-    agent_id: str,
-    body: SchedulerChatCancelRequest,
-    scheduler: SchedulerDep,
-):
-    """Cancel a running scheduler orchestration."""
-    del agent_id
-    success = await scheduler.cancel(body.state_id)
-    if not success:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No active orchestration found for state_id={body.state_id}",
-        )
-    return {"ok": True, "state_id": body.state_id}

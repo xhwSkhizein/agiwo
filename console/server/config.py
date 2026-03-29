@@ -49,9 +49,6 @@ class ConsoleConfig(BaseSettings):
     mongodb_db_name: str = "agiwo"
     mongodb_trace_collection: str = "traces"
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:3001"]
-
     # Default Agent Configuration
     default_agent_id: str = "default-console-agent"
     default_agent_name: str = "Console Agent"

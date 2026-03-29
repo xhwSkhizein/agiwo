@@ -35,6 +35,12 @@ _MAX_CHUNK_LEN = 6000
 _MAX_LOG_TEXT_LEN = 1200
 
 
+def truncate_for_log(text: str, max_len: int = _MAX_LOG_TEXT_LEN) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[:max_len] + "...[truncated]"
+
+
 async def safe_close_all(*closables: object) -> None:
     """Close multiple resources, logging and suppressing individual errors.
 
@@ -131,7 +137,7 @@ class BaseChannelService(ABC):
             chat_type=batch.context.chat_type,
             chat_id=batch.context.chat_id,
             message_count=len(batch.messages),
-            input_preview=self._truncate_for_log(user_message.extract_text()),
+            input_preview=truncate_for_log(user_message.extract_text()),
         )
 
         try:
@@ -222,11 +228,6 @@ class BaseChannelService(ABC):
             chunk + f"\n\n[续 {i + 1}/{total}]" if i < total - 1 else chunk
             for i, chunk in enumerate(raw_chunks)
         ]
-
-    def _truncate_for_log(self, text: str, max_len: int = _MAX_LOG_TEXT_LEN) -> str:
-        if len(text) <= max_len:
-            return text
-        return text[:max_len] + "...[truncated]"
 
     async def _can_deliver_session(
         self,

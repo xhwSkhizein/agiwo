@@ -4,7 +4,7 @@ API-layer Pydantic models for request/response serialization.
 
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agiwo.agent import UserInput
 from agiwo.config.settings import ModelProvider
@@ -119,6 +119,8 @@ class TraceResponse(BaseModel):
 
 
 class TraceListItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     trace_id: str
     agent_id: str | None = None
     session_id: str | None = None
@@ -158,7 +160,12 @@ class AgentConfigPayload(BaseModel):
 
 
 class AgentConfigReplace(AgentConfigPayload):
-    """Full-replacement payload for persisted agent config updates."""
+    """Full-replacement payload for persisted agent config updates.
+
+    Unlike AgentConfigPayload (used for creation where options/model_params
+    have default_factory defaults), this schema makes them required to ensure
+    every field is explicitly provided on a full replace.
+    """
 
     options: AgentOptionsInput
     model_params: ModelParamsInput
@@ -261,6 +268,10 @@ class CreateAgentRequest(BaseModel):
     session_id: str | None = None
 
 
+class SchedulerChatCancelRequest(BaseModel):
+    state_id: str
+
+
 class PendingEventResponse(BaseModel):
     id: str
     target_agent_id: str
@@ -291,13 +302,3 @@ class SwitchSessionRequest(BaseModel):
 
 class ForkSessionRequest(BaseModel):
     context_summary: str
-
-
-# ── Generic ─────────────────────────────────────────────────────────────
-
-
-class PaginatedResponse(BaseModel):
-    items: list[Any]
-    total: int
-    limit: int
-    offset: int

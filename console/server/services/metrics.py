@@ -127,6 +127,9 @@ def _merge_run_into_session(
     add_run_to_summary(session.metrics, run)
 
 
+# TODO(perf): This function scans all runs to derive sessions since there is
+# no dedicated session table. For large datasets, consider adding a persistent
+# session index or pushing pagination into the storage layer.
 async def collect_session_aggregates(
     run_storage: RunStoragePort,
     *,

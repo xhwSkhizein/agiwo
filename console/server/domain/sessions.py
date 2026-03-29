@@ -1,11 +1,13 @@
 """Console domain models for aggregated session summaries."""
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from pydantic import BaseModel, Field
 
 from agiwo.agent import UserInput
-from server.serialization.agent import (
+from agiwo.agent.models.run import Run
+from server.response_serialization import (
     serialize_run_user_input_payload,
     serialize_user_input_payload,
 )
@@ -18,10 +20,10 @@ from server.domain.run_metrics import RunMetricsSummary
 class SessionAggregate:
     session_id: str
     agent_id: str | None
-    last_run: object | None
+    last_run: Run | None
     metrics: RunMetricsSummary
-    created_at: object | None
-    updated_at: object | None
+    created_at: datetime | None
+    updated_at: datetime | None
 
 
 class SessionSummaryData(BaseModel):
@@ -60,23 +62,23 @@ def session_aggregate_to_summary_data(session: SessionAggregate) -> SessionSumma
     )
 
 
+def _format_last_input(last_run: Run | None) -> str | None:
+    if last_run is None:
+        return None
+    raw = serialize_run_user_input_payload(last_run.user_input)
+    if isinstance(raw, str) and raw:
+        return raw[:200]
+    return None
+
+
 def session_aggregate_to_chat_summary(session: SessionAggregate) -> dict[str, object]:
-    last_run = session.last_run
-    last_input = (
-        serialize_run_user_input_payload(last_run.user_input) if last_run else None
-    )
+    summary = session_aggregate_to_summary_data(session)
     return {
-        "session_id": session.session_id,
-        "run_count": session.metrics.run_count,
-        "last_input": (
-            last_input[:200] if isinstance(last_input, str) and last_input else None
-        ),
-        "last_response": (
-            last_run.response_content[:200]
-            if last_run and last_run.response_content
-            else None
-        ),
-        "updated_at": serialize_optional_datetime(session.updated_at),
+        "session_id": summary.session_id,
+        "run_count": summary.run_count,
+        "last_input": _format_last_input(session.last_run),
+        "last_response": summary.last_response,
+        "updated_at": summary.updated_at,
     }
 
 

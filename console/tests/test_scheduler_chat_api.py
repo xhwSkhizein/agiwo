@@ -1,16 +1,13 @@
 """
-Integration tests for the Scheduler Chat API endpoints.
+Integration tests for the Chat cancel API endpoint.
 
-Tests the /api/scheduler/chat/* routes using httpx TestClient.
+Tests the /api/chat/{agent_id}/cancel route using httpx TestClient.
 """
-
-from unittest.mock import AsyncMock
 
 import pytest
 
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.agent import RunCompletedEvent, StepDelta, StepDeltaEvent
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -27,7 +24,7 @@ from server.dependencies import (
     get_console_runtime_from_app,
 )
 from server.config import ConsoleConfig
-from server.services.agent_registry import AgentConfigRecord, AgentRegistry
+from server.services.agent_registry import AgentRegistry
 from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
 
@@ -82,7 +79,7 @@ class TestSchedulerChatCancel:
     async def test_cancel_nonexistent(self, client):
         """Cancel returns 404 when state_id doesn't exist."""
         resp = await client.post(
-            "/api/scheduler/chat/some-agent/cancel",
+            "/api/chat/some-agent/cancel",
             json={"state_id": "nonexistent-state"},
         )
         assert resp.status_code == 404
@@ -102,7 +99,7 @@ class TestSchedulerChatCancel:
         await scheduler._store.save_state(state)
 
         resp = await client.post(
-            "/api/scheduler/chat/some-agent/cancel",
+            "/api/chat/some-agent/cancel",
             json={"state_id": "completed-state"},
         )
         assert resp.status_code == 404
@@ -121,7 +118,7 @@ class TestSchedulerChatCancel:
         await scheduler._store.save_state(state)
 
         resp = await client.post(
-            "/api/scheduler/chat/some-agent/cancel",
+            "/api/chat/some-agent/cancel",
             json={"state_id": "running-state"},
         )
         assert resp.status_code == 200
@@ -147,7 +144,7 @@ class TestSchedulerChatCancel:
         await scheduler._store.save_state(state)
 
         resp = await client.post(
-            "/api/scheduler/chat/some-agent/cancel",
+            "/api/chat/some-agent/cancel",
             json={"state_id": "sleeping-state"},
         )
         assert resp.status_code == 200
@@ -184,7 +181,7 @@ class TestSchedulerChatCancel:
             await scheduler._store.save_state(s)
 
         resp = await client.post(
-            "/api/scheduler/chat/some-agent/cancel",
+            "/api/chat/some-agent/cancel",
             json={"state_id": "parent-cancel"},
         )
         assert resp.status_code == 200
@@ -200,96 +197,3 @@ class TestSchedulerChatCancel:
         child2_state = await scheduler.get_state("child-cancel-2")
         assert child2_state is not None
         assert child2_state.status == AgentStateStatus.COMPLETED
-
-
-class TestSchedulerChatEndpoint:
-    @pytest.mark.asyncio
-    async def test_chat_agent_not_found(self, client):
-        """Chat returns 404 when agent_id is not registered."""
-        resp = await client.post(
-            "/api/scheduler/chat/nonexistent-agent",
-            json={"message": "hello"},
-        )
-        assert resp.status_code == 404
-
-    @pytest.mark.asyncio
-    async def test_chat_streams_scheduler_events_and_completion(
-        self,
-        client,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        registry = _runtime(client).agent_registry
-        await registry.create_agent(
-            AgentConfigRecord(
-                id="agent-1",
-                name="scheduler-agent",
-                model_provider="openai",
-                model_name="gpt-test",
-            )
-        )
-
-        class FakeStreamingAgent:
-            def __init__(self) -> None:
-                self.closed = False
-
-            async def close(self) -> None:
-                self.closed = True
-
-        fake_agent = FakeStreamingAgent()
-        monkeypatch.setattr(
-            "server.services.chat_sse.build_agent",
-            AsyncMock(return_value=fake_agent),
-        )
-
-        scheduler = _runtime(client).scheduler
-        assert scheduler is not None
-
-        async def fake_stream(
-            message: str,
-            *,
-            agent,
-            session_id: str,
-            abort_signal,
-            timeout: int,
-        ):
-            assert agent is fake_agent
-            assert message == "hello"
-            assert session_id == "session-1"
-            assert timeout == 600
-            del abort_signal
-            yield StepDeltaEvent(
-                session_id="session-1",
-                run_id="run-1",
-                agent_id="agent-1",
-                parent_run_id=None,
-                depth=0,
-                step_id="step-1",
-                delta=StepDelta(content="hello"),
-            )
-            yield RunCompletedEvent(
-                session_id="session-1",
-                run_id="run-1",
-                agent_id="agent-1",
-                parent_run_id=None,
-                depth=0,
-                response="done",
-            )
-
-        monkeypatch.setattr(
-            scheduler,
-            "stream",
-            fake_stream,
-        )
-
-        async with client.stream(
-            "POST",
-            "/api/scheduler/chat/agent-1",
-            json={"message": "hello", "session_id": "session-1"},
-        ) as response:
-            assert response.status_code == 200
-            lines = [line async for line in response.aiter_lines()]
-
-        assert any(line == "event: step_delta" for line in lines)
-        assert any(line == "event: run_completed" for line in lines)
-        assert any('"response": "done"' in line for line in lines)
-        assert fake_agent.closed is True

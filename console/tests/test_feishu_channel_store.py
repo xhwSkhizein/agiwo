@@ -238,9 +238,9 @@ async def test_sqlite_feishu_channel_store_persists_across_reconnects(
         assert (
             await second_store.get_chat_context(chat_context.scope_id) == chat_context
         )
-        # feishu_session is dropped on reconnect (test-phase schema reset),
-        # so the session written by first_store is gone.
-        assert await second_store.get_session_with_context(session.id) is None
+        result = await second_store.get_session_with_context(session.id)
+        assert result is not None
+        assert result.session.id == session.id
     finally:
         await second_store.close()
 
