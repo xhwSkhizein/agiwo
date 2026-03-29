@@ -6,6 +6,10 @@ Provides core functionality for fetching web content using Playwright.
 
 import asyncio
 import time
+<<<<<<< HEAD
+=======
+from typing import Any
+>>>>>>> 0378823 (fix: resolve 5 critical correctness bugs)
 
 from playwright.async_api import Page
 
