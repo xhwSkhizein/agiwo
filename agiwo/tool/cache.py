@@ -40,6 +40,7 @@ class ToolResultCache:
             ttl_seconds: Time-to-live for cache entries (default: 1 hour)
         """
         self._cache: dict[str, CacheEntry] = {}
+        self._session_keys: dict[str, set[str]] = {}
         self._ttl = ttl_seconds
 
     def _make_key(self, session_id: str, tool_name: str, args: dict[str, Any]) -> str:
@@ -76,6 +77,11 @@ class ToolResultCache:
         # Check TTL
         if time.time() - entry.created_at > self._ttl:
             del self._cache[key]
+            session_set = self._session_keys.get(session_id)
+            if session_set is not None:
+                session_set.discard(key)
+                if not session_set:
+                    del self._session_keys[session_id]
             return None
 
         logger.debug(
@@ -106,6 +112,7 @@ class ToolResultCache:
 
         key = self._make_key(session_id, tool_name, args)
         self._cache[key] = CacheEntry(result=result)
+        self._session_keys.setdefault(session_id, set()).add(key)
 
         logger.debug(
             "tool_cache_set",
@@ -123,19 +130,15 @@ class ToolResultCache:
         Returns:
             Number of entries cleared
         """
-        # This is O(n) but cache size should be small
-        keys_to_delete = [
-            k
-            for k in self._cache
-            if k.startswith(session_id[:16])  # Rough prefix match
-        ]
+        keys_to_delete = self._session_keys.pop(session_id, set())
         for k in keys_to_delete:
-            del self._cache[k]
+            self._cache.pop(k, None)
         return len(keys_to_delete)
 
     def clear_all(self) -> None:
         """Clear entire cache."""
         self._cache.clear()
+        self._session_keys.clear()
 
 
 # Global cache instance (can be replaced with Redis etc. later)

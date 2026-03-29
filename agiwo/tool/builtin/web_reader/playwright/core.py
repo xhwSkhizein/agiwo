@@ -5,9 +5,7 @@ Provides core functionality for fetching web content using Playwright.
 """
 
 import asyncio
-import json
 import time
-from pathlib import Path
 from typing import Any
 
 from playwright.async_api import Page
@@ -252,44 +250,3 @@ class PlaywrightCrawler:
         finally:
             if page:
                 await page.close()
-
-    async def crawl_batch(
-        self, urls: list[str], save_dir: Path | None = None
-    ) -> list[dict[str, Any]]:
-        """
-        Crawl URLs in batch.
-
-        Args:
-            urls: List of URLs
-            save_dir: Save directory
-
-        Returns:
-            List of successfully crawled content
-        """
-        results = []
-        save_dir = save_dir or Path("crawled_data")
-        save_dir.mkdir(parents=True, exist_ok=True)
-
-        self.logger.info(f"Starting batch crawl, total {len(urls)} URLs")
-
-        for i, url in enumerate(urls, 1):
-            self.logger.info(f"\n[{i}/{len(urls)}] Processing {url}")
-
-            try:
-                content = await self.crawl_url(url, retries=self._config.max_retries)
-                if content:
-                    results.append(content)
-
-                    # Save to file
-                    file_name = f"{content['timestamp']}_{hash(url)}.json"
-                    (save_dir / file_name).write_text(
-                        json.dumps(content, ensure_ascii=False, indent=2),
-                        encoding="utf-8",
-                    )
-            except Exception as e:  # noqa: BLE001
-                self.logger.error(f"Failed to process URL: {e}")
-
-        self.logger.info(
-            f"Batch crawl completed, successful {len(results)}/{len(urls)}"
-        )
-        return results
