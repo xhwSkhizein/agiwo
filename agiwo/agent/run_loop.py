@@ -116,17 +116,7 @@ def _build_output(state: RunContext) -> RunOutput:
         response=state.response_content,
         run_id=state.run_id,
         session_id=state.session_id,
-        metrics=RunMetrics(
-            duration_ms=state.elapsed * 1000,
-            total_tokens=state.total_tokens,
-            input_tokens=state.input_tokens,
-            output_tokens=state.output_tokens,
-            cache_read_tokens=state.cache_read_tokens,
-            cache_creation_tokens=state.cache_creation_tokens,
-            token_cost=state.token_cost,
-            steps_count=state.steps_count,
-            tool_calls_count=state.tool_calls_count,
-        ),
+        metrics=RunMetrics.from_ledger(state.ledger, elapsed_ms=state.elapsed * 1000),
         termination_reason=state.termination_reason,
     )
 

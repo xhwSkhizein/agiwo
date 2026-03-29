@@ -1,7 +1,7 @@
 """Compact-operation domain types."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -18,7 +18,7 @@ class CompactMetadata:
     message_count: int
     transcript_path: str
     analysis: dict[str, Any]
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     compact_model: str = ""
     compact_tokens: int = 0
 

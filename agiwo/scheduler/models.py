@@ -194,7 +194,19 @@ class WakeCondition:
         return replace(self, timeout_at=timeout_at)
 
 
-_UNSET = object()
+class _UnsetType:
+    """Sentinel type for distinguishing 'not provided' from None."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+    def __bool__(self) -> bool:
+        return False
+
+
+_UNSET = _UnsetType()
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,12 +296,12 @@ class AgentState:
     def with_running(
         self,
         *,
-        task: UserInput | object = _UNSET,
-        pending_input: UserInput | None | object = _UNSET,
-        wake_condition: WakeCondition | None | object = _UNSET,
-        result_summary: str | None | object = _UNSET,
-        explain: str | None | object = _UNSET,
-        wake_count: int | object = _UNSET,
+        task: UserInput | _UnsetType = _UNSET,
+        pending_input: UserInput | None | _UnsetType = _UNSET,
+        wake_condition: WakeCondition | None | _UnsetType = _UNSET,
+        result_summary: str | None | _UnsetType = _UNSET,
+        explain: str | None | _UnsetType = _UNSET,
+        wake_count: int | _UnsetType = _UNSET,
     ) -> "AgentState":
         return self.with_updates(
             status=AgentStateStatus.RUNNING,
@@ -311,8 +323,8 @@ class AgentState:
         self,
         *,
         wake_condition: WakeCondition,
-        result_summary: str | None | object = _UNSET,
-        explain: str | None | object = _UNSET,
+        result_summary: str | None | _UnsetType = _UNSET,
+        explain: str | None | _UnsetType = _UNSET,
     ) -> "AgentState":
         return self.with_updates(
             status=AgentStateStatus.WAITING,
@@ -326,8 +338,8 @@ class AgentState:
     def with_idle(
         self,
         *,
-        result_summary: str | None | object = _UNSET,
-        explain: str | None | object = _UNSET,
+        result_summary: str | None | _UnsetType = _UNSET,
+        explain: str | None | _UnsetType = _UNSET,
     ) -> "AgentState":
         return self.with_updates(
             status=AgentStateStatus.IDLE,
@@ -350,7 +362,7 @@ class AgentState:
     def with_completed(
         self,
         *,
-        result_summary: str | None | object = _UNSET,
+        result_summary: str | None | _UnsetType = _UNSET,
     ) -> "AgentState":
         return self.with_updates(
             status=AgentStateStatus.COMPLETED,

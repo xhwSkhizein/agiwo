@@ -117,7 +117,7 @@ class DeepseekModel(OpenAIModel):
             return messages
 
         # Check if this is a thinking mode model
-        model_name = getattr(self, "model_name", None) or self.name
+        model_name = self.name
         is_thinking_mode = "reasoner" in model_name.lower()
 
         # Check if last message is a user message (new conversation turn)
