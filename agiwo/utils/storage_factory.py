@@ -30,9 +30,7 @@ def create_storage(
     factory = backends.get(storage_type)
     if factory is None:
         known = ", ".join(sorted(backends)) or "(none)"
-        raise ValueError(
-            f"Unknown {label} type: {storage_type!r}  (known: {known})"
-        )
+        raise ValueError(f"Unknown {label} type: {storage_type!r}  (known: {known})")
     return factory(config)
 
 

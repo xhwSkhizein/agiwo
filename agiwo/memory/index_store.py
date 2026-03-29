@@ -46,16 +46,10 @@ class MemoryIndexStore:
         self._embedding_provider = embedding_provider or _s.embedding_provider
         self._embedding_model = embedding_model or _s.embedding_model
         self._embedding_dims = (
-            embedding_dims
-            if embedding_dims is not None
-            else _s.embedding_dimensions
+            embedding_dims if embedding_dims is not None else _s.embedding_dimensions
         )
-        self._embedding_api_key = (
-            embedding_api_key or _s.get_embedding_api_key() or ""
-        )
-        self._embedding_api_base = (
-            embedding_api_base or _s.embedding_base_url or ""
-        )
+        self._embedding_api_key = embedding_api_key or _s.get_embedding_api_key() or ""
+        self._embedding_api_base = embedding_api_base or _s.embedding_base_url or ""
         self._top_k = top_k
 
         self._conn: sqlite3.Connection | None = None
@@ -65,9 +59,7 @@ class MemoryIndexStore:
 
         self._chunker = MemoryChunker(
             chunk_tokens=(
-                chunk_tokens
-                if chunk_tokens is not None
-                else _s.memory_chunk_tokens
+                chunk_tokens if chunk_tokens is not None else _s.memory_chunk_tokens
             ),
             overlap_tokens=(
                 chunk_overlap_tokens

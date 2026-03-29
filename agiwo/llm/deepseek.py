@@ -96,7 +96,11 @@ class DeepseekModel(OpenAIModel):
         return None
 
     def _resolve_base_url(self) -> str | None:
-        return self.base_url or get_settings().deepseek_base_url or "https://api.deepseek.com"
+        return (
+            self.base_url
+            or get_settings().deepseek_base_url
+            or "https://api.deepseek.com"
+        )
 
     def _preprocess_messages_for_thinking_mode(
         self, messages: list[dict]
