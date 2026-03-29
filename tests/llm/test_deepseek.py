@@ -65,11 +65,12 @@ def test_parse_dsml_function_calls_empty():
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.deepseek.settings")
+@patch("agiwo.llm.deepseek.get_settings")
 async def test_deepseek_model_arun_stream_with_dsml_function_calls(
-    mock_settings, mock_openai_client
+    mock_get_settings, mock_openai_client
 ):
     """Test that DSML function_calls in content are parsed into tool_calls."""
+    mock_settings = mock_get_settings.return_value
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
         id="deepseek-reasoner",
@@ -125,11 +126,12 @@ async def test_deepseek_model_arun_stream_with_dsml_function_calls(
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.deepseek.settings")
+@patch("agiwo.llm.deepseek.get_settings")
 async def test_deepseek_model_arun_stream_with_normal_tool_calls(
-    mock_settings, mock_openai_client
+    mock_get_settings, mock_openai_client
 ):
     """Test that normal tool_calls are not affected by DSML parsing."""
+    mock_settings = mock_get_settings.return_value
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
         id="deepseek-chat",
@@ -192,8 +194,9 @@ def mock_openai_client():
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.deepseek.settings")
-async def test_deepseek_model_arun_stream_basic(mock_settings, mock_openai_client):
+@patch("agiwo.llm.deepseek.get_settings")
+async def test_deepseek_model_arun_stream_basic(mock_get_settings, mock_openai_client):
+    mock_settings = mock_get_settings.return_value
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
         id="deepseek-chat",
@@ -234,10 +237,11 @@ async def test_deepseek_model_arun_stream_basic(mock_settings, mock_openai_clien
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.deepseek.settings")
+@patch("agiwo.llm.deepseek.get_settings")
 async def test_deepseek_model_preprocess_messages_new_turn(
-    mock_settings, mock_openai_client
+    mock_get_settings, mock_openai_client
 ):
+    mock_settings = mock_get_settings.return_value
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
         id="deepseek-reasoner",
@@ -269,10 +273,11 @@ async def test_deepseek_model_preprocess_messages_new_turn(
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.deepseek.settings")
+@patch("agiwo.llm.deepseek.get_settings")
 async def test_deepseek_model_preprocess_messages_thinking_mode(
-    mock_settings, mock_openai_client
+    mock_get_settings, mock_openai_client
 ):
+    mock_settings = mock_get_settings.return_value
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
         id="deepseek-reasoner",
@@ -301,8 +306,11 @@ async def test_deepseek_model_preprocess_messages_thinking_mode(
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.deepseek.settings")
-async def test_deepseek_model_with_reasoning_content(mock_settings, mock_openai_client):
+@patch("agiwo.llm.deepseek.get_settings")
+async def test_deepseek_model_with_reasoning_content(
+    mock_get_settings, mock_openai_client
+):
+    mock_settings = mock_get_settings.return_value
     mock_settings.deepseek_api_key = None
     model = DeepseekModel(
         id="deepseek-reasoner",

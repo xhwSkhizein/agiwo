@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.memory.index_store import MemoryIndexStore
 from agiwo.memory.searcher import SearchResult
 from agiwo.utils.logging import get_logger
@@ -22,7 +22,7 @@ class WorkspaceMemoryService:
         root_path: str | Path | None = None,
         embedding_provider: str | None = None,
     ) -> None:
-        self._root_path = root_path or settings.get_root_path()
+        self._root_path = root_path or get_settings().get_root_path()
         self._embedding_provider = embedding_provider
         self._stores: dict[str, MemoryIndexStore] = {}
         self._bootstrapper = WorkspaceBootstrapper()

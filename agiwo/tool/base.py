@@ -171,9 +171,13 @@ class BaseTool(ABC):
     cacheable: bool = False
     timeout_seconds: int = 30
 
-    def __init__(self) -> None:
-        self.name = self.get_name()
-        self.description = self.get_description()
+    @property
+    def name(self) -> str:
+        return self.get_name()
+
+    @property
+    def description(self) -> str:
+        return self.get_description()
 
     @abstractmethod
     def get_name(self) -> str:

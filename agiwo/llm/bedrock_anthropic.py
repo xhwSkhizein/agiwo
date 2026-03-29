@@ -12,7 +12,7 @@ except ImportError:
     raise ImportError("Please install boto3: pip install boto3") from None
 
 from agiwo.llm.base import Model, StreamChunk
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.llm.event_normalizer import (
     AnthropicStreamTranslator,
     normalize_bedrock_anthropic_event,
@@ -58,8 +58,9 @@ class BedrockAnthropicModel(Model):
             provider="bedrock-anthropic",
             **model_kwargs,
         )
-        self.aws_region = aws_region or settings.aws_region
-        self.aws_profile = aws_profile or settings.aws_profile
+        _s = get_settings()
+        self.aws_region = aws_region or _s.aws_region
+        self.aws_profile = aws_profile or _s.aws_profile
         self._client = None
 
     def _get_client(self):

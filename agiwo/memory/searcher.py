@@ -1,5 +1,10 @@
 """
 HybridSearcher - BM25 + Vector hybrid search with optional MMR and temporal decay.
+
+.. note::
+    This module uses synchronous ``sqlite3``.  A future migration to
+    ``aiosqlite`` is planned (see deferred item H-2) to align with
+    the project's async SQLite standard.
 """
 
 import json
@@ -9,7 +14,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.embedding import EmbeddingModel
 from agiwo.utils.logging import get_logger
 
@@ -180,30 +185,29 @@ class HybridSearcher:
         self._conn = conn
         self._embedder = embedder
         self._vec_available = vec_available
-        self._top_k = top_k if top_k is not None else settings.memory_top_k
+        _s = get_settings()
+        self._top_k = top_k if top_k is not None else _s.memory_top_k
         self._vector_weight = (
-            vector_weight
-            if vector_weight is not None
-            else settings.memory_vector_weight
+            vector_weight if vector_weight is not None else _s.memory_vector_weight
         )
         self._bm25_weight = (
-            bm25_weight if bm25_weight is not None else settings.memory_bm25_weight
+            bm25_weight if bm25_weight is not None else _s.memory_bm25_weight
         )
         self._temporal_decay_enabled = (
             temporal_decay_enabled
             if temporal_decay_enabled is not None
-            else settings.memory_temporal_decay
+            else _s.memory_temporal_decay
         )
         self._temporal_decay_half_life_days = (
             temporal_decay_half_life_days
             if temporal_decay_half_life_days is not None
-            else settings.memory_temporal_decay_half_life
+            else _s.memory_temporal_decay_half_life
         )
         self._mmr_enabled = (
-            mmr_enabled if mmr_enabled is not None else settings.memory_mmr_enabled
+            mmr_enabled if mmr_enabled is not None else _s.memory_mmr_enabled
         )
         self._mmr_lambda = (
-            mmr_lambda if mmr_lambda is not None else settings.memory_mmr_lambda
+            mmr_lambda if mmr_lambda is not None else _s.memory_mmr_lambda
         )
 
     async def search(self, query: str, top_k: int | None = None) -> list[SearchResult]:

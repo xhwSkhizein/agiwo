@@ -10,8 +10,9 @@ def mock_openai_client():
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.nvidia.settings")
-async def test_nvidia_model_arun_stream_basic(mock_settings, mock_openai_client):
+@patch("agiwo.llm.nvidia.get_settings")
+async def test_nvidia_model_arun_stream_basic(mock_get_settings, mock_openai_client):
+    mock_settings = mock_get_settings.return_value
     mock_settings.nvidia_api_key = None
     model = NvidiaModel(
         id="meta/llama-3.1-8b-instruct",
@@ -52,10 +53,11 @@ async def test_nvidia_model_arun_stream_basic(mock_settings, mock_openai_client)
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.nvidia.settings")
+@patch("agiwo.llm.nvidia.get_settings")
 async def test_nvidia_model_arun_stream_with_reasoning(
-    mock_settings, mock_openai_client
+    mock_get_settings, mock_openai_client
 ):
+    mock_settings = mock_get_settings.return_value
     mock_settings.nvidia_api_key = None
     model = NvidiaModel(
         id="meta/llama-3.1-8b-instruct",

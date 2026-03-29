@@ -47,7 +47,7 @@ class TestRunStepStorageConstructors:
 
     def test_create_unknown_storage_type(self):
         config = RunStepStorageConfig(storage_type="unknown")  # type: ignore
-        with pytest.raises(ValueError, match="Unknown run_step_storage_type"):
+        with pytest.raises(ValueError, match="Unknown run_step_storage type"):
             create_run_step_storage(config)
 
     @pytest.mark.asyncio
@@ -125,7 +125,7 @@ class TestTraceStorageFactory:
 
     def test_create_unknown_storage_type(self):
         config = TraceStorageConfig(storage_type="unknown")  # type: ignore
-        with pytest.raises(ValueError, match="Unknown trace_storage_type"):
+        with pytest.raises(ValueError, match="Unknown trace_storage type"):
             create_trace_storage(config)
 
     @pytest.mark.asyncio

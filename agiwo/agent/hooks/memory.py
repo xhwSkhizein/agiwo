@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.models.memory import MemoryRecord
 from agiwo.agent.runtime.context import RunContext
-from agiwo.config.settings import settings
+from agiwo.config.settings import get_settings
 from agiwo.memory import WorkspaceMemoryService
 from agiwo.utils.logging import get_logger
 
@@ -85,7 +85,7 @@ class DefaultMemoryHook:
         top_k: int | None = None,
         root_path: str | None = None,
     ) -> None:
-        self._top_k = top_k if top_k is not None else settings.memory_top_k
+        self._top_k = top_k if top_k is not None else get_settings().memory_top_k
         self._memory_service = WorkspaceMemoryService(
             root_path=root_path,
             embedding_provider=embedding_provider,
