@@ -81,6 +81,13 @@ ALLOWED_FEISHU_SDK_IMPORT_PATHS = {
     Path("console/server/channels/feishu/connection.py"),
     Path("console/server/channels/feishu/sdk_adapter.py"),
 }
+ALLOWED_RAW_SETTINGS_SKILLS_DIRS_PATHS = {
+    Path("agiwo/config/settings.py"),
+}
+ALLOWED_RAW_SETTINGS_SKILLS_DIRS_PREFIXES = (
+    Path("tests"),
+    Path("console/tests"),
+)
 ALLOWED_STEPRECORD_CONSTRUCTOR_PREFIXES = (
     Path("tests"),
     Path("console/tests"),
@@ -366,6 +373,18 @@ def _is_thin_scheduler_wrapper(
         and isinstance(call.func, ast.Attribute)
         and _is_scheduler_facade_delegate(call.func.value)
     )
+
+
+def _is_raw_settings_skills_dirs_access(node: ast.Attribute) -> bool:
+    if node.attr != "skills_dirs":
+        return False
+    if (
+        isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "get_settings"
+    ):
+        return True
+    return isinstance(node.value, ast.Name) and node.value.id == "settings"
 
 
 def _is_console_app_state_access(node: ast.Attribute) -> bool:
@@ -896,6 +915,23 @@ def _detect_attribute_errors(path: Path, node: ast.Attribute) -> list[GuardError
                     "Do not access app.state directly outside console/server/"
                     "dependencies.py; route runtime access through ConsoleRuntime "
                     "dependencies instead."
+                ),
+            )
+        )
+    if (
+        _is_raw_settings_skills_dirs_access(node)
+        and path not in ALLOWED_RAW_SETTINGS_SKILLS_DIRS_PATHS
+        and not _is_allowed_prefix(path, ALLOWED_RAW_SETTINGS_SKILLS_DIRS_PREFIXES)
+    ):
+        errors.append(
+            _make_error(
+                path,
+                node.lineno,
+                "AGW044",
+                (
+                    "Do not access settings.skills_dirs directly; use "
+                    "get_settings().get_env_skills_dirs() to respect "
+                    "explicit-env-only semantics."
                 ),
             )
         )

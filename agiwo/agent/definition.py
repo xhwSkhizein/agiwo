@@ -55,7 +55,7 @@ def build_skill_manager(config: AgentConfig) -> SkillManager | None:
     return SkillManager(
         SkillDiscoveryConfig(
             configured_dirs=normalize_skill_dirs(config.options.skills_dirs),
-            env_dirs=list(get_settings().skills_dirs or []),
+            env_dirs=get_settings().get_env_skills_dirs(),
             root_path=config.options.get_effective_root_path(),
         )
     )
