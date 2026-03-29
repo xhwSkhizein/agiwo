@@ -1339,6 +1339,31 @@ def _detect_agent_lifecycle_tool_text_errors(
     return errors
 
 
+def _detect_agent_lifecycle_stable_id_errors(
+    path: Path,
+    content: str,
+) -> list[GuardError]:
+    if path != Path("console/server/services/agent_lifecycle.py"):
+        return []
+    if not re.search(r"\bAgent\s*\(", content):
+        return []
+    if re.search(r"id\s*=\s*id\s+or\s+config\.id", content):
+        return []
+    line = _find_first_match_line(content, r"\bAgent\s*\(") or 1
+    return [
+        _make_error(
+            path,
+            line,
+            "AGW043",
+            (
+                "build_agent must construct Agent with `id=id or config.id` to "
+                "guarantee stable agent identity across HTTP requests; a random "
+                "default id breaks conversation history continuity."
+            ),
+        )
+    ]
+
+
 def _detect_agent_runtime_text_errors(path: Path, content: str) -> list[GuardError]:
     if not (
         path.as_posix().startswith("agiwo/")
@@ -1423,6 +1448,7 @@ def _detect_text_guard_errors(path: Path, content: str) -> list[GuardError]:
     errors.extend(_detect_feishu_sdk_text_errors(path, content))
     errors.extend(_detect_agent_runtime_text_errors(path, content))
     errors.extend(_detect_console_tool_catalog_text_errors(path, content))
+    errors.extend(_detect_agent_lifecycle_stable_id_errors(path, content))
     return errors
 
 

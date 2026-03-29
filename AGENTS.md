@@ -58,6 +58,7 @@
 
 - `Agent` 是具体类，不是 ABC。
 - 公开构造入口是 `Agent(AgentConfig(...), *, model=..., tools=..., hooks=..., id=...)`；`AgentConfig` 只承载纯配置，不放 live object。
+- **`id` 必须稳定**：`Agent.id` 是 `(session_id, agent_id)` 存储键的一部分，决定了对话历史能否被正确加载。在 Console 等需要跨请求复用会话的场景中，每次构造 `Agent` 时 **必须** 传入稳定的 `id`（如 registry `config.id`），否则 `_generate_default_id` 会产生随机后缀，导致后续请求查不到先前的 steps，表现为"对话历史丢失"。
 - 对外执行原语是 `start(...)` 返回 live execution handle；`run(...)` / `run_stream(...)` 只是便利封装。child 运行配置通过 `create_child_agent(...)` 或单独构造 `Agent` 实例来收敛，不再保留公开 `derive_child_spec(...)` / `ChildAgentSpec` 路径。
 - `run(...)` 只支持 root run；嵌套 agent 执行是内部协议，由 `nested/agent_tool.py` 中的 `AgentTool` 通过 `Agent.run_child(...)` 进入，不再暴露公开 `context` 参数。
 - live execution handle 持有 `run_id/session_id`、`stream()/wait()/steer()/cancel()`；`steer()` 不属于 `Agent` 模板对象。
@@ -136,6 +137,7 @@
 - Feishu store 实现收口到 `console/server/channels/feishu/store/` 包：`__init__.py`（protocol + factory）、`memory.py`（内存实现）、`sqlite.py`（SQLite 实现）。
 - Feishu 模块合并约定：`message_parser.py` 包含 envelope 类型 + sender 解析 + 解析 facade；`message_builder.py` 包含 attachment 解析 + UserMessage 构建；`connection.py` 包含 SDK 适配层 + WebSocket 连接管理。
 - Console 工具的展示、解析、组装都必须经过 `ConsoleToolCatalog`。
+- **`build_agent` 必须传入稳定 `id`**：`build_agent()` 构造 Agent 时必须使用 `id=id or config.id`，确保同一个 agent config 在不同请求中拿到相同的 `agent_id`。若遗漏此 fallback，每次 HTTP 请求都会产生随机 agent id，导致 `run_step_storage.get_steps(session_id, agent_id)` 查不到历史步骤，对话上下文无法延续。`repo_guard.py` 中有对应的 `AGW043` 检查。
 - Agent 配置写入保持 full replace；不要回到 partial merge / patch DTO 语义。
 - `storage_wiring.py` 同时包含 storage config builders 和 `NotifyingTraceStorage`（Console 侧 trace pub/sub）。
 - Agent registry 收口到 `console/server/services/agent_registry/` 包：`registry.py`（CRUD 服务）、`models.py`（AgentConfigRecord）、`store/`（protocol + factory + memory/mongo/sqlite 实现）。
