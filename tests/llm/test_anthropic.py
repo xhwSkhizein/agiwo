@@ -11,8 +11,11 @@ def mock_anthropic_client():
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.anthropic.settings")
-async def test_anthropic_model_arun_stream_basic(mock_settings, mock_anthropic_client):
+@patch("agiwo.llm.anthropic.get_settings")
+async def test_anthropic_model_arun_stream_basic(
+    mock_get_settings, mock_anthropic_client
+):
+    mock_settings = mock_get_settings.return_value
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
         id="claude-3-5-sonnet",
@@ -51,10 +54,11 @@ async def test_anthropic_model_arun_stream_basic(mock_settings, mock_anthropic_c
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.anthropic.settings")
+@patch("agiwo.llm.anthropic.get_settings")
 async def test_anthropic_model_arun_stream_with_system_prompt(
-    mock_settings, mock_anthropic_client
+    mock_get_settings, mock_anthropic_client
 ):
+    mock_settings = mock_get_settings.return_value
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
         id="claude-3-5-sonnet",
@@ -97,10 +101,11 @@ async def test_anthropic_model_arun_stream_with_system_prompt(
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.anthropic.settings")
+@patch("agiwo.llm.anthropic.get_settings")
 async def test_anthropic_model_arun_stream_with_usage(
-    mock_settings, mock_anthropic_client
+    mock_get_settings, mock_anthropic_client
 ):
+    mock_settings = mock_get_settings.return_value
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
         id="claude-3-5-sonnet",
@@ -155,10 +160,11 @@ async def test_anthropic_model_arun_stream_with_usage(
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.anthropic.settings")
+@patch("agiwo.llm.anthropic.get_settings")
 async def test_anthropic_model_arun_stream_with_tool_use(
-    mock_settings, mock_anthropic_client
+    mock_get_settings, mock_anthropic_client
 ):
+    mock_settings = mock_get_settings.return_value
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
         id="claude-3-5-sonnet",
@@ -225,11 +231,12 @@ async def test_anthropic_model_arun_stream_with_tool_use(
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.anthropic.settings")
+@patch("agiwo.llm.anthropic.get_settings")
 async def test_anthropic_model_arun_stream_maps_max_tokens_to_length(
-    mock_settings,
+    mock_get_settings,
     mock_anthropic_client,
 ):
+    mock_settings = mock_get_settings.return_value
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
         id="claude-3-5-sonnet",
@@ -271,8 +278,11 @@ async def test_anthropic_model_arun_stream_maps_max_tokens_to_length(
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.anthropic.settings")
-async def test_anthropic_model_convert_messages(mock_settings, mock_anthropic_client):
+@patch("agiwo.llm.anthropic.get_settings")
+async def test_anthropic_model_convert_messages(
+    mock_get_settings, mock_anthropic_client
+):
+    mock_settings = mock_get_settings.return_value
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
         id="claude-3-5-sonnet",

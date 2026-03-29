@@ -11,8 +11,9 @@ def mock_openai_client():
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.openai.settings")
-async def test_openai_model_arun_stream_basic(mock_settings, mock_openai_client):
+@patch("agiwo.llm.openai.get_settings")
+async def test_openai_model_arun_stream_basic(mock_get_settings, mock_openai_client):
+    mock_settings = mock_get_settings.return_value
     mock_settings.openai_api_key = None
     model = OpenAIModel(
         id="gpt-4",
@@ -53,8 +54,11 @@ async def test_openai_model_arun_stream_basic(mock_settings, mock_openai_client)
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.openai.settings")
-async def test_openai_model_arun_stream_with_usage(mock_settings, mock_openai_client):
+@patch("agiwo.llm.openai.get_settings")
+async def test_openai_model_arun_stream_with_usage(
+    mock_get_settings, mock_openai_client
+):
+    mock_settings = mock_get_settings.return_value
     mock_settings.openai_api_key = None
     model = OpenAIModel(
         id="gpt-4",
@@ -103,8 +107,11 @@ async def test_openai_model_arun_stream_with_usage(mock_settings, mock_openai_cl
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.openai.settings")
-async def test_openai_model_arun_stream_with_tools(mock_settings, mock_openai_client):
+@patch("agiwo.llm.openai.get_settings")
+async def test_openai_model_arun_stream_with_tools(
+    mock_get_settings, mock_openai_client
+):
+    mock_settings = mock_get_settings.return_value
     mock_settings.openai_api_key = None
     model = OpenAIModel(
         id="gpt-4",
@@ -167,10 +174,11 @@ async def test_openai_model_arun_stream_with_tools(mock_settings, mock_openai_cl
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.openai.settings")
+@patch("agiwo.llm.openai.get_settings")
 async def test_openai_model_arun_stream_multiple_chunks(
-    mock_settings, mock_openai_client
+    mock_get_settings, mock_openai_client
 ):
+    mock_settings = mock_get_settings.return_value
     mock_settings.openai_api_key = None
     model = OpenAIModel(
         id="gpt-4",
