@@ -58,9 +58,7 @@ class AgentTool(BaseTool):
         }
 
     def build_context(self, run_context: Any, *, tool_call_id: str = "") -> ToolContext:
-        import time as _time
-
-        tool_deadline = _time.time() + self.timeout_seconds
+        tool_deadline = time.time() + self.timeout_seconds
         timeout_at = (
             min(run_context.timeout_at, tool_deadline)
             if run_context.timeout_at is not None

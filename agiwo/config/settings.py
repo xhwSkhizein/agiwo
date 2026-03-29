@@ -422,8 +422,9 @@ def get_settings() -> AgiwoSettings:
     return _settings_instance
 
 
-# Eager singleton kept for backward compatibility.
-# New code should prefer `get_settings()` to avoid import-time side effects.
+# Eager singleton kept for backward compatibility with existing imports.
+# New code should prefer `get_settings()` so that modules can be imported
+# without triggering a settings load (useful for testing and lazy init).
 settings = get_settings()
 
 

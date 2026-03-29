@@ -196,11 +196,15 @@ class WakeCondition:
 
 class _UnsetType:
     """Sentinel type for distinguishing 'not provided' from None."""
+
     __slots__ = ()
+
     def __repr__(self) -> str:
         return "<UNSET>"
+
     def __bool__(self) -> bool:
         return False
+
 
 _UNSET = _UnsetType()
 

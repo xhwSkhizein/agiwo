@@ -227,9 +227,7 @@ class BaseTool(ABC):
 
         Subclasses may override to return specialized context types.
         """
-        import time as _time
-
-        tool_deadline = _time.time() + self.timeout_seconds
+        tool_deadline = time.time() + self.timeout_seconds
         timeout_at = (
             min(run_context.timeout_at, tool_deadline)
             if run_context.timeout_at is not None
