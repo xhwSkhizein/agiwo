@@ -72,34 +72,12 @@ class FeishuDeliveryService:
             context.trigger_user_id,
             text,
         )
-        try:
-            await self._api.reply_text(context.trigger_message_id, final_text)
-            logger.info(
-                "feishu_response_sent",
-                channel="feishu",
-                delivery="reply",
-                chat_type=context.chat_type,
-                chat_id=context.chat_id,
-                trigger_message_id=context.trigger_message_id,
-                text=self._truncate_for_log(final_text),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "feishu_reply_failed_fallback_to_create",
-                chat_id=context.chat_id,
-                message_id=context.trigger_message_id,
-                error=str(exc),
-            )
-            await self._api.create_text_message(context.chat_id, final_text)
-            logger.info(
-                "feishu_response_sent",
-                channel="feishu",
-                delivery="create_message",
-                chat_type=context.chat_type,
-                chat_id=context.chat_id,
-                trigger_message_id=context.trigger_message_id,
-                text=self._truncate_for_log(final_text),
-            )
+        await self._reply_with_fallback(
+            message_id=context.trigger_message_id,
+            chat_id=context.chat_id,
+            text=final_text,
+            log_event="feishu_response_sent",
+        )
 
     async def deliver_message(self, context: BatchContext, text: str) -> None:
         final_text = self._format_group_reply(
@@ -133,22 +111,12 @@ class FeishuDeliveryService:
             inbound.sender_id,
             text,
         )
-        try:
-            await self._api.reply_text(inbound.message_id, reply_text)
-            logger.info(
-                "feishu_command_response_sent",
-                channel="feishu",
-                chat_id=inbound.chat_id,
-                message_id=inbound.message_id,
-                text=self._truncate_for_log(reply_text),
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "feishu_command_response_failed",
-                message_id=inbound.message_id,
-                error=str(exc),
-            )
-            await self._api.create_text_message(inbound.chat_id, reply_text)
+        await self._reply_with_fallback(
+            message_id=inbound.message_id,
+            chat_id=inbound.chat_id,
+            text=reply_text,
+            log_event="feishu_command_response_sent",
+        )
 
     async def send_command_response_post(
         self,
@@ -190,6 +158,42 @@ class FeishuDeliveryService:
                     message_id=inbound.message_id,
                     error=str(exc),
                 )
+
+    async def _reply_with_fallback(
+        self,
+        *,
+        message_id: str,
+        chat_id: str,
+        text: str,
+        log_event: str,
+    ) -> None:
+        """Try replying to the message; fall back to creating a new message."""
+        try:
+            await self._api.reply_text(message_id, text)
+            logger.info(
+                log_event,
+                channel="feishu",
+                delivery="reply",
+                chat_id=chat_id,
+                message_id=message_id,
+                text=self._truncate_for_log(text),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"{log_event}_reply_failed",
+                chat_id=chat_id,
+                message_id=message_id,
+                error=str(exc),
+            )
+            await self._api.create_text_message(chat_id, text)
+            logger.info(
+                log_event,
+                channel="feishu",
+                delivery="create_message",
+                chat_id=chat_id,
+                message_id=message_id,
+                text=self._truncate_for_log(text),
+            )
 
     def _format_group_reply(
         self,

@@ -33,8 +33,6 @@ from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 
 logger = get_logger(__name__)
 
-_UNSET = object()
-
 
 @dataclass
 class SessionContextResolution:
@@ -54,15 +52,17 @@ class SessionContextService:
         self._store = store
         self._agent_registry = agent_registry
         self._default_agent_name = default_agent_name
-        self._default_agent_cache: AgentConfigRecord | None | object = _UNSET
+        self._default_agent_resolved = False
+        self._default_agent_cache: AgentConfigRecord | None = None
 
     async def resolve_default_agent_config(self) -> AgentConfigRecord | None:
         if not self._default_agent_name:
             return None
-        if self._default_agent_cache is not _UNSET:
-            return self._default_agent_cache  # type: ignore[return-value]
+        if self._default_agent_resolved:
+            return self._default_agent_cache
         config = await self._agent_registry.get_agent_by_name(self._default_agent_name)
         self._default_agent_cache = config
+        self._default_agent_resolved = True
         return config
 
     async def get_chat_context(

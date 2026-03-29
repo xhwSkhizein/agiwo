@@ -78,7 +78,6 @@ class ConsoleConfig(BaseSettings):
     feishu_scheduler_wait_timeout: int = 900
     feishu_ack_reaction_emoji: str = "Typing"
     feishu_ack_fallback_text: str = "收到，正在处理。"
-    feishu_verbose_mode: Literal["full", "lite", "off"] = "lite"
 
     # --- Properties that delegate to SDK settings ---
 

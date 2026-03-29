@@ -8,13 +8,13 @@ import pytest
 from agiwo.scheduler.commands import RouteResult
 from agiwo.agent import RunCompletedEvent, RunOutput, TerminationReason
 from server.channels.agent_executor import AgentExecutor
-from server.channels.base import (
+from server.channels.utils import (
     extract_stream_text,
     safe_close_all,
     split_text_into_chunks,
 )
 from server.channels.deferred_reply import DeferredReplyManager
-from server.channels.runtime_agent_pool import RuntimeAgentPool
+from server.channels.runtime_agent_pool import RuntimeAgentPool, _CachedAgent
 from server.channels.session import SessionContextService, SessionManager
 from server.channels.session.binding import SessionMutationPlan
 from server.channels.session.models import (
@@ -425,8 +425,9 @@ async def test_runtime_agent_pool_defers_refresh_while_state_running(
         store=store,
     )
     existing_agent = FakeAgent("runtime-1")
-    pool.runtime_agents["runtime-1"] = existing_agent
-    pool._runtime_agent_config_fingerprints["runtime-1"] = "stale-fingerprint"
+    pool._cache["runtime-1"] = _CachedAgent(
+        agent=existing_agent, config_fingerprint="stale-fingerprint"
+    )
     session = Session(
         id="sess-1",
         chat_context_scope_id="scope-1",

@@ -9,21 +9,18 @@ batching, agent runtime, and scheduler message pipeline.
 import asyncio
 import shutil
 from collections.abc import AsyncIterator
-from typing import Any, Literal
+from typing import Any
 
 from agiwo.agent import (
     Agent,
     AgentStreamItem,
-    RunCompletedEvent,
-    RunFailedEvent,
-    StepCompletedEvent,
     UserMessage,
 )
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.agent_executor import AgentExecutor
-from server.channels.base import (
+from server.channels.utils import (
     extract_stream_text,
     safe_close_all,
     split_text_into_chunks,
@@ -112,7 +109,6 @@ class FeishuChannelService:
             delivery_service=components.delivery_service,
             truncate_for_log=truncate_for_log,
         )
-        self._verbose_mode: Literal["full", "lite", "off"] = config.feishu_verbose_mode
         self._closed = False
 
     @property
@@ -245,7 +241,7 @@ class FeishuChannelService:
         batch: BatchPayload,
         session: Session,
     ) -> None:
-        if await self._can_deliver_target(batch.context, session):
+        if await self._can_deliver_session(batch.context, session):
             await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
         await self._arm_deferred_reply_if_active(batch, session)
 
@@ -260,9 +256,7 @@ class FeishuChannelService:
 
         had_output = False
         async for item in stream:
-            if not await self._can_deliver_target(batch.context, session):
-                continue
-            if await self._handle_stream_item(batch, session, item):
+            if not await self._can_deliver_session(batch.context, session):
                 continue
             text = extract_stream_text(item)
             if text is None:
@@ -287,7 +281,7 @@ class FeishuChannelService:
             state=state,
         ):
             return
-        if not await self._can_deliver_target(batch.context, session):
+        if not await self._can_deliver_session(batch.context, session):
             return
         if had_output:
             return
@@ -312,7 +306,7 @@ class FeishuChannelService:
             resolved_state = await self._executor.get_state(session.scheduler_state_id)
         if resolved_state is None or not resolved_state.is_active():
             return False
-        if not await self._can_deliver_target(batch.context, session):
+        if not await self._can_deliver_session(batch.context, session):
             return False
         self._deferred_replies.arm(session=session, context=batch.context)
         return True
@@ -337,9 +331,7 @@ class FeishuChannelService:
     async def _can_deliver_session(
         self,
         context: BatchContext,
-        *,
-        session_id: str,
-        state_id: str,
+        session: Session,
     ) -> bool:
         (
             _chat_context,
@@ -350,19 +342,8 @@ class FeishuChannelService:
         if current_session is None:
             return False
         return (
-            current_session.id == session_id
-            and current_session.scheduler_state_id == state_id
-        )
-
-    async def _can_deliver_target(
-        self,
-        context: BatchContext,
-        session: Session,
-    ) -> bool:
-        return await self._can_deliver_session(
-            context,
-            session_id=session.id,
-            state_id=session.scheduler_state_id,
+            current_session.id == session.id
+            and current_session.scheduler_state_id == session.scheduler_state_id
         )
 
     # -- Feishu-specific hooks --------------------------------------------------
@@ -391,81 +372,3 @@ class FeishuChannelService:
                 "AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME。"
             )
         return f"执行失败: {str(error)}"
-
-    async def _handle_stream_item(
-        self,
-        batch: BatchPayload,
-        session: Session,
-        item: AgentStreamItem,
-    ) -> bool:
-        del batch, session, item
-        return False
-
-    # -- Verbose mode hooks ----------------------------------------------------
-
-    def _format_stream_item(self, item: AgentStreamItem) -> str | None:
-        if self._verbose_mode == "off":
-            return None
-        if self._verbose_mode == "lite":
-            return self._format_lite(item)
-        return self._format_full(item)
-
-    def _format_steer_confirmation(self) -> str | None:
-        if self._verbose_mode == "off":
-            return None
-        return "消息已收到，任务正在处理中。"
-
-    @staticmethod
-    def _format_lite(item: AgentStreamItem) -> str | None:
-        if isinstance(item, RunCompletedEvent) and item.depth == 0:
-            return item.response
-        if isinstance(item, RunFailedEvent) and item.depth == 0:
-            return item.error
-        return None
-
-    @staticmethod
-    def _format_full(item: AgentStreamItem) -> str | None:
-        if isinstance(item, RunCompletedEvent):
-            return _format_completed_run_for_full_mode(item)
-        if isinstance(item, RunFailedEvent):
-            return _format_failed_run_for_full_mode(item)
-        if isinstance(item, StepCompletedEvent):
-            return _format_step_for_full_mode(item)
-        return None
-
-
-def _format_completed_run_for_full_mode(event: RunCompletedEvent) -> str | None:
-    if not event.response:
-        return None
-    if event.depth == 0:
-        return event.response
-    return f"[子Agent: {event.agent_id}] 完成:\n{event.response}"
-
-
-def _format_failed_run_for_full_mode(event: RunFailedEvent) -> str:
-    if event.depth == 0:
-        return event.error
-    return f"[子Agent: {event.agent_id}] 失败:\n{event.error}"
-
-
-def _format_step_for_full_mode(event: StepCompletedEvent) -> str | None:
-    """Format a StepCompletedEvent for full verbose output."""
-    step = event.step
-    prefix = f"[子Agent: {event.agent_id}] " if event.depth > 0 else ""
-
-    if step.is_tool_step():
-        tool_name = step.name or "tool"
-        content = step.content_for_user or step.get_display_text()
-        if not content:
-            return None
-        return f"{prefix}🛠 {tool_name}:\n{content}"
-
-    if step.is_assistant_step():
-        if step.tool_calls:
-            return None
-        content = step.get_display_text()
-        if not content:
-            return None
-        return f"{prefix}{content}" if prefix else None
-
-    return None

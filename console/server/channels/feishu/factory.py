@@ -9,7 +9,7 @@ from pathlib import Path
 from agiwo.scheduler.engine import Scheduler
 
 from server.channels.agent_executor import AgentExecutor
-from server.channels.base import truncate_for_log
+from server.channels.utils import truncate_for_log
 from server.channels.feishu.api_client import FeishuApiClient
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.connection import FeishuConnection
