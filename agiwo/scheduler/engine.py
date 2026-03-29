@@ -1,6 +1,8 @@
+"""Scheduler facade — lifecycle, public API, delegation to sub-modules."""
+
 import asyncio
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -13,12 +15,10 @@ from agiwo.agent import (
     UserInput,
     UserMessage,
 )
-from agiwo.scheduler.commands import (
-    DispatchAction,
-    DispatchReason,
-    RouteResult,
-)
-from agiwo.scheduler.formatting import SHUTDOWN_SUMMARY_TASK
+from agiwo.scheduler._stream import route_with_stream
+from agiwo.scheduler._tick import dispatch_action, tick as _tick
+from agiwo.scheduler._tree_ops import cancel_subtree, shutdown_subtree
+from agiwo.scheduler.commands import DispatchAction, DispatchReason, RouteResult
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     ACTIVE_AGENT_STATUSES,
@@ -29,25 +29,13 @@ from agiwo.scheduler.models import (
     SchedulerEventType,
 )
 from agiwo.scheduler.runner import RunnerContext, SchedulerRunner
+from agiwo.scheduler.runtime_state import RuntimeState, list_all_states
 from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
     SleepAndWaitTool,
     SpawnAgentTool,
-)
-from agiwo.scheduler.runtime_state import (
-    RuntimeState,
-    build_mailbox_input,
-    group_events,
-    list_all_states,
-    select_debounced_event_targets,
-)
-from agiwo.scheduler.stream import (
-    close_stream_channel,
-    consume_stream_channel,
-    finish_stream_channel,
-    open_stream_channel,
 )
 from agiwo.scheduler.store import create_agent_state_storage
 from agiwo.scheduler.store.base import AgentStateStorage
@@ -228,12 +216,13 @@ class Scheduler:
         if abort_signal is not None:
             self._rt.abort_signals[state.id] = abort_signal
 
-        await self._dispatch_action(
+        await dispatch_action(
+            self,
             DispatchAction(
                 state=state,
                 reason=DispatchReason.ROOT_SUBMIT,
                 input_override=user_input,
-            )
+            ),
         )
         self.nudge()
         return state.id
@@ -293,7 +282,8 @@ class Scheduler:
         current_state = await self._resolve_routable_state(lookup_id, deadline)
 
         if current_state is None:
-            return await self._route_with_stream(
+            return await route_with_stream(
+                self,
                 root_state_id=agent.id,
                 action="submitted",
                 timeout=self._deadline_remaining(deadline) if deadline else timeout,
@@ -325,7 +315,8 @@ class Scheduler:
             and current_state.is_persistent
             and current_state.status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
         ):
-            return await self._route_with_stream(
+            return await route_with_stream(
+                self,
                 root_state_id=current_state.id,
                 action="enqueued",
                 timeout=timeout,
@@ -337,7 +328,8 @@ class Scheduler:
                 ),
             )
 
-        return await self._route_with_stream(
+        return await route_with_stream(
+            self,
             root_state_id=agent.id,
             action="submitted",
             timeout=timeout,
@@ -362,7 +354,8 @@ class Scheduler:
             raise RuntimeError("scheduler.stream requires either agent or state_id")
 
         if state_id is None:
-            result = await self._route_with_stream(
+            result = await route_with_stream(
+                self,
                 root_state_id=agent.id,
                 action="submitted",
                 timeout=timeout,
@@ -377,7 +370,8 @@ class Scheduler:
                 ),
             )
         else:
-            result = await self._route_with_stream(
+            result = await route_with_stream(
+                self,
                 root_state_id=state_id,
                 action="enqueued",
                 timeout=timeout,
@@ -552,178 +546,34 @@ class Scheduler:
         return True
 
     async def tick(self) -> None:
-        await self._propagate_signals()
-        states = await list_all_states(
-            self._store,
-            statuses=(
-                AgentStateStatus.PENDING,
-                AgentStateStatus.WAITING,
-                AgentStateStatus.QUEUED,
-            ),
-        )
-        events = await self._store.list_events()
-        now = datetime.now(timezone.utc)
-        actions = self._plan_tick(states, events, now=now)
-        for action in actions:
-            await self._dispatch_action(action)
+        await _tick(self)
 
-    def _plan_tick(
-        self,
-        states: list[AgentState],
-        events: list[PendingEvent],
-        *,
-        now: datetime,
-    ) -> list[DispatchAction]:
-        actions: list[DispatchAction] = []
-        event_groups = group_events(events)
-        debounced_targets = select_debounced_event_targets(
-            events,
-            min_count=self._config.event_debounce_min_count,
-            max_wait_seconds=self._config.event_debounce_max_wait_seconds,
-            now=now,
-        )
-
-        for state in states:
-            if state.status == AgentStateStatus.PENDING:
-                actions.append(
-                    DispatchAction(state=state, reason=DispatchReason.CHILD_PENDING)
-                )
-                continue
-
-            if state.is_root and state.status == AgentStateStatus.QUEUED:
-                mailbox = tuple(
-                    event
-                    for event in event_groups.get((state.id, state.session_id), [])
-                    if event.event_type == SchedulerEventType.USER_HINT
-                )
-                actions.append(
-                    DispatchAction(
-                        state=state,
-                        reason=DispatchReason.ROOT_QUEUED_INPUT,
-                        input_override=build_mailbox_input(
-                            state.pending_input, mailbox
-                        ),
-                        events=mailbox,
-                    )
-                )
-                continue
-
-            if state.status != AgentStateStatus.WAITING:
-                continue
-
-            if state.wake_condition is not None:
-                if state.wake_condition.is_timed_out(now):
-                    actions.append(
-                        DispatchAction(state=state, reason=DispatchReason.WAKE_TIMEOUT)
-                    )
-                    continue
-
-                if state.wake_condition.is_satisfied(now):
-                    actions.append(
-                        DispatchAction(state=state, reason=DispatchReason.WAKE_READY)
-                    )
-                    continue
-
-            key = (state.id, state.session_id)
-            if key in debounced_targets:
-                grouped_events = tuple(event_groups.get(key, []))
-                if grouped_events:
-                    actions.append(
-                        DispatchAction(
-                            state=state,
-                            reason=DispatchReason.WAKE_EVENTS,
-                            events=grouped_events,
-                        )
-                    )
-
-        return actions
-
-    async def _dispatch_action(self, action: DispatchAction) -> None:
-        state = action.state
-        if state.id in self._rt.dispatched:
-            return
-
-        if action.reason in (
-            DispatchReason.WAKE_READY,
-            DispatchReason.WAKE_EVENTS,
-            DispatchReason.WAKE_TIMEOUT,
-        ):
-            rejection = await self._guard.check_wake(state)
-            if rejection is not None:
-                await self._save_state(state.with_failed(f"Wake rejected: {rejection}"))
-                return
-
-        self._rt.dispatched.add(state.id)
-        task = asyncio.create_task(self._runner.run(action))
-        self._track_active_task(task)
-
-    async def _propagate_signals(self) -> None:
-        candidates = await self._store.list_states(
-            statuses=(AgentStateStatus.COMPLETED, AgentStateStatus.FAILED),
-            signal_propagated=False,
-            limit=1000,
-        )
-        for state in candidates:
-            if not state.is_child or state.signal_propagated:
-                continue
-
-            parent = await self._store.get_state(state.parent_id or "")
-            if parent is not None and parent.wake_condition is not None:
-                completed_ids = list(parent.wake_condition.completed_ids)
-                if state.id not in completed_ids:
-                    completed_ids.append(state.id)
-                    await self._save_state(
-                        parent.with_updates(
-                            wake_condition=parent.wake_condition.with_completed_ids(
-                                completed_ids
-                            )
-                        )
-                    )
-
-            await self._save_state(state.with_signal_propagated())
-
-    async def _cancel_subtree(self, state_id: str, reason: str) -> None:
-        self._abort_runtime_state(state_id, reason)
-        for child in await self._active_children(state_id):
-            await self._cancel_subtree(child.id, reason)
-
-        state = await self._store.get_state(state_id)
-        if state is None:
-            return
-        await self._save_state(state.with_failed(reason))
-        if state.is_root:
-            await finish_stream_channel(self._rt.stream_channels, state.id)
-
-    async def _shutdown_subtree(self, state_id: str) -> None:
-        for child in await self._active_children(state_id):
-            await self._shutdown_subtree(child.id)
-
-        state = await self._store.get_state(state_id)
-        if state is None:
-            return
-
-        self._abort_runtime_state(state_id, "Shutdown requested")
-        if state.status == AgentStateStatus.RUNNING:
-            await self._shutdown_running_state(state)
-            return
-
-        await self._shutdown_passive_state(state)
-
-    async def _active_children(self, state_id: str) -> list[AgentState]:
-        children = await self._store.list_states(parent_id=state_id, limit=1000)
-        return [child for child in children if child.is_active()]
+    # -- Internal helpers (used by extracted modules) --------------------------
 
     async def _save_state(self, state: AgentState) -> None:
         await self._store.save_state(state)
         self._notify_state_change(state.id)
         self.nudge()
 
+    async def _cancel_subtree(self, state_id: str, reason: str) -> None:
+        await cancel_subtree(self, state_id, reason)
+
+    async def _shutdown_subtree(self, state_id: str) -> None:
+        await shutdown_subtree(self, state_id)
+
+    def _track_active_task(self, task: asyncio.Task) -> None:
+        self._rt.active_tasks.add(task)
+        task.add_done_callback(self._rt.active_tasks.discard)
+
+    def _notify_state_change(self, state_id: str) -> None:
+        for waiter in self._rt.waiters.get(state_id, set()):
+            waiter.set()
+
     async def _resolve_routable_state(
         self,
         state_id: str,
         deadline: float | None,
     ) -> AgentState | None:
-        """Return a non-PENDING state, or None if the state vanishes."""
         while True:
             state = await self._store.get_state(state_id)
             if state is None:
@@ -766,63 +616,22 @@ class Scheduler:
                 if not waiters:
                     self._rt.waiters.pop(state_id, None)
 
-    def _notify_state_change(self, state_id: str) -> None:
-        for waiter in self._rt.waiters.get(state_id, set()):
-            waiter.set()
-
-    def _track_active_task(self, task: asyncio.Task) -> None:
-        self._rt.active_tasks.add(task)
-        task.add_done_callback(self._rt.active_tasks.discard)
-
-    def _build_stream(
-        self,
-        state_id: str,
-        *,
-        timeout: float | None,
-        include_child_events: bool,
-    ) -> AsyncIterator[AgentStreamItem]:
-        async def iterator() -> AsyncIterator[AgentStreamItem]:
-            open_stream_channel(
-                self._rt.stream_channels,
-                state_id,
-                include_child_events=include_child_events,
-            )
-            try:
-                async for item in consume_stream_channel(
-                    self._rt.stream_channels,
-                    state_id,
-                    timeout=timeout,
-                ):
-                    yield item
-            finally:
-                await self._raise_stream_failure_if_needed(state_id)
-                close_stream_channel(self._rt.stream_channels, state_id)
-
-        return iterator()
-
-    async def _route_with_stream(
-        self,
-        *,
-        root_state_id: str,
-        action: str,
-        timeout: float | None,
-        include_child_events: bool,
-        operation: Callable[[], Awaitable[str]],
-    ) -> RouteResult:
-        if root_state_id in self._rt.stream_channels:
-            raise RuntimeError(
-                f"stream subscriber already active for root '{root_state_id}'"
-            )
-        state_id = await operation()
-        return RouteResult(
-            action=action,
-            state_id=state_id,
-            stream=self._build_stream(
-                root_state_id,
-                timeout=timeout,
-                include_child_events=include_child_events,
-            ),
+    async def _prepare_root_agent(self, agent: Agent, state_id: str) -> Agent:
+        return await agent.create_child_agent(
+            child_id=state_id,
+            system_prompt_override=agent.config.system_prompt,
+            exclude_tool_names={tool.get_name() for tool in agent.tools},
+            extra_tools=list(self._scheduling_tools),
         )
+
+    async def _rebind_registered_agent(self, state_id: str, agent: Agent) -> None:
+        previous = self._rt.agents.get(state_id)
+        self._rt.agents[state_id] = agent
+        if previous is not None and previous is not agent:
+            try:
+                await previous.close()
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduler_rebind_close_failed", state_id=state_id)
 
     async def _enqueue_and_return_state_id(
         self,
@@ -834,65 +643,6 @@ class Scheduler:
         await self.enqueue_input(state_id, user_input, agent=agent)
         return state_id
 
-    async def _prepare_root_agent(self, agent: Agent, state_id: str) -> Agent:
-        """Prepare a root-level agent by injecting scheduling tools."""
-        return await agent.create_child_agent(
-            child_id=state_id,
-            system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.get_name() for tool in agent.tools},
-            extra_tools=list(self._scheduling_tools),
-        )
-
-    async def _rebind_registered_agent(self, state_id: str, agent: Agent) -> None:
-        """Register prepared agent, closing any previous agent for the same state."""
-        previous = self._rt.agents.get(state_id)
-        self._rt.agents[state_id] = agent
-        if previous is not None and previous is not agent:
-            try:
-                await previous.close()
-            except Exception:  # noqa: BLE001
-                logger.exception("scheduler_rebind_close_failed", state_id=state_id)
-
-    def _abort_runtime_state(self, state_id: str, reason: str) -> None:
-        signal = self._rt.abort_signals.get(state_id)
-        if signal is None:
-            signal = AbortSignal()
-            self._rt.abort_signals[state_id] = signal
-        if not signal.is_aborted():
-            signal.abort(reason)
-
-        handle = self._rt.execution_handles.get(state_id)
-        if handle is not None:
-            handle.cancel(reason)
-
-    async def _shutdown_running_state(self, state: AgentState) -> None:
-        if state.is_root and state.is_persistent:
-            self._rt.shutdown_requested.add(state.id)
-            await self._save_state(
-                state.with_queued(pending_input=SHUTDOWN_SUMMARY_TASK)
-            )
-            return
-        await self._save_state(state.with_failed("Shutdown before completion"))
-
-    async def _shutdown_passive_state(self, state: AgentState) -> None:
-        if state.is_root and state.status in (
-            AgentStateStatus.WAITING,
-            AgentStateStatus.IDLE,
-        ):
-            await self._save_state(
-                state.with_queued(pending_input=SHUTDOWN_SUMMARY_TASK)
-            )
-            return
-
-        if state.status in (
-            AgentStateStatus.WAITING,
-            AgentStateStatus.PENDING,
-            AgentStateStatus.QUEUED,
-        ):
-            await self._save_state(state.with_failed("Shutdown before completion"))
-            if state.is_root:
-                await finish_stream_channel(self._rt.stream_channels, state.id)
-
     def _deadline_remaining(self, deadline: float | None) -> float | None:
         if deadline is None:
             return None
@@ -900,11 +650,6 @@ class Scheduler:
         if remaining <= 0:
             return 0
         return remaining
-
-    async def _raise_stream_failure_if_needed(self, state_id: str) -> None:
-        state = await self._store.get_state(state_id)
-        if state is not None and state.status == AgentStateStatus.FAILED:
-            raise RuntimeError(state.result_summary or "scheduler stream failed")
 
 
 __all__ = ["Scheduler"]

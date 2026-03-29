@@ -3,7 +3,10 @@
 import asyncio
 from collections.abc import AsyncIterator
 
+from agiwo.agent.models.compact import CompactMetadata
 from agiwo.agent.models.input import UserInput, UserMessage
+from agiwo.agent.models.run import Run
+from agiwo.agent.models.step import StepRecord
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.session import SessionStorage
 from agiwo.agent.models.stream import AgentStreamItem
@@ -12,7 +15,12 @@ from agiwo.utils.abort_signal import AbortSignal
 
 
 class SessionRuntime:
-    """Session-scoped runtime state shared by root and child runs."""
+    """Session-scoped runtime state shared by root and child runs.
+
+    Convenience methods (``save_run``, ``save_step``, etc.) are provided so
+    callers avoid 3-level Law-of-Demeter chains such as
+    ``state.session_runtime.run_step_storage.save_run(run)``.
+    """
 
     _SENTINEL = object()
 
@@ -35,8 +43,26 @@ class SessionRuntime:
         self._subscribers: set[asyncio.Queue[AgentStreamItem | object]] = set()
         self._closed = False
 
+    # ------------------------------------------------------------------
+    # Storage convenience methods
+    # ------------------------------------------------------------------
+
     async def allocate_sequence(self) -> int:
         return await self.run_step_storage.allocate_sequence(self.session_id)
+
+    async def save_run(self, run: Run) -> None:
+        await self.run_step_storage.save_run(run)
+
+    async def save_step(self, step: StepRecord) -> None:
+        await self.run_step_storage.save_step(step)
+
+    async def get_latest_compact_metadata(
+        self, agent_id: str
+    ) -> CompactMetadata | None:
+        """Retrieve the latest compact metadata for the given agent."""
+        return await self.session_storage.get_latest_compact_metadata(
+            self.session_id, agent_id
+        )
 
     def subscribe(self) -> AsyncIterator[AgentStreamItem]:
         queue: asyncio.Queue[AgentStreamItem | object] = asyncio.Queue()

@@ -14,6 +14,7 @@ from agiwo.agent import AgentHooks
 from agiwo.agent import AgentStreamItem, RunCompletedEvent, TerminationReason
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.llm.base import Model, StreamChunk
+from agiwo.scheduler._tick import propagate_signals
 from agiwo.scheduler.commands import DispatchAction, DispatchReason
 from agiwo.scheduler.models import (
     AgentState,
@@ -569,7 +570,7 @@ class TestSchedulerSignalPropagation:
         )
         await store.save_state(child1)
 
-        await scheduler._propagate_signals()
+        await propagate_signals(scheduler)
 
         parent_state = await store.get_state("parent")
         assert parent_state is not None
@@ -611,7 +612,7 @@ class TestSchedulerSignalPropagation:
         )
         await store.save_state(child1)
 
-        await scheduler._propagate_signals()
+        await propagate_signals(scheduler)
 
         parent_state = await store.get_state("parent")
         assert "child-1" in parent_state.wake_condition.completed_ids

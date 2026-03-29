@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -53,6 +54,33 @@ from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class PreparedRunContext:
+    """Return type for `_prepare_run_context`."""
+
+    tools_map: dict[str, BaseTool]
+    max_input_tokens_per_call: int
+    compact_start_seq: int
+    user_step: StepRecord
+    run: Run
+
+
+@dataclass
+class RunLoopState:
+    """Aggregated mutable state threaded through the run loop."""
+
+    model: Model
+    tools_map: dict[str, BaseTool]
+    options: AgentOptions
+    max_input_tokens_per_call: int
+    compact_prompt: str | None
+    max_context_window: int | None
+    compact_start_seq: int
+    abort_signal: AbortSignal | None
+    root_path: str | None
+    current_step: int = 0
 
 
 async def _start_run(state: RunContext, run: Run) -> None:
@@ -113,11 +141,11 @@ async def _fail_run(state: RunContext, run: Run, error: Exception) -> None:
 
 def _build_output(state: RunContext) -> RunOutput:
     return RunOutput(
-        response=state.response_content,
+        response=state.ledger.response_content,
         run_id=state.run_id,
         session_id=state.session_id,
         metrics=RunMetrics.from_ledger(state.ledger, elapsed_ms=state.elapsed * 1000),
-        termination_reason=state.termination_reason,
+        termination_reason=state.ledger.termination_reason,
     )
 
 
@@ -130,7 +158,7 @@ async def _prepare_run_context(
     model: Model,
     options: AgentOptions,
     hooks: AgentHooks,
-) -> tuple[dict[str, BaseTool], list[dict] | None, int, int, StepRecord, Run]:
+) -> PreparedRunContext:
     """Build all state needed before the main loop starts."""
     tools_map = {tool.get_name(): tool for tool in tools}
     tool_schemas = [
@@ -200,13 +228,12 @@ async def _prepare_run_context(
         options.max_input_tokens_per_call,
         model,
     )
-    return (
-        tools_map,
-        tool_schemas,
-        max_input_tokens_per_call,
-        compact_start_seq,
-        user_step,
-        run,
+    return PreparedRunContext(
+        tools_map=tools_map,
+        max_input_tokens_per_call=max_input_tokens_per_call,
+        compact_start_seq=compact_start_seq,
+        user_step=user_step,
+        run=run,
     )
 
 
@@ -255,14 +282,7 @@ async def execute_run(
     context.config = options
     context.hooks = hooks
 
-    (
-        tools_map,
-        _tool_schemas,
-        max_input_tokens_per_call,
-        compact_start_seq,
-        user_step,
-        run,
-    ) = await _prepare_run_context(
+    prepared = await _prepare_run_context(
         user_input,
         context=context,
         system_prompt=system_prompt,
@@ -273,33 +293,38 @@ async def execute_run(
     )
     max_context_window = resolve_max_context_window(model)
 
-    await _start_run(context, run)
+    await _start_run(context, prepared.run)
     try:
-        await commit_step(context, user_step, append_message=False, track_state=False)
-        await _run_loop(
-            state=context,
+        await commit_step(
+            context, prepared.user_step, append_message=False, track_state=False
+        )
+        loop_state = RunLoopState(
             model=model,
-            tools_map=tools_map,
+            tools_map=prepared.tools_map,
             options=options,
-            max_input_tokens_per_call=max_input_tokens_per_call,
+            max_input_tokens_per_call=prepared.max_input_tokens_per_call,
             compact_prompt=options.compact_prompt,
             max_context_window=max_context_window,
-            compact_start_seq=compact_start_seq,
-            pending_tool_calls=pending_tool_calls,
+            compact_start_seq=prepared.compact_start_seq,
             abort_signal=abort_signal,
             root_path=root_path or settings.root_path,
+        )
+        await _run_loop(
+            state=context,
+            loop=loop_state,
+            pending_tool_calls=pending_tool_calls,
         )
         return await _finalize_run(
             user_input,
             context=context,
-            run=run,
+            run=prepared.run,
             options=options,
             hooks=hooks,
             model=model,
             abort_signal=abort_signal,
         )
     except Exception as error:
-        await _fail_run(context, run, error)
+        await _fail_run(context, prepared.run, error)
         raise
 
 
@@ -345,41 +370,22 @@ async def _execute_tool_calls(
 async def _run_loop(
     *,
     state: RunContext,
-    model: Model,
-    tools_map: dict[str, BaseTool],
-    options: AgentOptions,
-    max_input_tokens_per_call: int,
-    compact_prompt: str | None,
-    max_context_window: int | None,
-    compact_start_seq: int,
+    loop: RunLoopState,
     pending_tool_calls: list[dict] | None,
-    abort_signal: AbortSignal | None,
-    root_path: str | None = None,
 ) -> None:
     try:
-        current_step = 0
-        if await _process_pending_tool_calls(
-            state=state,
-            pending_tool_calls=pending_tool_calls,
-            tools_map=tools_map,
-            abort_signal=abort_signal,
-        ):
-            return
+        if pending_tool_calls:
+            terminated = await _execute_tool_calls(
+                state=state,
+                tool_calls=pending_tool_calls,
+                tools_map=loop.tools_map,
+                abort_signal=loop.abort_signal,
+            )
+            if terminated:
+                return
 
         while not state.is_terminal:
-            current_step, compact_start_seq, should_stop = await _run_loop_iteration(
-                state=state,
-                model=model,
-                tools_map=tools_map,
-                options=options,
-                current_step=current_step,
-                max_input_tokens_per_call=max_input_tokens_per_call,
-                compact_prompt=compact_prompt,
-                max_context_window=max_context_window,
-                compact_start_seq=compact_start_seq,
-                abort_signal=abort_signal,
-                root_path=root_path,
-            )
+            should_stop = await _run_loop_iteration(state=state, loop=loop)
             if should_stop:
                 return
     except asyncio.CancelledError:
@@ -389,130 +395,84 @@ async def _run_loop(
         set_termination_reason(
             state,
             TerminationReason.ERROR_WITH_CONTEXT
-            if state.assistant_steps_count > 0
+            if state.ledger.assistant_steps_count > 0
             else TerminationReason.ERROR,
         )
         logger.error(
             "agent_execution_failed",
             run_id=state.run_id,
-            steps_completed=state.steps_count,
-            termination_reason=state.termination_reason,
+            steps_completed=state.ledger.steps_count,
+            termination_reason=state.ledger.termination_reason,
             exc_info=True,
         )
         raise
 
 
-async def _process_pending_tool_calls(
-    *,
-    state: RunContext,
-    pending_tool_calls: list[dict] | None,
-    tools_map: dict[str, BaseTool],
-    abort_signal: AbortSignal | None,
-) -> bool:
-    if not pending_tool_calls:
-        return False
-    return await _execute_tool_calls(
-        state=state,
-        tool_calls=pending_tool_calls,
-        tools_map=tools_map,
-        abort_signal=abort_signal,
-    )
-
-
 async def _run_loop_iteration(
     *,
     state: RunContext,
-    model: Model,
-    tools_map: dict[str, BaseTool],
-    options: AgentOptions,
-    current_step: int,
-    max_input_tokens_per_call: int,
-    compact_prompt: str | None,
-    max_context_window: int | None,
-    compact_start_seq: int,
-    abort_signal: AbortSignal | None,
-    root_path: str | None,
-) -> tuple[int, int, bool]:
-    if _apply_termination_reason(
-        state,
-        check_non_recoverable_limits(state, options, current_step),
-    ):
-        return current_step, compact_start_seq, True
+    loop: RunLoopState,
+) -> bool:
+    """Execute one iteration of the run loop. Returns True if the loop should stop."""
+    reason = check_non_recoverable_limits(state, loop.options, loop.current_step)
+    if reason is not None:
+        set_termination_reason(state, reason)
+        return True
 
     compact_start_seq, should_continue = await _run_compaction_cycle(
         state=state,
-        model=model,
-        abort_signal=abort_signal,
-        max_context_window=max_context_window,
-        compact_prompt=compact_prompt,
-        compact_start_seq=compact_start_seq,
-        root_path=root_path,
+        loop=loop,
     )
+    loop.compact_start_seq = compact_start_seq
     if should_continue or state.is_terminal:
-        return current_step, compact_start_seq, state.is_terminal
+        return state.is_terminal
 
-    current_step += 1
+    loop.current_step += 1
     step, llm_context = await _run_assistant_turn(
         state=state,
-        model=model,
-        abort_signal=abort_signal,
+        model=loop.model,
+        abort_signal=loop.abort_signal,
     )
-    should_stop = await _handle_assistant_turn_result(
+    return await _handle_assistant_turn_result(
         state=state,
         step=step,
         llm_context=llm_context,
-        tools_map=tools_map,
-        options=options,
-        max_input_tokens_per_call=max_input_tokens_per_call,
-        abort_signal=abort_signal,
+        tools_map=loop.tools_map,
+        options=loop.options,
+        max_input_tokens_per_call=loop.max_input_tokens_per_call,
+        abort_signal=loop.abort_signal,
     )
-    return current_step, compact_start_seq, should_stop
-
-
-def _apply_termination_reason(
-    state: RunContext,
-    reason: TerminationReason | None,
-) -> bool:
-    if reason is None:
-        return False
-    set_termination_reason(state, reason)
-    return True
 
 
 async def _run_compaction_cycle(
     *,
     state: RunContext,
-    model: Model,
-    abort_signal: AbortSignal | None,
-    max_context_window: int | None,
-    compact_prompt: str | None,
-    compact_start_seq: int,
-    root_path: str | None,
+    loop: RunLoopState,
 ) -> tuple[int, bool]:
     compact_metadata = await compact_if_needed(
         state=state,
-        model=model,
-        abort_signal=abort_signal,
-        max_context_window=max_context_window,
-        compact_prompt=compact_prompt,
-        compact_start_seq=compact_start_seq,
-        root_path=root_path,
+        model=loop.model,
+        abort_signal=loop.abort_signal,
+        max_context_window=loop.max_context_window,
+        compact_prompt=loop.compact_prompt,
+        compact_start_seq=loop.compact_start_seq,
+        root_path=loop.root_path,
     )
     if compact_metadata is None:
-        return compact_start_seq, False
+        return loop.compact_start_seq, False
 
-    compact_start_seq = compact_metadata.end_seq + 1
+    new_start_seq = compact_metadata.end_seq + 1
     logger.info(
         "compact_triggered",
         run_id=state.run_id,
-        before_messages=len(state.messages),
+        before_messages=len(state.ledger.messages),
     )
     if (
         state.config.max_run_cost is not None
-        and state.token_cost >= state.config.max_run_cost
+        and state.ledger.token_cost >= state.config.max_run_cost
     ):
         set_termination_reason(state, TerminationReason.MAX_RUN_COST)
-    return compact_start_seq, True
+    return new_start_seq, True
 
 
 async def _run_assistant_turn(
@@ -523,7 +483,9 @@ async def _run_assistant_turn(
 ) -> tuple[StepRecord, LLMCallContext]:
     replace_messages(
         state,
-        apply_steering_messages(state.copy_messages(), state.steering_queue),
+        apply_steering_messages(
+            state.copy_messages(), state.session_runtime.steering_queue
+        ),
     )
     if state.hooks.on_before_llm_call:
         modified = await state.hooks.on_before_llm_call(state.copy_messages())
@@ -552,16 +514,15 @@ async def _handle_assistant_turn_result(
     max_input_tokens_per_call: int,
     abort_signal: AbortSignal | None,
 ) -> bool:
-    if _apply_termination_reason(
+    reason = check_post_llm_limits(
         state,
-        check_post_llm_limits(
-            state,
-            step,
-            llm_context,
-            options=options,
-            max_input_tokens_per_call=max_input_tokens_per_call,
-        ),
-    ):
+        step,
+        llm_context,
+        options=options,
+        max_input_tokens_per_call=max_input_tokens_per_call,
+    )
+    if reason is not None:
+        set_termination_reason(state, reason)
         return True
 
     if not step.tool_calls:

@@ -83,9 +83,9 @@ class DeepseekModel(OpenAIModel):
             name=name,
             api_key=api_key,
             base_url=base_url,
+            provider="deepseek",
             **model_kwargs,
         )
-        self.provider = "deepseek"
 
     def _resolve_api_key(self) -> str | None:
         if self.api_key:

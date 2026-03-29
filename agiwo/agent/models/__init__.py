@@ -4,6 +4,7 @@ from agiwo.agent.models.compact import CompactMetadata
 from agiwo.agent.models.config import (
     AgentConfig,
     AgentOptions,
+    AgentStorageOptions,
     RunStepStorageConfig,
     TraceStorageConfig,
 )
@@ -45,6 +46,7 @@ from agiwo.agent.models.stream import (
 __all__ = [
     "AgentConfig",
     "AgentOptions",
+    "AgentStorageOptions",
     "AgentStreamItem",
     "AgentStreamItemBase",
     "ChannelContext",

@@ -52,17 +52,18 @@ def test_track_step_state_updates_counters_response_and_messages() -> None:
 
     track_step_state(state, step)
 
-    assert state.steps_count == 1
-    assert state.assistant_steps_count == 1
-    assert state.tool_calls_count == 2
-    assert state.response_content == "final answer"
-    assert state.token_cost == pytest.approx(1.5)
-    assert state.total_tokens == 10
-    assert state.input_tokens == 4
-    assert state.output_tokens == 6
-    assert state.cache_read_tokens == 2
-    assert state.cache_creation_tokens == 3
-    assert list(state.messages) == [step.to_message()]
+    ledger = state.ledger
+    assert ledger.steps_count == 1
+    assert ledger.assistant_steps_count == 1
+    assert ledger.tool_calls_count == 2
+    assert ledger.response_content == "final answer"
+    assert ledger.token_cost == pytest.approx(1.5)
+    assert ledger.total_tokens == 10
+    assert ledger.input_tokens == 4
+    assert ledger.output_tokens == 6
+    assert ledger.cache_read_tokens == 2
+    assert ledger.cache_creation_tokens == 3
+    assert ledger.messages == [step.to_message()]
 
 
 def test_track_step_state_skips_message_append_when_disabled() -> None:
@@ -71,9 +72,10 @@ def test_track_step_state_skips_message_append_when_disabled() -> None:
 
     track_step_state(state, step, append_message=False)
 
-    assert state.steps_count == 1
-    assert state.assistant_steps_count == 0
-    assert list(state.messages) == []
+    ledger = state.ledger
+    assert ledger.steps_count == 1
+    assert ledger.assistant_steps_count == 0
+    assert ledger.messages == []
 
 
 def test_runtime_state_ops_only_touch_mutable_ledger_state() -> None:
@@ -97,53 +99,39 @@ def test_runtime_state_ops_only_touch_mutable_ledger_state() -> None:
     )
     set_termination_reason(state, TerminationReason.CANCELLED)
 
-    assert list(state.messages) == [{"role": "assistant", "content": "summary"}]
-    assert state.last_compact_metadata is not None
-    assert state.termination_reason == TerminationReason.CANCELLED
+    ledger = state.ledger
+    assert ledger.messages == [{"role": "assistant", "content": "summary"}]
+    assert ledger.last_compact_metadata is not None
+    assert ledger.termination_reason == TerminationReason.CANCELLED
     assert state.run_id == "run-1"
     assert state.session_id == "session-1"
 
 
-def test_run_context_disallows_direct_assignment_to_mutable_ledger_fields() -> None:
+def test_ledger_fields_not_exposed_directly_on_run_context() -> None:
+    """Ledger state (messages, counters, etc.) lives only in ``state.ledger``.
+
+    There must be no read path for these fields directly on RunContext,
+    so accidental ``state.messages`` or ``state.termination_reason`` will
+    fail loudly rather than silently read stale data.
+    """
     state = _make_state()
-    metadata = CompactMetadata(
-        session_id="session-1",
-        agent_id="agent-1",
-        start_seq=1,
-        end_seq=2,
-        before_token_estimate=100,
-        after_token_estimate=10,
-        message_count=2,
-        transcript_path="/tmp/t.jsonl",
-        analysis={"summary": "summary"},
-        created_at=datetime(2026, 3, 26, 12, 0, 0),
-    )
 
-    with pytest.raises(AttributeError):
-        state.messages = [{"role": "assistant", "content": "summary"}]
-
-    with pytest.raises(AttributeError):
-        state.messages.append({"role": "assistant", "content": "summary"})
-
-    with pytest.raises(AttributeError):
-        state.tool_schemas = [{"type": "function"}]
-
-    with pytest.raises(AttributeError):
-        state.termination_reason = TerminationReason.CANCELLED
-
-    with pytest.raises(AttributeError):
-        state.last_compact_metadata = metadata
-
-    with pytest.raises(AttributeError):
-        state.total_tokens = 99
-
-    with pytest.raises(AttributeError):
-        state.steps_count = 99
-
-    with pytest.raises(AttributeError):
-        state.response_content = "direct write"
+    removed_attrs = [
+        "messages",
+        "tool_schemas",
+        "termination_reason",
+        "last_compact_metadata",
+        "total_tokens",
+        "steps_count",
+        "response_content",
+        "tool_calls_count",
+    ]
+    for attr in removed_attrs:
+        assert not hasattr(state, attr), (
+            f"RunContext should not expose '{attr}' directly"
+        )
 
     replace_messages(state, [{"role": "assistant", "content": "summary"}])
-    snapshot = state.messages
+    snapshot = state.copy_messages()
     snapshot[0]["content"] = "mutated"
-    assert list(state.messages) == [{"role": "assistant", "content": "summary"}]
+    assert state.ledger.messages == [{"role": "assistant", "content": "summary"}]

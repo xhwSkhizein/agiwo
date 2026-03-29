@@ -1,45 +1,11 @@
-"""Backwards-compatible re-export shim — prefer importing from agiwo.agent directly."""
+"""Deprecated — import from ``agiwo.agent`` or ``agiwo.agent.models`` instead."""
 
-from agiwo.agent.models.run import (  # noqa: F401
-    Run,
-    RunMetrics,
-    RunOutput,
-    RunStatus,
-    TerminationReason,
-)
-from agiwo.agent.models.step import (  # noqa: F401
-    LLMCallContext,
-    MessageRole,
-    StepDelta,
-    StepMetrics,
-    StepRecord,
-)
-from agiwo.agent.models.stream import (  # noqa: F401
-    AgentStreamItem,
-    AgentStreamItemBase,
-    RunCompletedEvent,
-    RunFailedEvent,
-    RunStartedEvent,
-    StepCompletedEvent,
-    StepDeltaEvent,
+import warnings as _warnings
+
+_warnings.warn(
+    "agiwo.agent.types is deprecated; import from agiwo.agent instead",
+    DeprecationWarning,
+    stacklevel=2,
 )
 
-__all__ = [
-    "AgentStreamItem",
-    "AgentStreamItemBase",
-    "LLMCallContext",
-    "MessageRole",
-    "Run",
-    "RunCompletedEvent",
-    "RunFailedEvent",
-    "RunMetrics",
-    "RunOutput",
-    "RunStartedEvent",
-    "RunStatus",
-    "StepCompletedEvent",
-    "StepDelta",
-    "StepDeltaEvent",
-    "StepMetrics",
-    "StepRecord",
-    "TerminationReason",
-]
+from agiwo.agent.models import *  # noqa: F401, F403, E402

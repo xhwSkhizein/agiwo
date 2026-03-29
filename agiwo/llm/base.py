@@ -15,11 +15,17 @@ class StreamChunk:
 
 
 @dataclass
-class Model(ABC):
-    """
-    Abstract base for all LLM model implementations.
+class LLMConfig:
+    """Pure data container for LLM model configuration.
 
-    Subclasses must implement arun_stream() to provide streaming responses.
+    Extracted so that the configuration can be serialized, compared, and
+    passed around independently of the live client held by ``Model``.
+
+    .. note::
+
+       Not to be confused with ``agiwo.llm.factory.ModelConfig`` (Pydantic),
+       which is the *construction spec* used to create a ``Model`` instance.
+       ``LLMConfig`` is the runtime config held by the model after creation.
     """
 
     id: str
@@ -47,6 +53,97 @@ class Model(ABC):
         if self.cache_hit_price < 0 or self.input_price < 0 or self.output_price < 0:
             raise ValueError("token prices must be non-negative")
 
+
+ModelConfig = LLMConfig  # backward-compat alias
+
+
+class Model(ABC):
+    """Abstract base for all LLM model implementations.
+
+    Subclasses compose an ``LLMConfig`` via the ``config`` attribute and
+    implement ``arun_stream()`` to provide streaming responses.
+
+    All configuration fields from ``LLMConfig`` are available as direct
+    properties for backward compatibility.
+    """
+
+    config: LLMConfig
+
+    def __init__(self, config: LLMConfig | None = None, **kwargs: Any) -> None:
+        if config is not None and kwargs:
+            raise TypeError(
+                "Pass either a config object or keyword arguments, not both"
+            )
+        if config is not None:
+            self.config = config
+        elif kwargs:
+            self.config = LLMConfig(**kwargs)
+        else:
+            raise TypeError(
+                "Model requires either a config argument or keyword arguments"
+            )
+
+    # Backward-compatible property accessors
+    @property
+    def id(self) -> str:
+        return self.config.id
+
+    @property
+    def name(self) -> str:
+        return self.config.name
+
+    @property
+    def temperature(self) -> float:
+        return self.config.temperature
+
+    @property
+    def top_p(self) -> float:
+        return self.config.top_p
+
+    @property
+    def max_output_tokens(self) -> int:
+        return self.config.max_output_tokens
+
+    @property
+    def max_context_window(self) -> int:
+        return self.config.max_context_window
+
+    @property
+    def frequency_penalty(self) -> float:
+        return self.config.frequency_penalty
+
+    @property
+    def presence_penalty(self) -> float:
+        return self.config.presence_penalty
+
+    @property
+    def api_key(self) -> str | None:
+        return self.config.api_key
+
+    @property
+    def base_url(self) -> str | None:
+        return self.config.base_url
+
+    @property
+    def provider(self) -> str:
+        return self.config.provider
+
+    @provider.setter
+    def provider(self, value: str) -> None:
+        self.config.provider = value
+
+    @property
+    def cache_hit_price(self) -> float:
+        return self.config.cache_hit_price
+
+    @property
+    def input_price(self) -> float:
+        return self.config.input_price
+
+    @property
+    def output_price(self) -> float:
+        return self.config.output_price
+
     @abstractmethod
     async def arun_stream(
         self,
@@ -61,4 +158,4 @@ class Model(ABC):
             await self.client.close()
 
 
-__all__ = ["Model", "StreamChunk"]
+__all__ = ["LLMConfig", "Model", "ModelConfig", "StreamChunk"]

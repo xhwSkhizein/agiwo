@@ -9,6 +9,7 @@ import aiosqlite
 from agiwo.agent.models.run import Run
 from agiwo.agent.models.step import StepRecord
 from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.storage._decorators import storage_op
 from agiwo.agent.storage.serialization import (
     deserialize_run_from_storage,
     deserialize_step_from_storage,
@@ -160,44 +161,32 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     # --- Run Operations ---
 
+    @storage_op("save_run", run_id=lambda self, run: run.id)
     async def save_run(self, run: Run) -> None:
         """Save or update a run."""
         conn = await self._ensure_connection()
+        data = self._serialize_model(run)
+        columns = ", ".join(data.keys())
+        placeholders = ", ".join(["?" for _ in data])
+        values = list(data.values())
+        query = f"""
+            INSERT OR REPLACE INTO runs ({columns})
+            VALUES ({placeholders})
+        """
+        await conn.execute(query, values)
+        await conn.commit()
 
-        try:
-            data = self._serialize_model(run)
-
-            columns = ", ".join(data.keys())
-            placeholders = ", ".join(["?" for _ in data])
-            values = list(data.values())
-
-            query = f"""
-                INSERT OR REPLACE INTO runs ({columns})
-                VALUES ({placeholders})
-            """
-
-            await conn.execute(query, values)
-            await conn.commit()
-        except Exception as e:
-            logger.error("save_run_failed", error=str(e), run_id=run.id)
-            raise
-
+    @storage_op("get_run", run_id=lambda self, run_id: run_id)
     async def get_run(self, run_id: str) -> Run | None:
         """Get a run by ID."""
         conn = await self._ensure_connection()
+        async with conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return self._deserialize_run(row)
+            return None
 
-        try:
-            async with conn.execute(
-                "SELECT * FROM runs WHERE id = ?", (run_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    return self._deserialize_run(row)
-                return None
-        except Exception as e:
-            logger.error("get_run_failed", error=str(e), run_id=run_id)
-            raise
-
+    @storage_op("list_runs")
     async def list_runs(
         self,
         user_id: str | None = None,
@@ -207,97 +196,75 @@ class SQLiteRunStepStorage(RunStepStorage):
     ) -> list[Run]:
         """List runs with filtering and pagination."""
         conn = await self._ensure_connection()
+        query = "SELECT * FROM runs WHERE agent_id IS NOT NULL"
+        params = []
 
-        try:
-            query = "SELECT * FROM runs WHERE agent_id IS NOT NULL"
-            params = []
+        if user_id is not None:
+            query += " AND user_id = ?"
+            params.append(user_id)
+        if session_id is not None:
+            query += " AND session_id = ?"
+            params.append(session_id)
 
-            if user_id:
-                query += " AND user_id = ?"
-                params.append(user_id)
-            if session_id:
-                query += " AND session_id = ?"
-                params.append(session_id)
+        query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
 
-            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
-            params.extend([limit, offset])
+        runs = []
+        async with conn.execute(query, params) as cursor:
+            async for row in cursor:
+                runs.append(self._deserialize_run(row))
+        return runs
 
-            runs = []
-            async with conn.execute(query, params) as cursor:
-                async for row in cursor:
-                    runs.append(self._deserialize_run(row))
-            return runs
-        except Exception as e:
-            logger.error("list_runs_failed", error=str(e))
-            raise
-
+    @storage_op("delete_run", run_id=lambda self, run_id: run_id)
     async def delete_run(self, run_id: str) -> None:
         """Delete a run and its associated steps."""
         conn = await self._ensure_connection()
-
-        try:
-            await conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
-            await conn.execute("DELETE FROM steps WHERE run_id = ?", (run_id,))
-            await conn.commit()
-        except Exception as e:
-            logger.error("delete_run_failed", error=str(e), run_id=run_id)
-            raise
+        await conn.execute("DELETE FROM runs WHERE id = ?", (run_id,))
+        await conn.execute("DELETE FROM steps WHERE run_id = ?", (run_id,))
+        await conn.commit()
 
     # --- Step Operations ---
 
+    @storage_op(
+        "save_step",
+        step_id=lambda self, step: step.id,
+        session_id=lambda self, step: step.session_id,
+    )
     async def save_step(self, step: StepRecord) -> None:
         """Save or update a step."""
         conn = await self._ensure_connection()
+        data = self._serialize_model(step)
+        columns = ", ".join(data.keys())
+        placeholders = ", ".join(["?" for _ in data])
+        values = list(data.values())
+        query = f"""
+            INSERT OR REPLACE INTO steps ({columns})
+            VALUES ({placeholders})
+        """
+        await conn.execute(query, values)
+        await conn.commit()
 
-        try:
-            data = self._serialize_model(step)
-
-            columns = ", ".join(data.keys())
-            placeholders = ", ".join(["?" for _ in data])
-            values = list(data.values())
-
-            query = f"""
-                INSERT OR REPLACE INTO steps ({columns})
-                VALUES ({placeholders})
-            """
-
-            await conn.execute(query, values)
-            await conn.commit()
-        except Exception as e:
-            logger.error(
-                "save_step_failed",
-                error=str(e),
-                step_id=step.id,
-                session_id=step.session_id,
-                sequence=step.sequence,
-            )
-            raise
-
+    @storage_op("save_steps_batch", count=lambda self, steps: len(steps))
     async def save_steps_batch(self, steps: list[StepRecord]) -> None:
         """Batch save steps."""
         if not steps:
             return
-
         conn = await self._ensure_connection()
+        serialized = [self._serialize_model(step) for step in steps]
+        all_keys = list(dict.fromkeys(k for s in serialized for k in s))
+        columns = ", ".join(all_keys)
+        placeholders = ", ".join(["?" for _ in all_keys])
+        query = f"""
+            INSERT OR REPLACE INTO steps ({columns})
+            VALUES ({placeholders})
+        """
+        await conn.executemany(
+            query,
+            [tuple(item.get(k) for k in all_keys) for item in serialized],
+        )
+        await conn.commit()
 
-        try:
-            serialized = [self._serialize_model(step) for step in steps]
-            all_keys = list(dict.fromkeys(k for s in serialized for k in s))
-            columns = ", ".join(all_keys)
-            placeholders = ", ".join(["?" for _ in all_keys])
-            query = f"""
-                INSERT OR REPLACE INTO steps ({columns})
-                VALUES ({placeholders})
-            """
-            await conn.executemany(
-                query,
-                [tuple(item.get(k) for k in all_keys) for item in serialized],
-            )
-            await conn.commit()
-        except Exception as e:
-            logger.error("save_steps_batch_failed", error=str(e), count=len(steps))
-            raise
-
+    @storage_op("get_steps", session_id=lambda self, session_id, *_, **__: session_id)
     async def get_steps(
         self,
         session_id: str,
@@ -309,104 +276,84 @@ class SQLiteRunStepStorage(RunStepStorage):
     ) -> list[StepRecord]:
         """Get steps for a session with optional filtering."""
         conn = await self._ensure_connection()
+        query = "SELECT * FROM steps WHERE session_id = ?"
+        params: list[str | int | None] = [session_id]
 
-        try:
-            query = "SELECT * FROM steps WHERE session_id = ?"
-            params: list[str | int | None] = [session_id]
+        if start_seq is not None:
+            query += " AND sequence >= ?"
+            params.append(start_seq)
+        if end_seq is not None:
+            query += " AND sequence <= ?"
+            params.append(end_seq)
+        if run_id is not None:
+            query += " AND run_id = ?"
+            params.append(run_id)
+        if agent_id is not None:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
 
-            if start_seq is not None:
-                query += " AND sequence >= ?"
-                params.append(start_seq)
-            if end_seq is not None:
-                query += " AND sequence <= ?"
-                params.append(end_seq)
-            if run_id is not None:
-                query += " AND run_id = ?"
-                params.append(run_id)
-            if agent_id is not None:
-                query += " AND agent_id = ?"
-                params.append(agent_id)
+        query += " ORDER BY sequence ASC LIMIT ?"
+        params.append(limit)
 
-            query += " ORDER BY sequence ASC LIMIT ?"
-            params.append(limit)
+        steps = []
+        async with conn.execute(query, params) as cursor:
+            async for row in cursor:
+                steps.append(self._deserialize_step(row))
+        return steps
 
-            steps = []
-            async with conn.execute(query, params) as cursor:
-                async for row in cursor:
-                    steps.append(self._deserialize_step(row))
-            return steps
-        except Exception as e:
-            logger.error("get_steps_failed", error=str(e), session_id=session_id)
-            raise
-
+    @storage_op("get_last_step", session_id=lambda self, session_id: session_id)
     async def get_last_step(self, session_id: str) -> StepRecord | None:
         """Get the last step of a session."""
         conn = await self._ensure_connection()
+        async with conn.execute(
+            "SELECT * FROM steps WHERE session_id = ? ORDER BY sequence DESC LIMIT 1",
+            (session_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return self._deserialize_step(row)
+            return None
 
-        try:
-            async with conn.execute(
-                "SELECT * FROM steps WHERE session_id = ? ORDER BY sequence DESC LIMIT 1",
-                (session_id,),
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    return self._deserialize_step(row)
-                return None
-        except Exception as e:
-            logger.error("get_last_step_failed", error=str(e), session_id=session_id)
-            raise
-
+    @storage_op(
+        "delete_steps", session_id=lambda self, session_id, *_, **__: session_id
+    )
     async def delete_steps(self, session_id: str, start_seq: int) -> int:
         """Delete steps from a sequence number onwards."""
         conn = await self._ensure_connection()
+        cursor = await conn.execute(
+            "DELETE FROM steps WHERE session_id = ? AND sequence >= ?",
+            (session_id, start_seq),
+        )
+        await conn.commit()
+        return cursor.rowcount
 
-        try:
-            cursor = await conn.execute(
-                "DELETE FROM steps WHERE session_id = ? AND sequence >= ?",
-                (session_id, start_seq),
-            )
-            await conn.commit()
-            return cursor.rowcount
-        except Exception as e:
-            logger.error("delete_steps_failed", error=str(e), session_id=session_id)
-            raise
-
+    @storage_op("get_step_count", session_id=lambda self, session_id: session_id)
     async def get_step_count(self, session_id: str) -> int:
         """Get total number of steps for a session."""
         conn = await self._ensure_connection()
+        async with conn.execute(
+            "SELECT COUNT(*) FROM steps WHERE session_id = ?", (session_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
-        try:
-            async with conn.execute(
-                "SELECT COUNT(*) FROM steps WHERE session_id = ?", (session_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return row[0] if row else 0
-        except Exception as e:
-            logger.error("get_step_count_failed", error=str(e), session_id=session_id)
-            raise
-
+    @storage_op("get_max_sequence", session_id=lambda self, session_id: session_id)
     async def get_max_sequence(self, session_id: str) -> int:
-        """
-        Get the maximum sequence number in the session.
+        """Get the maximum sequence number in the session.
 
         Returns:
             Maximum sequence number, or 0 if no steps exist
         """
         conn = await self._ensure_connection()
+        async with conn.execute(
+            "SELECT MAX(sequence) FROM steps WHERE session_id = ?", (session_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row and row[0] is not None else 0
 
-        try:
-            async with conn.execute(
-                "SELECT MAX(sequence) FROM steps WHERE session_id = ?", (session_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return row[0] if row and row[0] is not None else 0
-        except Exception as e:
-            logger.error("get_max_sequence_failed", error=str(e), session_id=session_id)
-            raise
-
+    @storage_op("allocate_sequence", session_id=lambda self, session_id: session_id)
     async def allocate_sequence(self, session_id: str) -> int:
-        """
-        Atomically allocate next sequence number using SQLite transactions.
+        """Atomically allocate next sequence number using SQLite transactions.
         Thread-safe and concurrent-safe operation.
 
         Args:
@@ -416,41 +363,37 @@ class SQLiteRunStepStorage(RunStepStorage):
             Next sequence number (starting from 1)
         """
         conn = await self._ensure_connection()
-
+        await conn.execute("BEGIN IMMEDIATE")
         try:
-            await conn.execute("BEGIN IMMEDIATE")
+            async with conn.execute(
+                "SELECT sequence FROM counters WHERE session_id = ?", (session_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
 
-            try:
-                async with conn.execute(
-                    "SELECT sequence FROM counters WHERE session_id = ?", (session_id,)
-                ) as cursor:
-                    row = await cursor.fetchone()
+                if row:
+                    new_seq = row[0] + 1
+                    await conn.execute(
+                        "UPDATE counters SET sequence = ? WHERE session_id = ?",
+                        (new_seq, session_id),
+                    )
+                else:
+                    max_seq = await self.get_max_sequence(session_id)
+                    new_seq = max_seq + 1
+                    await conn.execute(
+                        "INSERT INTO counters (session_id, sequence) VALUES (?, ?)",
+                        (session_id, new_seq),
+                    )
 
-                    if row:
-                        new_seq = row[0] + 1
-                        await conn.execute(
-                            "UPDATE counters SET sequence = ? WHERE session_id = ?",
-                            (new_seq, session_id),
-                        )
-                    else:
-                        max_seq = await self.get_max_sequence(session_id)
-                        new_seq = max_seq + 1
-                        await conn.execute(
-                            "INSERT INTO counters (session_id, sequence) VALUES (?, ?)",
-                            (session_id, new_seq),
-                        )
-
-                    await conn.commit()
-                    return new_seq
-            except Exception:
-                await conn.rollback()
-                raise
-        except Exception as e:
-            logger.error(
-                "allocate_sequence_failed", error=str(e), session_id=session_id
-            )
+                await conn.commit()
+                return new_seq
+        except Exception:
+            await conn.rollback()
             raise
 
+    @storage_op(
+        "get_step_by_tool_call_id",
+        tool_call_id=lambda self, session_id, tool_call_id: tool_call_id,
+    )
     async def get_step_by_tool_call_id(
         self,
         session_id: str,
@@ -458,23 +401,14 @@ class SQLiteRunStepStorage(RunStepStorage):
     ) -> StepRecord | None:
         """Get a Tool Step by tool_call_id."""
         conn = await self._ensure_connection()
-
-        try:
-            async with conn.execute(
-                "SELECT * FROM steps WHERE session_id = ? AND tool_call_id = ?",
-                (session_id, tool_call_id),
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    return self._deserialize_step(row)
-                return None
-        except Exception as e:
-            logger.error(
-                "get_step_by_tool_call_id_failed",
-                error=str(e),
-                tool_call_id=tool_call_id,
-            )
-            raise
+        async with conn.execute(
+            "SELECT * FROM steps WHERE session_id = ? AND tool_call_id = ?",
+            (session_id, tool_call_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return self._deserialize_step(row)
+            return None
 
     @staticmethod
     def _dumps(value) -> str:

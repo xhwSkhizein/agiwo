@@ -11,7 +11,7 @@ try:
 except ImportError:
     raise ImportError("Please install openai package: pip install openai") from None
 
-from agiwo.llm.base import Model, StreamChunk
+from agiwo.llm.base import Model, ModelConfig, StreamChunk
 from agiwo.llm.event_normalizer import normalize_usage_metrics
 from agiwo.config.settings import get_settings
 from agiwo.utils.retry import retry_async
@@ -45,8 +45,9 @@ class OpenAIModel(Model):
         cache_hit_price: float = 0.0,
         input_price: float = 0.0,
         output_price: float = 0.0,
+        provider: str = "openai",
     ):
-        super().__init__(
+        config = ModelConfig(
             id=id,
             name=name,
             api_key=api_key,
@@ -57,11 +58,12 @@ class OpenAIModel(Model):
             max_context_window=max_context_window,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
-            provider="openai",
+            provider=provider,
             cache_hit_price=cache_hit_price,
             input_price=input_price,
             output_price=output_price,
         )
+        super().__init__(config)
         self.allow_env_fallback = allow_env_fallback
         self.client = self._create_client()
 

@@ -4,7 +4,7 @@ Global settings from environment variables.
 
 import os
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Any, Literal, cast, get_args
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -422,10 +422,37 @@ def get_settings() -> AgiwoSettings:
     return _settings_instance
 
 
-# Eager singleton kept for backward compatibility with existing imports.
-# New code should prefer `get_settings()` so that modules can be imported
-# without triggering a settings load (useful for testing and lazy init).
-settings = get_settings()
+class _LazySettingsProxy:
+    """Proxy that defers ``get_settings()`` until first attribute access.
+
+    This avoids triggering env-file loading at import time, making it
+    safe to ``from agiwo.config.settings import settings`` in library
+    code and tests without side-effects.
+    """
+
+    __slots__ = ("_instance",)
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "_instance", None)
+
+    def _resolve(self) -> "AgiwoSettings":
+        inst = object.__getattribute__(self, "_instance")
+        if inst is None:
+            inst = get_settings()
+            object.__setattr__(self, "_instance", inst)
+        return inst
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        setattr(self._resolve(), name, value)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return repr(self._resolve())
+
+
+settings: AgiwoSettings = cast(AgiwoSettings, _LazySettingsProxy())
 
 
 __all__ = ["AgiwoSettings", "get_settings", "load_settings", "settings"]
