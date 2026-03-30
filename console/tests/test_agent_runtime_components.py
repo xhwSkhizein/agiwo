@@ -1,4 +1,3 @@
-import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock
@@ -6,14 +5,13 @@ from unittest.mock import ANY, AsyncMock
 import pytest
 
 from agiwo.scheduler.commands import RouteResult
-from agiwo.agent import RunCompletedEvent, RunOutput, TerminationReason
+from agiwo.agent import RunCompletedEvent
 from server.channels.agent_executor import AgentExecutor
 from server.channels.utils import (
     extract_stream_text,
     safe_close_all,
     split_text_into_chunks,
 )
-from server.channels.deferred_reply import DeferredReplyManager
 from server.channels.runtime_agent_pool import RuntimeAgentPool, _CachedAgent
 from server.channels.session import SessionContextService, SessionManager
 from server.channels.session.binding import SessionMutationPlan
@@ -106,11 +104,6 @@ class _TestChannelService:
         self._session_service = session_service
         self._agent_pool = agent_pool
         self._executor = executor
-        self._deferred_replies = DeferredReplyManager(
-            executor=executor,
-            session_service=session_service,
-            deliver_chunked=self._deliver_message,
-        )
         self._session_mgr = SessionManager(
             on_batch_ready=lambda *a: None,
             debounce_ms=1,
@@ -118,9 +111,7 @@ class _TestChannelService:
         )
 
     async def close_base(self) -> None:
-        await safe_close_all(
-            self._deferred_replies, self._session_mgr, self._agent_pool
-        )
+        await safe_close_all(self._session_mgr, self._agent_pool)
 
     async def _deliver_reply(self, context: BatchContext, text: str) -> None:
         self.reply_calls.append((context, text))
@@ -131,13 +122,27 @@ class _TestChannelService:
     async def _execute_batch(self, batch: BatchPayload) -> None:
         session, agent = await self._prepare_batch_runtime(batch)
         dispatch = await self._executor.execute(agent, session, batch.user_message)
-        if dispatch.action == "steered":
-            await self._handle_steered_dispatch(batch, session)
-            return
+
         had_output = await self._consume_dispatch_stream(
             batch, session, dispatch.stream
         )
-        await self._finalize_dispatch(batch, session, had_output)
+        if had_output:
+            return
+
+        if not await self._can_deliver_target(batch.context, session):
+            return
+
+        if dispatch.stream is None:
+            await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
+            return
+
+        state = await self._executor.get_state(session.scheduler_state_id)
+        if state is not None and state.result_summary:
+            await self._deliver_stream_text(
+                batch.context, state.result_summary, had_output=False
+            )
+            return
+        await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
 
     async def _prepare_batch_runtime(self, batch):
         resolution = await self._session_service.get_or_create_current_session(
@@ -150,11 +155,6 @@ class _TestChannelService:
         session = resolution.session
         agent = await self._agent_pool.get_or_create_runtime_agent(session)
         return session, agent
-
-    async def _handle_steered_dispatch(self, batch, session):
-        if await self._can_deliver_target(batch.context, session):
-            await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
-        await self._arm_deferred_reply_if_active(batch, session)
 
     async def _consume_dispatch_stream(self, batch, session, stream):
         if stream is None:
@@ -170,32 +170,6 @@ class _TestChannelService:
                 batch.context, text, had_output=had_output
             )
         return had_output
-
-    async def _finalize_dispatch(self, batch, session, had_output):
-        state = await self._executor.get_state(session.scheduler_state_id)
-        if await self._arm_deferred_reply_if_active(batch, session, state=state):
-            return
-        if not await self._can_deliver_target(batch.context, session):
-            return
-        if had_output:
-            return
-        if state is not None and state.result_summary:
-            await self._deliver_stream_text(
-                batch.context, state.result_summary, had_output=False
-            )
-            return
-        await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
-
-    async def _arm_deferred_reply_if_active(self, batch, session, *, state=None):
-        resolved_state = state
-        if resolved_state is None:
-            resolved_state = await self._executor.get_state(session.scheduler_state_id)
-        if resolved_state is None or not resolved_state.is_active():
-            return False
-        if not await self._can_deliver_target(batch.context, session):
-            return False
-        self._deferred_replies.arm(session=session, context=batch.context)
-        return True
 
     async def _deliver_stream_text(self, context, text, *, had_output):
         chunks = split_text_into_chunks(text)
@@ -228,10 +202,9 @@ class _TestChannelService:
         )
 
 
-class _DeferredExecutor:
-    def __init__(self, state, result: RunOutput) -> None:
-        self._state = state
-        self._result = result
+class _SteeredIntoRunningExecutor:
+    def __init__(self) -> None:
+        pass
 
     async def execute(self, agent, session, user_input):
         del agent, session, user_input
@@ -239,11 +212,7 @@ class _DeferredExecutor:
 
     async def get_state(self, state_id: str | None):
         del state_id
-        return self._state
-
-    async def wait_for(self, state_id: str) -> RunOutput:
-        del state_id
-        return self._result
+        return None
 
 
 @pytest.mark.asyncio
@@ -489,7 +458,7 @@ async def test_agent_executor_steers_running_state_and_returns_steered_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_base_channel_service_delivers_deferred_reply_for_active_state() -> None:
+async def test_base_channel_service_acks_steered_into_running() -> None:
     now = datetime.now(timezone.utc)
     session = Session(
         id="sess-1",
@@ -501,17 +470,7 @@ async def test_base_channel_service_delivers_deferred_reply_for_active_state() -
         created_at=now,
         updated_at=now,
     )
-    state = SimpleNamespace(
-        is_active=lambda: True,
-        result_summary=None,
-    )
-    executor = _DeferredExecutor(
-        state=state,
-        result=RunOutput(
-            response="final deferred answer",
-            termination_reason=TerminationReason.COMPLETED,
-        ),
-    )
+    executor = _SteeredIntoRunningExecutor()
     session_service = SimpleNamespace(
         get_or_create_current_session=AsyncMock(
             return_value=SimpleNamespace(
@@ -542,28 +501,18 @@ async def test_base_channel_service_delivers_deferred_reply_for_active_state() -
         base_agent_id="agent-1",
     )
 
-    await service._execute_batch(
-        BatchPayload(
-            context=batch_context,
-            messages=[],
-            user_message="hello",
-        )
-    )
-
-    # Wait for deferred reply with bounded timeout
     try:
-        await asyncio.wait_for(
-            asyncio.sleep(0.1),  # Allow background task to complete
-            timeout=5.0,
+        await service._execute_batch(
+            BatchPayload(
+                context=batch_context,
+                messages=[],
+                user_message="hello",
+            )
         )
-    except asyncio.TimeoutError:
-        pass  # Continue to assertions
-
-    try:
         assert [text for _, text in service.reply_calls] == [
             "消息已收到，正在继续处理。"
         ]
-        assert [text for _, text in service.message_calls] == ["final deferred answer"]
+        assert service.message_calls == []
     finally:
         await service.close_base()
 

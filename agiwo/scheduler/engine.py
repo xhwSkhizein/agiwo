@@ -296,19 +296,18 @@ class Scheduler:
             AgentStateStatus.WAITING,
             AgentStateStatus.QUEUED,
         ):
-            urgent = current_state.status == AgentStateStatus.WAITING
-            steered = await self.steer(current_state.id, user_input, urgent=urgent)
-            if not steered:
-                refreshed = await self._store.get_state(current_state.id)
-                if refreshed is not None and refreshed.status in (
-                    AgentStateStatus.RUNNING,
-                    AgentStateStatus.WAITING,
-                    AgentStateStatus.QUEUED,
-                ):
-                    raise RuntimeError(
-                        f"Failed to steer active scheduler state '{current_state.id}'"
-                    )
-            return RouteResult(action="steered", state_id=current_state.id)
+            if current_state.status == AgentStateStatus.RUNNING:
+                return await self._steer_into_running(
+                    current_state,
+                    user_input,
+                )
+
+            return await self._steer_with_stream(
+                current_state,
+                user_input,
+                timeout=timeout,
+                include_child_events=include_child_events,
+            )
 
         if (
             current_state.is_root
@@ -488,6 +487,46 @@ class Scheduler:
             return False
         await self._cancel_subtree(state_id, reason)
         return True
+
+    async def _steer_into_running(
+        self,
+        state: AgentState,
+        user_input: UserInput,
+    ) -> RouteResult:
+        steered = await self.steer(state.id, user_input, urgent=False)
+        if not steered:
+            refreshed = await self._store.get_state(state.id)
+            if refreshed is not None and refreshed.status in ACTIVE_AGENT_STATUSES:
+                raise RuntimeError(
+                    f"Failed to steer active scheduler state '{state.id}'"
+                )
+        return RouteResult(action="steered", state_id=state.id)
+
+    async def _steer_with_stream(
+        self,
+        state: AgentState,
+        user_input: UserInput,
+        *,
+        timeout: float | None,
+        include_child_events: bool,
+    ) -> RouteResult:
+        urgent = state.status == AgentStateStatus.WAITING
+        sid = state.id
+
+        async def _do_steer() -> str:
+            steered = await self.steer(sid, user_input, urgent=urgent)
+            if not steered:
+                raise RuntimeError(f"Failed to steer scheduler state '{sid}'")
+            return sid
+
+        return await route_with_stream(
+            self,
+            root_state_id=sid,
+            action="steered",
+            timeout=timeout,
+            include_child_events=include_child_events,
+            operation=_do_steer,
+        )
 
     async def steer(
         self,

@@ -104,6 +104,7 @@
 - 当前唤醒路径包括 `WAITSET`、`TIMER`、`PERIODIC`、`PENDING_EVENTS`。
 - scheduler state storage 当前支持 memory/sqlite/mongodb，由 `Scheduler` 自己创建和持有；store 边界保持为通用 repo（`save/get/list/delete_events`），wake/timeout/debounce/signal 规则统一放在 `SchedulerEngine`。
 - `Scheduler` 的外部流式协议直接复用 `AgentStreamItem`；不要在 SDK core 再维护第二套 live-output protocol。
+- `route_root_input` 对所有非 RUNNING 路径（submitted / enqueued / steered+WAITING / steered+QUEUED）都返回带 stream 的 `RouteResult`；只有 steered+RUNNING 不带 stream（原 stream subscriber 仍在消费）。下游不需要为 steered 场景单独维护 deferred reply 补丁。
 
 ### Storage & Observability
 
@@ -132,8 +133,9 @@
 - 共享的 Console 领域模型放 `console/server/domain/`。
 - Console 自己持有 API/表单 DTO；不要再把 `Input/Patch` 请求模型塞回 SDK。
 - session 相关代码收口到 `console/server/channels/session/` 包：`models.py`（数据模型与 store protocol）、`binding.py`（domain 操作与异常）、`context_service.py`（session/chat-context 协调）、`manager.py`（消息批处理与防抖）。session identity 字段通过 `binding.py` 协调，经 `ChannelChatSessionStore.apply_session_mutation(...)` 原子写入。
-- 渠道运行时由三个独立子服务组成：`SessionContextService`（session/chat-context 生命周期）、`RuntimeAgentPool`（runtime agent 缓存与 config 指纹刷新）、`AgentExecutor`（scheduler 交互与状态路由）。`BaseChannelService` 直接持有这三者，不再经过 facade。
+- 渠道运行时由三个独立子服务组成：`SessionContextService`（session/chat-context 生命周期）、`RuntimeAgentPool`（runtime agent 缓存与 config 指纹刷新）、`AgentExecutor`（scheduler 交互与状态路由）。Channel service 直接持有这三者，不再经过 facade。
 - `AgentExecutor.execute()` 只委托 `scheduler.route_root_input(...)` 做 root 输入路由，不再在 Console 自己编码 scheduler 状态机。timeout 为可选参数，默认不设硬超时。
+- Channel 消息管线是线性流程：consume stream → deliver output → fallback。SDK `route_root_input` 在 steered+WAITING/QUEUED 时已返回 stream，channel 层不需要 deferred reply 补丁。steered+RUNNING 时无 stream，channel 只发 ack（原 stream subscriber 仍在消费）。
 - Feishu store 实现收口到 `console/server/channels/feishu/store/` 包：`__init__.py`（protocol + factory）、`memory.py`（内存实现）、`sqlite.py`（SQLite 实现）。
 - Feishu 模块合并约定：`message_parser.py` 包含 envelope 类型 + sender 解析 + 解析 facade；`message_builder.py` 包含 attachment 解析 + UserMessage 构建；`connection.py` 包含 SDK 适配层 + WebSocket 连接管理。
 - Console 工具的展示、解析、组装都必须经过 `ConsoleToolCatalog`。

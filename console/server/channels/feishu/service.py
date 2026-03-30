@@ -26,7 +26,6 @@ from server.channels.utils import (
     split_text_into_chunks,
     truncate_for_log,
 )
-from server.channels.deferred_reply import DeferredReplyManager
 from server.channels.exceptions import (
     BaseAgentNotFoundError,
     DefaultAgentNameNotFoundError,
@@ -76,11 +75,6 @@ class FeishuChannelService:
         self._session_service = components.session_service
         self._agent_pool = components.agent_pool
         self._executor = components.executor
-        self._deferred_replies = DeferredReplyManager(
-            executor=components.executor,
-            session_service=components.session_service,
-            deliver_chunked=self._deliver_message,
-        )
         self._session_mgr = SessionManager(
             on_batch_ready=self._on_batch_ready,
             debounce_ms=config.feishu_debounce_ms,
@@ -145,7 +139,6 @@ class FeishuChannelService:
     async def close(self) -> None:
         self._closed = True
         await safe_close_all(
-            self._deferred_replies,
             self._session_mgr,
             self._agent_pool,
         )
@@ -211,16 +204,31 @@ class FeishuChannelService:
     async def _execute_batch(self, batch: BatchPayload) -> None:
         session, agent = await self._prepare_batch_runtime(batch)
         dispatch = await self._executor.execute(agent, session, batch.user_message)
-        if dispatch.action == "steered":
-            await self._handle_steered_dispatch(batch, session)
-            return
 
         had_output = await self._consume_dispatch_stream(
             batch,
             session,
             dispatch.stream,
         )
-        await self._finalize_dispatch(batch, session, had_output)
+        if had_output:
+            return
+
+        if not await self._can_deliver_session(batch.context, session):
+            return
+
+        if dispatch.stream is None:
+            await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
+            return
+
+        state = await self._executor.get_state(session.scheduler_state_id)
+        if state is not None and state.result_summary:
+            await self._deliver_stream_text(
+                batch.context,
+                state.result_summary,
+                had_output=False,
+            )
+            return
+        await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
 
     async def _prepare_batch_runtime(
         self, batch: BatchPayload
@@ -235,15 +243,6 @@ class FeishuChannelService:
         session = resolution.session
         agent = await self._agent_pool.get_or_create_runtime_agent(session)
         return session, agent
-
-    async def _handle_steered_dispatch(
-        self,
-        batch: BatchPayload,
-        session: Session,
-    ) -> None:
-        if await self._can_deliver_session(batch.context, session):
-            await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
-        await self._arm_deferred_reply_if_active(batch, session)
 
     async def _consume_dispatch_stream(
         self,
@@ -267,49 +266,6 @@ class FeishuChannelService:
                 had_output=had_output,
             )
         return had_output
-
-    async def _finalize_dispatch(
-        self,
-        batch: BatchPayload,
-        session: Session,
-        had_output: bool,
-    ) -> None:
-        state = await self._executor.get_state(session.scheduler_state_id)
-        if await self._arm_deferred_reply_if_active(
-            batch,
-            session,
-            state=state,
-        ):
-            return
-        if not await self._can_deliver_session(batch.context, session):
-            return
-        if had_output:
-            return
-        if state is not None and state.result_summary:
-            await self._deliver_stream_text(
-                batch.context,
-                state.result_summary,
-                had_output=False,
-            )
-            return
-        await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
-
-    async def _arm_deferred_reply_if_active(
-        self,
-        batch: BatchPayload,
-        session: Session,
-        *,
-        state=None,
-    ) -> bool:
-        resolved_state = state
-        if resolved_state is None:
-            resolved_state = await self._executor.get_state(session.scheduler_state_id)
-        if resolved_state is None or not resolved_state.is_active():
-            return False
-        if not await self._can_deliver_session(batch.context, session):
-            return False
-        self._deferred_replies.arm(session=session, context=batch.context)
-        return True
 
     async def _deliver_stream_text(
         self,
