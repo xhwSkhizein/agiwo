@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
 from server.channels.feishu.store import create_feishu_channel_store
 from server.channels.feishu.store.sqlite import SqliteFeishuChannelStore
-from server.channels.session.binding import open_initial_session
 from server.channels.session.models import ChannelChatContext, Session
 
 
@@ -117,27 +117,34 @@ async def test_feishu_channel_store_applies_session_mutation_atomically(
     await store.connect()
     try:
         now = datetime.now(timezone.utc)
-        mutation = open_initial_session(
-            chat_context_scope_id="scope-atomic",
+        session_id = str(uuid4())
+        chat_context = ChannelChatContext(
+            scope_id="scope-atomic",
             channel_instance_id="feishu-main",
             chat_id="chat-atomic",
             chat_type="p2p",
             user_open_id="user-atomic",
             base_agent_id="base-agent",
+            current_session_id=session_id,
+            created_at=now,
+            updated_at=now,
+        )
+        session = Session(
+            id=session_id,
+            chat_context_scope_id="scope-atomic",
+            base_agent_id="base-agent",
+            runtime_agent_id="",
+            scheduler_state_id="",
             created_by="AUTO",
-            now=now,
+            created_at=now,
+            updated_at=now,
         )
 
-        await store.apply_session_mutation(mutation)
+        await store.upsert_chat_context(chat_context)
+        await store.upsert_session(session)
 
-        assert (
-            await store.get_chat_context(mutation.chat_context.scope_id)
-            == mutation.chat_context
-        )
-        assert (
-            await store.get_session(mutation.current_session.id)
-            == mutation.current_session
-        )
+        assert await store.get_chat_context(chat_context.scope_id) == chat_context
+        assert await store.get_session(session.id) == session
     finally:
         await store.close()
 

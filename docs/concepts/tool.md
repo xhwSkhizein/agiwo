@@ -87,10 +87,19 @@ class SlowTool(BaseTool):
 
 The `ToolContext` provides runtime information to tool execution:
 
-- Workspace paths
-- Agent identity
-- Session information
-- Storage access
+```python
+@dataclass(frozen=True)
+class ToolContext:
+    session_id: str
+    agent_id: str | None = None
+    agent_name: str | None = None
+    user_id: str | None = None
+    timeout_at: float | None = None
+    depth: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
+    gate_checked: bool = False
+    tool_call_id: str = ""
+```
 
 ## Builtin Tools
 

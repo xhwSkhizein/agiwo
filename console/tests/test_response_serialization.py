@@ -4,6 +4,7 @@ from agiwo.agent import (
     ContentPart,
     ContentType,
     MessageRole,
+    StepCompletedEvent,
     StepMetrics,
     StepRecord,
     UserMessage,
@@ -11,12 +12,46 @@ from agiwo.agent import (
 from agiwo.scheduler.models import AgentState, AgentStateStatus
 from agiwo.llm.config_policy import sanitize_model_params_data
 
-from server.response_serialization import state_to_response, step_to_response
 from server.schemas import (
     AgentOptionsInput,
+    AgentStateResponse,
     ModelParamsInput,
+    StepResponse,
     sanitize_agent_options_data,
+    stream_event_to_payload,
 )
+
+
+def test_stream_event_step_payload_matches_rest_step_response() -> None:
+    user_input = UserMessage(
+        content=[ContentPart(type=ContentType.TEXT, text="hello")],
+    )
+    step = StepRecord(
+        id="step-1",
+        session_id="sess-1",
+        run_id="run-1",
+        sequence=1,
+        role=MessageRole.USER,
+        user_input=user_input,
+        content=[{"type": "text", "text": "hello"}],
+        created_at=datetime(2026, 3, 9, tzinfo=timezone.utc),
+    )
+    event = StepCompletedEvent(
+        session_id="sess-1",
+        run_id="run-1",
+        agent_id="agent-1",
+        parent_run_id=None,
+        depth=0,
+        step=step,
+        timestamp=datetime(2026, 3, 9, 1, tzinfo=timezone.utc),
+    )
+
+    rest_payload = StepResponse.from_sdk(step).model_dump()
+    stream_payload = stream_event_to_payload(event)
+
+    assert stream_payload["step"] == rest_payload
+    assert stream_payload["step"]["user_input"]["content"][0]["type"] == "text"
+    assert stream_payload["step"]["user_input"]["content"][0]["text"] == "hello"
 
 
 def test_step_response_includes_usage_source_in_metrics() -> None:
@@ -37,7 +72,7 @@ def test_step_response_includes_usage_source_in_metrics() -> None:
         created_at=datetime(2026, 3, 9, tzinfo=timezone.utc),
     )
 
-    payload = step_to_response(step).model_dump()
+    payload = StepResponse.from_sdk(step).model_dump()
 
     assert payload["metrics"]["usage_source"] == "estimated"
     assert payload["metrics"]["model_name"] == "gpt-test"
@@ -54,7 +89,7 @@ def test_scheduler_state_response_normalizes_serialized_user_input() -> None:
         ),
     )
 
-    payload = state_to_response(state).model_dump()
+    payload = AgentStateResponse.from_sdk(state).model_dump()
 
     assert payload["task"][0]["type"] == "text"
     assert payload["task"][0]["text"] == "queued"

@@ -15,7 +15,6 @@ from server.channels.session.models import (
     Session,
     SessionWithContext,
 )
-from server.channels.session.binding import SessionMutationPlan
 
 _SESSION_WITH_CONTEXT_SELECT = """
 SELECT
@@ -201,17 +200,6 @@ class SqliteFeishuChannelStore:
     async def upsert_session(self, session: Session) -> None:
         conn = await self._require_conn()
         await self._upsert_session_record(conn, session)
-        await conn.commit()
-
-    async def apply_session_mutation(self, mutation: SessionMutationPlan) -> None:
-        conn = await self._require_conn()
-        await conn.execute("BEGIN")
-        try:
-            await self._upsert_chat_context_record(conn, mutation.chat_context)
-            await self._upsert_session_record(conn, mutation.current_session)
-        except Exception:
-            await conn.rollback()
-            raise
         await conn.commit()
 
     async def list_sessions_by_user(

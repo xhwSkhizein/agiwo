@@ -1,54 +1,43 @@
 # Memory System — 核心组件详解
 
-## 1. MemoryConfig（配置）
+## 1. 配置
 
-位置：`agiwo/tool/builtin/config.py`
+Memory 配置通过全局 `AgiwoSettings`（`agiwo/config/settings.py`）加载，而非独立的 `MemoryConfig` dataclass。
+
+关键配置项：
+
+| 配置项 | 默认值 | 说明 |
+|---------|--------|------|
+| `memory_top_k` | `5` | 默认返回结果数 |
+| `memory_chunk_tokens` | `400` | 每块最大 token 数 |
+| `memory_chunk_overlap_tokens` | `80` | 相邻块重叠 token 数 |
+| `relevant_memory_max_token` | `2048` | 注入 prompt 的最大记忆 token |
+
+构造 `MemoryRetrievalTool` / `WorkspaceMemoryService` 时可通过参数覆盖：
 
 ```python
-@dataclass
-class MemoryConfig:
-    # Embedding
-    embedding_provider: str = "auto"      # "openai" | "auto" | "disabled"
-    embedding_model: str = ""             # 空则使用 provider 默认模型
-    embedding_api_base: str = ""          # 空则读取 OPENAI_BASE_URL 环境变量
-    embedding_api_key: str = ""           # 空则读取 OPENAI_API_KEY 环境变量
-    embedding_dims: int = 1536            # text-embedding-3-small 默认维度
+from agiwo.tool.builtin.retrieval_tool.tool import MemoryRetrievalTool
 
-    # Chunking
-    chunk_tokens: int = 400               # 每块最大 token 数
-    chunk_overlap_tokens: int = 80        # 相邻块重叠 token 数
-
-    # Search
-    top_k: int = 5                        # 默认返回结果数
-    vector_weight: float = 0.7            # 混合融合向量权重
-    bm25_weight: float = 0.3             # 混合融合 BM25 权重
-
-    # Temporal decay（时间衰减）
-    temporal_decay_enabled: bool = False
-    temporal_decay_half_life_days: float = 30.0
-
-    # MMR 重排
-    mmr_enabled: bool = False
-    mmr_lambda: float = 0.5              # 相关性 vs 多样性平衡系数
+tool = MemoryRetrievalTool(
+    top_k=10,
+    embedding_provider="openai",
+)
 ```
 
-**说明**：
-- `embedding_provider = "auto"` 时，按顺序探测 OpenAI 兼容 API → 降级纯 BM25
-- `embedding_provider = "disabled"` 时，直接使用纯 BM25，不尝试 Embedding
-- `MemoryRetrievalTool` 构造时注入 `MemoryConfig`，不依赖全局 singleton
+`embedding_provider = "auto"` 时尝试使用 OpenAI 兼容 API，降级纯 BM25。不设 embedding 时传入 `"disabled"` 即可。
 
 ---
 
 ## 2. MemoryChunker（文本切割）
 
-位置：`agiwo/tool/builtin/retrieval_tool/chunker.py`
+位置：`agiwo/memory/chunker.py`
 
-**职责**：将单个 Markdown 文件切割为多个重叠 chunk，输出结构如下：
+**职责**：将 Markdown 文件切割为多个重叠 chunk。
 
 ```python
 @dataclass
 class MemoryChunk:
-    chunk_id: str        # sha256(path + start_line)[:16]
+    chunk_id: str        # sha256(f"{path}:{start_line}")[:16]
     path: str            # 相对于 workspace 的文件路径
     start_line: int
     end_line: int
@@ -57,81 +46,50 @@ class MemoryChunk:
 ```
 
 **切割策略**：
-- 按 token 数量切割（使用 `tiktoken` 的 `cl100k_base` 编码，与 OpenAI Embedding 对齐）
-- 优先在段落边界（空行）切割，避免语义割裂
-- 在段落边界找不到合适切点时，回退到句子边界（`. ` / `\n`）
-- `chunk_overlap_tokens`：复用前一块末尾 N 个 token，保持上下文连续性
-
-**为何选择 token-based 而非 char-based**：
-- Embedding API 有 token 上限（text-embedding-3-small：8192）
-- char-based 在中英文混合内容中误差大，token-based 与 API 计费/限制对齐
+- 按 token 数量切割（使用 `tiktoken` 编码，与 OpenAI Embedding 对齐）
+- 超出 `chunk_tokens` 限制时分块，复用前一块末尾 N 个 token 保持上下文连续性
 
 ---
 
-## 3. MemoryEmbedder（向量化）
+## 3. Embedding 层
 
-位置：`agiwo/tool/builtin/retrieval_tool/embedder.py`
+位置：`agiwo/embedding/`
 
-**接口**：
+项目通过 `agiwo/embedding/` 包统一管理 Embedding 能力。
 
 ```python
-class MemoryEmbedder(Protocol):
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        ...
-    
-    @property
-    def model_id(self) -> str:
-        ...
-    
-    @property
-    def dims(self) -> int:
-        ...
+from agiwo.embedding import EmbeddingModel, EmbeddingFactory
+
+embedder = EmbeddingFactory.create(
+    provider="openai",
+    model="text-embedding-3-small",
+    dimensions=1536,
+    api_key=os.getenv("OPENAI_API_KEY"),
+)
+
+# 批量向量化
+embeddings = await embedder.embed(["text1", "text2"])
 ```
 
-**唯一实现：`OpenAIEmbedder`**
-
-- 复用项目已有的 HTTP Client 风格（`httpx.AsyncClient`）
-- 支持 OpenAI 兼容 API（如 SiliconFlow、DeepSeek、本地 Ollama）
-- 批量请求：单次最多 100 个 chunk，超出则分批发送
-- 失败时抛出 `EmbeddingError`，由 `MemoryIndexStore` 捕获后降级为纯 BM25
-
-**`EmbedderFactory.create(config)`**：
-
-```
-config.embedding_provider == "auto"
-  └─ 尝试创建 OpenAIEmbedder（用配置或环境变量中的 api_key）
-       ├─ 成功 → 返回 OpenAIEmbedder
-       └─ api_key 缺失 → 返回 None（调用方降级 BM25）
-
-config.embedding_provider == "openai"
-  └─ 强制创建 OpenAIEmbedder（api_key 缺失则抛出 ConfigError）
-
-config.embedding_provider == "disabled"
-  └─ 直接返回 None
-```
-
-**Embedding 缓存**（存储在同一 SQLite 中）：
+**Embedding 缓存**（存储在 SQLite 中）：
 
 ```sql
 CREATE TABLE embedding_cache (
-    content_hash TEXT NOT NULL,   -- sha256(text)
+    content_hash TEXT NOT NULL,
     model_id     TEXT NOT NULL,
-    embedding    BLOB NOT NULL,   -- numpy float32 array，pack 为 bytes
+    embedding    BLOB NOT NULL,
     updated_at   INTEGER NOT NULL,
     PRIMARY KEY (content_hash, model_id)
 );
 ```
 
-- 按 `(content_hash, model_id)` 查询，命中直接返回，不调用 API
-- 仅在 chunk 内容变更（`content_hash` 变化）时失效，大幅减少 API 调用
-
 ---
 
 ## 4. MemoryIndexStore（核心存储 + 索引管理）
 
-位置：`agiwo/tool/builtin/retrieval_tool/store.py`
+位置：`agiwo/memory/index_store.py`
 
-**职责**：持有 SQLite 连接，协调 Chunker + Embedder，暴露 `search()` 接口。
+**职责**：持有 SQLite 连接，协调 Chunker，暴露 `sync_files()` 等接口。
 
 ### 4.1 Schema
 
@@ -139,7 +97,7 @@ CREATE TABLE embedding_cache (
 -- 已索引文件记录
 CREATE TABLE files (
     path     TEXT PRIMARY KEY,
-    hash     TEXT NOT NULL,   -- 文件内容 sha256
+    hash     TEXT NOT NULL,
     mtime    INTEGER NOT NULL,
     size     INTEGER NOT NULL
 );
@@ -151,7 +109,7 @@ CREATE TABLE chunks (
     start_line INTEGER NOT NULL,
     end_line   INTEGER NOT NULL,
     content_hash TEXT NOT NULL,
-    model_id   TEXT NOT NULL DEFAULT '',  -- 产生 embedding 的模型，空=BM25-only
+    model_id   TEXT NOT NULL DEFAULT '',
     text       TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -168,68 +126,47 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5(
     text,
     chunk_id UNINDEXED,
     path UNINDEXED,
-    start_line UNINDEXED,
-    end_line UNINDEXED,
     tokenize = "unicode61"
-);
-
--- Embedding 缓存
-CREATE TABLE embedding_cache (
-    content_hash TEXT NOT NULL,
-    model_id     TEXT NOT NULL,
-    embedding    BLOB NOT NULL,
-    updated_at   INTEGER NOT NULL,
-    PRIMARY KEY (content_hash, model_id)
 );
 ```
 
-### 4.2 初始化与懒加载
+### 4.2 初始化
+
+MemoryIndexStore 通过构造函数接受 `workspace_dir` 和 `embedder`：
 
 ```python
 class MemoryIndexStore:
-    def __init__(self, workspace_dir: Path, config: MemoryConfig):
+    def __init__(self, workspace_dir: Path, embedder=None):
         self._workspace_dir = workspace_dir
-        self._memory_dir = workspace_dir / "MEMORY"
         self._db_path = workspace_dir / "memory.db"
-        self._config = config
-        self._conn: sqlite3.Connection | None = None
-        self._embedder: MemoryEmbedder | None = None
-        self._vec_available: bool = False
+        self._embedder = embedder  # EmbeddingModel 实例或 None
 ```
-
-- `_conn` 在第一次 `search()` 时通过 `_ensure_initialized()` 创建，不在构造函数中打开
-- 尝试 `conn.load_extension("vec0")` 检测 sqlite-vec 可用性，失败则 `_vec_available = False`
-- `_embedder` 通过 `EmbedderFactory.create(config)` 创建，失败则为 `None`（纯 BM25 模式）
 
 ### 4.3 增量索引（sync_files）
 
 ```
 sync_files():
-  1. 扫描 MEMORY/*.md（glob，非递归）
+  1. 扫描 MEMORY/*.md
   2. 对每个文件，计算 (mtime, size) 与 files 表比对
   3. 变更文件 → index_file(path)
-  4. 已删除文件 → remove_file(path)（删除 chunks / fts / vec 中对应行）
+  4. 已删除文件 → remove_file(path)
 
 index_file(path):
   1. 读取文件内容，计算 sha256 全文 hash
-  2. Chunker.chunk(content) → list[MemoryChunk]
-  3. 按 content_hash 批量查询 embedding_cache，分离 cache_hit / cache_miss
-  4. 对 cache_miss chunks 批量调用 Embedder.embed()，结果写入 embedding_cache
-  5. 删除该 path 的旧 chunks（chunks / fts / vec）
-  6. 批量 INSERT 新 chunks 到 chunks + fts
-  7. 若 _vec_available，批量 INSERT 到 chunks_vec
-  8. 更新 files 表（path, hash, mtime, size）
+  2. Chunker.chunk_file() → list[MemoryChunk]
+  3. 按 content_hash 批量查询 embedding_cache
+  4. 对 cache_miss chunks 批量调用 embedder.embed()
+  5. 删除该 path 的旧 chunks
+  6. 批量 INSERT 新 chunks
 ```
-
-**关键设计**：步骤 3-4 是增量核心——同一文本内容无论来自哪个文件、哪次索引，只要 `content_hash` 命中缓存，就跳过 API 调用。对于 Agent 频繁 append 的日志文件，只有新增部分产生 API 费用。
 
 ---
 
 ## 5. HybridSearcher（混合检索）
 
-位置：`agiwo/tool/builtin/retrieval_tool/searcher.py`
+位置：`agiwo/memory/searcher.py`
 
-**职责**：给定 query 字符串，返回按相关性排序的 `list[SearchResult]`。
+**职责**：给定 query 字符串，返回 `list[SearchResult]`。
 
 ```python
 @dataclass
@@ -239,88 +176,59 @@ class SearchResult:
     start_line: int
     end_line: int
     text: str
-    score: float          # 最终融合分数 [0, 1]
-    vector_score: float   # 原始向量分数（调试用）
-    bm25_score: float     # 原始 BM25 分数（调试用）
+    score: float
+    vector_score: float
+    bm25_score: float
 ```
 
 **检索流程详见 [data-flow.md](./data-flow.md)。**
 
 ---
 
-## 6. MemoryRetrievalTool（对外入口）
+## 6. WorkspaceMemoryService（业务编排层）
 
-位置：`agiwo/tool/builtin/retrieval_tool/retrieval.py`
+位置：`agiwo/memory/service.py`
 
-**作为标准 `BaseTool` 实现，对 Agent 暴露两个操作：**
+`MemoryRetrievalTool` 实际调用的是 `WorkspaceMemoryService`，而非直接使用 `MemoryIndexStore`。
 
-### Tool 参数设计
-
-```json
-{
-  "type": "object",
-  "properties": {
-    "query": {
-      "type": "string",
-      "description": "Search query to find relevant memories"
-    },
-    "top_k": {
-      "type": "integer",
-      "description": "Number of results to return (default: 5)",
-      "default": 5
-    }
-  },
-  "required": ["query"]
-}
+```python
+class WorkspaceMemoryService:
+    async def search(self, agent_name, agent_id, query, top_k) -> tuple[Workspace | None, list[SearchResult]]:
+        # 1. 解析 workspace 目录
+        # 2. 初始化 MemoryIndexStore
+        # 3. 增量同步 MEMORY/ 目录
+        # 4. 混合检索
+        # 5. 返回结果
 ```
 
-**为何去掉 `summarize` 参数**：原 stub 中有 `summarize` 参数（让 LLM 二次总结结果），这增加了不必要的 LLM 调用且职责混乱。Agent 自身可判断是否需要进一步处理检索结果，Tool 只负责检索。
+---
+
+## 7. MemoryRetrievalTool（对外入口）
+
+位置：`agiwo/tool/builtin/retrieval_tool/tool.py`
+
+内部使用 `WorkspaceMemoryService` 而非 `MemoryIndexStore`。
 
 ### 执行流程
 
 ```python
-async def execute(parameters, context, abort_signal):
-    # 1. 从 context 解析 workspace_dir
-    workspace_dir = resolve_workspace(context, self._config)
-    
-    # 2. 获取/初始化 MemoryIndexStore（按 workspace_dir 缓存）
-    store = await _get_or_create_store(workspace_dir, self._config)
-    
-    # 3. 增量同步 MEMORY/ 目录
-    await store.sync_files()
-    
-    # 4. 混合检索
-    results = await store.search(query, top_k)
-    
-    # 5. 格式化输出给 LLM
-    return ToolResult(content=format_results(results))
+async def execute(self, parameters, context, abort_signal):
+    if abort_signal and abort_signal.is_aborted():
+        return ToolResult.aborted(tool_name=self.name, ...)
+
+    workspace, results = await self._memory_service.search(
+        agent_name=context.agent_name,
+        agent_id=context.agent_id,
+        query=parameters.get("query", ""),
+        top_k=parameters.get("top_k", self._top_k),
+    )
+
+    return ToolResult.success(tool_name=self.name, content=format_results(results))
 ```
-
-### Store 缓存
-
-`MemoryRetrievalTool` 内维护 `dict[str, MemoryIndexStore]`，按 `workspace_dir` 缓存 store 实例（避免每次调用重建 SQLite 连接）。由于 Tool 实例在 Agent 生命周期内唯一，此缓存与 Agent 生命周期对齐，无需额外管理。
-
-### 输出格式
-
-```
-## Memory Search Results for: "xxx"
-
-### [1] MEMORY/2025-01-15.md (lines 12-25)
-Score: 0.87
----
-{chunk text}
-
-### [2] MEMORY/project_alpha_2025-01-08.md (lines 3-18)
-Score: 0.72
----
-{chunk text}
-```
-
-包含文件路径和行号，方便 Agent 精确定位后用 `bash_tool` 读取完整文件。
 
 ---
 
-## 7. Prompt Runtime 集成
+## 8. Prompt 集成
 
 位置：`agiwo/agent/prompt.py`
 
@@ -333,8 +241,6 @@ Before answering anything about prior work, decisions, dates, or preferences:
 call `memory_retrieval` to search MEMORY/ files, then use the returned
 file paths + line numbers to read precise sections if needed.
 ```
-
-同时，`build_system_prompt()` 会在构建 system prompt 时准备 workspace 文档与环境信息；`render_system_prompt()` 再把这些内容和工具/skills 区块拼接成最终 prompt。`MEMORY/` 的近期内容会通过 `<inject-memories>` 约定自动注入，历史记忆仍通过 `memory_retrieval` 工具按需召回。
 
 **双轨机制**：
 - **自动注入**：近期记忆直接在 context 中，Agent 无需显式调用工具即可感知

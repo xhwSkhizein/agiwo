@@ -11,12 +11,13 @@ from agiwo.scheduler.commands import RouteResult
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
-from server.channels.session.binding import (
+from server.channels.session.models import (
+    ChannelChatSessionStore,
+    Session,
     append_message_to_current_task,
     assign_scheduler_state,
     mark_session_task_started,
 )
-from server.channels.session.models import ChannelChatSessionStore, Session
 
 logger = get_logger(__name__)
 
