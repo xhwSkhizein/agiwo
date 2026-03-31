@@ -23,8 +23,9 @@ Agent 决定记录某段知识
 
 ```
 memory_retrieval(query="...")
-  └─► store.sync_files()     ← 增量扫描 + 索引变更文件
-        └─► store.search()   ← 混合检索
+  └─► WorkspaceMemoryService.search()
+        └─► MemoryIndexStore.sync_files()     ← 增量扫描 + 索引变更文件
+              └─► HybridSearcher.search()     ← 混合检索
 ```
 
 **增量扫描逻辑**（`sync_files`）：
@@ -63,9 +64,10 @@ index_file(path):
      c. INSERT cache_miss embeddings → embedding_cache
 
   4. 删除旧索引
+     SELECT chunk_id FROM chunks WHERE path = ?
      DELETE FROM chunks WHERE path = ?
-     DELETE FROM chunks_fts WHERE path = ?
-     DELETE FROM chunks_vec WHERE chunk_id IN (旧 chunk_ids)
+     DELETE FROM chunks_fts WHERE chunk_id IN (...)
+     DELETE FROM chunks_vec WHERE chunk_id IN (...)
 
   5. 批量写入新索引
      INSERT INTO chunks (...)
@@ -159,7 +161,7 @@ has_vec = v_score > 0
 has_bm  = bm_score > 0
 
 if has_vec and has_bm:
-    final = config.vector_weight * v_score + config.bm25_weight * bm_score
+    final = 0.7 * v_score + 0.3 * bm_score  # default weights
 elif has_vec:
     final = v_score   # 仅向量，满权重
 else:

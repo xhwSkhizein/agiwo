@@ -52,6 +52,13 @@ class BaseTool(ABC):
 | `timeout_seconds` | `30` | Execution timeout |
 | `concurrency_safe` | `True` | Can run in parallel with other tools |
 
+### Additional Methods
+
+| Method | Description |
+|--------|-------------|
+| `gate(parameters, context) -> ToolGateDecision` | Preflight safety check before execution |
+| `build_context(run_context, tool_call_id) -> ToolContext` | Builds `ToolContext` from agent run context |
+
 ---
 
 ## `ToolResult`
@@ -155,9 +162,17 @@ class ToolDefinition:
 ## `ToolContext`
 
 ```python
+@dataclass(frozen=True)
 class ToolContext:
-    """Runtime context provided to tool execution."""
-    # Access workspace paths, agent identity, session info, storage
+    session_id: str
+    agent_id: str | None = None
+    agent_name: str | None = None
+    user_id: str | None = None
+    timeout_at: float | None = None
+    depth: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
+    gate_checked: bool = False
+    tool_call_id: str = ""
 ```
 
 ---
@@ -166,7 +181,7 @@ class ToolContext:
 
 ```python
 class AbortSignal:
-    def is_cancelled(self) -> bool: ...
+    def is_aborted(self) -> bool: ...
 ```
 
 Pass to long-running tools and check periodically for cancellation.

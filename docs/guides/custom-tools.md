@@ -88,7 +88,7 @@ Check `abort_signal` for cancellation in long-running tools:
 ```python
 async def execute(self, parameters, context, abort_signal) -> ToolResult:
     for item in large_dataset:
-        if abort_signal and abort_signal.is_cancelled():
+        if abort_signal and abort_signal.is_aborted():
             return ToolResult.aborted(
                 tool_name=self.name,
             )
@@ -111,11 +111,11 @@ The runtime batches concurrent-safe tools together for parallel execution.
 
 ```python
 async def execute(self, parameters, context, abort_signal) -> ToolResult:
-    # Access workspace path
-    workspace = context.workspace_dir
-
     # Access agent identity
     agent_name = context.agent_name
+
+    # Access session metadata
+    session_id = context.session_id
 
     # ...
 ```

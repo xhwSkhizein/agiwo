@@ -102,29 +102,37 @@ model = BedrockAnthropicModel(id="anthropic.claude-3-sonnet", name="claude-3-son
 # Uses AWS credentials (boto3)
 ```
 
-### `OpenAICompatibleModel`
+## Compatible Endpoints
+
+For OpenAI-compatible or Anthropic-compatible endpoints, use the factory:
+
+### OpenAI-Compatible
 
 ```python
-from agiwo.llm import OpenAICompatibleModel
+from agiwo.llm import create_model_from_dict
 
-model = OpenAICompatibleModel(
-    id="custom-model",
-    name="custom-model",
-    base_url="https://api.example.com/v1",
-    api_key_env_name="MY_API_KEY",
+model = create_model_from_dict(
+    provider="openai-compatible",
+    model_name="custom-model",
+    params={
+        "base_url": "https://api.example.com/v1",
+        "api_key_env_name": "MY_API_KEY",
+    },
 )
 ```
 
-### `AnthropicCompatibleModel`
+### Anthropic-Compatible
 
 ```python
-from agiwo.llm import AnthropicCompatibleModel
+from agiwo.llm import create_model_from_dict
 
-model = AnthropicCompatibleModel(
-    id="custom-model",
-    name="custom-model",
-    base_url="https://api.example.com/v1",
-    api_key_env_name="MY_API_KEY",
+model = create_model_from_dict(
+    provider="anthropic-compatible",
+    model_name="custom-model",
+    params={
+        "base_url": "https://api.example.com/v1",
+        "api_key_env_name": "MY_API_KEY",
+    },
 )
 ```
 
@@ -132,15 +140,34 @@ model = AnthropicCompatibleModel(
 
 ## Model Factory
 
-```python
-from agiwo.llm.factory import create_model
+### `create_model()`
 
-model = create_model(
+```python
+from agiwo.llm.factory import create_model, ModelSpec
+
+model = create_model(ModelSpec(
     provider="openai",
     model_name="gpt-4o",
     temperature=0.5,
     max_output_tokens=8192,
+))
+```
+
+### `create_model_from_dict()`
+
+For use with loose dicts or config files:
+
+```python
+from agiwo.llm import create_model_from_dict
+
+model = create_model_from_dict(
+    provider="openai",
+    model_name="gpt-4o",
+    params={
+        "temperature": 0.5,
+        "max_output_tokens": 8192,
+    },
 )
 ```
 
-Supported provider strings: `"openai"`, `"anthropic"`, `"deepseek"`, `"nvidia"`, `"bedrock_anthropic"`, `"openai-compatible"`, `"anthropic-compatible"`.
+Supported provider strings: `"openai"`, `"anthropic"`, `"deepseek"`, `"nvidia"`, `"bedrock-anthropic"`, `"openai-compatible"`, `"anthropic-compatible"`.

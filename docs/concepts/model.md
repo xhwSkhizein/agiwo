@@ -107,13 +107,15 @@ model = BedrockAnthropicModel(id="anthropic.claude-3-sonnet", name="claude-3-son
 For any OpenAI-compatible API endpoint:
 
 ```python
-from agiwo.llm import OpenAICompatibleModel
+from agiwo.llm import create_model_from_dict
 
-model = OpenAICompatibleModel(
-    id="my-custom-model",
-    name="my-custom-model",
-    base_url="https://api.example.com/v1",
-    api_key_env_name="MY_API_KEY",
+model = create_model_from_dict(
+    provider="openai-compatible",
+    model_name="my-custom-model",
+    params={
+        "base_url": "https://api.example.com/v1",
+        "api_key_env_name": "MY_API_KEY",
+    },
 )
 ```
 
@@ -122,13 +124,15 @@ model = OpenAICompatibleModel(
 For Anthropic-compatible endpoints:
 
 ```python
-from agiwo.llm import AnthropicCompatibleModel
+from agiwo.llm import create_model_from_dict
 
-model = AnthropicCompatibleModel(
-    id="my-anthropic-model",
-    name="my-anthropic-model",
-    base_url="https://api.example.com/v1",
-    api_key_env_name="MY_API_KEY",
+model = create_model_from_dict(
+    provider="anthropic-compatible",
+    model_name="my-anthropic-model",
+    params={
+        "base_url": "https://api.example.com/v1",
+        "api_key_env_name": "MY_API_KEY",
+    },
 )
 ```
 
@@ -137,12 +141,12 @@ model = AnthropicCompatibleModel(
 Models are typically constructed through the factory for consistency:
 
 ```python
-from agiwo.llm.factory import create_model
+from agiwo.llm import create_model_from_dict
 
-model = create_model(
+model = create_model_from_dict(
     provider="openai",
     model_name="gpt-4o",
-    temperature=0.5,
+    params={"temperature": 0.5},
 )
 ```
 

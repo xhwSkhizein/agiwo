@@ -198,8 +198,6 @@ RuntimeState(
 
 Both Console and Feishu enter through session-first, scheduler-mediated flows:
 
-- Console SSE endpoint (`/api/chat/{agent_id}`) uses `stream_scheduler_events` which calls `scheduler.stream()`
-- Feishu batch execution delegates to `RemoteWorkspaceConversationService` which calls `executor.execute()` → `scheduler.route_root_input()`
-- Session session management APIs (create, switch, fork) use `RemoteWorkspaceSessionService`
-
-Entry adapters translate transport concerns into shared session and conversation services rather than invoking agent runtimes directly.
+- Console SSE endpoint (`/api/chat/{agent_id}`) uses `scheduler.stream()` for streaming events
+- Feishu delegates to the session channel's `SessionContextService` which calls `scheduler.route_root_input()`
+- Session management APIs (create, switch, fork) use `SessionManager` in `console/server/channels/session/`

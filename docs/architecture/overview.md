@@ -9,7 +9,7 @@ Console / Feishu → Session application layer → Scheduler → Agent
 The Console and Feishu adapters share the same session-first conversation semantics:
 
 - **Entry adapters** (Console Web, Feishu) handle transport-specific concerns (SSE, long-connection, message parsing)
-- **Session application layer** (`RemoteWorkspaceSessionService`, `RemoteWorkspaceConversationService`) owns session lifecycle, implicit task management, and fork semantics
+- **Session application layer** (`SessionManager`, `SessionContextService` in `console/server/channels/session/`) owns session lifecycle, implicit task management, and fork semantics
 - **Scheduler** mediates all execution — both Console and Feishu route through `scheduler.route_root_input()`
 - **Agent** executes the actual work, with results projected back as SDK execution facts
 

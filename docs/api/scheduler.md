@@ -230,6 +230,8 @@ async def rebind_agent(self, state_id: str, agent: Agent) -> bool
 def get_registered_agent(self, state_id: str) -> Agent | None
 ```
 
+Returns the live Agent instance bound to `state_id`, or `None` if not found.
+
 ## Core Models
 
 ### `SchedulerConfig`
