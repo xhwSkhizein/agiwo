@@ -43,9 +43,13 @@ class StepMetricsResponse(RunMetricsResponse):
     @classmethod
     def from_sdk(cls, metrics: "StepMetrics") -> "StepMetricsResponse":
         return cls(
+            duration_ms=metrics.duration_ms,
             input_tokens=metrics.input_tokens,
             output_tokens=metrics.output_tokens,
             total_tokens=metrics.total_tokens,
+            cache_read_tokens=metrics.cache_read_tokens,
+            cache_creation_tokens=metrics.cache_creation_tokens,
+            token_cost=metrics.token_cost,
             usage_source=metrics.usage_source,
             model_name=metrics.model_name,
             provider=metrics.provider,

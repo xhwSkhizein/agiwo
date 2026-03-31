@@ -9,6 +9,7 @@ from server.models.metrics import RunMetricsResponse, StepMetricsResponse
 
 if TYPE_CHECKING:
     from agiwo.agent import StepRecord
+    from agiwo.agent.models.run import Run
 
 
 class StepResponse(BaseModel):
@@ -43,9 +44,7 @@ class StepResponse(BaseModel):
             content_for_user=step.content_for_user,
             reasoning_content=step.reasoning_content,
             user_input=step.user_input,
-            tool_calls=[tc.model_dump() for tc in step.tool_calls]
-            if step.tool_calls
-            else None,
+            tool_calls=step.tool_calls if step.tool_calls else None,
             tool_call_id=step.tool_call_id,
             name=step.name,
             metrics=StepMetricsResponse.from_sdk(step.metrics)
@@ -69,3 +68,33 @@ class RunResponse(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
     parent_run_id: str | None = None
+
+    @classmethod
+    def from_sdk(cls, run: "Run") -> "RunResponse":
+        return cls(
+            id=run.id,
+            agent_id=run.agent_id,
+            session_id=run.session_id,
+            user_id=run.user_id,
+            user_input=run.user_input,
+            status=run.status.value
+            if hasattr(run.status, "value")
+            else str(run.status),
+            response_content=run.response_content,
+            metrics=RunMetricsResponse(
+                duration_ms=run.metrics.duration_ms,
+                input_tokens=run.metrics.input_tokens,
+                output_tokens=run.metrics.output_tokens,
+                total_tokens=run.metrics.total_tokens,
+                cache_read_tokens=run.metrics.cache_read_tokens,
+                cache_creation_tokens=run.metrics.cache_creation_tokens,
+                token_cost=run.metrics.token_cost,
+                steps_count=run.metrics.steps_count,
+                tool_calls_count=run.metrics.tool_calls_count,
+            )
+            if run.metrics
+            else None,
+            created_at=run.created_at.isoformat() if run.created_at else None,
+            updated_at=run.updated_at.isoformat() if run.updated_at else None,
+            parent_run_id=run.parent_run_id,
+        )

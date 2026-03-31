@@ -12,6 +12,23 @@ if TYPE_CHECKING:
     from agiwo.scheduler.models import AgentState
 
 
+def extract_content_parts(value: object) -> object:
+    """Extract content parts from JSON string or return value as-is.
+
+    Handles the special __type == "content_parts" wrapper used for structured
+    user input serialization.
+    """
+    if isinstance(value, str):
+        try:
+            data = json.loads(value)
+            if isinstance(data, dict) and data.get("__type") == "content_parts":
+                return data.get("parts", [])
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return value
+    return value
+
+
 class WakeConditionResponse(BaseModel):
     type: str
     wait_for: list[str] = Field(default_factory=list)
@@ -41,15 +58,7 @@ class AgentStateBase(BaseModel):
     @field_validator("task", mode="before")
     @classmethod
     def _extract_content_parts(cls, v: object) -> object:
-        if isinstance(v, str):
-            try:
-                data = json.loads(v)
-                if isinstance(data, dict) and data.get("__type") == "content_parts":
-                    return data.get("parts", [])
-                return data
-            except (json.JSONDecodeError, TypeError):
-                return v
-        return v
+        return extract_content_parts(v)
 
 
 class AgentStateResponse(AgentStateBase):
@@ -61,15 +70,7 @@ class AgentStateResponse(AgentStateBase):
     @field_validator("pending_input", mode="before")
     @classmethod
     def _extract_pending_input(cls, v: object) -> object:
-        if isinstance(v, str):
-            try:
-                data = json.loads(v)
-                if isinstance(data, dict) and data.get("__type") == "content_parts":
-                    return data.get("parts", [])
-                return data
-            except (json.JSONDecodeError, TypeError):
-                return v
-        return v
+        return extract_content_parts(v)
 
     @classmethod
     def from_sdk(cls, state: "AgentState") -> "AgentStateResponse":
@@ -90,7 +91,9 @@ class AgentStateResponse(AgentStateBase):
                 else str(getattr(wc, "wait_mode", "all")),
                 completed_ids=list(getattr(wc, "completed_ids", []) or []),
                 time_value=getattr(wc, "time_value", None),
-                time_unit=getattr(wc, "time_unit", None),
+                time_unit=wc.time_unit.value
+                if hasattr(getattr(wc, "time_unit", None), "value")
+                else getattr(wc, "time_unit", None),
                 wakeup_at=wakeup_at,
                 timeout_at=timeout_at,
             )

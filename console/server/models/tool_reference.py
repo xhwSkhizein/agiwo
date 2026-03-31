@@ -2,8 +2,6 @@
 
 from agiwo.tool.builtin.registry import BUILTIN_TOOLS, ensure_builtin_tools_loaded
 
-ensure_builtin_tools_loaded()
-
 AGENT_TOOL_PREFIX = "agent:"
 
 
@@ -14,6 +12,7 @@ class InvalidToolReferenceError(ValueError):
 
 
 def parse_tool_reference(value: object) -> str:
+    ensure_builtin_tools_loaded()
     if not isinstance(value, str):
         raise InvalidToolReferenceError(value)
     normalized = value.strip()
