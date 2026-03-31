@@ -4,6 +4,9 @@ Integration tests for the Scheduler API endpoints.
 Tests the /api/scheduler/* routes using httpx TestClient.
 """
 
+import os
+import shutil
+
 import pytest
 from datetime import datetime, timezone
 
@@ -78,6 +81,9 @@ async def client(monkeypatch: pytest.MonkeyPatch):
     await registry.close()
     await scheduler.stop()
     await run_step_storage.close()
+
+    # Clean up agent workspace directories created during tests
+    _cleanup_agent_workspaces()
 
 
 async def _seed_states(client: AsyncClient) -> None:
@@ -319,3 +325,15 @@ class TestPersistentAgentEndpoints:
         assert data["completed"] == 1
         assert data["failed"] == 1
         assert data["pending"] == 0
+
+
+def _cleanup_agent_workspaces() -> None:
+    """Remove agent workspace directories created by tests."""
+    # Default root path is .agiwo (relative to cwd)
+    root_path = os.path.expanduser(".agiwo")
+    # Agent names used in tests that create workspace directories
+    test_agent_names = ["persistent-agent"]
+    for agent_name in test_agent_names:
+        workspace_dir = os.path.join(root_path, agent_name)
+        if os.path.exists(workspace_dir):
+            shutil.rmtree(workspace_dir, ignore_errors=True)

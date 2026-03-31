@@ -7,7 +7,7 @@ from agiwo.tool.builtin.registry import BUILTIN_TOOLS
 from agiwo.tool.storage.citation import CitationStoreConfig
 
 from server.config import ConsoleConfig
-from server.schemas import AGENT_TOOL_PREFIX, parse_tool_references
+from server.models import AGENT_TOOL_PREFIX, parse_tool_references
 from server.services.agent_registry import AgentRegistry
 from server.services.storage_wiring import build_citation_store_config
 

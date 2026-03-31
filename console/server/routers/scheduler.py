@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from agiwo.scheduler.models import AgentStateStatus
 
 from server.dependencies import ConsoleRuntimeDep, SchedulerDep
-from server.schemas import (
+from server.models import (
     AgentStateListItem,
     AgentStateResponse,
     CancelRequest,

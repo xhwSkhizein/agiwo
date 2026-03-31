@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from agiwo.utils.serialization import serialize_optional_datetime
 from server.dependencies import ConsoleRuntimeDep
-from server.schemas import (
+from server.models import (
     AgentConfigPayload,
     AgentConfigResponse,
     AgentOptionsInput,

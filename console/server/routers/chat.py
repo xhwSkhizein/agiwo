@@ -5,7 +5,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from server.channels.session import SessionContextService
 from server.dependencies import ConsoleRuntime, ConsoleRuntimeDep, SchedulerDep
-from server.schemas import (
+from server.models import (
     ChatRequest,
     CreateSessionRequest,
     ForkSessionRequest,

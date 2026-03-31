@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Query, HTTPException
 
 from server.dependencies import ConsoleRuntimeDep
-from server.schemas import TraceListItem, TraceResponse
+from server.models import TraceListItem, TraceResponse
 
 router = APIRouter(prefix="/api/traces", tags=["traces"])
 

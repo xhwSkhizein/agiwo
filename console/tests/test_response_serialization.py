@@ -12,7 +12,7 @@ from agiwo.agent import (
 from agiwo.scheduler.models import AgentState, AgentStateStatus
 from agiwo.llm.config_policy import sanitize_model_params_data
 
-from server.schemas import (
+from server.models import (
     AgentOptionsInput,
     AgentStateResponse,
     ModelParamsInput,
