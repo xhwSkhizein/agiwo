@@ -15,14 +15,13 @@ from agiwo.scheduler.models import AgentState
 from agiwo.scheduler.engine import Scheduler
 
 from server.config import ConsoleConfig, DefaultAgentTemplate
-from server.schemas import AgentOptionsInput, ModelParamsInput
+from server.schemas import AGENT_TOOL_PREFIX, AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
 )
-from server.domain.tool_references import AGENT_TOOL_PREFIX
-from server.tools import build_agent_tool_instance, build_tools
+from server.tools import build_tools
 
 
 # ── Exceptions ────────────────────────────────────────────────────────
@@ -107,7 +106,7 @@ async def build_agent(
             registry,
             _building=_building.copy(),
         )
-        return build_agent_tool_instance(child_agent)
+        return child_agent.as_tool()
 
     tools = await build_tools(
         config.tools or [],

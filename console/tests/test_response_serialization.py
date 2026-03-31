@@ -10,6 +10,8 @@ from agiwo.agent import (
     UserMessage,
 )
 from agiwo.scheduler.models import AgentState, AgentStateStatus
+from agiwo.llm.config_policy import sanitize_model_params_data
+
 from server.schemas import (
     AgentOptionsInput,
     AgentStateResponse,
@@ -18,7 +20,6 @@ from server.schemas import (
     sanitize_agent_options_data,
     stream_event_to_payload,
 )
-from agiwo.llm.config_policy import sanitize_model_params_data
 
 
 def test_stream_event_step_payload_matches_rest_step_response() -> None:

@@ -3,10 +3,12 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from server.dependencies import ConsoleRuntimeDep
-from server.domain.sessions import session_aggregate_to_summary_data
-from server.domain.sessions import SessionSummaryData
 from server.schemas import RunResponse, StepResponse
-from server.services.metrics import collect_session_aggregates
+from server.services.metrics import (
+    SessionSummaryData,
+    collect_session_aggregates,
+    session_aggregate_to_summary_data,
+)
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 
