@@ -78,7 +78,7 @@ def _get_session_service(runtime: ConsoleRuntime) -> SessionContextService:
     return SessionContextService(
         store=runtime.session_store,
         agent_registry=runtime.agent_registry,
-        default_agent_name=runtime.config.default_agent_name,
+        default_agent_name=runtime.config.default_agent.name,
     )
 
 

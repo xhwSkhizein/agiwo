@@ -7,12 +7,41 @@ Storage/LLM settings are inherited from SDK's AgiwoSettings (AGIWO_ prefix).
 
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agiwo.config.settings import settings as sdk_settings
 from agiwo.llm.config_policy import sanitize_model_params_data
 from agiwo.config.settings import ModelProvider
+
+
+class DefaultAgentTemplate(BaseModel):
+    """Template for the default agent created on first boot."""
+
+    id: str = "default-console-agent"
+    name: str = "Console Agent"
+    description: str = "Default agent for Console channels"
+    model_provider: ModelProvider = "openai-compatible"
+    model_name: str = "codex-5.3"
+    model_params: dict[str, Any] = Field(default_factory=dict)
+    system_prompt: str = ""
+    tools: list[str] = Field(
+        default_factory=lambda: [
+            "bash",
+            "bash_process",
+            "web_search",
+            "web_reader",
+            "memory_retrieval",
+        ]
+    )
+
+    @field_validator("model_params", mode="before")
+    @classmethod
+    def _normalize_model_params(cls, value: object) -> dict[str, Any]:
+        sanitized = sanitize_model_params_data(value)
+        if not isinstance(sanitized, dict):
+            return {}
+        return sanitized
 
 
 class ConsoleConfig(BaseSettings):
@@ -25,6 +54,7 @@ class ConsoleConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="AGIWO_CONSOLE_",
+        env_nested_delimiter="__",
         case_sensitive=False,
         extra="ignore",
     )
@@ -44,22 +74,7 @@ class ConsoleConfig(BaseSettings):
     metadata_storage_type: Literal["memory", "sqlite"] = "sqlite"
 
     # Default Agent Configuration
-    default_agent_id: str = "default-console-agent"
-    default_agent_name: str = "Console Agent"
-    default_agent_description: str = "Default agent for Console channels"
-    default_agent_model_provider: ModelProvider = "openai-compatible"
-    default_agent_model_name: str = "codex-5.3"
-    default_agent_model_params: dict[str, Any] = Field(default_factory=dict)
-    default_agent_system_prompt: str = ""
-    default_agent_tools: list[str] = Field(
-        default_factory=lambda: [
-            "bash",
-            "bash_process",
-            "web_search",
-            "web_reader",
-            "memory_retrieval",
-        ]
-    )
+    default_agent: DefaultAgentTemplate = Field(default_factory=DefaultAgentTemplate)
 
     # Feishu channel
     feishu_enabled: bool = False
@@ -98,11 +113,3 @@ class ConsoleConfig(BaseSettings):
         if value == "none":
             return "memory"
         return value  # type: ignore[return-value]
-
-    @field_validator("default_agent_model_params", mode="before")
-    @classmethod
-    def _normalize_default_agent_model_params(cls, value: object) -> dict[str, Any]:
-        sanitized = sanitize_model_params_data(value)
-        if not isinstance(sanitized, dict):
-            return {}
-        return sanitized

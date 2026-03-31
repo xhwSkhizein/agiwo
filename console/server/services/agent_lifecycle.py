@@ -7,17 +7,14 @@ Consolidates all Agent construction paths:
 - resume_persistent_agent: wake a persistent agent with new task
 """
 
-from typing import Any
-
-from agiwo.agent import Agent
-from agiwo.agent import AgentConfig, AgentOptions
+from agiwo.agent import Agent, AgentConfig
 from agiwo.llm.base import Model
 from agiwo.tool.base import BaseTool
 from agiwo.llm import create_model_from_dict
 from agiwo.scheduler.models import AgentState
 from agiwo.scheduler.engine import Scheduler
 
-from server.config import ConsoleConfig
+from server.config import ConsoleConfig, DefaultAgentTemplate
 from server.schemas import AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import (
@@ -46,9 +43,19 @@ class PersistentAgentValidationError(PersistentAgentResumeError):
 # ── Defaults ──────────────────────────────────────────────────────────
 
 
-def build_default_agent_options() -> dict[str, Any]:
-    """Return the canonical default agent options payload."""
-    return AgentOptionsInput.model_validate({}).model_dump(exclude_none=True)
+def build_default_agent_record(template: DefaultAgentTemplate) -> AgentConfigRecord:
+    """Build an AgentConfigRecord from the default agent template in ConsoleConfig."""
+    return AgentConfigRecord(
+        id=template.id,
+        name=template.name,
+        description=template.description,
+        model_provider=template.model_provider,
+        model_name=template.model_name,
+        system_prompt=template.system_prompt,
+        tools=list(template.tools),
+        options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
+        model_params=dict(template.model_params),
+    )
 
 
 # ── Build ─────────────────────────────────────────────────────────────
@@ -61,17 +68,6 @@ def build_model(config: AgentConfigRecord) -> Model:
         provider=config.model_provider,
         model_name=config.model_name,
         params=model_params.model_dump(exclude_none=True),
-    )
-
-
-def build_agent_options(
-    config: AgentConfigRecord, console_config: ConsoleConfig
-) -> AgentOptions:
-    """Build AgentOptions with storage config matching the console storage backend."""
-    opts = AgentOptionsInput.model_validate(config.options or {})
-    return opts.to_agent_options(
-        run_step_storage=build_run_step_storage_config(console_config),
-        trace_storage=build_trace_storage_config(console_config),
     )
 
 
@@ -94,7 +90,11 @@ async def build_agent(
     _building.add(config.id)
 
     model = build_model(config)
-    options = build_agent_options(config, console_config)
+    opts_input = AgentOptionsInput.model_validate(config.options or {})
+    options = opts_input.to_agent_options(
+        run_step_storage=build_run_step_storage_config(console_config),
+        trace_storage=build_trace_storage_config(console_config),
+    )
 
     async def _build_agent_tool(ref: str) -> BaseTool | None:
         agent_id = ref[len(AGENT_TOOL_PREFIX) :]
