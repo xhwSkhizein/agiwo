@@ -8,7 +8,6 @@ from agiwo.utils.serialization import serialize_optional_datetime
 from server.dependencies import ConsoleRuntimeDep
 from server.schemas import (
     AgentConfigPayload,
-    AgentConfigReplace,
     AgentConfigResponse,
     AgentOptionsInput,
     ModelParamsInput,
@@ -97,7 +96,7 @@ async def get_agent(agent_id: str, runtime: ConsoleRuntimeDep) -> AgentConfigRes
 @router.put("/{agent_id}", response_model=AgentConfigResponse)
 async def update_agent(
     agent_id: str,
-    body: AgentConfigReplace,
+    body: AgentConfigPayload,
     runtime: ConsoleRuntimeDep,
 ) -> AgentConfigResponse:
     """Replace an existing agent configuration."""

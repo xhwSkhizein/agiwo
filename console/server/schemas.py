@@ -19,8 +19,57 @@ from agiwo.llm.config_policy import (
     validate_provider_model_params,
 )
 from agiwo.skill.config import normalize_skill_dirs
-from server.domain.run_metrics import RunMetricsSummary
-from server.domain.tool_references import parse_tool_references
+from agiwo.tool.builtin.registry import BUILTIN_TOOLS, ensure_builtin_tools_loaded
+
+ensure_builtin_tools_loaded()
+
+
+# ── Tool References ───────────────────────────────────────────────────
+
+AGENT_TOOL_PREFIX = "agent:"
+
+
+class InvalidToolReferenceError(ValueError):
+    def __init__(self, value: object) -> None:
+        super().__init__(f"Invalid tool reference: {value!r}")
+        self.value = value
+
+
+def parse_tool_reference(value: object) -> str:
+    if not isinstance(value, str):
+        raise InvalidToolReferenceError(value)
+    normalized = value.strip()
+    if not normalized:
+        raise InvalidToolReferenceError(value)
+    if normalized.startswith(AGENT_TOOL_PREFIX):
+        agent_id = normalized[len(AGENT_TOOL_PREFIX) :].strip()
+        if not agent_id:
+            raise InvalidToolReferenceError(value)
+        return f"{AGENT_TOOL_PREFIX}{agent_id}"
+    if normalized not in BUILTIN_TOOLS:
+        raise InvalidToolReferenceError(normalized)
+    return normalized
+
+
+def parse_tool_references(values: list[object]) -> list[str]:
+    return [parse_tool_reference(value) for value in values]
+
+
+# ── Metrics ────────────────────────────────────────────────────────────
+
+
+class RunMetricsSummary(BaseModel):
+    run_count: int = 0
+    completed_run_count: int = 0
+    step_count: int = 0
+    tool_calls_count: int = 0
+    duration_ms: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    token_cost: float = 0.0
 
 
 # ── Agent Options & Model Params ────────────────────────────────────────
@@ -42,15 +91,21 @@ def sanitize_agent_options_data(
     return sanitized
 
 
-class AgentOptionsInput(AgentOptions):
+class AgentOptionsInput(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    config_root: str = ""
     max_steps: int = Field(default=50, ge=1)
     run_timeout: int = Field(default=600, ge=1)
     max_input_tokens_per_call: int | None = Field(default=None, ge=1)
     max_run_cost: float | None = Field(default=None, ge=0)
+    enable_termination_summary: bool = True
+    termination_summary_prompt: str = ""
     enable_skill: bool = Field(default_factory=lambda: settings.is_skills_enabled)
     skills_dirs: list[str] | None = None
     relevant_memory_max_token: int = Field(default=2048, ge=1)
     stream_cleanup_timeout: float = Field(default=300.0, gt=0)
+    compact_prompt: str = ""
 
     @model_validator(mode="before")
     @classmethod
@@ -64,7 +119,6 @@ class AgentOptionsInput(AgentOptions):
         trace_storage: TraceStorageConfig,
     ) -> AgentOptions:
         data = self.model_dump(exclude_none=True)
-        data.pop("storage", None)
         return AgentOptions(
             **data,
             storage=AgentStorageOptions(
@@ -241,18 +295,6 @@ class AgentConfigPayload(BaseModel):
         return self
 
 
-class AgentConfigReplace(AgentConfigPayload):
-    """Full-replacement payload for persisted agent config updates.
-
-    Unlike AgentConfigPayload (used for creation where options/model_params
-    have default_factory defaults), this schema makes them required to ensure
-    every field is explicitly provided on a full replace.
-    """
-
-    options: AgentOptionsInput
-    model_params: ModelParamsInput
-
-
 class AgentConfigResponse(BaseModel):
     id: str
     name: str
@@ -304,8 +346,7 @@ class AgentStateResponse(AgentStateBase):
     signal_propagated: bool = False
 
 
-class AgentStateListItem(AgentStateBase):
-    pass
+AgentStateListItem = AgentStateBase
 
 
 class SchedulerStatsResponse(BaseModel):

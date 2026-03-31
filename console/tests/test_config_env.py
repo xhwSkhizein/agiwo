@@ -5,8 +5,7 @@ from agiwo.agent import AgentOptions
 from agiwo.config.settings import settings
 from agiwo.llm.openai import OpenAIModel
 from server.config import ConsoleConfig, DefaultAgentTemplate
-from server.schemas import AgentOptionsInput
-from server.schemas import AgentConfigPayload, AgentConfigReplace
+from server.schemas import AgentConfigPayload, AgentOptionsInput
 from server.services.agent_lifecycle import (
     build_default_agent_record,
     build_model,
@@ -16,10 +15,7 @@ from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
 )
-from server.domain.tool_references import (
-    InvalidToolReferenceError,
-    parse_tool_references,
-)
+from server.schemas import InvalidToolReferenceError, parse_tool_references
 from server.tools import build_tools
 
 
@@ -256,22 +252,23 @@ def test_agent_config_record_sanitizes_model_params_and_strips_plain_api_key() -
     assert "api_key" not in record.model_params
 
 
-def test_agent_config_replace_requires_full_nested_payloads() -> None:
-    with pytest.raises(ValidationError, match="options"):
-        AgentConfigReplace.model_validate(
-            {
-                "name": "tester",
-                "description": "",
-                "model_provider": "openai-compatible",
-                "model_name": "MiniMax-M2.5",
-                "system_prompt": "",
-                "tools": [],
-                "model_params": {
-                    "base_url": "https://api.minimax.chat/v1",
-                    "api_key_env_name": "MINIMAX_API_KEY",
-                },
-            }
-        )
+def test_agent_config_payload_uses_defaults_when_options_omitted() -> None:
+    payload = AgentConfigPayload.model_validate(
+        {
+            "name": "tester",
+            "description": "",
+            "model_provider": "openai-compatible",
+            "model_name": "MiniMax-M2.5",
+            "system_prompt": "",
+            "tools": [],
+            "model_params": {
+                "base_url": "https://api.minimax.chat/v1",
+                "api_key_env_name": "MINIMAX_API_KEY",
+            },
+        }
+    )
+    assert payload.options.max_steps == 50
+    assert payload.model_params.max_output_tokens == 4096
 
 
 @pytest.mark.asyncio

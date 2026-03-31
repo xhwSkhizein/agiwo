@@ -5,7 +5,6 @@ from sse_starlette.sse import EventSourceResponse
 
 from server.channels.session import SessionContextService
 from server.dependencies import ConsoleRuntime, ConsoleRuntimeDep, SchedulerDep
-from server.domain.sessions import session_aggregate_to_chat_summary
 from server.schemas import (
     ChatRequest,
     CreateSessionRequest,
@@ -13,12 +12,11 @@ from server.schemas import (
     SchedulerChatCancelRequest,
     SwitchSessionRequest,
 )
-from server.services.chat_sse import (
-    create_conversation_response,
-    scheduler_error_message,
-    stream_scheduler_events,
+from server.services.chat_sse import create_scheduler_chat_response
+from server.services.metrics import (
+    collect_session_aggregates,
+    session_aggregate_to_chat_summary,
 )
-from server.services.metrics import collect_session_aggregates
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -30,13 +28,11 @@ async def chat(
     runtime: ConsoleRuntimeDep,
 ) -> EventSourceResponse:
     """Send a message to an agent via the Scheduler and stream SSE events."""
-    return await create_conversation_response(
+    return await create_scheduler_chat_response(
         agent_id,
         body.message,
         body.session_id,
         runtime,
-        stream_scheduler_events,
-        unexpected_error_builder=scheduler_error_message,
     )
 
 

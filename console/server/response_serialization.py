@@ -4,9 +4,9 @@ This module is the single serialization layer between SDK/domain models and
 API Pydantic schemas.
 """
 
-from typing import Any, Literal
+from typing import Any
 
-from agiwo.agent import AgentStreamItem, Run, StepRecord
+from agiwo.agent import Run, StepRecord
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.observability.trace import Span, Trace
 from agiwo.scheduler.models import AgentState, PendingEvent, WakeCondition, thaw_value
@@ -15,10 +15,10 @@ from agiwo.utils.serialization import (
     serialize_optional_datetime,
 )
 
-from server.domain.run_metrics import RunMetricsSummary
 from server.schemas import (
     AgentStateListItem,
     AgentStateResponse,
+    RunMetricsSummary,
     PendingEventResponse,
     RunResponse,
     SpanResponse,
@@ -29,23 +29,10 @@ from server.schemas import (
 )
 
 
-# ── Lightweight input helpers (also used by domain/sessions.py) ──────────────
-
-
 def serialize_user_input_payload(
     value: UserInput | dict[str, Any] | None,
 ) -> str | dict[str, Any] | list[Any] | None:
     return UserMessage.to_transport_payload(value)
-
-
-def serialize_run_user_input_payload(
-    user_input: UserInput | dict[str, Any] | None,
-    *,
-    mode: Literal["stored", "structured"] = "stored",
-) -> str | dict[str, Any] | list[Any] | None:
-    if mode == "structured":
-        return serialize_user_input_payload(user_input)
-    return UserMessage.to_storage_value(user_input)
 
 
 # ── Response converters (SDK/domain → Pydantic schema) ───────────────────────
@@ -113,8 +100,8 @@ def span_to_response(span: Span) -> SpanResponse:
     )
 
 
-def trace_to_list_item(trace: Trace) -> TraceListItem:
-    return TraceListItem(
+def _trace_base_fields(trace: Trace) -> dict[str, Any]:
+    return dict(
         trace_id=trace.trace_id,
         agent_id=trace.agent_id,
         session_id=trace.session_id,
@@ -130,6 +117,12 @@ def trace_to_list_item(trace: Trace) -> TraceListItem:
         total_cache_read_tokens=trace.total_cache_read_tokens,
         total_cache_creation_tokens=trace.total_cache_creation_tokens,
         total_token_cost=trace.total_token_cost,
+    )
+
+
+def trace_to_list_item(trace: Trace) -> TraceListItem:
+    return TraceListItem(
+        **_trace_base_fields(trace),
         input_query=trace.input_query[:200] if trace.input_query else None,
         final_output=trace.final_output[:200] if trace.final_output else None,
     )
@@ -137,23 +130,9 @@ def trace_to_list_item(trace: Trace) -> TraceListItem:
 
 def trace_to_response(trace: Trace) -> TraceResponse:
     return TraceResponse(
-        trace_id=trace.trace_id,
-        agent_id=trace.agent_id,
-        session_id=trace.session_id,
-        user_id=trace.user_id,
-        start_time=serialize_optional_datetime(trace.start_time),
+        **_trace_base_fields(trace),
         end_time=serialize_optional_datetime(trace.end_time),
-        duration_ms=trace.duration_ms,
-        status=serialize_enum_value(trace.status),
         root_span_id=trace.root_span_id,
-        total_tokens=trace.total_tokens,
-        total_input_tokens=trace.total_input_tokens,
-        total_output_tokens=trace.total_output_tokens,
-        total_llm_calls=trace.total_llm_calls,
-        total_tool_calls=trace.total_tool_calls,
-        total_cache_read_tokens=trace.total_cache_read_tokens,
-        total_cache_creation_tokens=trace.total_cache_creation_tokens,
-        total_token_cost=trace.total_token_cost,
         max_depth=trace.max_depth,
         input_query=trace.input_query,
         final_output=trace.final_output,
@@ -180,17 +159,16 @@ def _wake_condition_to_response(
     )
 
 
-def state_to_list_item(
+def _state_base_fields(
     state: AgentState,
-    metrics: RunMetricsSummary | None = None,
-) -> AgentStateListItem:
-    return AgentStateListItem(
+    metrics: RunMetricsSummary | None,
+) -> dict[str, Any]:
+    return dict(
         id=state.id,
         status=serialize_enum_value(state.status),
         task=serialize_user_input_payload(state.task),
         parent_id=state.parent_id,
         wake_condition=_wake_condition_to_response(state.wake_condition),
-        result_summary=state.result_summary[:200] if state.result_summary else None,
         agent_config_id=state.agent_config_id,
         is_persistent=state.is_persistent,
         depth=state.depth,
@@ -201,28 +179,27 @@ def state_to_list_item(
     )
 
 
+def state_to_list_item(
+    state: AgentState,
+    metrics: RunMetricsSummary | None = None,
+) -> AgentStateListItem:
+    return AgentStateListItem(
+        **_state_base_fields(state, metrics),
+        result_summary=state.result_summary[:200] if state.result_summary else None,
+    )
+
+
 def state_to_response(
     state: AgentState,
     metrics: RunMetricsSummary | None = None,
 ) -> AgentStateResponse:
     return AgentStateResponse(
-        id=state.id,
+        **_state_base_fields(state, metrics),
         session_id=state.session_id,
-        status=serialize_enum_value(state.status),
-        task=serialize_user_input_payload(state.task),
-        parent_id=state.parent_id,
         pending_input=serialize_user_input_payload(state.pending_input),
         config_overrides=thaw_value(state.config_overrides),
-        wake_condition=_wake_condition_to_response(state.wake_condition),
         result_summary=state.result_summary,
         signal_propagated=state.signal_propagated,
-        agent_config_id=state.agent_config_id,
-        is_persistent=state.is_persistent,
-        depth=state.depth,
-        wake_count=state.wake_count,
-        metrics=metrics or RunMetricsSummary(),
-        created_at=serialize_optional_datetime(state.created_at),
-        updated_at=serialize_optional_datetime(state.updated_at),
     )
 
 
@@ -235,10 +212,3 @@ def pending_event_to_response(event: PendingEvent) -> PendingEventResponse:
         payload=thaw_value(event.payload),
         created_at=serialize_optional_datetime(event.created_at),
     )
-
-
-def stream_event_to_payload(event: AgentStreamItem) -> dict[str, Any]:
-    payload = event.to_dict()
-    if event.type == "step_completed":
-        payload["step"] = step_to_response(event.step).model_dump()
-    return payload
