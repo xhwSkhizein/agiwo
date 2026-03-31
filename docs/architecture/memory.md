@@ -14,7 +14,7 @@ The Memory system provides hybrid retrieval (BM25 + vector search) over MEMORY/ 
 ```
 Agent
   └─► MemoryRetrievalTool.execute()
-        └─► MemoryIndexStore
+        └─► WorkspaceMemoryService.search()
               ├── sync_files()      # Incremental file scanning
               └── search(query)
                     ├── vector_search()  # Embedding + cosine similarity
@@ -59,21 +59,24 @@ When embedding is unavailable, weights auto-compensate to maintain score range [
 
 ## Configuration
 
-```python
-from agiwo.tool.builtin.config import MemoryConfig
+Memory settings are loaded from global settings (`AGIWO_*` env vars or `AgiwoSettings`):
 
-config = MemoryConfig(
-    embedding_provider="auto",       # "openai" | "auto" | "disabled"
-    embedding_model="text-embedding-3-small",
-    chunk_tokens=400,
-    chunk_overlap_tokens=80,
-    top_k=5,
-    vector_weight=0.7,
-    bm25_weight=0.3,
-    temporal_decay_enabled=False,
-    temporal_decay_half_life_days=30.0,
-    mmr_enabled=False,
-    mmr_lambda=0.5,
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `AGIWO_MEMORY_TOP_K` | `5` | Number of results to return |
+| `AGIWO_MEMORY_CHUNK_TOKENS` | `400` | Chunk size in tokens |
+| `AGIWO_MEMORY_CHUNK_OVERLAP_TOKENS` | `80` | Overlap between chunks |
+| `AGIWO_MEMORY_RELEVANT_MAX_TOKEN` | `2048` | Max tokens for relevant memories |
+
+Per-tool overrides are available via constructor:
+
+```python
+from agiwo.tool.builtin.registry import builtin_tool
+from agiwo.tool.builtin.retrieval_tool.tool import MemoryRetrievalTool
+
+tool = MemoryRetrievalTool(
+    top_k=10,
+    embedding_provider="openai",
 )
 ```
 

@@ -182,14 +182,18 @@ model = DeepseekModel(id="deepseek-chat", name="deepseek-chat")
 
 ### OpenAI-Compatible (custom endpoint)
 
-```python
-from agiwo.llm import OpenAICompatibleModel
+For any OpenAI-compatible API endpoint, use `create_model_from_dict`:
 
-model = OpenAICompatibleModel(
-    id="my-model",
-    name="my-model",
-    base_url="https://api.example.com/v1",
-    api_key_env_name="MY_API_KEY",
+```python
+from agiwo.llm import create_model_from_dict
+
+model = create_model_from_dict(
+    provider="openai-compatible",
+    model_name="my-model",
+    params={
+        "base_url": "https://api.example.com/v1",
+        "api_key_env_name": "MY_API_KEY",
+    },
 )
 ```
 

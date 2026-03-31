@@ -9,7 +9,7 @@
 - **按 Agent 隔离**：每个 `agent_name` 对应独立的 `.agiwo/<agent_name>/` workspace，索引库也独立存储
 - **被动索引**：不引入后台守护进程；索引在工具调用时按需触发（增量、懒加载）
 - **Embedding 可降级**：若无可用 Embedding Provider，自动退化为纯 BM25 检索，功能不中断
-- **与现有架构零耦合**：`MemoryRetrievalTool` 是标准 `BaseTool`，`MemoryIndexStore` 独立于 Agent 生命周期
+- **与现有架构零耦合**：`MemoryRetrievalTool` 是标准 `BaseTool`，`WorkspaceMemoryService` 独立于 Agent 生命周期
 
 ---
 
@@ -70,7 +70,7 @@
 | 时间衰减 | 可配置指数衰减 | 可配置指数衰减（保留） |
 | MMR 重排 | 可选 | 可选（保留） |
 | Query Expansion | FTS-Only 时关键词扩展 | 保留（停用词过滤 + 多词 OR 查询） |
-| 配置体系 | resolveMemorySearchConfig() 全局 | `MemoryConfig` dataclass，注入 Tool |
+| 配置体系 | resolveMemorySearchConfig() 全局 | 全局 `AgiwoSettings`，按工具构造函数覆盖 |
 
 **关键简化**：去掉后台 Watcher 和会话同步，改为在 `memory_retrieval` 工具调用入口做增量索引检查。这使系统完全无状态守护进程，符合 Agiwo 的 "no background daemon" 原则。
 
@@ -79,16 +79,22 @@
 ## 文件组织
 
 ```
-agiwo/tool/builtin/retrieval_tool/
+agiwo/memory/
 ├── __init__.py
-├── store.py          # MemoryIndexStore：SQLite 索引 + 检索核心
-├── chunker.py        # Markdown chunk 切割
-├── embedder.py       # Embedding Provider 抽象 + OpenAI 实现
-├── searcher.py       # HybridSearcher：BM25 + Vector + 融合 + MMR
-└── retrieval.py      # MemoryRetrievalTool（BaseTool 实现，对外入口）
+├── chunker.py        # MemoryChunker, MemoryChunk: Markdown chunk 切割
+├── index_store.py    # MemoryIndexStore: SQLite 索引 + 检索
+├── searcher.py       # HybridSearcher, SearchResult: BM25 + Vector
+└── service.py        # WorkspaceMemoryService: 业务编排层
 
-agiwo/tool/builtin/config.py
-└── MemoryConfig      # 新增配置 dataclass
+agiwo/tool/builtin/retrieval_tool/
+└── tool.py           # MemoryRetrievalTool（BaseTool 实现，对外入口）
+
+agiwo/embedding/
+├── __init__.py
+├── base.py           # EmbeddingModel 抽象
+├── factory.py        # EmbeddingFactory
+├── openai.py         # OpenAI Embedding 实现
+└── local.py          # Local Embedding 实现
 ```
 
 ---
@@ -101,8 +107,8 @@ Agent 写记忆
 
 Agent 查记忆
   └─► memory_retrieval(query="...")
-        └─► MemoryIndexStore.search(query)
-              ├─ sync_files()          # 增量扫描 MEMORY/，索引变更文件
+        └─► WorkspaceMemoryService.search()
+              ├─ MemoryIndexStore.sync_files()  # 增量扫描 MEMORY/，索引变更文件
               ├─ HybridSearcher.search()
               │    ├─ vector_search()  # Embedding + cosine
               │    ├─ bm25_search()    # FTS5

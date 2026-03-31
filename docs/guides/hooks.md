@@ -17,6 +17,7 @@ hooks = AgentHooks(
     on_step=my_on_step_hook,
     on_memory_write=my_memory_write_hook,
     on_memory_retrieve=my_memory_retrieve_hook,
+    on_compaction_failed=my_compaction_failed_hook,
 )
 ```
 
@@ -77,10 +78,20 @@ async def on_memory_write(user_input, result, context) -> None:
     """Called after a successful run to persist external memory."""
     print(f"Persisting memory for run {context.run_id}")
 
-async def on_memory_retrieve(user_input, context) -> list:
-    """Called before execution to fetch memories."""
+async def on_memory_retrieve(user_input, context) -> list[MemoryRecord]:
+    """Called before execution to fetch memories.
+    Return a list of MemoryRecord objects, or empty list."""
+    from agiwo.agent.models.run import MemoryRecord
     print(f"Retrieving memories for run {context.run_id}")
     return []
+```
+
+### Compaction Failure
+
+```python
+async def on_compaction_failed(error, context) -> None:
+    """Called when context compaction fails."""
+    print(f"Compaction failed: {error}")
 ```
 
 ## Using Hooks

@@ -83,7 +83,7 @@ async def main() -> None:
     print(result.response)
 
     async for event in agent.run_stream("Give me a one-line summary of recursion."):
-        if event.delta and event.delta.content:
+        if event.type == "step_delta" and event.delta.content:
             print(event.delta.content, end="", flush=True)
 
     await agent.close()

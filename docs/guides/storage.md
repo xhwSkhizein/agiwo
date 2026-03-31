@@ -1,13 +1,12 @@
 # Storage & Observability
 
-Agiwo separates storage into three independent concerns: run/step persistence, session metadata, and trace collection.
+Agiwo separates storage into two independent concerns: run/step persistence and trace collection.
 
 ## Storage Layers
 
 | Layer | Purpose | Interface |
 |-------|---------|-----------|
 | Run/Step Storage | Persist agent run and step records | `RunStepStorage` |
-| Session Storage | Session metadata and compaction state | `SessionStorage` |
 | Trace Storage | Distributed traces for observability | `BaseTraceStorage` |
 
 ## Run/Step Storage
@@ -25,14 +24,6 @@ storage = create_run_step_storage(
 
 # Memory backend (for testing)
 storage = create_run_step_storage(RunStepStorageConfig(storage_type="memory"))
-
-# MongoDB backend
-storage = create_run_step_storage(
-    RunStepStorageConfig(
-        storage_type="mongodb",
-        config={"mongo_uri": "mongodb://...", "db_name": "agiwo"},
-    )
-)
 ```
 
 Pass storage configuration through `AgentConfig.options`:
@@ -62,21 +53,7 @@ agent = Agent(
 
 ## Session Storage
 
-Manages session-level metadata:
-
-```python
-from agiwo.agent import RunStepStorageConfig
-from agiwo.agent.storage.factory import create_session_storage
-
-storage = create_session_storage(
-    RunStepStorageConfig(storage_type="sqlite", config={"db_path": "sessions.db"})
-)
-```
-
-Sessions track:
-- Conversation history metadata
-- Compaction state (when context gets too long)
-- User identity and preferences
+The SDK does not provide a standalone `SessionStorage` abstraction. Session state management is handled by the console server via `SessionManager` in `console/server/channels/session/manager.py`, or by the SDK's in-memory runtime state during agent execution.
 
 ## Trace Storage
 
@@ -94,14 +71,6 @@ trace_storage = create_trace_storage(
 # Memory
 trace_storage = create_trace_storage(TraceStorageConfig(storage_type="memory"))
 
-# MongoDB
-trace_storage = create_trace_storage(
-    TraceStorageConfig(
-        storage_type="mongodb",
-        config={"mongo_uri": "mongodb://...", "db_name": "agiwo"},
-    )
-)
-```
 
 Pass trace configuration through `AgentConfig.options`:
 
@@ -156,7 +125,7 @@ The `subscribe()` method enables real-time trace streaming to the Console UI.
 |---------|----------|-------------|
 | `memory` | Testing, ephemeral workloads | No (lost on restart) |
 | `sqlite` | Single-node deployments, development | Yes |
-| `mongo` | Production, multi-node, high volume | Yes |
+| `sqlite` | Single-node deployments, development | Yes |
 
 ## Configuration
 
