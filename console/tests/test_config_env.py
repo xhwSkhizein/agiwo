@@ -4,16 +4,18 @@ from pydantic import ValidationError
 from agiwo.agent import AgentOptions
 from agiwo.config.settings import settings
 from agiwo.llm.openai import OpenAIModel
-from server.app import _build_default_agent_config
-from server.config import ConsoleConfig
+from server.config import ConsoleConfig, DefaultAgentTemplate
 from server.schemas import AgentOptionsInput
 from server.schemas import AgentConfigPayload, AgentConfigReplace
 from server.services.agent_lifecycle import (
-    build_agent_options,
-    build_default_agent_options,
+    build_default_agent_record,
     build_model,
 )
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
+from server.services.storage_wiring import (
+    build_run_step_storage_config,
+    build_trace_storage_config,
+)
 from server.domain.tool_references import (
     InvalidToolReferenceError,
     parse_tool_references,
@@ -32,7 +34,7 @@ def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> 
 def test_console_config_rejects_legacy_default_model_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("AGIWO_CONSOLE_DEFAULT_AGENT_MODEL_PROVIDER", "generic")
+    monkeypatch.setenv("AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PROVIDER", "generic")
 
     with pytest.raises(ValidationError):
         ConsoleConfig()
@@ -42,7 +44,7 @@ def test_console_config_rejects_plain_api_key_in_default_model_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv(
-        "AGIWO_CONSOLE_DEFAULT_AGENT_MODEL_PARAMS",
+        "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PARAMS",
         '{"api_key":"sk-plain-text","base_url":"https://api.example.com/v1"}',
     )
 
@@ -50,35 +52,33 @@ def test_console_config_rejects_plain_api_key_in_default_model_params(
         ConsoleConfig()
 
 
-def test_build_agent_options_uses_global_skills_default(
+def test_agent_options_input_uses_global_skills_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "is_skills_enabled", False)
 
-    config = AgentConfigRecord(
-        name="tester",
-        model_provider="openai",
-        model_name="gpt-4o-mini",
-        options={},
-    )
     console_config = ConsoleConfig(
         run_step_storage_type="memory",
         trace_storage_type="memory",
         metadata_storage_type="memory",
     )
-
-    options = build_agent_options(config, console_config)
+    opts = AgentOptionsInput.model_validate({})
+    options = opts.to_agent_options(
+        run_step_storage=build_run_step_storage_config(console_config),
+        trace_storage=build_trace_storage_config(console_config),
+    )
 
     assert options.enable_skill is False
     assert options.skills_dirs is None
 
 
-def test_default_agent_config_uses_shared_option_defaults() -> None:
-    config = ConsoleConfig()
+def test_default_agent_record_uses_shared_option_defaults() -> None:
+    template = DefaultAgentTemplate()
 
-    record = _build_default_agent_config(config)
+    record = build_default_agent_record(template)
 
-    assert record.options == build_default_agent_options()
+    expected = AgentOptionsInput.model_validate({}).model_dump(exclude_none=True)
+    assert record.options == expected
     assert record.options["max_steps"] == AgentOptions().max_steps
 
 
@@ -88,16 +88,18 @@ def test_agent_options_payload_normalizes_single_skills_dirs() -> None:
     assert payload.skills_dirs == ["skills"]
 
 
-def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
+def test_agent_options_input_normalizes_skills_dirs_and_maps_all_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(settings, "is_skills_enabled", True)
 
-    config = AgentConfigRecord(
-        name="tester",
-        model_provider="openai",
-        model_name="gpt-4o-mini",
-        options={
+    console_config = ConsoleConfig(
+        run_step_storage_type="memory",
+        trace_storage_type="memory",
+        metadata_storage_type="memory",
+    )
+    opts = AgentOptionsInput.model_validate(
+        {
             "config_root": "/tmp/agent-root",
             "max_steps": 42,
             "run_timeout": 120,
@@ -110,15 +112,12 @@ def test_build_agent_options_normalizes_skills_dirs_and_maps_all_fields(
             "relevant_memory_max_token": 1024,
             "stream_cleanup_timeout": 90.5,
             "compact_prompt": "Compact the context",
-        },
+        }
     )
-    console_config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+    options = opts.to_agent_options(
+        run_step_storage=build_run_step_storage_config(console_config),
+        trace_storage=build_trace_storage_config(console_config),
     )
-
-    options = build_agent_options(config, console_config)
 
     assert options.config_root == "/tmp/agent-root"
     assert options.max_steps == 42

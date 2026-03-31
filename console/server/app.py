@@ -19,8 +19,8 @@ from server.dependencies import (
 from server.channels.utils import safe_close_all
 from server.channels.feishu import FeishuChannelService
 from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
-from server.services.agent_registry import AgentRegistry, AgentConfigRecord
-from server.services.agent_lifecycle import build_default_agent_options
+from server.services.agent_registry import AgentRegistry
+from server.services.agent_lifecycle import build_default_agent_record
 from server.services.storage_wiring import (
     build_agent_state_storage_config,
     create_run_step_storage,
@@ -37,21 +37,6 @@ from server.routers import (
 from agiwo.utils.logging import get_logger
 
 logger = get_logger("app")
-
-
-def _build_default_agent_config(config: ConsoleConfig) -> AgentConfigRecord:
-    """Build default agent config from ConsoleConfig."""
-    return AgentConfigRecord(
-        id=config.default_agent_id,
-        name=config.default_agent_name,
-        description=config.default_agent_description,
-        model_provider=config.default_agent_model_provider,
-        model_name=config.default_agent_model_name,
-        system_prompt=config.default_agent_system_prompt,
-        tools=config.default_agent_tools,
-        options=build_default_agent_options(),
-        model_params=config.default_agent_model_params,
-    )
 
 
 @asynccontextmanager
@@ -90,11 +75,9 @@ async def lifespan(app: FastAPI):
             config.feishu_default_agent_name
         )
         if base_agent is None:
-            base_agent = _build_default_agent_config(config)
+            base_agent = build_default_agent_record(config.default_agent)
             await agent_registry.create_agent(base_agent)
-            logger.info(
-                "create Default Agent Config", name=config.feishu_default_agent_name
-            )
+            logger.info("create Default Agent Config", name=config.default_agent.name)
 
         feishu_channel_service = FeishuChannelService(
             config=config,
