@@ -13,8 +13,11 @@ from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.exceptions import BaseAgentNotFoundError
-from server.channels.session.binding import assign_runtime_identity
-from server.channels.session.models import ChannelChatSessionStore, Session
+from server.channels.session.models import (
+    ChannelChatSessionStore,
+    Session,
+    assign_runtime_identity,
+)
 from server.config import ConsoleConfig
 from server.services.agent_lifecycle import build_agent
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry

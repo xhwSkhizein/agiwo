@@ -4,21 +4,15 @@ Session and chat-context coordination for channel runtime flows.
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from agiwo.utils.logging import get_logger
 
-from server.channels.exceptions import BaseAgentNotFoundError
-from server.channels.session.binding import (
+from server.channels.exceptions import (
+    BaseAgentNotFoundError,
     ChatContextNotFoundError,
-    SessionMutationPlan,
     SessionNotFoundError,
     SessionNotInChatContextError,
-    fork_session as _fork_session_binding,
-    open_initial_session,
-    open_new_session,
-    repair_missing_base_agent,
-    switch_session,
-    sync_chat_context_base_agent,
 )
 from server.channels.session.models import (
     BatchContext,
@@ -102,11 +96,8 @@ class SessionContextService:
             )
 
         if chat_context.base_agent_id != context.base_agent_id:
-            sync_chat_context_base_agent(
-                chat_context,
-                base_agent_id=context.base_agent_id,
-                now=datetime.now(timezone.utc),
-            )
+            chat_context.base_agent_id = context.base_agent_id
+            chat_context.updated_at = datetime.now(timezone.utc)
             await self._store.upsert_chat_context(chat_context)
 
         session = await self._store.get_session(chat_context.current_session_id)
@@ -147,7 +138,7 @@ class SessionContextService:
             )
             return SessionCreateResult(
                 chat_context=created.chat_context,
-                session=created.current_session,
+                session=created.session,
             )
 
         created = await self._create_session_for_chat_context(
@@ -157,7 +148,7 @@ class SessionContextService:
         )
         return SessionCreateResult(
             chat_context=created.chat_context,
-            session=created.current_session,
+            session=created.session,
         )
 
     async def switch_session(
@@ -177,17 +168,20 @@ class SessionContextService:
             raise SessionNotInChatContextError(target_session_id, chat_context.scope_id)
 
         previous = await self._store.get_session(chat_context.current_session_id)
-        mutation = switch_session(
-            chat_context,
-            previous,
-            target,
-            now=datetime.now(timezone.utc),
-        )
-        await self._store.apply_session_mutation(mutation)
+        now = datetime.now(timezone.utc)
+        chat_context.current_session_id = target.id
+        chat_context.updated_at = now
+        if previous is not None:
+            previous.updated_at = now
+        target.updated_at = now
+        await self._store.upsert_chat_context(chat_context)
+        if previous is not None:
+            await self._store.upsert_session(previous)
+        await self._store.upsert_session(target)
         return SessionSwitchResult(
-            previous_session=mutation.previous_session,
-            current_session=mutation.current_session,
-            chat_context=mutation.chat_context,
+            previous_session=previous,
+            current_session=target,
+            chat_context=chat_context,
         )
 
     async def list_user_sessions(
@@ -230,19 +224,33 @@ class SessionContextService:
         user_open_id: str,
         base_agent_id: str,
         created_by: str,
-    ) -> SessionMutationPlan:
-        mutation = open_initial_session(
-            chat_context_scope_id=chat_context_scope_id,
+    ) -> SessionContextResolution:
+        now = datetime.now(timezone.utc)
+        session_id = str(uuid4())
+        chat_context = ChannelChatContext(
+            scope_id=chat_context_scope_id,
             channel_instance_id=channel_instance_id,
             chat_id=chat_id,
             chat_type=chat_type,
             user_open_id=user_open_id,
             base_agent_id=base_agent_id,
-            created_by=created_by,
-            now=datetime.now(timezone.utc),
+            current_session_id=session_id,
+            created_at=now,
+            updated_at=now,
         )
-        await self._store.apply_session_mutation(mutation)
-        return mutation
+        session = Session(
+            id=session_id,
+            chat_context_scope_id=chat_context_scope_id,
+            base_agent_id=base_agent_id,
+            runtime_agent_id="",
+            scheduler_state_id="",
+            created_by=created_by,
+            created_at=now,
+            updated_at=now,
+        )
+        await self._store.upsert_chat_context(chat_context)
+        await self._store.upsert_session(session)
+        return SessionContextResolution(chat_context=chat_context, session=session)
 
     async def _create_session_for_chat_context(
         self,
@@ -250,15 +258,25 @@ class SessionContextService:
         *,
         base_agent_id: str,
         created_by: str,
-    ) -> SessionMutationPlan:
-        mutation = open_new_session(
-            chat_context,
+    ) -> SessionContextResolution:
+        now = datetime.now(timezone.utc)
+        session_id = str(uuid4())
+        session = Session(
+            id=session_id,
+            chat_context_scope_id=chat_context.scope_id,
             base_agent_id=base_agent_id,
+            runtime_agent_id="",
+            scheduler_state_id="",
             created_by=created_by,
-            now=datetime.now(timezone.utc),
+            created_at=now,
+            updated_at=now,
         )
-        await self._store.apply_session_mutation(mutation)
-        return mutation
+        chat_context.current_session_id = session_id
+        chat_context.base_agent_id = base_agent_id
+        chat_context.updated_at = now
+        await self._store.upsert_chat_context(chat_context)
+        await self._store.upsert_session(session)
+        return SessionContextResolution(chat_context=chat_context, session=session)
 
     async def _ensure_session_base_agent(
         self,
@@ -278,25 +296,27 @@ class SessionContextService:
 
         old_base_agent_id = session.base_agent_id
         old_runtime_agent_id = session.runtime_agent_id
-        mutation = repair_missing_base_agent(
-            chat_context,
-            session,
-            default_agent_id=default_config.id,
-            now=datetime.now(timezone.utc),
-        )
-        await self._store.apply_session_mutation(mutation)
+        now = datetime.now(timezone.utc)
+        session.base_agent_id = default_config.id
+        session.runtime_agent_id = ""
+        session.scheduler_state_id = ""
+        session.updated_at = now
+        chat_context.base_agent_id = default_config.id
+        chat_context.updated_at = now
+        await self._store.upsert_chat_context(chat_context)
+        await self._store.upsert_session(session)
         logger.warning(
             "channel_session_rebind_base_agent",
             session_id=session.id,
             old_base_agent_id=old_base_agent_id,
-            new_base_agent_id=mutation.current_session.base_agent_id,
+            new_base_agent_id=session.base_agent_id,
             old_runtime_agent_id=old_runtime_agent_id,
-            new_runtime_agent_id=mutation.current_session.runtime_agent_id,
+            new_runtime_agent_id=session.runtime_agent_id,
         )
         return SessionContextResolution(
-            chat_context=mutation.chat_context,
-            session=mutation.current_session,
-            retired_runtime_agent_id=mutation.retired_runtime_agent_id,
+            chat_context=chat_context,
+            session=session,
+            retired_runtime_agent_id=old_runtime_agent_id or None,
         )
 
     async def fork_session(
@@ -312,17 +332,28 @@ class SessionContextService:
         source = await self._store.get_session(chat_context.current_session_id)
         if source is None:
             raise SessionNotFoundError(chat_context.current_session_id)
-        mutation = _fork_session_binding(
-            chat_context,
-            source,
+        now = datetime.now(timezone.utc)
+        session_id = str(uuid4())
+        session = Session(
+            id=session_id,
+            chat_context_scope_id=chat_context.scope_id,
+            base_agent_id=source.base_agent_id,
+            runtime_agent_id="",
+            scheduler_state_id="",
             created_by=created_by,
-            context_summary=context_summary,
-            now=datetime.now(timezone.utc),
+            created_at=now,
+            updated_at=now,
+            source_session_id=source.id,
+            source_task_id=source.current_task_id,
+            fork_context_summary=context_summary,
         )
-        await self._store.apply_session_mutation(mutation)
+        chat_context.current_session_id = session_id
+        chat_context.updated_at = now
+        await self._store.upsert_chat_context(chat_context)
+        await self._store.upsert_session(session)
         return SessionCreateResult(
-            chat_context=mutation.chat_context,
-            session=mutation.current_session,
+            chat_context=chat_context,
+            session=session,
         )
 
     async def fork_session_by_id(
@@ -339,17 +370,28 @@ class SessionContextService:
         chat_context = await self._store.get_chat_context(source.chat_context_scope_id)
         if chat_context is None:
             raise ChatContextNotFoundError(source.chat_context_scope_id)
-        mutation = _fork_session_binding(
-            chat_context,
-            source,
+        now = datetime.now(timezone.utc)
+        new_session_id = str(uuid4())
+        session = Session(
+            id=new_session_id,
+            chat_context_scope_id=chat_context.scope_id,
+            base_agent_id=source.base_agent_id,
+            runtime_agent_id="",
+            scheduler_state_id="",
             created_by=created_by,
-            context_summary=context_summary,
-            now=datetime.now(timezone.utc),
+            created_at=now,
+            updated_at=now,
+            source_session_id=source.id,
+            source_task_id=source.current_task_id,
+            fork_context_summary=context_summary,
         )
-        await self._store.apply_session_mutation(mutation)
+        chat_context.current_session_id = new_session_id
+        chat_context.updated_at = now
+        await self._store.upsert_chat_context(chat_context)
+        await self._store.upsert_session(session)
         return SessionCreateResult(
-            chat_context=mutation.chat_context,
-            session=mutation.current_session,
+            chat_context=chat_context,
+            session=session,
         )
 
     async def list_sessions(

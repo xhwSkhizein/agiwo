@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from server.channels.session.binding import SessionMutationPlan
 from server.channels.session.context_service import SessionContextService
 from server.channels.session.models import ChannelChatContext, Session
 from server.services.agent_registry import AgentRegistry
@@ -56,12 +55,6 @@ class InMemorySessionStore:
             for s in self.sessions.values()
             if s.chat_context_scope_id == chat_context_scope_id
         ]
-
-    async def apply_session_mutation(self, mutation: SessionMutationPlan) -> None:
-        self.chat_context = mutation.chat_context
-        self.sessions[mutation.current_session.id] = mutation.current_session
-        if mutation.previous_session is not None:
-            self.sessions[mutation.previous_session.id] = mutation.previous_session
 
     async def upsert_chat_context(self, chat_context: ChannelChatContext) -> None:
         self.chat_context = chat_context

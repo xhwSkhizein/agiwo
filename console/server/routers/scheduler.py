@@ -8,11 +8,6 @@ from fastapi import APIRouter, HTTPException, Query
 from agiwo.scheduler.models import AgentStateStatus
 
 from server.dependencies import ConsoleRuntimeDep, SchedulerDep
-from server.response_serialization import (
-    pending_event_to_response,
-    state_to_list_item as _state_to_list_item,
-    state_to_response as _state_to_response,
-)
 from server.schemas import (
     AgentStateListItem,
     AgentStateResponse,
@@ -29,7 +24,6 @@ from server.services.agent_lifecycle import (
     build_agent,
     resume_persistent_agent,
 )
-from server.services.metrics import build_metrics_by_state
 
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
 
@@ -59,15 +53,7 @@ async def list_agent_states(
         limit=limit,
         offset=offset,
     )
-    run_storage = runtime.run_step_storage
-    metrics_by_state = await build_metrics_by_state(states, run_storage)
-    return [
-        _state_to_list_item(
-            s,
-            metrics_by_state.get((s.resolve_runtime_session_id(), s.id)),
-        )
-        for s in states
-    ]
+    return [AgentStateListItem.from_sdk(s) for s in states]
 
 
 @router.get("/states/{state_id}", response_model=AgentStateResponse)
@@ -80,12 +66,7 @@ async def get_agent_state(
     state = await scheduler.get_state(state_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Agent state not found")
-    run_storage = runtime.run_step_storage
-    metrics_by_state = await build_metrics_by_state([state], run_storage)
-    return _state_to_response(
-        state,
-        metrics_by_state.get((state.resolve_runtime_session_id(), state.id)),
-    )
+    return AgentStateResponse.from_sdk(state)
 
 
 @router.get("/states/{state_id}/children", response_model=list[AgentStateListItem])
@@ -97,15 +78,7 @@ async def get_children(
     """Get child agent states for a given parent state."""
     children = await scheduler.list_states(parent_id=state_id, limit=1000)
     children.sort(key=lambda s: s.created_at, reverse=True)
-    run_storage = runtime.run_step_storage
-    metrics_by_state = await build_metrics_by_state(children, run_storage)
-    return [
-        _state_to_list_item(
-            s,
-            metrics_by_state.get((s.resolve_runtime_session_id(), s.id)),
-        )
-        for s in children
-    ]
+    return [AgentStateListItem.from_sdk(s) for s in children]
 
 
 @router.get("/stats", response_model=SchedulerStatsResponse)
@@ -185,7 +158,7 @@ async def list_pending_events(
         target_agent_id=state_id,
         session_id=state.session_id,
     )
-    return [pending_event_to_response(event) for event in events]
+    return [PendingEventResponse.from_sdk(event) for event in events]
 
 
 @router.post("/states/create")

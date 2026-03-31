@@ -7,7 +7,6 @@ from server.channels.session.models import (
     Session,
     SessionWithContext,
 )
-from server.channels.session.binding import SessionMutationPlan
 
 _EVENT_DEDUP_MAX_SIZE = 10_000
 
@@ -71,10 +70,6 @@ class InMemoryFeishuChannelStore:
             session.chat_context_scope_id, set()
         )
         ids.add(session.id)
-
-    async def apply_session_mutation(self, mutation: SessionMutationPlan) -> None:
-        await self.upsert_chat_context(mutation.chat_context)
-        await self.upsert_session(mutation.current_session)
 
     async def list_sessions_by_user(
         self, user_open_id: str
