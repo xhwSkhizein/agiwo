@@ -5,7 +5,7 @@ from agiwo.agent import AgentOptions
 from agiwo.config.settings import settings
 from agiwo.llm.openai import OpenAIModel
 from server.config import ConsoleConfig, DefaultAgentTemplate
-from server.schemas import AgentConfigPayload, AgentOptionsInput
+from server.models import AgentConfigPayload, AgentOptionsInput
 from server.services.agent_lifecycle import (
     build_default_agent_record,
     build_model,
@@ -15,7 +15,7 @@ from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
 )
-from server.schemas import InvalidToolReferenceError, parse_tool_references
+from server.models import InvalidToolReferenceError, parse_tool_references
 from server.tools import build_tools
 
 

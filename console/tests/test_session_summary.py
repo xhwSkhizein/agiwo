@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from agiwo.agent import ContentPart, ContentType, UserMessage
-from server.schemas import RunMetricsSummary
+from server.models import RunMetricsSummary
 from server.services.metrics import (
     collect_session_aggregates,
     session_aggregate_to_chat_summary,

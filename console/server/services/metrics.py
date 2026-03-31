@@ -12,7 +12,7 @@ from agiwo.agent.storage.base import RunStepStorage
 from agiwo.scheduler.models import AgentState
 from agiwo.utils.serialization import serialize_optional_datetime
 
-from server.schemas import RunMetricsSummary
+from server.models import RunMetricsSummary
 
 
 @dataclass

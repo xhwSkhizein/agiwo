@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from server.config import ConsoleConfig
-from server.schemas import AgentConfigPayload, AgentOptionsInput, ModelParamsInput
+from server.models import AgentConfigPayload, AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry.models import AgentConfigRecord
 from server.services.agent_registry.store import (
     AgentRegistryStore,

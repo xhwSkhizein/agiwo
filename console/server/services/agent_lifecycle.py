@@ -15,7 +15,7 @@ from agiwo.scheduler.models import AgentState
 from agiwo.scheduler.engine import Scheduler
 
 from server.config import ConsoleConfig, DefaultAgentTemplate
-from server.schemas import AGENT_TOOL_PREFIX, AgentOptionsInput, ModelParamsInput
+from server.models import AGENT_TOOL_PREFIX, AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import (
     build_run_step_storage_config,

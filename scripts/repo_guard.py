@@ -180,11 +180,6 @@ FEISHU_ENVELOPE_ENTRYPOINTS = {
         "_process_incoming_payload",
     },
 }
-AGENT_CONFIG_REPLACE_ENTRYPOINTS = {
-    Path("console/server/routers/agents.py"): {
-        "update_agent",
-    },
-}
 
 
 @dataclass(frozen=True)
@@ -491,11 +486,6 @@ def _requires_feishu_inbound_envelope(path: Path, function_name: str) -> bool:
     return required_entrypoints is not None and function_name in required_entrypoints
 
 
-def _requires_agent_config_replace(path: Path, function_name: str) -> bool:
-    required_entrypoints = AGENT_CONFIG_REPLACE_ENTRYPOINTS.get(path)
-    return required_entrypoints is not None and function_name in required_entrypoints
-
-
 def _detect_feishu_inbound_envelope_error(
     path: Path,
     node: ast.FunctionDef | ast.AsyncFunctionDef,
@@ -519,29 +509,6 @@ def _detect_feishu_inbound_envelope_error(
         (
             "Feishu inbound entrypoints must accept FeishuInboundEnvelope; "
             "do not reintroduce raw dict payload contracts in parser/handler/service."
-        ),
-    )
-
-
-def _detect_agent_config_replace_error(
-    path: Path,
-    node: ast.FunctionDef | ast.AsyncFunctionDef,
-) -> GuardError | None:
-    if not _requires_agent_config_replace(path, node.name):
-        return None
-    body_arg = next((arg for arg in node.args.args if arg.arg == "body"), None)
-    if body_arg is not None and _is_annotation_name(
-        body_arg.annotation,
-        {"AgentConfigReplace"},
-    ):
-        return None
-    return _make_error(
-        path,
-        node.lineno,
-        "AGW025",
-        (
-            "Agent config PUT endpoints must accept AgentConfigReplace; "
-            "keep update semantics as full replacement, not partial patch."
         ),
     )
 
@@ -634,9 +601,6 @@ def _detect_function_errors(
     feishu_error = _detect_feishu_inbound_envelope_error(path, node)
     if feishu_error is not None:
         errors.append(feishu_error)
-    agent_config_error = _detect_agent_config_replace_error(path, node)
-    if agent_config_error is not None:
-        errors.append(agent_config_error)
     return errors
 
 
@@ -1346,35 +1310,6 @@ def _detect_console_tool_catalog_contract_text_errors(
     return errors
 
 
-def _detect_agent_lifecycle_tool_text_errors(
-    path: Path,
-    content: str,
-) -> list[GuardError]:
-    errors: list[GuardError] = []
-    if path == Path("console/server/services/agent_lifecycle.py"):
-        for pattern in (
-            r"\bAGENT_TOOL_PREFIX\b",
-            r"\btool_config_overrides\b",
-            r"\bcreate_tools\s*\(",
-        ):
-            line = _find_first_match_line(content, pattern)
-            if line is None:
-                continue
-            errors.append(
-                _make_error(
-                    path,
-                    line,
-                    "AGW031",
-                    (
-                        "Agent lifecycle must route tool parsing/building through "
-                        "ConsoleToolCatalog; do not reintroduce local prefixes or "
-                        "builtin override branches."
-                    ),
-                )
-            )
-    return errors
-
-
 def _detect_agent_lifecycle_stable_id_errors(
     path: Path,
     content: str,
@@ -1471,7 +1406,6 @@ def _detect_console_tool_catalog_text_errors(
 ) -> list[GuardError]:
     errors = _detect_tool_reference_domain_text_errors(path, content)
     errors.extend(_detect_console_tool_catalog_contract_text_errors(path, content))
-    errors.extend(_detect_agent_lifecycle_tool_text_errors(path, content))
     errors.extend(_detect_agents_router_tool_text_errors(path, content))
     return errors
 

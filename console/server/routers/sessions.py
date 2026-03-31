@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from server.dependencies import ConsoleRuntimeDep
-from server.schemas import RunResponse, StepResponse
+from server.models import RunResponse, StepResponse
 from server.services.metrics import (
     SessionSummaryData,
     collect_session_aggregates,
