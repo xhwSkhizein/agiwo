@@ -132,6 +132,7 @@ class ChannelChatSessionStore(Protocol):
 
 # Helper functions for session operations
 
+
 def assign_runtime_identity(session: Session, runtime_agent_id: str) -> None:
     """Assign runtime identity to a session."""
     session.runtime_agent_id = runtime_agent_id

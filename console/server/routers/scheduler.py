@@ -53,10 +53,7 @@ async def list_agent_states(
         limit=limit,
         offset=offset,
     )
-    return [
-        AgentStateListItem.from_sdk(s)
-        for s in states
-    ]
+    return [AgentStateListItem.from_sdk(s) for s in states]
 
 
 @router.get("/states/{state_id}", response_model=AgentStateResponse)

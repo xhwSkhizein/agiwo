@@ -143,14 +143,8 @@ async def test_feishu_channel_store_applies_session_mutation_atomically(
         await store.upsert_chat_context(chat_context)
         await store.upsert_session(session)
 
-        assert (
-            await store.get_chat_context(chat_context.scope_id)
-            == chat_context
-        )
-        assert (
-            await store.get_session(session.id)
-            == session
-        )
+        assert await store.get_chat_context(chat_context.scope_id) == chat_context
+        assert await store.get_session(session.id) == session
     finally:
         await store.close()
 

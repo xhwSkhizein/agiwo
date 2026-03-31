@@ -177,10 +177,14 @@ class StepResponse(BaseModel):
             content_for_user=step.content_for_user,
             reasoning_content=step.reasoning_content,
             user_input=step.user_input,
-            tool_calls=[tc.model_dump() for tc in step.tool_calls] if step.tool_calls else None,
+            tool_calls=[tc.model_dump() for tc in step.tool_calls]
+            if step.tool_calls
+            else None,
             tool_call_id=step.tool_call_id,
             name=step.name,
-            metrics=StepMetricsResponse.from_sdk(step.metrics) if step.metrics else None,
+            metrics=StepMetricsResponse.from_sdk(step.metrics)
+            if step.metrics
+            else None,
             created_at=step.created_at.isoformat() if step.created_at else None,
             parent_run_id=step.parent_run_id,
             depth=step.depth,
@@ -392,7 +396,9 @@ class AgentStateResponse(AgentStateBase):
             wake_condition = WakeConditionResponse(
                 type=wc.type.value if hasattr(wc.type, "value") else str(wc.type),
                 wait_for=list(getattr(wc, "wait_for", []) or []),
-                wait_mode=wc.wait_mode.value if hasattr(wc.wait_mode, "value") else str(getattr(wc, "wait_mode", "all")),
+                wait_mode=wc.wait_mode.value
+                if hasattr(wc.wait_mode, "value")
+                else str(getattr(wc, "wait_mode", "all")),
                 completed_ids=list(getattr(wc, "completed_ids", []) or []),
                 time_value=getattr(wc, "time_value", None),
                 time_unit=getattr(wc, "time_unit", None),
@@ -402,7 +408,9 @@ class AgentStateResponse(AgentStateBase):
 
         base_dict = {
             "id": state.id,
-            "status": state.status.value if hasattr(state.status, "value") else str(state.status),
+            "status": state.status.value
+            if hasattr(state.status, "value")
+            else str(state.status),
             "task": state.task,
             "parent_id": state.parent_id,
             "result_summary": state.result_summary,
@@ -430,7 +438,9 @@ class AgentStateListItem(AgentStateBase):
         """Create an AgentStateListItem from an AgentState."""
         return cls(
             id=state.id,
-            status=state.status.value if hasattr(state.status, "value") else str(state.status),
+            status=state.status.value
+            if hasattr(state.status, "value")
+            else str(state.status),
             task=state.task,
             parent_id=state.parent_id,
             result_summary=state.result_summary,
