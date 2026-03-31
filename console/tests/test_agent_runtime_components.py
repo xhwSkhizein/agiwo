@@ -14,7 +14,6 @@ from server.channels.utils import (
 )
 from server.channels.runtime_agent_pool import RuntimeAgentPool, _CachedAgent
 from server.channels.session import SessionContextService, SessionManager
-from server.channels.session.binding import SessionMutationPlan
 from server.channels.session.models import (
     BatchContext,
     BatchPayload,
@@ -32,7 +31,6 @@ class FakeChannelChatSessionStore:
         self.sessions: dict[str, Session] = {}
         self.upserted_chat_contexts: list[ChannelChatContext] = []
         self.upserted_sessions: list[Session] = []
-        self.applied_mutations: list[SessionMutationPlan] = []
 
     async def get_chat_context(self, scope_id: str) -> ChannelChatContext | None:
         return self.chat_contexts.get(scope_id)
@@ -59,11 +57,6 @@ class FakeChannelChatSessionStore:
     async def upsert_session(self, session: Session) -> None:
         self.sessions[session.id] = session
         self.upserted_sessions.append(session)
-
-    async def apply_session_mutation(self, mutation: SessionMutationPlan) -> None:
-        self.applied_mutations.append(mutation)
-        await self.upsert_chat_context(mutation.chat_context)
-        await self.upsert_session(mutation.current_session)
 
     async def list_sessions_by_user(
         self, user_open_id: str
@@ -311,7 +304,7 @@ async def test_session_service_create_new_session_honors_explicit_base_agent() -
     assert created.chat_context.base_agent_id == "new-base"
     assert created.session.base_agent_id == "new-base"
     assert created.chat_context.current_session_id == created.session.id
-    assert store.applied_mutations[-1].current_session is created.session
+    assert store.upserted_sessions[-1] is created.session
 
 
 @pytest.mark.asyncio

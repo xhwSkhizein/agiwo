@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from agiwo.agent import (
     AgentOptions,
     AgentStorageOptions,
+    AgentStreamItem,
     RunStepStorageConfig,
     TraceStorageConfig,
     UserInput,
@@ -122,6 +123,19 @@ class StepMetricsResponse(RunMetricsResponse):
     provider: str | None = None
     first_token_latency_ms: float | None = None
 
+    @classmethod
+    def from_sdk(cls, metrics: "StepMetrics") -> "StepMetricsResponse":
+        """Create a StepMetricsResponse from StepMetrics."""
+        return cls(
+            input_tokens=metrics.input_tokens,
+            output_tokens=metrics.output_tokens,
+            total_tokens=metrics.total_tokens,
+            usage_source=metrics.usage_source,
+            model_name=metrics.model_name,
+            provider=metrics.provider,
+            first_token_latency_ms=metrics.first_token_latency_ms,
+        )
+
 
 class StepResponse(BaseModel):
     id: str
@@ -141,6 +155,29 @@ class StepResponse(BaseModel):
     created_at: str | None = None
     parent_run_id: str | None = None
     depth: int = 0
+
+    @classmethod
+    def from_sdk(cls, step: "StepRecord") -> "StepResponse":
+        """Create a StepResponse from a StepRecord."""
+        return cls(
+            id=step.id,
+            session_id=step.session_id,
+            run_id=step.run_id,
+            sequence=step.sequence,
+            role=step.role.value,
+            agent_id=step.agent_id,
+            content=step.content,
+            content_for_user=step.content_for_user,
+            reasoning_content=step.reasoning_content,
+            user_input=step.user_input,
+            tool_calls=[tc.model_dump() for tc in step.tool_calls] if step.tool_calls else None,
+            tool_call_id=step.tool_call_id,
+            name=step.name,
+            metrics=StepMetricsResponse.from_sdk(step.metrics) if step.metrics else None,
+            created_at=step.created_at.isoformat() if step.created_at else None,
+            parent_run_id=step.parent_run_id,
+            depth=step.depth,
+        )
 
 
 class RunResponse(BaseModel):
@@ -296,6 +333,21 @@ class AgentStateBase(BaseModel):
     created_at: str | None = None
     updated_at: str | None = None
 
+    @field_validator("task", mode="before")
+    @classmethod
+    def _extract_content_parts(cls, v: object) -> object:
+        """Extract parts from serialized UserInput format."""
+        if isinstance(v, str):
+            import json
+            try:
+                data = json.loads(v)
+                if isinstance(data, dict) and data.get("__type") == "content_parts":
+                    return data.get("parts", [])
+                return data
+            except (json.JSONDecodeError, TypeError):
+                return v
+        return v
+
 
 class AgentStateResponse(AgentStateBase):
     session_id: str
@@ -303,9 +355,92 @@ class AgentStateResponse(AgentStateBase):
     config_overrides: dict[str, Any] = Field(default_factory=dict)
     signal_propagated: bool = False
 
+    @field_validator("pending_input", mode="before")
+    @classmethod
+    def _extract_pending_input(cls, v: object) -> object:
+        """Extract parts from serialized UserInput format."""
+        if isinstance(v, str):
+            import json
+            try:
+                data = json.loads(v)
+                if isinstance(data, dict) and data.get("__type") == "content_parts":
+                    return data.get("parts", [])
+                return data
+            except (json.JSONDecodeError, TypeError):
+                return v
+        return v
+
+    @classmethod
+    def from_sdk(cls, state: "AgentState") -> "AgentStateResponse":
+        """Create an AgentStateResponse from an AgentState."""
+        from server.domain.run_metrics import RunMetricsSummary
+
+        # Convert wake_condition if present
+        wake_condition = None
+        if hasattr(state, "wake_condition") and state.wake_condition is not None:
+            wc = state.wake_condition
+            # Convert datetime fields to isoformat strings
+            wakeup_at = getattr(wc, "wakeup_at", None)
+            timeout_at = getattr(wc, "timeout_at", None)
+            if wakeup_at is not None and hasattr(wakeup_at, "isoformat"):
+                wakeup_at = wakeup_at.isoformat()
+            if timeout_at is not None and hasattr(timeout_at, "isoformat"):
+                timeout_at = timeout_at.isoformat()
+            wake_condition = WakeConditionResponse(
+                type=wc.type.value if hasattr(wc.type, "value") else str(wc.type),
+                wait_for=list(getattr(wc, "wait_for", []) or []),
+                wait_mode=wc.wait_mode.value if hasattr(wc.wait_mode, "value") else str(getattr(wc, "wait_mode", "all")),
+                completed_ids=list(getattr(wc, "completed_ids", []) or []),
+                time_value=getattr(wc, "time_value", None),
+                time_unit=getattr(wc, "time_unit", None),
+                wakeup_at=wakeup_at,
+                timeout_at=timeout_at,
+            )
+
+        base_dict = {
+            "id": state.id,
+            "status": state.status.value if hasattr(state.status, "value") else str(state.status),
+            "task": state.task,
+            "parent_id": state.parent_id,
+            "result_summary": state.result_summary,
+            "agent_config_id": state.agent_config_id,
+            "is_persistent": state.is_persistent,
+            "depth": state.depth,
+            "wake_count": state.wake_count,
+            "metrics": getattr(state, "metrics", None) or RunMetricsSummary(),
+            "created_at": state.created_at.isoformat() if state.created_at else None,
+            "updated_at": state.updated_at.isoformat() if state.updated_at else None,
+            "wake_condition": wake_condition,
+        }
+        return cls(
+            **base_dict,
+            session_id=state.session_id,
+            pending_input=state.pending_input,
+            config_overrides=state.config_overrides,
+            signal_propagated=state.signal_propagated,
+        )
+
 
 class AgentStateListItem(AgentStateBase):
-    pass
+    @classmethod
+    def from_sdk(cls, state: "AgentState") -> "AgentStateListItem":
+        """Create an AgentStateListItem from an AgentState."""
+        from server.domain.run_metrics import RunMetricsSummary
+
+        return cls(
+            id=state.id,
+            status=state.status.value if hasattr(state.status, "value") else str(state.status),
+            task=state.task,
+            parent_id=state.parent_id,
+            result_summary=state.result_summary,
+            agent_config_id=state.agent_config_id,
+            is_persistent=state.is_persistent,
+            depth=state.depth,
+            wake_count=state.wake_count,
+            metrics=getattr(state, "metrics", None) or RunMetricsSummary(),
+            created_at=state.created_at.isoformat() if state.created_at else None,
+            updated_at=state.updated_at.isoformat() if state.updated_at else None,
+        )
 
 
 class SchedulerStatsResponse(BaseModel):
@@ -375,3 +510,18 @@ class SwitchSessionRequest(BaseModel):
 
 class ForkSessionRequest(BaseModel):
     context_summary: str
+
+
+# ── Stream Event Serialization ────────────────────────────────────────
+
+
+def stream_event_to_payload(event: AgentStreamItem) -> dict[str, Any]:
+    """Convert an AgentStreamItem to a SSE payload dictionary."""
+    from agiwo.agent import StepCompletedEvent, StepMetrics
+
+    if isinstance(event, StepCompletedEvent):
+        return {
+            "type": "step",
+            "step": StepResponse.from_sdk(event.step).model_dump(),
+        }
+    return {"type": "unknown", "data": str(event)}

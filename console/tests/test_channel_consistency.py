@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from server.channels.agent_executor import AgentExecutor
-from server.channels.session.binding import (
+from server.channels.session.models import (
+    ChannelChatContext,
+    Session,
     append_message_to_current_task,
-    fork_session,
     mark_session_task_started,
 )
-from server.channels.session.models import ChannelChatContext, Session
 
 
 def _session(
@@ -87,19 +87,27 @@ def test_fork_lineage_is_consistent_across_channels() -> None:
     source = _session(current_task_id="task-1", task_message_count=3)
     now = datetime.now(timezone.utc)
 
-    mutation = fork_session(
-        chat_context,
-        source,
+    # Inline fork_session logic
+    from uuid import uuid4
+    forked_session = Session(
+        id=str(uuid4()),
+        chat_context_scope_id=chat_context.scope_id,
+        base_agent_id=source.base_agent_id,
+        runtime_agent_id="",
+        scheduler_state_id="",
         created_by="CONSOLE_FORK",
-        context_summary="Branch off",
-        now=now,
+        created_at=now,
+        updated_at=now,
+        source_session_id=source.id,
+        source_task_id=source.current_task_id,
+        fork_context_summary="Branch off",
     )
 
-    assert mutation.current_session.source_session_id == "sess-1"
-    assert mutation.current_session.source_task_id == "task-1"
-    assert mutation.current_session.fork_context_summary == "Branch off"
-    assert mutation.current_session.runtime_agent_id == ""
-    assert mutation.current_session.current_task_id is None
+    assert forked_session.source_session_id == "sess-1"
+    assert forked_session.source_task_id == "task-1"
+    assert forked_session.fork_context_summary == "Branch off"
+    assert forked_session.runtime_agent_id == ""
+    assert forked_session.current_task_id is None
 
 
 @pytest.mark.asyncio

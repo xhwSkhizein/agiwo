@@ -11,9 +11,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from agiwo.agent import UserMessage
 
-if TYPE_CHECKING:
-    from server.channels.session.binding import SessionMutationPlan
-
 
 @dataclass
 class Attachment:
@@ -125,13 +122,33 @@ class ChannelChatSessionStore(Protocol):
         session_id: str,
     ) -> SessionWithContext | None: ...
     async def upsert_session(self, session: Session) -> None: ...
-    async def apply_session_mutation(
-        self,
-        mutation: "SessionMutationPlan",
-    ) -> None: ...
     async def list_sessions_by_user(
         self, user_open_id: str
     ) -> list[SessionWithContext]: ...
     async def list_sessions_by_chat_context(
         self, chat_context_scope_id: str
     ) -> list[Session]: ...
+
+
+# Helper functions for session operations
+
+def assign_runtime_identity(session: Session, runtime_agent_id: str) -> None:
+    """Assign runtime identity to a session."""
+    session.runtime_agent_id = runtime_agent_id
+    session.scheduler_state_id = runtime_agent_id
+
+
+def assign_scheduler_state(session: Session, scheduler_state_id: str) -> None:
+    """Assign scheduler state ID to a session."""
+    session.scheduler_state_id = scheduler_state_id
+
+
+def mark_session_task_started(session: Session, *, task_id: str) -> None:
+    """Mark a new task as started on the session."""
+    session.current_task_id = task_id
+    session.task_message_count = 0
+
+
+def append_message_to_current_task(session: Session) -> None:
+    """Increment the message count for the current task."""
+    session.task_message_count += 1

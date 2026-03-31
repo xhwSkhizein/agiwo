@@ -23,3 +23,28 @@ class DefaultAgentNameNotFoundError(ChannelError):
     def __init__(self, agent_name: str) -> None:
         self.agent_name = agent_name
         super().__init__(f"default_agent_name_not_found: {agent_name}")
+
+
+class SessionNotFoundError(ChannelError):
+    """Raised when a session is not found."""
+
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+        super().__init__(f"Session not found: {session_id}")
+
+
+class ChatContextNotFoundError(ChannelError):
+    """Raised when a chat context is not found."""
+
+    def __init__(self, scope_id: str) -> None:
+        self.scope_id = scope_id
+        super().__init__(f"Chat context not found: {scope_id}")
+
+
+class SessionNotInChatContextError(ChannelError):
+    """Raised when a session does not belong to the specified chat context."""
+
+    def __init__(self, session_id: str, scope_id: str) -> None:
+        self.session_id = session_id
+        self.scope_id = scope_id
+        super().__init__(f"Session {session_id} not in chat context {scope_id}")
