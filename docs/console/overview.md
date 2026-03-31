@@ -7,7 +7,7 @@ The Console is a control plane for managing Agiwo agents. It consists of a FastA
 ```
 Console
 ├── FastAPI Server (console/server/)
-│   ├── REST API — Agent config CRUD, scheduler state, traces
+│   ├── REST API — Agent config CRUD, scheduler state, runs, sessions
 │   ├── SSE API — Real-time chat and trace streaming
 │   ├── Channel Runtime — Feishu (and extensible to others)
 │   └── Services — Agent lifecycle, registry, storage
@@ -72,45 +72,54 @@ SDK settings (`AGIWO_*`) and provider credentials (`OPENAI_API_KEY`, etc.) are a
 - Create and configure agents via API or UI
 - Store agent configs in SQLite, MongoDB, or memory
 - Full replace semantics (not patch/merge)
+- List available built-in tools via `GET /api/agents/tools/available`
 
 ### Chat
 
 - Interactive chat with agents over SSE
 - Real-time streaming responses
 - Session management and continuity
+- Cancel running conversations
 
 ### Scheduler
 
 - View all scheduled agent states
 - Monitor running, waiting, and queued agents
-- Cancel or steer agents from the UI
+- Cancel, steer, or resume agents from the UI
+- Submit new tasks via API
 
 ### Traces
 
 - Browse execution traces
 - Drill into individual steps
 - View token usage and costs
-- Real-time trace streaming via SSE
+
+### Runs & Sessions
+
+- List runs with filtering by user and session
+- View session summaries with aggregated metrics
+- Inspect individual steps within sessions
 
 ### Channels
 
 - **Feishu**: Full integration with Feishu messaging
   - WebSocket connection for real-time messages
-  - Command parsing and routing
+  - Command parsing and routing (`/status`, `/new`, `/switch`, etc.)
   - Group and direct message support
-  - Message history storage
+  - Message history storage in SQLite or memory
 
 ## Extending the Console
 
 ### Adding a Channel
 
 1. Create a new package in `console/server/channels/your_channel/`
-2. Implement `BaseChannelService`
-3. Register in the channel factory
+2. Implement a channel service following the `feishu/service.py` pattern
+3. Initialize and register in `console/server/app.py`
 
 ### Adding an API Route
 
-1. Create a router in `console/server/routers/your_router.py`
-2. Include it in `console/server/app.py`
+1. Define request/response models in `console/server/models/`
+2. Create a router in `console/server/routers/your_router.py`
+3. Include it in `console/server/app.py`
 
 See the existing Feishu implementation for reference.

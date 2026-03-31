@@ -26,25 +26,6 @@ storage = create_run_step_storage(
 storage = create_run_step_storage(RunStepStorageConfig(storage_type="memory"))
 ```
 
-Pass storage configuration through `AgentConfig.options`:
-
-```python
-agent = Agent(
-    AgentConfig(
-        name="assistant",
-        description="...",
-        system_prompt="...",
-        options=AgentOptions(
-            run_step_storage=RunStepStorageConfig(
-                storage_type="sqlite",
-                config={"db_path": "runs.db"},
-            )
-        ),
-    ),
-    model=model,
-)
-```
-
 ### What gets stored
 
 - **Run records**: input, output, timestamps, token usage, status
@@ -70,7 +51,7 @@ trace_storage = create_trace_storage(
 
 # Memory
 trace_storage = create_trace_storage(TraceStorageConfig(storage_type="memory"))
-
+```
 
 Pass trace configuration through `AgentConfig.options`:
 
@@ -109,22 +90,18 @@ Trace (one per run)
 # Get a specific trace
 trace = await trace_storage.get_trace(trace_id)
 
-# List recent traces
-traces = await trace_storage.list_traces(limit=50)
-
-# Subscribe to live traces (for SSE/streaming)
-async for trace_update in trace_storage.subscribe():
-    process(trace_update)
+# Query traces with filters (agent_id, session_id, status, time range, etc.)
+from agiwo.observability.base import TraceQuery
+traces = await trace_storage.query_traces(
+    TraceQuery(agent_id="agent-123", limit=50)
+)
 ```
-
-The `subscribe()` method enables real-time trace streaming to the Console UI.
 
 ## Choosing Backends
 
 | Backend | Use Case | Persistence |
 |---------|----------|-------------|
 | `memory` | Testing, ephemeral workloads | No (lost on restart) |
-| `sqlite` | Single-node deployments, development | Yes |
 | `sqlite` | Single-node deployments, development | Yes |
 
 ## Configuration
