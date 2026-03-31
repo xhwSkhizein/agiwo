@@ -7,7 +7,7 @@ implementations (Feishu, Slack, DingTalk, etc.).
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import Any, Protocol
 
 from agiwo.agent import UserMessage
 

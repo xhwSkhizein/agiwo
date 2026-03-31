@@ -6,6 +6,7 @@ when using the shared AgentExecutor.
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
@@ -88,7 +89,6 @@ def test_fork_lineage_is_consistent_across_channels() -> None:
     now = datetime.now(timezone.utc)
 
     # Inline fork_session logic
-    from uuid import uuid4
     forked_session = Session(
         id=str(uuid4()),
         chat_context_scope_id=chat_context.scope_id,

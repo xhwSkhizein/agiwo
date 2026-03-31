@@ -27,7 +27,7 @@ async def list_runs(
         limit=limit,
         offset=offset,
     )
-    return [run_to_response(r) for r in runs]
+    return [RunResponse.from_sdk(r) for r in runs]
 
 
 @router.get("/runs/{run_id}", response_model=RunResponse)
@@ -37,7 +37,7 @@ async def get_run(run_id: str, runtime: ConsoleRuntimeDep) -> RunResponse:
     run = await storage.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    return run_to_response(run)
+    return RunResponse.from_sdk(run)
 
 
 @router.get("/sessions", response_model=list[SessionSummaryData])

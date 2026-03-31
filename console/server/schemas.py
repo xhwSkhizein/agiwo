@@ -2,7 +2,9 @@
 API-layer Pydantic models for request/response serialization.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import json
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -11,6 +13,7 @@ from agiwo.agent import (
     AgentStorageOptions,
     AgentStreamItem,
     RunStepStorageConfig,
+    StepCompletedEvent,
     TraceStorageConfig,
     UserInput,
 )
@@ -22,6 +25,10 @@ from agiwo.llm.config_policy import (
 from agiwo.skill.config import normalize_skill_dirs
 from server.domain.run_metrics import RunMetricsSummary
 from server.domain.tool_references import parse_tool_references
+
+if TYPE_CHECKING:
+    from agiwo.agent import StepMetrics, StepRecord
+    from agiwo.scheduler.models import AgentState
 
 
 # ── Agent Options & Model Params ────────────────────────────────────────
@@ -338,7 +345,6 @@ class AgentStateBase(BaseModel):
     def _extract_content_parts(cls, v: object) -> object:
         """Extract parts from serialized UserInput format."""
         if isinstance(v, str):
-            import json
             try:
                 data = json.loads(v)
                 if isinstance(data, dict) and data.get("__type") == "content_parts":
@@ -360,7 +366,6 @@ class AgentStateResponse(AgentStateBase):
     def _extract_pending_input(cls, v: object) -> object:
         """Extract parts from serialized UserInput format."""
         if isinstance(v, str):
-            import json
             try:
                 data = json.loads(v)
                 if isinstance(data, dict) and data.get("__type") == "content_parts":
@@ -373,8 +378,6 @@ class AgentStateResponse(AgentStateBase):
     @classmethod
     def from_sdk(cls, state: "AgentState") -> "AgentStateResponse":
         """Create an AgentStateResponse from an AgentState."""
-        from server.domain.run_metrics import RunMetricsSummary
-
         # Convert wake_condition if present
         wake_condition = None
         if hasattr(state, "wake_condition") and state.wake_condition is not None:
@@ -425,8 +428,6 @@ class AgentStateListItem(AgentStateBase):
     @classmethod
     def from_sdk(cls, state: "AgentState") -> "AgentStateListItem":
         """Create an AgentStateListItem from an AgentState."""
-        from server.domain.run_metrics import RunMetricsSummary
-
         return cls(
             id=state.id,
             status=state.status.value if hasattr(state.status, "value") else str(state.status),
@@ -517,8 +518,6 @@ class ForkSessionRequest(BaseModel):
 
 def stream_event_to_payload(event: AgentStreamItem) -> dict[str, Any]:
     """Convert an AgentStreamItem to a SSE payload dictionary."""
-    from agiwo.agent import StepCompletedEvent, StepMetrics
-
     if isinstance(event, StepCompletedEvent):
         return {
             "type": "step",

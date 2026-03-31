@@ -24,7 +24,6 @@ from server.services.agent_lifecycle import (
     build_agent,
     resume_persistent_agent,
 )
-from server.services.metrics import build_metrics_by_state
 
 router = APIRouter(prefix="/api/scheduler", tags=["scheduler"])
 
@@ -54,8 +53,6 @@ async def list_agent_states(
         limit=limit,
         offset=offset,
     )
-    run_storage = runtime.run_step_storage
-    metrics_by_state = await build_metrics_by_state(states, run_storage)
     return [
         AgentStateListItem.from_sdk(s)
         for s in states
