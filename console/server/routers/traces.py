@@ -7,7 +7,11 @@ from typing import Any
 from fastapi import APIRouter, Query, HTTPException
 
 from server.dependencies import ConsoleRuntimeDep
-from server.models import TraceListItem, TraceResponse
+from server.response_serialization import (
+    trace_list_item_from_sdk,
+    trace_response_from_sdk,
+)
+from server.models.view import TraceListItem, TraceResponse
 
 router = APIRouter(prefix="/api/traces", tags=["traces"])
 
@@ -36,7 +40,7 @@ async def list_traces(
         query["status"] = status
 
     traces = await store.query_traces(query)
-    return [TraceListItem.from_sdk(t) for t in traces]
+    return [trace_list_item_from_sdk(t) for t in traces]
 
 
 @router.get("/{trace_id}", response_model=TraceResponse)
@@ -46,4 +50,4 @@ async def get_trace(trace_id: str, runtime: ConsoleRuntimeDep) -> TraceResponse:
     trace = await store.get_trace(trace_id)
     if trace is None:
         raise HTTPException(status_code=404, detail="Trace not found")
-    return TraceResponse.from_sdk(trace)
+    return trace_response_from_sdk(trace)

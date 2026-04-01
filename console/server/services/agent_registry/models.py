@@ -7,7 +7,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
 
 from agiwo.llm.config_policy import sanitize_model_params_data
-from server.models import sanitize_agent_options_data
+from server.models.agent_config import sanitize_agent_options_data
 
 
 class AgentConfigRecord(BaseModel):

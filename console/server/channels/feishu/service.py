@@ -19,7 +19,6 @@ from agiwo.agent import (
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
-from server.channels.agent_executor import AgentExecutor
 from server.channels.utils import (
     extract_stream_text,
     safe_close_all,
@@ -35,16 +34,20 @@ from server.channels.feishu.commands import build_feishu_command_registry
 from server.channels.feishu.factory import FeishuServiceFactory
 from server.channels.feishu.inbound_handler import FeishuInboundHandler
 from server.channels.feishu.message_parser import FeishuInboundEnvelope
-from server.channels.runtime_agent_pool import RuntimeAgentPool
-from server.channels.session import SessionContextService, SessionManager
-from server.channels.session.models import (
+from server.channels.session import SessionManager
+from server.config import ConsoleConfig
+from server.models.session import (
     BatchContext,
     BatchPayload,
     InboundMessage,
     Session,
 )
-from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
+from server.services.runtime import (
+    AgentRuntimeCache,
+    SessionContextService,
+    SessionRuntimeService,
+)
 
 logger = get_logger(__name__)
 
@@ -75,10 +78,11 @@ class FeishuChannelService:
         self._session_service = components.session_service
         self._agent_pool = components.agent_pool
         self._executor = components.executor
+        feishu = config.channels.feishu
         self._session_mgr = SessionManager(
             on_batch_ready=self._on_batch_ready,
-            debounce_ms=config.feishu_debounce_ms,
-            max_batch_window_ms=config.feishu_max_batch_window_ms,
+            debounce_ms=feishu.debounce_ms,
+            max_batch_window_ms=feishu.max_batch_window_ms,
         )
 
         command_registry = build_feishu_command_registry(
@@ -90,9 +94,9 @@ class FeishuChannelService:
             console_config=config,
         )
         self._inbound_handler = FeishuInboundHandler(
-            channel_instance_id=config.feishu_channel_instance_id,
-            default_agent_name=config.feishu_default_agent_name,
-            whitelist_open_ids=set(config.feishu_whitelist_open_ids),
+            channel_instance_id=feishu.channel_instance_id,
+            default_agent_name=feishu.default_agent_name,
+            whitelist_open_ids=set(feishu.whitelist_open_ids),
             parser=components.parser,
             content_extractor=components.content_extractor,
             group_history_store=components.group_history_store,
@@ -114,11 +118,11 @@ class FeishuChannelService:
         return self._session_service
 
     @property
-    def agent_pool(self) -> RuntimeAgentPool:
+    def agent_pool(self) -> AgentRuntimeCache:
         return self._agent_pool
 
     @property
-    def executor(self) -> AgentExecutor:
+    def executor(self) -> SessionRuntimeService:
         return self._executor
 
     async def initialize(self) -> None:

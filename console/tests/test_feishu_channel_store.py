@@ -5,7 +5,7 @@ import pytest
 
 from server.channels.feishu.store import create_feishu_channel_store
 from server.channels.feishu.store.sqlite import SqliteFeishuChannelStore
-from server.channels.session.models import ChannelChatContext, Session
+from server.models.session import ChannelChatContext, Session
 
 
 def _make_chat_context(

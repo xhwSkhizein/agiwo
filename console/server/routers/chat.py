@@ -1,21 +1,31 @@
 """Chat API router — real-time Agent conversation via SSE."""
 
+from collections.abc import AsyncIterator
+from datetime import datetime, timezone
+import json
+from uuid import uuid4
+
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
-from server.channels.session import SessionContextService
 from server.dependencies import ConsoleRuntime, ConsoleRuntimeDep, SchedulerDep
-from server.models import (
+from server.models.session import Session
+from server.response_serialization import stream_event_to_sse_message
+from server.models.view import (
     ChatRequest,
     CreateSessionRequest,
     ForkSessionRequest,
     SchedulerChatCancelRequest,
     SwitchSessionRequest,
 )
-from server.services.chat_sse import create_scheduler_chat_response
 from server.services.metrics import (
     collect_session_aggregates,
     session_aggregate_to_chat_summary,
+)
+from server.services.runtime import (
+    SessionContextService,
+    SessionRuntimeService,
+    build_agent,
 )
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -27,13 +37,69 @@ async def chat(
     body: ChatRequest,
     runtime: ConsoleRuntimeDep,
 ) -> EventSourceResponse:
-    """Send a message to an agent via the Scheduler and stream SSE events."""
-    return await create_scheduler_chat_response(
-        agent_id,
-        body.message,
-        body.session_id,
-        runtime,
+    """Send a message to an agent via the shared runtime service and stream SSE."""
+    registry = runtime.agent_registry
+    agent_config = await registry.get_agent(agent_id)
+    if agent_config is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    try:
+        agent = await build_agent(agent_config, runtime.config, registry)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    scheduler = runtime.scheduler
+    if scheduler is None:
+        raise RuntimeError("Scheduler not initialized")
+    if runtime.session_store is None:
+        raise RuntimeError("Session store not available")
+
+    session = await _get_or_create_chat_session(
+        session_id=body.session_id or str(uuid4()),
+        agent_id=agent_id,
+        runtime=runtime,
     )
+    runtime_service = SessionRuntimeService(
+        scheduler=scheduler,
+        session_store=runtime.session_store,
+        timeout=600,
+    )
+    dispatch = await runtime_service.execute(agent, session, body.message)
+
+    async def event_generator() -> AsyncIterator[dict[str, str]]:
+        try:
+            if dispatch.stream is not None:
+                async for item in dispatch.stream:
+                    yield stream_event_to_sse_message(item)
+                return
+
+            state = await runtime_service.get_state(session.scheduler_state_id)
+            if state is not None and state.result_summary:
+                yield {
+                    "event": "scheduler_ack",
+                    "data": json.dumps(
+                        {
+                            "type": "scheduler_ack",
+                            "result_summary": state.result_summary,
+                        },
+                        default=str,
+                    ),
+                }
+                return
+            yield {
+                "event": "scheduler_ack",
+                "data": json.dumps(
+                    {
+                        "type": "scheduler_ack",
+                        "message": "消息已收到，正在继续处理。",
+                    },
+                    default=str,
+                ),
+            }
+        finally:
+            await agent.close()
+
+    return EventSourceResponse(event_generator())
 
 
 @router.post("/{agent_id}/cancel")
@@ -76,6 +142,32 @@ def _get_session_service(runtime: ConsoleRuntime) -> SessionContextService:
         agent_registry=runtime.agent_registry,
         default_agent_name=runtime.config.default_agent.name,
     )
+
+
+async def _get_or_create_chat_session(
+    *,
+    session_id: str,
+    agent_id: str,
+    runtime: ConsoleRuntime,
+) -> Session:
+    assert runtime.session_store is not None
+    session = await runtime.session_store.get_session(session_id)
+    if session is not None:
+        return session
+
+    now = datetime.now(timezone.utc)
+    session = Session(
+        id=session_id,
+        chat_context_scope_id=session_id,
+        base_agent_id=agent_id,
+        runtime_agent_id="",
+        scheduler_state_id="",
+        created_by="CONSOLE_CHAT",
+        created_at=now,
+        updated_at=now,
+    )
+    await runtime.session_store.upsert_session(session)
+    return session
 
 
 @router.post("/{agent_id}/sessions/create")

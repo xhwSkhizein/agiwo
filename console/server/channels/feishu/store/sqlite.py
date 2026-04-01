@@ -10,7 +10,7 @@ from server.channels.feishu.store.migrations import (
     migrate_chat_context_table,
     migrate_session_table,
 )
-from server.channels.session.models import (
+from server.models.session import (
     ChannelChatContext,
     Session,
     SessionWithContext,

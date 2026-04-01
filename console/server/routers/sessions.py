@@ -3,7 +3,8 @@
 from fastapi import APIRouter, HTTPException, Query
 
 from server.dependencies import ConsoleRuntimeDep
-from server.models import RunResponse, StepResponse
+from server.response_serialization import run_response_from_sdk, step_response_from_sdk
+from server.models.view import RunResponse, StepResponse
 from server.services.metrics import (
     SessionSummaryData,
     collect_session_aggregates,
@@ -29,7 +30,7 @@ async def list_runs(
         limit=limit,
         offset=offset,
     )
-    return [RunResponse.from_sdk(r) for r in runs]
+    return [run_response_from_sdk(r) for r in runs]
 
 
 @router.get("/runs/{run_id}", response_model=RunResponse)
@@ -39,7 +40,7 @@ async def get_run(run_id: str, runtime: ConsoleRuntimeDep) -> RunResponse:
     run = await storage.get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
-    return RunResponse.from_sdk(run)
+    return run_response_from_sdk(run)
 
 
 @router.get("/sessions", response_model=list[SessionSummaryData])
@@ -86,4 +87,4 @@ async def get_session_steps(
         agent_id=agent_id,
         limit=limit,
     )
-    return [StepResponse.from_sdk(s) for s in steps]
+    return [step_response_from_sdk(s) for s in steps]

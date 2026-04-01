@@ -6,14 +6,16 @@ from pydantic import ValidationError
 
 from agiwo.utils.serialization import serialize_optional_datetime
 from server.dependencies import ConsoleRuntimeDep
-from server.models import (
+from server.models.view import (
     AgentConfigPayload,
     AgentConfigResponse,
     AgentOptionsInput,
     ModelParamsInput,
 )
 from server.services.agent_registry import AgentConfigRecord
-from server.tools import list_available_tools as _list_available_tools
+from server.services.tool_catalog.tool_catalog import (
+    list_available_tools as _list_available_tools,
+)
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 

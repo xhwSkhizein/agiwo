@@ -25,8 +25,9 @@ from server.channels.feishu.commands.status_text import (
     format_scheduler_status,
     status_to_emoji,
 )
-from server.channels.session import SessionContextService, SessionManager
-from server.channels.session.models import Session
+from server.channels.session import SessionManager
+from server.models.session import Session
+from server.services.runtime import SessionContextService
 
 
 def build_session_command_specs(

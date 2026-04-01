@@ -1,7 +1,6 @@
 """Feishu inbound payload handling, trigger rules, and command dispatch."""
 
 from collections.abc import Callable
-from typing import Any
 
 from agiwo.utils.logging import get_logger
 
@@ -15,8 +14,10 @@ from server.channels.feishu.message_parser import (
     FeishuMessageParser,
 )
 from server.channels.feishu.store import FeishuChannelStoreBackend
-from server.channels.session import SessionContextService, SessionManager
-from server.channels.session.models import BatchContext, InboundMessage
+from server.channels.session import SessionManager
+from server.models.session import BatchContext, InboundMessage
+from server.services.agent_registry import AgentConfigRecord
+from server.services.runtime import SessionContextService
 
 logger = get_logger(__name__)
 
@@ -120,8 +121,12 @@ class FeishuInboundHandler:
         return {"msg": "ok"}
 
     async def _enqueue_message(
-        self, inbound: InboundMessage, default_agent: Any
+        self,
+        inbound: InboundMessage,
+        default_agent: AgentConfigRecord | None,
     ) -> None:
+        if default_agent is None:
+            raise DefaultAgentNameNotFoundError(self._default_agent_name)
         chat_context_scope_id = self._build_chat_context_scope_id(inbound)
         context = BatchContext(
             chat_context_scope_id=chat_context_scope_id,
@@ -137,8 +142,8 @@ class FeishuInboundHandler:
     async def _try_handle_command(
         self,
         inbound: InboundMessage,
-        default_agent: Any,
-    ) -> dict[str, Any] | None:
+        default_agent: AgentConfigRecord | None,
+    ) -> dict[str, object] | None:
         parsed = self._command_registry.try_parse(inbound.text)
         if parsed is None:
             return None
@@ -175,7 +180,9 @@ class FeishuInboundHandler:
         return {"msg": "command_executed"}
 
     async def _build_command_context(
-        self, inbound: InboundMessage, default_agent: Any
+        self,
+        inbound: InboundMessage,
+        default_agent: AgentConfigRecord | None,
     ) -> CommandContext:
         chat_context_scope_id = self._build_chat_context_scope_id(inbound)
         (

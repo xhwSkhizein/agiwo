@@ -6,23 +6,27 @@ import pytest
 
 from agiwo.scheduler.commands import RouteResult
 from agiwo.agent import RunCompletedEvent
-from server.channels.agent_executor import AgentExecutor
 from server.channels.utils import (
     extract_stream_text,
     safe_close_all,
     split_text_into_chunks,
 )
-from server.channels.runtime_agent_pool import RuntimeAgentPool, _CachedAgent
-from server.channels.session import SessionContextService, SessionManager
-from server.channels.session.models import (
+from server.channels.session import SessionManager
+from server.config import ConsoleConfig
+from server.models.session import (
     BatchContext,
     BatchPayload,
     ChannelChatContext,
     Session,
     SessionWithContext,
 )
-from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord
+from server.services.runtime import (
+    AgentRuntimeCache,
+    CachedAgent,
+    SessionContextService,
+    SessionRuntimeService,
+)
 
 
 class FakeChannelChatSessionStore:
@@ -308,7 +312,7 @@ async def test_session_service_create_new_session_honors_explicit_base_agent() -
 
 
 @pytest.mark.asyncio
-async def test_runtime_agent_pool_assigns_runtime_identity_and_persists_session(
+async def test_agent_runtime_cache_assigns_runtime_identity_and_persists_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FakeChannelChatSessionStore()
@@ -326,15 +330,15 @@ async def test_runtime_agent_pool_assigns_runtime_identity_and_persists_session(
         return built_agent
 
     monkeypatch.setattr(
-        "server.channels.runtime_agent_pool.build_agent",
+        "server.services.runtime.agent_runtime_cache.build_agent",
         fake_build_agent,
     )
 
-    pool = RuntimeAgentPool(
+    pool = AgentRuntimeCache(
         scheduler=scheduler,
         agent_registry=registry,
         console_config=ConsoleConfig(),
-        store=store,
+        session_store=store,
     )
     session = Session(
         id="sess-1",
@@ -357,7 +361,7 @@ async def test_runtime_agent_pool_assigns_runtime_identity_and_persists_session(
 
 
 @pytest.mark.asyncio
-async def test_runtime_agent_pool_defers_refresh_while_state_running(
+async def test_agent_runtime_cache_defers_refresh_while_state_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FakeChannelChatSessionStore()
@@ -376,18 +380,18 @@ async def test_runtime_agent_pool_defers_refresh_while_state_running(
         return replacement_agent
 
     monkeypatch.setattr(
-        "server.channels.runtime_agent_pool.build_agent",
+        "server.services.runtime.agent_runtime_cache.build_agent",
         fake_build_agent,
     )
 
-    pool = RuntimeAgentPool(
+    pool = AgentRuntimeCache(
         scheduler=scheduler,
         agent_registry=registry,
         console_config=ConsoleConfig(),
-        store=store,
+        session_store=store,
     )
     existing_agent = FakeAgent("runtime-1")
-    pool._cache["runtime-1"] = _CachedAgent(
+    pool._cache["runtime-1"] = CachedAgent(
         agent=existing_agent, config_fingerprint="stale-fingerprint"
     )
     session = Session(
@@ -410,7 +414,7 @@ async def test_runtime_agent_pool_defers_refresh_while_state_running(
 
 
 @pytest.mark.asyncio
-async def test_agent_executor_steers_running_state_and_returns_steered_dispatch() -> (
+async def test_session_runtime_service_steers_running_state_and_returns_steered_dispatch() -> (
     None
 ):
     store = FakeChannelChatSessionStore()
@@ -419,9 +423,9 @@ async def test_agent_executor_steers_running_state_and_returns_steered_dispatch(
         route_root_input=AsyncMock(return_value=route_result),
         wait_for=AsyncMock(),
     )
-    executor = AgentExecutor(
+    runtime_service = SessionRuntimeService(
         scheduler=scheduler,
-        store=store,
+        session_store=store,
         timeout=60,
     )
     session = Session(
@@ -435,10 +439,12 @@ async def test_agent_executor_steers_running_state_and_returns_steered_dispatch(
         updated_at=datetime.now(timezone.utc),
     )
 
-    dispatch = await executor.execute(FakeAgent("runtime-1"), session, "hello")
+    dispatch = await runtime_service.execute(FakeAgent("runtime-1"), session, "hello")
 
     assert dispatch.action == "steered"
     assert dispatch.stream is None
+    assert session.current_task_id is not None
+    assert session.task_message_count == 1
     scheduler.route_root_input.assert_awaited_once_with(
         "hello",
         agent=ANY,
@@ -448,6 +454,123 @@ async def test_agent_executor_steers_running_state_and_returns_steered_dispatch(
         timeout=60,
     )
     assert store.sessions["sess-1"] is session
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_service_updates_scheduler_binding_on_new_state_id() -> (
+    None
+):
+    store = FakeChannelChatSessionStore()
+    route_result = SimpleNamespace(
+        action="submitted",
+        state_id="state-2",
+        stream=None,
+    )
+    scheduler = SimpleNamespace(
+        route_root_input=AsyncMock(return_value=route_result),
+    )
+    runtime_service = SessionRuntimeService(
+        scheduler=scheduler,
+        session_store=store,
+        timeout=None,
+    )
+    session = Session(
+        id="sess-1",
+        chat_context_scope_id="scope-1",
+        base_agent_id="base-agent",
+        runtime_agent_id="runtime-1",
+        scheduler_state_id="state-1",
+        created_by="AUTO",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+        current_task_id="task-1",
+        task_message_count=2,
+    )
+
+    dispatch = await runtime_service.execute(FakeAgent("runtime-1"), session, "next")
+
+    assert dispatch is route_result
+    assert session.scheduler_state_id == "state-2"
+    assert session.current_task_id == "task-1"
+    assert session.task_message_count == 3
+    assert store.sessions["sess-1"] is session
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_service_cancel_if_active_only_cancels_live_state() -> (
+    None
+):
+    active_state = SimpleNamespace(is_active=lambda: True)
+    inactive_state = SimpleNamespace(is_active=lambda: False)
+    scheduler = SimpleNamespace(
+        get_state=AsyncMock(side_effect=[active_state, inactive_state]),
+        cancel=AsyncMock(),
+    )
+    runtime_service = SessionRuntimeService(
+        scheduler=scheduler,
+        session_store=FakeChannelChatSessionStore(),
+    )
+    active_session = Session(
+        id="sess-active",
+        chat_context_scope_id="scope-1",
+        base_agent_id="base-agent",
+        runtime_agent_id="runtime-1",
+        scheduler_state_id="state-active",
+        created_by="AUTO",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    inactive_session = Session(
+        id="sess-inactive",
+        chat_context_scope_id="scope-1",
+        base_agent_id="base-agent",
+        runtime_agent_id="runtime-2",
+        scheduler_state_id="state-inactive",
+        created_by="AUTO",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    await runtime_service.cancel_if_active(active_session, "stop")
+    await runtime_service.cancel_if_active(inactive_session, "stop")
+    await runtime_service.cancel_if_active(
+        Session(
+            id="sess-empty",
+            chat_context_scope_id="scope-1",
+            base_agent_id="base-agent",
+            runtime_agent_id="",
+            scheduler_state_id="",
+            created_by="AUTO",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        ),
+        "stop",
+    )
+
+    scheduler.cancel.assert_awaited_once_with("state-active", "stop")
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_service_wait_and_get_state_delegate_to_scheduler() -> (
+    None
+):
+    scheduler = SimpleNamespace(
+        get_state=AsyncMock(return_value=SimpleNamespace(id="state-1")),
+        wait_for=AsyncMock(return_value=SimpleNamespace(status="completed")),
+    )
+    runtime_service = SessionRuntimeService(
+        scheduler=scheduler,
+        session_store=FakeChannelChatSessionStore(),
+    )
+
+    assert await runtime_service.get_state(None) is None
+    state = await runtime_service.get_state("state-1")
+    result = await runtime_service.wait_for("state-1")
+
+    assert state.id == "state-1"
+    assert result.status == "completed"
+    scheduler.get_state.assert_awaited_once_with("state-1")
+    scheduler.wait_for.assert_awaited_once_with("state-1", timeout=None)
 
 
 @pytest.mark.asyncio

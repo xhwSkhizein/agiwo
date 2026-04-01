@@ -2,7 +2,7 @@
 
 from collections import OrderedDict
 
-from server.channels.session.models import (
+from server.models.session import (
     ChannelChatContext,
     Session,
     SessionWithContext,

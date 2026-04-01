@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from server.channels.session.context_service import SessionContextService
-from server.channels.session.models import ChannelChatContext, Session
+from server.models.session import ChannelChatContext, Session
+from server.services.runtime.session_service import SessionContextService
 from server.services.agent_registry import AgentRegistry
 
 

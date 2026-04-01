@@ -11,6 +11,7 @@ from agiwo.scheduler.models import AgentStateStorageConfig, SchedulerConfig
 from agiwo.scheduler.engine import Scheduler
 
 from server.app import create_app
+from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
 from server.config import ConsoleConfig
 from server.dependencies import (
     ConsoleRuntime,
@@ -45,6 +46,8 @@ async def client():
     )
     scheduler = Scheduler(scheduler_config)
     await scheduler.start()
+    session_store = InMemoryFeishuChannelStore()
+    await session_store.connect()
 
     bind_console_runtime(
         app,
@@ -54,6 +57,7 @@ async def client():
             trace_storage=trace_storage,
             agent_registry=registry,
             scheduler=scheduler,
+            session_store=session_store,
         ),
     )
 
@@ -72,7 +76,7 @@ async def test_chat_streams_scheduler_events(
     client,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The /api/chat endpoint now routes through the scheduler."""
+    """The /api/chat endpoint routes through SessionRuntimeService + route_root_input."""
     registry = _runtime(client).agent_registry
     await registry.create_agent(
         AgentConfigRecord(
@@ -92,25 +96,14 @@ async def test_chat_streams_scheduler_events(
 
     fake_agent = FakeAgent()
     monkeypatch.setattr(
-        "server.services.chat_sse.build_agent",
+        "server.routers.chat.build_agent",
         AsyncMock(return_value=fake_agent),
     )
 
     scheduler = _runtime(client).scheduler
     assert scheduler is not None
 
-    async def fake_stream(
-        message: str,
-        *,
-        agent,
-        session_id: str,
-        abort_signal,
-        timeout: int,
-    ):
-        assert agent is fake_agent
-        assert message == "hello"
-        assert timeout == 600
-        del abort_signal
+    async def _stream(session_id: str):
         yield StepDeltaEvent(
             session_id=session_id,
             run_id="run-1",
@@ -129,7 +122,31 @@ async def test_chat_streams_scheduler_events(
             response="done",
         )
 
-    monkeypatch.setattr(scheduler, "stream", fake_stream)
+    async def fake_route_root_input(
+        message: str,
+        *,
+        agent,
+        state_id: str | None,
+        session_id: str,
+        persistent: bool,
+        timeout: int,
+    ):
+        assert agent is fake_agent
+        assert message == "hello"
+        assert state_id is None
+        assert persistent is True
+        assert timeout == 600
+        return type(
+            "RouteResultStub",
+            (),
+            {
+                "action": "submitted",
+                "state_id": "state-1",
+                "stream": _stream(session_id),
+            },
+        )()
+
+    monkeypatch.setattr(scheduler, "route_root_input", fake_route_root_input)
 
     async with client.stream(
         "POST",

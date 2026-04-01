@@ -4,9 +4,11 @@ from pydantic import ValidationError
 from agiwo.agent import AgentOptions
 from agiwo.config.settings import settings
 from agiwo.llm.openai import OpenAIModel
-from server.config import ConsoleConfig, DefaultAgentTemplate
-from server.models import AgentConfigPayload, AgentOptionsInput
-from server.services.agent_lifecycle import (
+from server.config import ConsoleConfig, DefaultAgentConfig
+from server.models.agent_config import AgentOptionsInput
+from server.models.view import AgentConfigPayload
+from server.services.runtime.agent_factory import (
+    agent_options_input_to_agent_options,
     build_default_agent_record,
     build_model,
 )
@@ -15,8 +17,11 @@ from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
 )
-from server.models import InvalidToolReferenceError, parse_tool_references
-from server.tools import build_tools
+from server.services.tool_catalog.tool_builder import build_tools
+from server.services.tool_catalog.tool_references import (
+    InvalidToolReferenceError,
+    parse_tool_references,
+)
 
 
 def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -24,7 +29,7 @@ def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> 
 
     config = ConsoleConfig()
 
-    assert config.feishu_enabled is True
+    assert config.channels.feishu.enabled is True
 
 
 def test_console_config_rejects_legacy_default_model_provider(
@@ -59,7 +64,8 @@ def test_agent_options_input_uses_global_skills_default(
         metadata_storage_type="memory",
     )
     opts = AgentOptionsInput.model_validate({})
-    options = opts.to_agent_options(
+    options = agent_options_input_to_agent_options(
+        opts,
         run_step_storage=build_run_step_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),
     )
@@ -69,7 +75,7 @@ def test_agent_options_input_uses_global_skills_default(
 
 
 def test_default_agent_record_uses_shared_option_defaults() -> None:
-    template = DefaultAgentTemplate()
+    template = DefaultAgentConfig()
 
     record = build_default_agent_record(template)
 
@@ -110,7 +116,8 @@ def test_agent_options_input_normalizes_skills_dirs_and_maps_all_fields(
             "compact_prompt": "Compact the context",
         }
     )
-    options = opts.to_agent_options(
+    options = agent_options_input_to_agent_options(
+        opts,
         run_step_storage=build_run_step_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),
     )

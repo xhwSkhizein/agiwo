@@ -1,6 +1,4 @@
-"""
-Session and chat-context coordination for channel runtime flows.
-"""
+"""Session and chat-context coordination for runtime flows."""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,7 +12,7 @@ from server.channels.exceptions import (
     SessionNotFoundError,
     SessionNotInChatContextError,
 )
-from server.channels.session.models import (
+from server.models.session import (
     BatchContext,
     ChannelChatContext,
     ChannelChatSessionStore,
@@ -22,13 +20,14 @@ from server.channels.session.models import (
     SessionCreateResult,
     SessionSwitchResult,
     UserSessionItem,
+    reset_runtime_binding,
 )
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 
 logger = get_logger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)
 class SessionContextResolution:
     chat_context: ChannelChatContext
     session: Session
@@ -92,7 +91,7 @@ class SessionContextService:
             )
             return SessionContextResolution(
                 chat_context=created.chat_context,
-                session=created.current_session,
+                session=created.session,
             )
 
         if chat_context.base_agent_id != context.base_agent_id:
@@ -109,7 +108,7 @@ class SessionContextService:
             )
             return SessionContextResolution(
                 chat_context=created.chat_context,
-                session=created.current_session,
+                session=created.session,
             )
 
         return await self._ensure_session_base_agent(session, chat_context)
@@ -127,7 +126,7 @@ class SessionContextService:
     ) -> SessionCreateResult:
         chat_context = await self._store.get_chat_context(chat_context_scope_id)
         if chat_context is None:
-            created = await self._create_chat_context_with_session(
+            return await self._create_chat_context_with_session(
                 chat_context_scope_id=chat_context_scope_id,
                 channel_instance_id=channel_instance_id,
                 chat_id=chat_id,
@@ -136,19 +135,11 @@ class SessionContextService:
                 base_agent_id=base_agent_id,
                 created_by=created_by,
             )
-            return SessionCreateResult(
-                chat_context=created.chat_context,
-                session=created.session,
-            )
 
-        created = await self._create_session_for_chat_context(
+        return await self._create_session_for_chat_context(
             chat_context,
             base_agent_id=base_agent_id,
             created_by=created_by,
-        )
-        return SessionCreateResult(
-            chat_context=created.chat_context,
-            session=created.session,
         )
 
     async def switch_session(
@@ -214,111 +205,6 @@ class SessionContextService:
         items.sort(key=lambda item: item.session.updated_at, reverse=True)
         return items
 
-    async def _create_chat_context_with_session(
-        self,
-        *,
-        chat_context_scope_id: str,
-        channel_instance_id: str,
-        chat_id: str,
-        chat_type: str,
-        user_open_id: str,
-        base_agent_id: str,
-        created_by: str,
-    ) -> SessionContextResolution:
-        now = datetime.now(timezone.utc)
-        session_id = str(uuid4())
-        chat_context = ChannelChatContext(
-            scope_id=chat_context_scope_id,
-            channel_instance_id=channel_instance_id,
-            chat_id=chat_id,
-            chat_type=chat_type,
-            user_open_id=user_open_id,
-            base_agent_id=base_agent_id,
-            current_session_id=session_id,
-            created_at=now,
-            updated_at=now,
-        )
-        session = Session(
-            id=session_id,
-            chat_context_scope_id=chat_context_scope_id,
-            base_agent_id=base_agent_id,
-            runtime_agent_id="",
-            scheduler_state_id="",
-            created_by=created_by,
-            created_at=now,
-            updated_at=now,
-        )
-        await self._store.upsert_chat_context(chat_context)
-        await self._store.upsert_session(session)
-        return SessionContextResolution(chat_context=chat_context, session=session)
-
-    async def _create_session_for_chat_context(
-        self,
-        chat_context: ChannelChatContext,
-        *,
-        base_agent_id: str,
-        created_by: str,
-    ) -> SessionContextResolution:
-        now = datetime.now(timezone.utc)
-        session_id = str(uuid4())
-        session = Session(
-            id=session_id,
-            chat_context_scope_id=chat_context.scope_id,
-            base_agent_id=base_agent_id,
-            runtime_agent_id="",
-            scheduler_state_id="",
-            created_by=created_by,
-            created_at=now,
-            updated_at=now,
-        )
-        chat_context.current_session_id = session_id
-        chat_context.base_agent_id = base_agent_id
-        chat_context.updated_at = now
-        await self._store.upsert_chat_context(chat_context)
-        await self._store.upsert_session(session)
-        return SessionContextResolution(chat_context=chat_context, session=session)
-
-    async def _ensure_session_base_agent(
-        self,
-        session: Session,
-        chat_context: ChannelChatContext,
-    ) -> SessionContextResolution:
-        base_config = await self._agent_registry.get_agent(session.base_agent_id)
-        if base_config is not None:
-            return SessionContextResolution(
-                chat_context=chat_context,
-                session=session,
-            )
-
-        default_config = await self.resolve_default_agent_config()
-        if default_config is None:
-            raise BaseAgentNotFoundError(session.base_agent_id)
-
-        old_base_agent_id = session.base_agent_id
-        old_runtime_agent_id = session.runtime_agent_id
-        now = datetime.now(timezone.utc)
-        session.base_agent_id = default_config.id
-        session.runtime_agent_id = ""
-        session.scheduler_state_id = ""
-        session.updated_at = now
-        chat_context.base_agent_id = default_config.id
-        chat_context.updated_at = now
-        await self._store.upsert_chat_context(chat_context)
-        await self._store.upsert_session(session)
-        logger.warning(
-            "channel_session_rebind_base_agent",
-            session_id=session.id,
-            old_base_agent_id=old_base_agent_id,
-            new_base_agent_id=session.base_agent_id,
-            old_runtime_agent_id=old_runtime_agent_id,
-            new_runtime_agent_id=session.runtime_agent_id,
-        )
-        return SessionContextResolution(
-            chat_context=chat_context,
-            session=session,
-            retired_runtime_agent_id=old_runtime_agent_id or None,
-        )
-
     async def fork_session(
         self,
         *,
@@ -363,7 +249,6 @@ class SessionContextService:
         context_summary: str,
         created_by: str,
     ) -> SessionCreateResult:
-        """Fork from a specific session ID (for Console API where scope is not directly available)."""
         source = await self._store.get_session(session_id)
         if source is None:
             raise SessionNotFoundError(session_id)
@@ -399,8 +284,111 @@ class SessionContextService:
         *,
         chat_context_scope_id: str,
     ) -> list[Session]:
-        """List all sessions for a given chat context scope."""
         chat_context = await self._store.get_chat_context(chat_context_scope_id)
         if chat_context is None:
             return []
         return await self._store.list_sessions_by_chat_context(chat_context.scope_id)
+
+    async def _create_chat_context_with_session(
+        self,
+        *,
+        chat_context_scope_id: str,
+        channel_instance_id: str,
+        chat_id: str,
+        chat_type: str,
+        user_open_id: str,
+        base_agent_id: str,
+        created_by: str,
+    ) -> SessionCreateResult:
+        now = datetime.now(timezone.utc)
+        session_id = str(uuid4())
+        chat_context = ChannelChatContext(
+            scope_id=chat_context_scope_id,
+            channel_instance_id=channel_instance_id,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            user_open_id=user_open_id,
+            base_agent_id=base_agent_id,
+            current_session_id=session_id,
+            created_at=now,
+            updated_at=now,
+        )
+        session = Session(
+            id=session_id,
+            chat_context_scope_id=chat_context_scope_id,
+            base_agent_id=base_agent_id,
+            runtime_agent_id="",
+            scheduler_state_id="",
+            created_by=created_by,
+            created_at=now,
+            updated_at=now,
+        )
+        await self._store.upsert_chat_context(chat_context)
+        await self._store.upsert_session(session)
+        return SessionCreateResult(chat_context=chat_context, session=session)
+
+    async def _create_session_for_chat_context(
+        self,
+        chat_context: ChannelChatContext,
+        *,
+        base_agent_id: str,
+        created_by: str,
+    ) -> SessionCreateResult:
+        now = datetime.now(timezone.utc)
+        session_id = str(uuid4())
+        session = Session(
+            id=session_id,
+            chat_context_scope_id=chat_context.scope_id,
+            base_agent_id=base_agent_id,
+            runtime_agent_id="",
+            scheduler_state_id="",
+            created_by=created_by,
+            created_at=now,
+            updated_at=now,
+        )
+        chat_context.current_session_id = session_id
+        chat_context.base_agent_id = base_agent_id
+        chat_context.updated_at = now
+        await self._store.upsert_chat_context(chat_context)
+        await self._store.upsert_session(session)
+        return SessionCreateResult(chat_context=chat_context, session=session)
+
+    async def _ensure_session_base_agent(
+        self,
+        session: Session,
+        chat_context: ChannelChatContext,
+    ) -> SessionContextResolution:
+        base_config = await self._agent_registry.get_agent(session.base_agent_id)
+        if base_config is not None:
+            return SessionContextResolution(
+                chat_context=chat_context,
+                session=session,
+            )
+
+        default_config = await self.resolve_default_agent_config()
+        if default_config is None:
+            raise BaseAgentNotFoundError(session.base_agent_id)
+
+        old_base_agent_id = session.base_agent_id
+        old_runtime_agent_id = session.runtime_agent_id
+        now = datetime.now(timezone.utc)
+        session.base_agent_id = default_config.id
+        reset_runtime_binding(session)
+        session.updated_at = now
+        chat_context.base_agent_id = default_config.id
+        chat_context.updated_at = now
+        await self._store.upsert_chat_context(chat_context)
+        await self._store.upsert_session(session)
+        logger.warning(
+            "channel_session_rebind_base_agent",
+            session_id=session.id,
+            old_base_agent_id=old_base_agent_id,
+            new_base_agent_id=session.base_agent_id,
+            old_runtime_agent_id=old_runtime_agent_id,
+            new_runtime_agent_id=session.runtime_agent_id,
+        )
+        return SessionContextResolution(
+            chat_context=chat_context,
+            session=session,
+            retired_runtime_agent_id=old_runtime_agent_id or None,
+        )

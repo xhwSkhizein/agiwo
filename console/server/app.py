@@ -7,10 +7,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from agiwo.scheduler.models import SchedulerConfig
 from agiwo.scheduler.engine import Scheduler
+from agiwo.scheduler.models import SchedulerConfig
 
-from server.config import ConsoleConfig
 from server.dependencies import (
     ConsoleRuntime,
     bind_console_runtime,
@@ -19,6 +18,7 @@ from server.dependencies import (
 from server.channels.utils import safe_close_all
 from server.channels.feishu import FeishuChannelService
 from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
+from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
 from server.services.storage_wiring import (
     build_agent_state_storage_config,
@@ -56,14 +56,14 @@ async def lifespan(app: FastAPI):
     await console_session_store.connect()
 
     feishu_channel_service: FeishuChannelService | None = None
-    if config.feishu_enabled:
+    if config.channels.feishu.enabled:
         logger.info("feishu_channel_enabled", enabled=True)
         missing: list[str] = []
-        if not config.feishu_app_id:
+        if not config.channels.feishu.app_id:
             missing.append("AGIWO_CONSOLE_FEISHU_APP_ID")
-        if not config.feishu_app_secret:
+        if not config.channels.feishu.app_secret:
             missing.append("AGIWO_CONSOLE_FEISHU_APP_SECRET")
-        if not config.feishu_default_agent_name:
+        if not config.channels.feishu.default_agent_name:
             missing.append("AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME")
         if missing:
             raise RuntimeError(
@@ -71,7 +71,7 @@ async def lifespan(app: FastAPI):
                 + ", ".join(missing)
             )
         base_agent = await agent_registry.get_agent_by_name(
-            config.feishu_default_agent_name
+            config.channels.feishu.default_agent_name
         )
         if base_agent is None:
             # 使用 .env 中的默认 Agent（不持久化到 DB）

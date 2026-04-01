@@ -34,10 +34,9 @@
 | --- | --- |
 | `console/server/` | FastAPI 控制面与 runtime 集成。 |
 | `console/server/routers/` | API/SSE 边界，只做 HTTP 路由与请求/响应装配。 |
-| `console/server/services/` | 应用服务层。`agent_lifecycle.py`（构建/恢复/恢复 agent）、`agent_registry/`（配置 CRUD + store 子包）、`storage_wiring.py`（存储 config builders + NotifyingTraceStorage）、`chat_sse.py`、`metrics.py`。 |
-| `console/server/domain/` | Console 共享领域模型，避免业务层直接依赖 API DTO。 |
-| `console/server/channels/` | 渠道运行时抽象、session binding/context 管理，以及 Feishu 等渠道集成。 |
-| `console/server/tools.py` | Console 侧唯一的工具 catalog、tool reference 解析与工具组装入口。 |
+| `console/server/services/` | 应用服务层。`runtime/`（agent factory、runtime cache、session runtime / session service）、`tool_catalog/`（tool reference / catalog / runtime builder）、`agent_registry/`（配置 CRUD + store 子包）、`storage_wiring.py`（存储 config builders）、`metrics.py`。 |
+| `console/server/models/` | Console 数据模型目录。`view.py` 只放 API/SSE 视图模型；`session.py`、`agent_config.py`、`metrics.py` 放共享运行时/配置/聚合模型。不要再新增 `schemas.py` 或平级 `domain/`。 |
+| `console/server/channels/` | 渠道适配层，负责批处理、消息解析、delivery，以及 Feishu 等渠道集成。 |
 | `console/web/` | Console 前端。 |
 | `console/tests/` | Console 后端测试。 |
 
@@ -129,20 +128,20 @@
 
 ### Console
 
-- `console/server/schemas.py` 与 `console/server/response_serialization.py` 只属于 API/SSE 边界。
-- 共享的 Console 领域模型放 `console/server/domain/`。
+- `console/server/models/view.py` 与 `console/server/response_serialization.py` 只属于 API/SSE 边界。
+- 共享的 Console 数据模型统一放 `console/server/models/`；不要再新增 `schemas.py`、`schema.py` 或平级 `domain/` 目录。
 - Console 自己持有 API/表单 DTO；不要再把 `Input/Patch` 请求模型塞回 SDK。
-- session 相关代码收口到 `console/server/channels/session/` 包：`models.py`（数据模型与 store protocol）、`binding.py`（domain 操作与异常）、`context_service.py`（session/chat-context 协调）、`manager.py`（消息批处理与防抖）。session identity 字段通过 `binding.py` 协调，经 `ChannelChatSessionStore.apply_session_mutation(...)` 原子写入。
-- 渠道运行时由三个独立子服务组成：`SessionContextService`（session/chat-context 生命周期）、`RuntimeAgentPool`（runtime agent 缓存与 config 指纹刷新）、`AgentExecutor`（scheduler 交互与状态路由）。Channel service 直接持有这三者，不再经过 facade。
-- `AgentExecutor.execute()` 只委托 `scheduler.route_root_input(...)` 做 root 输入路由，不再在 Console 自己编码 scheduler 状态机。timeout 为可选参数，默认不设硬超时。
+- `console/server/channels/session/` 只保留批处理相关能力；渠道代码直接依赖 `server.models.session`，不要再引入 compatibility shim。
+- 渠道运行时由三个独立子服务组成：`SessionContextService`（session/chat-context 生命周期）、`AgentRuntimeCache`（runtime agent 缓存与 config 指纹刷新）、`SessionRuntimeService`（scheduler 交互与状态路由）。Channel service 直接持有这三者，不再经过 facade。
+- `SessionRuntimeService.execute()` 只委托 `scheduler.route_root_input(...)` 做 root 输入路由，不再在 Console 自己编码 scheduler 状态机。timeout 为可选参数，默认不设硬超时。
 - Channel 消息管线是线性流程：consume stream → deliver output → fallback。SDK `route_root_input` 在 steered+WAITING/QUEUED 时已返回 stream，channel 层不需要 deferred reply 补丁。steered+RUNNING 时无 stream，channel 只发 ack（原 stream subscriber 仍在消费）。
 - Feishu store 实现收口到 `console/server/channels/feishu/store/` 包：`__init__.py`（protocol + factory）、`memory.py`（内存实现）、`sqlite.py`（SQLite 实现）。
 - Feishu 模块合并约定：`message_parser.py` 包含 envelope 类型 + sender 解析 + 解析 facade；`message_builder.py` 包含 attachment 解析 + UserMessage 构建；`connection.py` 包含 SDK 适配层 + WebSocket 连接管理。
 - Console 工具的展示、解析、组装都必须经过 `ConsoleToolCatalog`。
-- **`build_agent` 必须传入稳定 `id`**：`build_agent()` 构造 Agent 时必须使用 `id=id or config.id`，确保同一个 agent config 在不同请求中拿到相同的 `agent_id`。若遗漏此 fallback，每次 HTTP 请求都会产生随机 agent id，导致 `run_step_storage.get_steps(session_id, agent_id)` 查不到历史步骤，对话上下文无法延续。`repo_guard.py` 中有对应的 `AGW043` 检查。
+- **`build_agent` 必须传入稳定 `id`**：`services/runtime/agent_factory.py` 中的 `build_agent()` 构造 Agent 时必须使用 `id=id or config.id`，确保同一个 agent config 在不同请求中拿到相同的 `agent_id`。若遗漏此 fallback，每次 HTTP 请求都会产生随机 agent id，导致 `run_step_storage.get_steps(session_id, agent_id)` 查不到历史步骤，对话上下文无法延续。`repo_guard.py` 中有对应的 `AGW043` 检查。
 - Agent 配置写入保持 full replace；不要回到 partial merge / patch DTO 语义。
 - `storage_wiring.py` 同时包含 storage config builders 和 `NotifyingTraceStorage`（Console 侧 trace pub/sub）。
-- Agent registry 收口到 `console/server/services/agent_registry/` 包：`registry.py`（CRUD 服务）、`models.py`（AgentConfigRecord）、`store/`（protocol + factory + memory/mongo/sqlite 实现）。
+- Agent registry 收口到 `console/server/services/agent_registry/` 包：`registry.py`（CRUD 服务）、`models.py`（AgentConfigRecord）、`store/`（protocol + factory + memory/sqlite 实现）。
 
 ### Configuration
 
@@ -234,7 +233,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full change history.
 
 1. 在 `agiwo/tool/builtin/` 下新增实现。
 2. 用 `@builtin_tool(...)` 注册；仅在确实需要默认启用时再加 `@default_enable`。
-3. 如果 Console 侧需要自定义展示文案或 build-time 依赖，在 `console/server/tools.py` 增补对应 catalog 逻辑。
+3. 如果 Console 侧需要自定义展示文案或 build-time 依赖，在 `console/server/services/tool_catalog/` 增补对应 catalog / builder 逻辑。
 
 ### Notes
 

@@ -4,7 +4,7 @@ from typing import Protocol
 
 from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
 from server.channels.feishu.store.sqlite import SqliteFeishuChannelStore
-from server.channels.session.models import ChannelChatSessionStore
+from server.models.session import ChannelChatSessionStore
 
 
 class FeishuChannelStoreBackend(ChannelChatSessionStore, Protocol):

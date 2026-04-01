@@ -13,7 +13,7 @@ from typing import Any
 
 from agiwo.utils.logging import get_logger
 
-from server.channels.session.models import BatchContext, InboundMessage
+from server.models.session import BatchContext, InboundMessage
 
 logger = get_logger(__name__)
 

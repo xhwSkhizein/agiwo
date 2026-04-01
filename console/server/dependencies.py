@@ -10,8 +10,8 @@ from agiwo.observability.base import BaseTraceStorage
 from agiwo.scheduler.engine import Scheduler
 
 from server.channels.feishu import FeishuChannelService
-from server.channels.session.models import ChannelChatSessionStore
 from server.config import ConsoleConfig
+from server.models.session import ChannelChatSessionStore
 from server.services.agent_registry import AgentRegistry
 
 _RUNTIME_STATE_KEY = "console_runtime"

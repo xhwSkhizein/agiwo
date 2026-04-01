@@ -1,6 +1,4 @@
-"""
-Runtime agent cache and lifecycle management for channel sessions.
-"""
+"""Runtime agent cache and lifecycle management for session-bound execution."""
 
 import asyncio
 import hashlib
@@ -13,42 +11,38 @@ from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.exceptions import BaseAgentNotFoundError
-from server.channels.session.models import (
-    ChannelChatSessionStore,
-    Session,
-    assign_runtime_identity,
-)
+from server.models.session import ChannelChatSessionStore, Session, bind_runtime_agent
 from server.config import ConsoleConfig
-from server.services.agent_lifecycle import build_agent
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
+from server.services.runtime.agent_factory import build_agent
 
 logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
-class _CachedAgent:
+class CachedAgent:
     agent: Agent
     config_fingerprint: str
 
 
-class RuntimeAgentPool:
+class AgentRuntimeCache:
     def __init__(
         self,
         *,
         scheduler: Scheduler,
         agent_registry: AgentRegistry,
         console_config: ConsoleConfig,
-        store: ChannelChatSessionStore,
+        session_store: ChannelChatSessionStore,
     ) -> None:
         self._scheduler = scheduler
         self._agent_registry = agent_registry
         self._console_config = console_config
-        self._store = store
-        self._cache: dict[str, _CachedAgent] = {}
+        self._session_store = session_store
+        self._cache: dict[str, CachedAgent] = {}
 
     @property
     def runtime_agents(self) -> dict[str, Agent]:
-        return {k: v.agent for k, v in self._cache.items()}
+        return {key: cached.agent for key, cached in self._cache.items()}
 
     async def get_or_create_runtime_agent(self, session: Session) -> Agent:
         base_config = await self._agent_registry.get_agent(session.base_agent_id)
@@ -67,16 +61,13 @@ class RuntimeAgentPool:
             )
 
         previous_runtime_id = session.runtime_agent_id
-        # Capture the pre-assignment runtime id; after _assign_runtime_identity()
-        # session.runtime_agent_id points at the new agent id, so this is the key
-        # we must remove from the old runtime cache.
         agent = await build_agent(
             base_config,
             self._console_config,
             self._agent_registry,
             id=previous_runtime_id or None,
         )
-        assign_runtime_identity(session, agent.id)
+        bind_runtime_agent(session, agent.id)
 
         if previous_runtime_id:
             rebound = await self._scheduler.rebind_agent(
@@ -98,9 +89,9 @@ class RuntimeAgentPool:
             await retired.agent.close()
 
         session.updated_at = datetime.now(timezone.utc)
-        await self._store.upsert_session(session)
+        await self._session_store.upsert_session(session)
 
-        self._cache[session.runtime_agent_id] = _CachedAgent(
+        self._cache[session.runtime_agent_id] = CachedAgent(
             agent=agent,
             config_fingerprint=expected_fingerprint,
         )
@@ -112,7 +103,7 @@ class RuntimeAgentPool:
             await retired.agent.close()
 
     async def close(self) -> None:
-        close_tasks = [c.agent.close() for c in self._cache.values()]
+        close_tasks = [cached.agent.close() for cached in self._cache.values()]
         if close_tasks:
             await asyncio.gather(*close_tasks, return_exceptions=True)
         self._cache.clear()

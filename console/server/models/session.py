@@ -1,9 +1,4 @@
-"""
-Generic channel data models and protocols.
-
-These models represent common messaging concepts shared across all channel
-implementations (Feishu, Slack, DingTalk, etc.).
-"""
+"""Console session and channel runtime models."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -12,14 +7,14 @@ from typing import Any, Protocol
 from agiwo.agent import UserMessage
 
 
-@dataclass
+@dataclass(slots=True)
 class Attachment:
     type: str
     key: str
     name: str = ""
 
 
-@dataclass
+@dataclass(slots=True)
 class InboundMessage:
     channel_instance_id: str
     event_id: str
@@ -38,7 +33,7 @@ class InboundMessage:
     attachments: list[Attachment] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(slots=True)
 class ChannelChatContext:
     scope_id: str
     channel_instance_id: str
@@ -51,7 +46,14 @@ class ChannelChatContext:
     updated_at: datetime
 
 
-@dataclass
+@dataclass(slots=True)
+class SessionRuntimeBinding:
+    base_agent_id: str
+    runtime_agent_id: str = ""
+    scheduler_state_id: str = ""
+
+
+@dataclass(slots=True)
 class Session:
     id: str
     chat_context_scope_id: str
@@ -67,21 +69,29 @@ class Session:
     source_task_id: str | None = None
     fork_context_summary: str | None = None
 
+    @property
+    def runtime_binding(self) -> SessionRuntimeBinding:
+        return SessionRuntimeBinding(
+            base_agent_id=self.base_agent_id,
+            runtime_agent_id=self.runtime_agent_id,
+            scheduler_state_id=self.scheduler_state_id,
+        )
 
-@dataclass
+
+@dataclass(slots=True)
 class SessionWithContext:
     session: Session
     chat_context: ChannelChatContext
 
 
-@dataclass
+@dataclass(slots=True)
 class SessionSwitchResult:
     previous_session: Session | None
     current_session: Session
     chat_context: ChannelChatContext
 
 
-@dataclass
+@dataclass(slots=True)
 class UserSessionItem:
     session: Session
     chat_context: ChannelChatContext
@@ -89,13 +99,13 @@ class UserSessionItem:
     in_current_context: bool
 
 
-@dataclass
+@dataclass(slots=True)
 class SessionCreateResult:
     chat_context: ChannelChatContext
     session: Session
 
 
-@dataclass
+@dataclass(slots=True)
 class BatchContext:
     chat_context_scope_id: str
     channel_instance_id: str
@@ -106,7 +116,7 @@ class BatchContext:
     base_agent_id: str
 
 
-@dataclass
+@dataclass(slots=True)
 class BatchPayload:
     context: BatchContext
     messages: list[InboundMessage]
@@ -130,26 +140,29 @@ class ChannelChatSessionStore(Protocol):
     ) -> list[Session]: ...
 
 
-# Helper functions for session operations
+def bind_runtime_agent(session: Session, agent_id: str) -> None:
+    """Bind a runtime agent to a session and default scheduler state to it."""
+    session.runtime_agent_id = agent_id
+    session.scheduler_state_id = agent_id
 
 
-def assign_runtime_identity(session: Session, runtime_agent_id: str) -> None:
-    """Assign runtime identity to a session."""
-    session.runtime_agent_id = runtime_agent_id
-    session.scheduler_state_id = runtime_agent_id
+def bind_scheduler_state(session: Session, state_id: str) -> None:
+    """Bind the latest scheduler state to the session."""
+    session.scheduler_state_id = state_id
 
 
-def assign_scheduler_state(session: Session, scheduler_state_id: str) -> None:
-    """Assign scheduler state ID to a session."""
-    session.scheduler_state_id = scheduler_state_id
+def reset_runtime_binding(session: Session) -> None:
+    """Clear runtime and scheduler bindings while keeping the base agent."""
+    session.runtime_agent_id = ""
+    session.scheduler_state_id = ""
 
 
-def mark_session_task_started(session: Session, *, task_id: str) -> None:
-    """Mark a new task as started on the session."""
+def start_task(session: Session, *, task_id: str) -> None:
+    """Start a new task for the session."""
     session.current_task_id = task_id
     session.task_message_count = 0
 
 
-def append_message_to_current_task(session: Session) -> None:
-    """Increment the message count for the current task."""
+def append_task_message(session: Session) -> None:
+    """Increment the message count for the active session task."""
     session.task_message_count += 1
