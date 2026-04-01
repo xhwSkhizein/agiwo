@@ -16,7 +16,7 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型统一收口在 `models/`，hook contract 与默认 hook adapter 收口在 `hooks/`，nested-agent adapter 收口在 `nested/`，run/session runtime context 与 step/state helper 收口在 `runtime/`，termination prompt/limit/summary logic 收口在 `termination/`，transport serializer 收口在 `transport/`；`prompt.py` 同时承载 system prompt 构建与 run-message assembly，`types.py` 只作为 public facade 复导出稳定模型与 stream event，`storage/` 负责持久化。 |
+| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `hooks/`，nested-agent adapter 收口在 `nested/`，run/session runtime context 与 state helper 收口在 `runtime/`，termination logic 收口在 `termination/`，`storage/` 负责持久化。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
 | `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade 与 loop lifecycle，`engine.py` 是唯一编排 owner，`runner.py` 负责单次 dispatch action 执行，`commands.py` 承载调度动作与 tool DTO，`runtime_state.py` 承载进程内 live state 与 tick helpers，`tool_control.py` 收口 child/sleep/cancel 的 tool-facing control，`runtime_tools.py` 是注入给 agent 的 scheduler runtime tools，`store/` 只负责持久化。 |
@@ -57,17 +57,13 @@
 
 - `Agent` 是具体类，不是 ABC。
 - 公开构造入口是 `Agent(AgentConfig(...), *, model=..., tools=..., hooks=..., id=...)`；`AgentConfig` 只承载纯配置，不放 live object。
-- **`id` 必须稳定**：`Agent.id` 是 `(session_id, agent_id)` 存储键的一部分，决定了对话历史能否被正确加载。在 Console 等需要跨请求复用会话的场景中，每次构造 `Agent` 时 **必须** 传入稳定的 `id`（如 registry `config.id`），否则 `_generate_default_id` 会产生随机后缀，导致后续请求查不到先前的 steps，表现为"对话历史丢失"。
-- 对外执行原语是 `start(...)` 返回 live execution handle；`run(...)` / `run_stream(...)` 只是便利封装。child 运行配置通过 `create_child_agent(...)` 或单独构造 `Agent` 实例来收敛，不再保留公开 `derive_child_spec(...)` / `ChildAgentSpec` 路径。
-- `run(...)` 只支持 root run；嵌套 agent 执行是内部协议，由 `nested/agent_tool.py` 中的 `AgentTool` 通过 `Agent.run_child(...)` 进入，不再暴露公开 `context` 参数。
-- live execution handle 持有 `run_id/session_id`、`stream()/wait()/steer()/cancel()`；`steer()` 不属于 `Agent` 模板对象。
-- `Agent` 内部分离 definition-scoped owner（tools / hooks / prompt / skills）与 resource-scoped owner（run-step storage / session storage / trace storage / active root executions）；执行主链固定为 `Agent.start(...) -> SessionRuntime -> run_loop`，不要重新引入更深的 lifecycle/engine 中间层。
-- `SessionRuntime` 是 session 级共享 owner，持有 sequence owner、trace_id、abort signal、steering queue 和 stream subscribers。
-- `RunContext` 组合 immutable `RunIdentity` 与 mutable `RunLedger`；session/runtime context 位于 `runtime/context.py` 与 `runtime/session.py`，运行时状态变更优先通过 `runtime/state_ops.py` / `runtime/step_committer.py` 收口，不要回到各模块直接随手改 ledger 字段。
-- `AgentHooks` 是可选 async 回调的 dataclass；当前 hook 覆盖 run、tool、LLM、step、memory write/retrieve。
+- **`id` 必须稳定**：在 Console 这类跨请求复用会话的场景里，每次构造 `Agent` 都必须传稳定 `id`（如 registry `config.id`），否则历史 steps 会丢。
+- 对外执行原语是 `start(...)` 返回 live execution handle；`run(...)` / `run_stream(...)` 只是便利封装。
+- 嵌套 agent 执行是内部协议，由 `nested/agent_tool.py` 通过 `Agent.run_child(...)` 进入；不要再暴露公开 `context` 参数。
+- `SessionRuntime` 是 session 级 owner；`RunContext` 组合 immutable identity 与 mutable ledger。运行时状态变更优先通过 `runtime/state_ops.py` / `runtime/step_committer.py` 收口。
 - `StepRecord` 使用工厂方法创建，不要直接构造。
-- `UserMessage` 是 `UserInput` 的 canonical structured owner；input normalization、transport payload projection、storage encoding/decoding 统一收口在它本身，不要再散落 codec helper。
-- 纯数据模型统一放 `models/`，按语义拆分到 `config.py`、`input.py`、`run.py`、`step.py`、`stream.py`、`memory.py`、`compact.py`；不要再新增顶层 `*_types.py`、one-model 文件或总垃圾桶式 `types.py`。
+- `UserMessage` 是 `UserInput` 的 canonical structured owner；input normalization 和 storage encoding/decoding 统一收口在它本身。
+- 纯数据模型统一放 `models/`，不要再新增顶层 `*_types.py`、one-model 文件或垃圾桶式 `types.py`。
 
 ### Model
 
@@ -96,12 +92,10 @@
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
 - 当前公开编排接口包括：`run`、`submit`、`enqueue_input`、`route_root_input`、`stream`、`wait_for`、`steer`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`。
 - `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 `SchedulerEngine`。
-- `SchedulerEngine` 是唯一编排 owner：公开 API、查询 API、tool-facing control、tick planning (`normalize -> plan -> dispatch`)、tree cancel/shutdown 都收口在这里；进程内 live state 聚合在内部 `_RuntimeState`，不再拆到独立 `coordinator/state_ops/tick_ops/tree_ops` 模块。
-- `SchedulerRunner` 只负责单次执行：接收 `DispatchAction`，运行 root/child/wake cycle、构造 wake message、把 `RunOutput` 翻译成 scheduler outcome；runner 只能通过 `RunnerContext` 访问 store/runtime/notify/nudge/semaphore。
-- `TaskGuard` 是 spawn/wake 的唯一护栏入口。
+- `SchedulerEngine` 是唯一编排 owner；`SchedulerRunner` 只负责单次执行；`TaskGuard` 是 spawn/wake 的唯一护栏入口。
 - scheduler 状态现在显式区分 `WAITING`、`IDLE`、`QUEUED`；不要再把待命/排队语义塞回一个泛化 `SLEEPING`。
 - 当前唤醒路径包括 `WAITSET`、`TIMER`、`PERIODIC`、`PENDING_EVENTS`。
-- scheduler state storage 当前支持 memory/sqlite/mongodb，由 `Scheduler` 自己创建和持有；store 边界保持为通用 repo（`save/get/list/delete_events`），wake/timeout/debounce/signal 规则统一放在 `SchedulerEngine`。
+- scheduler state storage 当前支持 memory/sqlite/mongodb，由 `Scheduler` 自己创建和持有。
 - `Scheduler` 的外部流式协议直接复用 `AgentStreamItem`；不要在 SDK core 再维护第二套 live-output protocol。
 - `route_root_input` 对所有非 RUNNING 路径（submitted / enqueued / steered+WAITING / steered+QUEUED）都返回带 stream 的 `RouteResult`；只有 steered+RUNNING 不带 stream（原 stream subscriber 仍在消费）。下游不需要为 steered 场景单独维护 deferred reply 补丁。
 
@@ -120,7 +114,7 @@
 - 所有公开方法与核心数据结构都应带类型注解。
 - async 逻辑保持显式，不要把 `await` 藏进难追踪的 helper。
 - 哨兵判断优先用 `is not None`；truthy 检查只在语义明确时使用。
-- 顶层模块名只保留稳定入口与核心 orchestrator；领域性 helper 进入具名子包（如 `models/`、`runtime/`、`nested/`、`transport/`）。
+- 顶层模块名只保留稳定入口与核心 orchestrator；领域性 helper 进入具名子包（如 `models/`、`runtime/`、`nested/`）。
 - 模块名优先表达职责，避免新增 `helpers.py`、`utils.py`、`misc.py`、`pipeline.py` 这类弱语义文件名。
 - 不为“可能以后有用”保留遗留兼容层；除非明确要求，否则直接删除旧路径。
 - 遇到循环依赖优先重构依赖方向，不要靠局部导入规避。
@@ -136,11 +130,10 @@
 - `SessionRuntimeService.execute()` 只委托 `scheduler.route_root_input(...)` 做 root 输入路由，不再在 Console 自己编码 scheduler 状态机。timeout 为可选参数，默认不设硬超时。
 - Channel 消息管线是线性流程：consume stream → deliver output → fallback。SDK `route_root_input` 在 steered+WAITING/QUEUED 时已返回 stream，channel 层不需要 deferred reply 补丁。steered+RUNNING 时无 stream，channel 只发 ack（原 stream subscriber 仍在消费）。
 - Feishu store 实现收口到 `console/server/channels/feishu/store/` 包：`__init__.py`（protocol + factory）、`memory.py`（内存实现）、`sqlite.py`（SQLite 实现）。
-- Feishu 模块合并约定：`message_parser.py` 包含 envelope 类型 + sender 解析 + 解析 facade；`message_builder.py` 包含 attachment 解析 + UserMessage 构建；`connection.py` 包含 SDK 适配层 + WebSocket 连接管理。
+- Feishu 模块约定：`message_parser.py` 只保留 envelope 类型与解析 facade；sender 解析、attachment 解析、delivery、连接管理放在各自具名模块。
 - Console 工具的展示、解析、组装都必须经过 `ConsoleToolCatalog`。
 - **`build_agent` 必须传入稳定 `id`**：`services/runtime/agent_factory.py` 中的 `build_agent()` 构造 Agent 时必须使用 `id=id or config.id`，确保同一个 agent config 在不同请求中拿到相同的 `agent_id`。若遗漏此 fallback，每次 HTTP 请求都会产生随机 agent id，导致 `run_step_storage.get_steps(session_id, agent_id)` 查不到历史步骤，对话上下文无法延续。`repo_guard.py` 中有对应的 `AGW043` 检查。
 - Agent 配置写入保持 full replace；不要回到 partial merge / patch DTO 语义。
-- `storage_wiring.py` 同时包含 storage config builders 和 `NotifyingTraceStorage`（Console 侧 trace pub/sub）。
 - Agent registry 收口到 `console/server/services/agent_registry/` 包：`registry.py`（CRUD 服务）、`models.py`（AgentConfigRecord）、`store/`（protocol + factory + memory/sqlite 实现）。
 
 ### Configuration
@@ -157,7 +150,6 @@
 - `agiwo.agent.types` 是 public facade；agent 内部实现优先直接依赖 `models/`、`hooks/`、`runtime/` 这些 focused 模块，不要再把内部依赖都堆回 facade。
 - 不要在 Console 或其他集成侧直读 `scheduler.store`；统一走 `Scheduler` facade 的查询 API。
 - scheduler runtime tools 直接依赖 `SchedulerEngine` 的 tool-facing 方法；不要重新引入 `SchedulerControl` protocol。
-- 不要把 store mutation、递归 cancel/shutdown、tick dispatch 重新塞回 `Scheduler` facade。
 - 不要在 SDK core 里同时维护 text-only 和 typed 两套 scheduler stream API；如需文本适配，只能放在消费侧边缘。
 - 当同一语义逻辑出现第 2 次时就要评估抽象；不要继续把热点文件堆成 God Object。
 
@@ -208,13 +200,7 @@ uv run pytest tests/ -v
 
 类型检查不是当前仓库默认门槛；只有分支实际接入某个 checker 时，才运行对应工具。
 
-## Development Notes
-
-### Recent Changes
-
-See [CHANGELOG.md](./CHANGELOG.md) for the full change history.
-
-### Common Changes
+## Common Changes
 
 #### 添加新 LLM Provider
 

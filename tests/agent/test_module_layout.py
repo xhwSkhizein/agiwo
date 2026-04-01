@@ -10,10 +10,8 @@ def test_nested_agent_modules_are_exposed_from_new_package() -> None:
     assert hasattr(context_module, "AgentToolContext")
 
 
-def test_transport_package_is_exposed_from_sdk_layer() -> None:
-    transport_module = importlib.import_module("agiwo.agent.transport")
-
-    assert transport_module is not None
+def test_transport_package_has_been_removed_from_sdk_layer() -> None:
+    assert importlib.util.find_spec("agiwo.agent.transport") is None
 
 
 def test_hooks_module_exposes_agent_hooks_and_memory_defaults() -> None:
