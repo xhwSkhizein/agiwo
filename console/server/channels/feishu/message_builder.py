@@ -10,7 +10,7 @@ from agiwo.utils.logging import get_logger
 from server.channels.feishu.api_client import FeishuApiClient
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
-from server.channels.session.models import Attachment, BatchContext, InboundMessage
+from server.models.session import Attachment, BatchContext, InboundMessage
 
 logger = get_logger(__name__)
 

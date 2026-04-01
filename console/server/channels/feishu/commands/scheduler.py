@@ -29,7 +29,7 @@ from server.channels.feishu.commands.status_text import (
 )
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
-from server.services.agent_lifecycle import resume_persistent_agent
+from server.services.runtime import resume_persistent_agent
 
 
 def build_scheduler_command_specs(

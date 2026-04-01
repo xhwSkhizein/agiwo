@@ -1,7 +1,7 @@
 """Regression tests for Console and Feishu channel consistency.
 
 Both entrypoints must produce equivalent session/task semantics
-when using the shared AgentExecutor.
+when using the shared SessionRuntimeService.
 """
 
 from datetime import datetime, timezone
@@ -10,13 +10,13 @@ from uuid import uuid4
 
 import pytest
 
-from server.channels.agent_executor import AgentExecutor
-from server.channels.session.models import (
+from server.models.session import (
     ChannelChatContext,
     Session,
-    append_message_to_current_task,
-    mark_session_task_started,
+    append_task_message,
+    start_task,
 )
+from server.services.runtime.session_runtime_service import SessionRuntimeService
 
 
 def _session(
@@ -74,11 +74,11 @@ def test_implicit_task_creation_is_consistent_across_channels() -> None:
     session = _session()
     assert session.current_task_id is None
 
-    mark_session_task_started(session, task_id="task-1")
+    start_task(session, task_id="task-1")
     assert session.current_task_id == "task-1"
     assert session.task_message_count == 0
 
-    append_message_to_current_task(session)
+    append_task_message(session)
     assert session.task_message_count == 1
 
 
@@ -112,7 +112,7 @@ def test_fork_lineage_is_consistent_across_channels() -> None:
 
 @pytest.mark.asyncio
 async def test_executor_applies_task_semantics_uniformly() -> None:
-    """AgentExecutor applies the same task logic regardless of entry channel."""
+    """SessionRuntimeService applies the same task logic regardless of entry channel."""
     session = _session()
     scheduler = AsyncMock()
     scheduler.route_root_input = AsyncMock(
@@ -120,9 +120,13 @@ async def test_executor_applies_task_semantics_uniformly() -> None:
     )
     store = AsyncMock()
     store.upsert_session = AsyncMock()
-    executor = AgentExecutor(scheduler=scheduler, store=store, timeout=60)
+    runtime_service = SessionRuntimeService(
+        scheduler=scheduler,
+        session_store=store,
+        timeout=60,
+    )
 
-    await executor.execute(
+    await runtime_service.execute(
         agent=AsyncMock(), session=session, user_input="hello from console"
     )
 
@@ -131,7 +135,7 @@ async def test_executor_applies_task_semantics_uniformly() -> None:
     assert task_id_after_console is not None
     assert count_after_console == 1
 
-    await executor.execute(
+    await runtime_service.execute(
         agent=AsyncMock(), session=session, user_input="hello from feishu"
     )
 

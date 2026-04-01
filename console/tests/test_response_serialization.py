@@ -12,12 +12,14 @@ from agiwo.agent import (
 from agiwo.scheduler.models import AgentState, AgentStateStatus
 from agiwo.llm.config_policy import sanitize_model_params_data
 
-from server.models import (
+from server.models.agent_config import (
     AgentOptionsInput,
-    AgentStateResponse,
     ModelParamsInput,
-    StepResponse,
     sanitize_agent_options_data,
+)
+from server.response_serialization import (
+    agent_state_response_from_sdk,
+    step_response_from_sdk,
     stream_event_to_payload,
 )
 
@@ -46,7 +48,7 @@ def test_stream_event_step_payload_matches_rest_step_response() -> None:
         timestamp=datetime(2026, 3, 9, 1, tzinfo=timezone.utc),
     )
 
-    rest_payload = StepResponse.from_sdk(step).model_dump()
+    rest_payload = step_response_from_sdk(step).model_dump()
     stream_payload = stream_event_to_payload(event)
 
     assert stream_payload["step"] == rest_payload
@@ -72,7 +74,7 @@ def test_step_response_includes_usage_source_in_metrics() -> None:
         created_at=datetime(2026, 3, 9, tzinfo=timezone.utc),
     )
 
-    payload = StepResponse.from_sdk(step).model_dump()
+    payload = step_response_from_sdk(step).model_dump()
 
     assert payload["metrics"]["usage_source"] == "estimated"
     assert payload["metrics"]["model_name"] == "gpt-test"
@@ -89,7 +91,7 @@ def test_scheduler_state_response_normalizes_serialized_user_input() -> None:
         ),
     )
 
-    payload = AgentStateResponse.from_sdk(state).model_dump()
+    payload = agent_state_response_from_sdk(state).model_dump()
 
     assert payload["task"][0]["type"] == "text"
     assert payload["task"][0]["text"] == "queued"
@@ -97,7 +99,7 @@ def test_scheduler_state_response_normalizes_serialized_user_input() -> None:
     assert payload["pending_input"][0]["text"] == "wake me"
 
 
-def test_agent_config_schema_and_registry_share_normalization_policy() -> None:
+def test_agent_config_view_model_and_registry_share_normalization_policy() -> None:
     option_input = {"skills_dirs": " ./skills "}
     option_schema = AgentOptionsInput.model_validate(option_input)
     model_param_input = {

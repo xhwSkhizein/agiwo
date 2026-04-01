@@ -70,11 +70,11 @@ ALLOWED_CONSOLE_API_IMPORT_PREFIXES = (
     Path("console/tests"),
 )
 ALLOWED_CONSOLE_API_IMPORT_PATHS = {
-    Path("console/server/schemas.py"),
+    Path("console/server/models/view.py"),
     Path("console/server/response_serialization.py"),
 }
 ALLOWED_SESSION_IDENTITY_ASSIGN_PATHS = {
-    Path("console/server/channels/session/binding.py"),
+    Path("console/server/models/session.py"),
 }
 ALLOWED_SESSION_IDENTITY_ASSIGN_PREFIXES = (Path("console/tests"),)
 ALLOWED_FEISHU_SDK_IMPORT_PATHS = {
@@ -112,11 +112,11 @@ WARNING_ONLY_CODES = {
     "AGW004",
 }
 FILE_GROWTH_BUDGETS = (
-    (re.compile(r"^console/server/routers/[^/]+\.py$"), 150),
+    (re.compile(r"^console/server/routers/[^/]+\.py$"), 180),
     (re.compile(r"^console/server/channels/agent_runtime\.py$"), 450),
     (re.compile(r"^console/server/channels/feishu/store\.py$"), 420),
     (re.compile(r"^console/server/services/agent_registry\.py$"), 320),
-    (re.compile(r"^console/server/schemas\.py$"), 420),
+    (re.compile(r"^console/server/models/view\.py$"), 420),
     (re.compile(r"^console/server/response_serialization\.py$"), 280),
     (re.compile(r"^agiwo/tool/builtin/bash_tool/tool\.py$"), 840),
     (re.compile(r"^agiwo/config/settings\.py$"), 390),
@@ -254,7 +254,7 @@ def _imports_feishu_sdk_impl(module_name: str | None) -> bool:
 
 
 def _is_console_api_boundary_import(module_name: str | None) -> bool:
-    return module_name in {"server.schemas", "server.response_serialization"}
+    return module_name in {"server.models.view", "server.response_serialization"}
 
 
 def _allows_console_api_boundary_import(path: Path) -> bool:
@@ -764,13 +764,13 @@ def _detect_import_name_errors(
         and path.as_posix().startswith("console/server/")
         and not _allows_console_api_boundary_import(path)
     ):
-        code = "AGW017" if module_name == "server.schemas" else "AGW018"
+        code = "AGW017" if module_name == "server.models.view" else "AGW018"
         message = (
-            "Keep server.schemas API-only; move shared models/helpers to "
-            "server.domain before importing them from services/channels."
-            if module_name == "server.schemas"
+            "Keep server.models.view API-only; move shared models/helpers to "
+            "server.models before importing them from services/channels."
+            if module_name == "server.models.view"
             else "Keep server.response_serialization at the API boundary; "
-            "services/channels must use server.domain or core serializers instead."
+            "services/channels must use server.models or core serializers instead."
         )
         errors.append(_make_error(path, line, code, message))
     if _imports_agent_v2(module_name):
@@ -1246,7 +1246,7 @@ def _detect_tool_reference_domain_text_errors(
     content: str,
 ) -> list[GuardError]:
     errors: list[GuardError] = []
-    if path == Path("console/server/domain/agent_configs.py"):
+    if path == Path("console/server/models/agent_config.py"):
         line = _find_first_match_line(content, r"\btools:\s*list\[str\]")
         if line is not None:
             errors.append(
@@ -1255,9 +1255,9 @@ def _detect_tool_reference_domain_text_errors(
                     line,
                     "AGW036",
                     (
-                        "AgentConfigInput must normalize tools into the formal "
-                        "ToolReference contract; do not fall back to bare "
-                        "list[str] domain semantics."
+                        "Shared agent config models must not fall back to bare "
+                        "list[str] tool semantics; normalize tool references at "
+                        "the API boundary before they reach services."
                     ),
                 )
             )

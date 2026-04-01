@@ -1,4 +1,4 @@
-"""Console tool catalog: canonical refs, metadata, and tool assembly."""
+"""Runtime tool assembly for console agents."""
 
 from collections.abc import Awaitable, Callable
 
@@ -7,44 +7,13 @@ from agiwo.tool.builtin.registry import BUILTIN_TOOLS
 from agiwo.tool.storage.citation import CitationStoreConfig
 
 from server.config import ConsoleConfig
-from server.models import AGENT_TOOL_PREFIX, parse_tool_references
-from server.services.agent_registry import AgentRegistry
 from server.services.storage_wiring import build_citation_store_config
-
-BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
-    "bash": "Execute shell commands in a terminal-style sandbox",
-    "web_search": "Search the web for information",
-    "web_reader": "Fetch and extract content from web URLs",
-}
+from server.services.tool_catalog.tool_references import (
+    AGENT_TOOL_PREFIX,
+    parse_tool_references,
+)
 
 _CITATION_TOOLS: set[str] = {"web_search", "web_reader"}
-
-
-async def list_available_tools(
-    registry: AgentRegistry,
-    *,
-    exclude_agent_id: str | None = None,
-) -> list[dict[str, str]]:
-    tools: list[dict[str, str]] = [
-        {
-            "name": name,
-            "description": BUILTIN_TOOL_DESCRIPTIONS.get(name, ""),
-            "type": "builtin",
-        }
-        for name in BUILTIN_TOOLS
-    ]
-    for agent in await registry.list_agents():
-        if exclude_agent_id is not None and agent.id == exclude_agent_id:
-            continue
-        tools.append(
-            {
-                "name": f"{AGENT_TOOL_PREFIX}{agent.id}",
-                "description": agent.description or f"Delegate tasks to {agent.name}",
-                "type": "agent",
-                "agent_name": agent.name,
-            }
-        )
-    return tools
 
 
 async def build_tools(

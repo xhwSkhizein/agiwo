@@ -19,10 +19,10 @@ from server.channels.feishu.message_builder import (
 from server.channels.feishu.message_parser import (
     FeishuInboundEnvelope,
     FeishuMessageParser,
-    FeishuSenderResolver,
 )
-from server.channels.session.models import Attachment, BatchContext, InboundMessage
+from server.channels.feishu.sender_resolver import FeishuSenderResolver
 from server.config import ConsoleConfig
+from server.models.session import Attachment, BatchContext, InboundMessage
 
 
 def _inbound_message(

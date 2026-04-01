@@ -5,7 +5,7 @@ from collections.abc import Callable
 from agiwo.utils.logging import get_logger
 
 from server.channels.feishu.api_client import FeishuApiClient
-from server.channels.session.models import BatchContext, InboundMessage
+from server.models.session import BatchContext, InboundMessage
 from server.config import ConsoleConfig
 
 logger = get_logger(__name__)

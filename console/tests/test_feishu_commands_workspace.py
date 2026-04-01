@@ -8,7 +8,7 @@ import pytest
 
 from server.channels.feishu.commands.base import CommandContext
 from server.channels.feishu.commands.session import build_session_command_specs
-from server.channels.session.models import (
+from server.models.session import (
     ChannelChatContext,
     Session,
     SessionCreateResult,

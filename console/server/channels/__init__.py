@@ -1,3 +1,1 @@
-from server.channels.feishu.service import FeishuChannelService
-
-__all__ = ["FeishuChannelService"]
+"""Channel adapters and batching helpers."""

@@ -18,16 +18,16 @@ from server.channels.feishu.commands.base import (
     CommandSpec,
 )
 from server.channels.feishu.commands.status_text import format_scheduler_status
-from server.channels.session.models import Session
-from server.channels.runtime_agent_pool import RuntimeAgentPool
+from server.models.session import Session
 from server.services.metrics import summarize_runs_paginated
+from server.services.runtime import AgentRuntimeCache
 
 
 _PROMPT_PREVIEW_MAX_LEN = 5000
 
 
 def build_context_command_specs(
-    agent_pool: RuntimeAgentPool,
+    agent_pool: AgentRuntimeCache,
     scheduler: Scheduler,
 ) -> list[CommandSpec]:
     return [
@@ -45,7 +45,7 @@ def build_context_command_specs(
 
 
 async def _execute_context(
-    agent_pool: RuntimeAgentPool,
+    agent_pool: AgentRuntimeCache,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
@@ -78,7 +78,7 @@ async def _execute_context(
 
 
 async def _execute_status(
-    agent_pool: RuntimeAgentPool,
+    agent_pool: AgentRuntimeCache,
     scheduler: Scheduler,
     ctx: CommandContext,
     args: str,
@@ -151,7 +151,7 @@ async def _execute_status(
 
 
 async def _load_session_agent(
-    agent_pool: RuntimeAgentPool,
+    agent_pool: AgentRuntimeCache,
     current_session: Session,
 ) -> tuple[Agent | None, str | None]:
     agent = agent_pool.runtime_agents.get(current_session.runtime_agent_id)

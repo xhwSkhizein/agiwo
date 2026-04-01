@@ -1,30 +1,27 @@
-"""
-Agent lifecycle management — build, rehydrate, and resume agents.
-
-Consolidates all Agent construction paths:
-- build_agent: from AgentConfigRecord (new agent)
-- rehydrate_agent: from AgentState (server restart recovery)
-- resume_persistent_agent: wake a persistent agent with new task
-"""
+"""Agent construction and recovery for the Console runtime."""
 
 from agiwo.agent import Agent, AgentConfig
-from agiwo.llm.base import Model
-from agiwo.tool.base import BaseTool
+from agiwo.agent import (
+    AgentOptions,
+    AgentStorageOptions,
+    RunStepStorageConfig,
+    TraceStorageConfig,
+)
 from agiwo.llm import create_model_from_dict
-from agiwo.scheduler.models import AgentState
+from agiwo.llm.base import Model
 from agiwo.scheduler.engine import Scheduler
+from agiwo.scheduler.models import AgentState
+from agiwo.tool.base import BaseTool
 
-from server.config import ConsoleConfig, DefaultAgentTemplate
-from server.models import AGENT_TOOL_PREFIX, AgentOptionsInput, ModelParamsInput
+from server.config import ConsoleConfig, DefaultAgentConfig
+from server.models.agent_config import AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
 )
-from server.tools import build_tools
-
-
-# ── Exceptions ────────────────────────────────────────────────────────
+from server.services.tool_catalog.tool_builder import build_tools
+from server.services.tool_catalog.tool_references import AGENT_TOOL_PREFIX
 
 
 class PersistentAgentResumeError(RuntimeError):
@@ -39,11 +36,23 @@ class PersistentAgentValidationError(PersistentAgentResumeError):
     """Raised when the target state cannot be resumed."""
 
 
-# ── Defaults ──────────────────────────────────────────────────────────
+def agent_options_input_to_agent_options(
+    options_input: AgentOptionsInput,
+    *,
+    run_step_storage: RunStepStorageConfig,
+    trace_storage: TraceStorageConfig,
+) -> AgentOptions:
+    data = options_input.model_dump(exclude_none=True)
+    return AgentOptions(
+        **data,
+        storage=AgentStorageOptions(
+            run_step_storage=run_step_storage,
+            trace_storage=trace_storage,
+        ),
+    )
 
 
-def build_default_agent_record(template: DefaultAgentTemplate) -> AgentConfigRecord:
-    """Build an AgentConfigRecord from the default agent template in ConsoleConfig."""
+def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecord:
     return AgentConfigRecord(
         id=template.id,
         name=template.name,
@@ -57,11 +66,7 @@ def build_default_agent_record(template: DefaultAgentTemplate) -> AgentConfigRec
     )
 
 
-# ── Build ─────────────────────────────────────────────────────────────
-
-
 def build_model(config: AgentConfigRecord) -> Model:
-    """Build a Model instance from agent config."""
     model_params = ModelParamsInput.model_validate(config.model_params or {})
     return create_model_from_dict(
         provider=config.model_provider,
@@ -78,10 +83,6 @@ async def build_agent(
     id: str | None = None,
     _building: set[str] | None = None,
 ) -> Agent:
-    """Build an Agent instance from persisted config.
-
-    The _building set prevents circular agent references.
-    """
     if _building is None:
         _building = set()
     if config.id in _building:
@@ -90,7 +91,8 @@ async def build_agent(
 
     model = build_model(config)
     opts_input = AgentOptionsInput.model_validate(config.options or {})
-    options = opts_input.to_agent_options(
+    options = agent_options_input_to_agent_options(
+        opts_input,
         run_step_storage=build_run_step_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),
     )
@@ -128,26 +130,11 @@ async def build_agent(
     )
 
 
-# ── Rehydrate ─────────────────────────────────────────────────────────
-
-
 async def rehydrate_agent(
     state: AgentState,
     registry: AgentRegistry,
     console_config: ConsoleConfig,
 ) -> Agent:
-    """Rebuild an Agent from its persisted state and config registry.
-
-    Uses ``state.agent_config_id`` (if set) to look up the original
-    ``AgentConfigRecord``, then delegates to ``build_agent`` to construct the
-    full Agent with model, tools, and options.
-
-    The returned Agent's ``id`` is set to ``state.id`` (the runtime instance
-    ID) so that the Scheduler can match it back to the correct AgentState.
-
-    Raises:
-        RuntimeError: If the config record cannot be found.
-    """
     config_id = state.agent_config_id or state.id
     config = await registry.get_agent(config_id)
     if config is None:
@@ -159,9 +146,6 @@ async def rehydrate_agent(
     return await build_agent(config, console_config, registry, id=state.id)
 
 
-# ── Resume ────────────────────────────────────────────────────────────
-
-
 async def resume_persistent_agent(
     scheduler: Scheduler,
     *,
@@ -170,7 +154,6 @@ async def resume_persistent_agent(
     registry: AgentRegistry,
     console_config: ConsoleConfig,
 ) -> None:
-    """Resume a persistent root agent, rehydrating it if needed."""
     state = await scheduler.get_state(state_id)
     if state is None:
         raise PersistentAgentNotFoundError("Agent state not found")

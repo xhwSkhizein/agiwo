@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 def build_run_step_storage_config(
     console_config: ConsoleConfig,
 ) -> RunStepStorageConfig:
-    if console_config.run_step_storage_type == "sqlite":
+    if console_config.storage.run_step_type == "sqlite":
         return RunStepStorageConfig(
             storage_type="sqlite",
             config={"db_path": console_config.sqlite_db_path},
@@ -33,7 +33,7 @@ def build_run_step_storage_config(
 
 
 def build_trace_storage_config(console_config: ConsoleConfig) -> TraceStorageConfig:
-    if console_config.trace_storage_type == "sqlite":
+    if console_config.storage.trace_type == "sqlite":
         return TraceStorageConfig(
             storage_type="sqlite",
             config={
@@ -47,7 +47,7 @@ def build_trace_storage_config(console_config: ConsoleConfig) -> TraceStorageCon
 def build_agent_state_storage_config(
     console_config: ConsoleConfig,
 ) -> AgentStateStorageConfig:
-    if console_config.metadata_storage_type == "sqlite":
+    if console_config.storage.metadata_type == "sqlite":
         return AgentStateStorageConfig(
             storage_type="sqlite",
             config={"db_path": console_config.sqlite_db_path},
@@ -56,7 +56,7 @@ def build_agent_state_storage_config(
 
 
 def build_citation_store_config(console_config: ConsoleConfig) -> CitationStoreConfig:
-    if console_config.metadata_storage_type == "sqlite":
+    if console_config.storage.metadata_type == "sqlite":
         return CitationStoreConfig(
             storage_type="sqlite",
             sqlite_db_path=console_config.sqlite_db_path,

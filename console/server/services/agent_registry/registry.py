@@ -2,22 +2,45 @@
 
 from datetime import datetime
 
+from agiwo.llm.config_policy import validate_provider_model_params
+from pydantic import BaseModel, Field, field_validator, model_validator
+
 from server.config import ConsoleConfig
-from server.models import AgentConfigPayload, AgentOptionsInput, ModelParamsInput
+from server.models.agent_config import AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry.models import AgentConfigRecord
 from server.services.agent_registry.store import (
     AgentRegistryStore,
     create_agent_registry_store,
 )
+from server.services.tool_catalog.tool_references import parse_tool_references
+
+
+class _ValidatedAgentConfig(BaseModel):
+    model_provider: str
+    model_name: str
+    tools: list[str] = Field(default_factory=list)
+    options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
+    model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _validate_tools(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise TypeError("tools must be a list")
+        return parse_tool_references(value)
+
+    @model_validator(mode="after")
+    def _validate_model_connection(self) -> "_ValidatedAgentConfig":
+        validate_provider_model_params(self.model_provider, self.model_params)
+        return self
 
 
 def _validate_agent_config_record(record: AgentConfigRecord) -> AgentConfigRecord:
-    payload = AgentConfigPayload(
-        name=record.name,
-        description=record.description,
+    validated = _ValidatedAgentConfig(
         model_provider=record.model_provider,
         model_name=record.model_name,
-        system_prompt=record.system_prompt,
         tools=record.tools,
         options=AgentOptionsInput.model_validate(record.options or {}),
         model_params=ModelParamsInput.model_validate(record.model_params or {}),
@@ -25,7 +48,9 @@ def _validate_agent_config_record(record: AgentConfigRecord) -> AgentConfigRecor
     return AgentConfigRecord.model_validate(
         {
             **record.model_dump(mode="python"),
-            "tools": payload.tools,
+            "tools": validated.tools,
+            "options": validated.options.model_dump(exclude_none=True),
+            "model_params": validated.model_params.model_dump(exclude_none=True),
         }
     )
 

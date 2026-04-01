@@ -21,8 +21,8 @@ from server.channels.feishu.commands.scheduler import (
     _user_input_to_preview,
     _user_input_to_string,
 )
-from server.channels.session.models import Session
 from server.config import ConsoleConfig
+from server.models.session import Session
 
 
 def _command_context(*, current_session: Session | None = None) -> CommandContext:

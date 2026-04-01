@@ -8,7 +8,12 @@ from fastapi import APIRouter, HTTPException, Query
 from agiwo.scheduler.models import AgentStateStatus
 
 from server.dependencies import ConsoleRuntimeDep, SchedulerDep
-from server.models import (
+from server.response_serialization import (
+    agent_state_list_item_from_sdk,
+    agent_state_response_from_sdk,
+    pending_event_response_from_sdk,
+)
+from server.models.view import (
     AgentStateListItem,
     AgentStateResponse,
     CancelRequest,
@@ -18,7 +23,7 @@ from server.models import (
     SchedulerStatsResponse,
     SteerRequest,
 )
-from server.services.agent_lifecycle import (
+from server.services.runtime import (
     PersistentAgentNotFoundError,
     PersistentAgentValidationError,
     build_agent,
@@ -53,7 +58,7 @@ async def list_agent_states(
         limit=limit,
         offset=offset,
     )
-    return [AgentStateListItem.from_sdk(s) for s in states]
+    return [agent_state_list_item_from_sdk(s) for s in states]
 
 
 @router.get("/states/{state_id}", response_model=AgentStateResponse)
@@ -66,7 +71,7 @@ async def get_agent_state(
     state = await scheduler.get_state(state_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Agent state not found")
-    return AgentStateResponse.from_sdk(state)
+    return agent_state_response_from_sdk(state)
 
 
 @router.get("/states/{state_id}/children", response_model=list[AgentStateListItem])
@@ -78,7 +83,7 @@ async def get_children(
     """Get child agent states for a given parent state."""
     children = await scheduler.list_states(parent_id=state_id, limit=1000)
     children.sort(key=lambda s: s.created_at, reverse=True)
-    return [AgentStateListItem.from_sdk(s) for s in children]
+    return [agent_state_list_item_from_sdk(s) for s in children]
 
 
 @router.get("/stats", response_model=SchedulerStatsResponse)
@@ -158,7 +163,7 @@ async def list_pending_events(
         target_agent_id=state_id,
         session_id=state.session_id,
     )
-    return [PendingEventResponse.from_sdk(event) for event in events]
+    return [pending_event_response_from_sdk(event) for event in events]
 
 
 @router.post("/states/create")

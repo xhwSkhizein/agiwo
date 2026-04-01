@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from agiwo.agent import RunStatus
-from server.models import RunMetricsSummary
+from server.models.metrics import RunMetricsSummary
 from server.services.metrics import summarize_runs_paginated
 
 

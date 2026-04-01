@@ -11,15 +11,19 @@ from agiwo.agent.models.run import Run, RunMetrics, RunStatus
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepRecord
 from agiwo.scheduler.models import TimeUnit
 
-from server.models.metrics import RunMetricsResponse, StepMetricsResponse
-from server.models.scheduler_state import (
+from server.models.view import (
     AgentStateBase,
     AgentStateResponse,
+    RunMetricsResponse,
     WakeConditionResponse,
     extract_content_parts,
 )
-from server.models.step_run import RunResponse, StepResponse
-from server.models.tool_reference import (
+from server.response_serialization import (
+    run_response_from_sdk,
+    step_metrics_response_from_sdk,
+    step_response_from_sdk,
+)
+from server.services.tool_catalog.tool_references import (
     InvalidToolReferenceError,
     parse_tool_reference,
     parse_tool_references,
@@ -45,7 +49,7 @@ class TestStepMetricsResponseFromSdk:
             first_token_latency_ms=100.5,
         )
 
-        response = StepMetricsResponse.from_sdk(metrics)
+        response = step_metrics_response_from_sdk(metrics)
 
         assert response.duration_ms == 1234.5
         assert response.input_tokens == 100
@@ -63,7 +67,7 @@ class TestStepMetricsResponseFromSdk:
         """Verify from_sdk handles None metric values."""
         metrics = StepMetrics()
 
-        response = StepMetricsResponse.from_sdk(metrics)
+        response = step_metrics_response_from_sdk(metrics)
 
         assert response.duration_ms is None
         assert response.input_tokens is None
@@ -227,7 +231,7 @@ class TestStepResponseToolCalls:
         step.depth = 0
 
         # This should NOT call model_dump() on dict elements
-        response = StepResponse.from_sdk(step)
+        response = step_response_from_sdk(step)
 
         assert response.tool_calls == tool_calls
         assert response.tool_calls[0]["id"] == "1"
@@ -253,7 +257,7 @@ class TestStepResponseToolCalls:
         step.parent_run_id = None
         step.depth = 0
 
-        response = StepResponse.from_sdk(step)
+        response = step_response_from_sdk(step)
 
         assert response.tool_calls is None
 
@@ -290,7 +294,7 @@ class TestRunResponseFromSdk:
             parent_run_id="parent-run-1",
         )
 
-        response = RunResponse.from_sdk(run)
+        response = run_response_from_sdk(run)
 
         assert response.id == "run-1"
         assert response.agent_id == "agent-1"
@@ -329,7 +333,7 @@ class TestRunResponseFromSdk:
             status=RunStatus.RUNNING,
         )
 
-        response = RunResponse.from_sdk(run)
+        response = run_response_from_sdk(run)
 
         assert response.status == "running"
 
@@ -346,7 +350,7 @@ class TestRunResponseFromSdk:
             metrics=RunMetrics(),  # Empty metrics
         )
 
-        response = RunResponse.from_sdk(run)
+        response = run_response_from_sdk(run)
 
         assert response.metrics is not None
         assert response.metrics.duration_ms == 0.0
@@ -358,10 +362,11 @@ class TestToolReferenceLazyLoading:
     def test_ensure_builtin_tools_loaded_called_on_parse(self):
         """Verify ensure_builtin_tools_loaded is called when parsing tool references."""
         with patch(
-            "server.models.tool_reference.ensure_builtin_tools_loaded"
+            "server.services.tool_catalog.tool_references.ensure_builtin_tools_loaded"
         ) as mock_load:
             with patch(
-                "server.models.tool_reference.BUILTIN_TOOLS", {"bash": MagicMock()}
+                "server.services.tool_catalog.tool_references.BUILTIN_TOOLS",
+                {"bash": MagicMock()},
             ):
                 # First call should trigger lazy loading
                 parse_tool_reference("bash")
@@ -369,13 +374,16 @@ class TestToolReferenceLazyLoading:
 
     def test_invalid_tool_raises_error(self):
         """Verify invalid tool reference raises InvalidToolReferenceError."""
-        with patch("server.models.tool_reference.BUILTIN_TOOLS", {"bash": MagicMock()}):
+        with patch(
+            "server.services.tool_catalog.tool_references.BUILTIN_TOOLS",
+            {"bash": MagicMock()},
+        ):
             with pytest.raises(InvalidToolReferenceError):
                 parse_tool_reference("nonexistent_tool")
 
     def test_agent_tool_reference_parsed_correctly(self):
         """Verify agent: prefix tool references are parsed correctly."""
-        with patch("server.models.tool_reference.BUILTIN_TOOLS", {}):
+        with patch("server.services.tool_catalog.tool_references.BUILTIN_TOOLS", {}):
             result = parse_tool_reference("agent:test-agent")
             assert result == "agent:test-agent"
 
@@ -387,10 +395,12 @@ class TestToolReferenceLazyLoading:
     def test_parse_tool_references_bulk(self):
         """Verify parse_tool_references works for list of tools."""
         with patch(
-            "server.models.tool_reference.BUILTIN_TOOLS",
+            "server.services.tool_catalog.tool_references.BUILTIN_TOOLS",
             {"bash": MagicMock(), "web_search": MagicMock()},
         ):
-            with patch("server.models.tool_reference.ensure_builtin_tools_loaded"):
+            with patch(
+                "server.services.tool_catalog.tool_references.ensure_builtin_tools_loaded"
+            ):
                 results = parse_tool_references(["bash", "web_search"])
                 assert results == ["bash", "web_search"]
 

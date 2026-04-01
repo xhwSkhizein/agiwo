@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 
-from server.channels.session.models import ChannelChatContext, Session
+from server.models.session import ChannelChatContext, Session
 
 
 @dataclass
