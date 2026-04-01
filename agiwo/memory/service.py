@@ -36,11 +36,9 @@ class WorkspaceMemoryService:
         resolved_name = agent_name or agent_id
         if not resolved_name:
             return None
-        resolved_id = agent_id or resolved_name
         return build_agent_workspace(
             root_path=self._root_path,
             agent_name=resolved_name,
-            agent_id=resolved_id,
         )
 
     async def search(

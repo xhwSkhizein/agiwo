@@ -20,7 +20,6 @@ from server.channels.utils import safe_close_all
 from server.channels.feishu import FeishuChannelService
 from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
 from server.services.agent_registry import AgentRegistry
-from server.services.agent_lifecycle import build_default_agent_record
 from server.services.storage_wiring import (
     build_agent_state_storage_config,
     create_run_step_storage,
@@ -75,9 +74,9 @@ async def lifespan(app: FastAPI):
             config.feishu_default_agent_name
         )
         if base_agent is None:
-            base_agent = build_default_agent_record(config.default_agent)
-            await agent_registry.create_agent(base_agent)
-            logger.info("create Default Agent Config", name=config.default_agent.name)
+            # 使用 .env 中的默认 Agent（不持久化到 DB）
+            base_agent = agent_registry._build_default_agent_record()
+            logger.info("using_default_agent_from_env", name=base_agent.name)
 
         feishu_channel_service = FeishuChannelService(
             config=config,

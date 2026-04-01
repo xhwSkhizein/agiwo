@@ -59,10 +59,45 @@ class AgentRegistry:
         return await self._require_store().list_agents(limit=limit, offset=offset)
 
     async def get_agent(self, agent_id: str) -> AgentConfigRecord | None:
-        return await self._require_store().get_agent(agent_id)
+        """Get agent by id. Returns default agent from .env if not in DB."""
+        record = await self._require_store().get_agent(agent_id)
+        if record is not None:
+            return record
+
+        # DB 中没有，检查是否是默认 Agent
+        if agent_id == self._config.default_agent.id:
+            return self._build_default_agent_record()
+
+        return None
+
+    def _build_default_agent_record(self) -> AgentConfigRecord:
+        """Build default agent from .env config (not persisted to DB)."""
+        template = self._config.default_agent
+        return AgentConfigRecord(
+            id=template.id,
+            name=template.name,
+            description=template.description,
+            model_provider=template.model_provider,
+            model_name=template.model_name,
+            system_prompt=template.system_prompt,
+            tools=list(template.tools),
+            options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
+            model_params=ModelParamsInput.model_validate(
+                template.model_params or {}
+            ).model_dump(exclude_none=True),
+        )
 
     async def get_agent_by_name(self, agent_name: str) -> AgentConfigRecord | None:
-        return await self._require_store().get_agent_by_name(agent_name)
+        """Get agent by name. Returns default agent from .env if not in DB."""
+        record = await self._require_store().get_agent_by_name(agent_name)
+        if record is not None:
+            return record
+
+        # DB 中没有，检查是否是默认 Agent 的名称
+        if agent_name == self._config.default_agent.name:
+            return self._build_default_agent_record()
+
+        return None
 
     async def create_agent(self, record: AgentConfigRecord) -> AgentConfigRecord:
         normalized = _validate_agent_config_record(record)

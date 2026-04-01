@@ -20,7 +20,6 @@ class WorkspaceBootstrapper:
 
     async def ensure_prompt_ready(self, workspace: AgentWorkspace) -> None:
         workspace.memory_dir.mkdir(parents=True, exist_ok=True)
-        workspace.instance_work_dir.mkdir(parents=True, exist_ok=True)
         self._ensure_template_files(workspace)
 
     def _ensure_template_files(self, workspace: AgentWorkspace) -> None:
