@@ -218,23 +218,14 @@ class SessionContextService:
         source = await self._store.get_session(chat_context.current_session_id)
         if source is None:
             raise SessionNotFoundError(chat_context.current_session_id)
-        now = datetime.now(timezone.utc)
-        session_id = str(uuid4())
-        session = Session(
-            id=session_id,
-            chat_context_scope_id=chat_context.scope_id,
-            base_agent_id=source.base_agent_id,
-            runtime_agent_id="",
-            scheduler_state_id="",
+        session = self._create_forked_session(
+            chat_context=chat_context,
+            source=source,
+            context_summary=context_summary,
             created_by=created_by,
-            created_at=now,
-            updated_at=now,
-            source_session_id=source.id,
-            source_task_id=source.current_task_id,
-            fork_context_summary=context_summary,
         )
-        chat_context.current_session_id = session_id
-        chat_context.updated_at = now
+        chat_context.current_session_id = session.id
+        chat_context.updated_at = session.updated_at
         await self._store.upsert_chat_context(chat_context)
         await self._store.upsert_session(session)
         return SessionCreateResult(
@@ -255,23 +246,14 @@ class SessionContextService:
         chat_context = await self._store.get_chat_context(source.chat_context_scope_id)
         if chat_context is None:
             raise ChatContextNotFoundError(source.chat_context_scope_id)
-        now = datetime.now(timezone.utc)
-        new_session_id = str(uuid4())
-        session = Session(
-            id=new_session_id,
-            chat_context_scope_id=chat_context.scope_id,
-            base_agent_id=source.base_agent_id,
-            runtime_agent_id="",
-            scheduler_state_id="",
+        session = self._create_forked_session(
+            chat_context=chat_context,
+            source=source,
+            context_summary=context_summary,
             created_by=created_by,
-            created_at=now,
-            updated_at=now,
-            source_session_id=source.id,
-            source_task_id=source.current_task_id,
-            fork_context_summary=context_summary,
         )
-        chat_context.current_session_id = new_session_id
-        chat_context.updated_at = now
+        chat_context.current_session_id = session.id
+        chat_context.updated_at = session.updated_at
         await self._store.upsert_chat_context(chat_context)
         await self._store.upsert_session(session)
         return SessionCreateResult(
@@ -352,6 +334,29 @@ class SessionContextService:
         await self._store.upsert_chat_context(chat_context)
         await self._store.upsert_session(session)
         return SessionCreateResult(chat_context=chat_context, session=session)
+
+    def _create_forked_session(
+        self,
+        *,
+        chat_context: ChannelChatContext,
+        source: Session,
+        context_summary: str,
+        created_by: str,
+    ) -> Session:
+        now = datetime.now(timezone.utc)
+        return Session(
+            id=str(uuid4()),
+            chat_context_scope_id=chat_context.scope_id,
+            base_agent_id=source.base_agent_id,
+            runtime_agent_id="",
+            scheduler_state_id="",
+            created_by=created_by,
+            created_at=now,
+            updated_at=now,
+            source_session_id=source.id,
+            source_task_id=source.current_task_id,
+            fork_context_summary=context_summary,
+        )
 
     async def _ensure_session_base_agent(
         self,

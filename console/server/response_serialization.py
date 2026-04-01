@@ -41,25 +41,31 @@ def step_metrics_response_from_sdk(metrics: step.StepMetrics) -> StepMetricsResp
     )
 
 
-def step_response_from_sdk(step: step.StepRecord) -> StepResponse:
+def step_response_from_sdk(step_record: step.StepRecord) -> StepResponse:
     return StepResponse(
-        id=step.id,
-        session_id=step.session_id,
-        run_id=step.run_id,
-        sequence=step.sequence,
-        role=step.role.value,
-        agent_id=step.agent_id,
-        content=step.content,
-        content_for_user=step.content_for_user,
-        reasoning_content=step.reasoning_content,
-        user_input=step.user_input,
-        tool_calls=step.tool_calls if step.tool_calls else None,
-        tool_call_id=step.tool_call_id,
-        name=step.name,
-        metrics=step_metrics_response_from_sdk(step.metrics) if step.metrics else None,
-        created_at=step.created_at.isoformat() if step.created_at else None,
-        parent_run_id=step.parent_run_id,
-        depth=step.depth,
+        id=step_record.id,
+        session_id=step_record.session_id,
+        run_id=step_record.run_id,
+        sequence=step_record.sequence,
+        role=step_record.role.value,
+        agent_id=step_record.agent_id,
+        content=step_record.content,
+        content_for_user=step_record.content_for_user,
+        reasoning_content=step_record.reasoning_content,
+        user_input=step_record.user_input,
+        tool_calls=step_record.tool_calls if step_record.tool_calls else None,
+        tool_call_id=step_record.tool_call_id,
+        name=step_record.name,
+        metrics=(
+            step_metrics_response_from_sdk(step_record.metrics)
+            if step_record.metrics
+            else None
+        ),
+        created_at=step_record.created_at.isoformat()
+        if step_record.created_at
+        else None,
+        parent_run_id=step_record.parent_run_id,
+        depth=step_record.depth,
     )
 
 

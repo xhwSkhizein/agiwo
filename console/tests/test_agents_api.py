@@ -121,8 +121,14 @@ async def test_list_available_tools_uses_catalog_for_builtin_and_agent_entries(
     assert response.status_code == 200
     payload = response.json()
     builtin_names = {item["name"] for item in payload if item["type"] == "builtin"}
+    builtin_descriptions = {
+        item["name"]: item["description"]
+        for item in payload
+        if item["type"] == "builtin"
+    }
     agent_names = {item["name"] for item in payload if item["type"] == "agent"}
     assert "web_search" in builtin_names
+    assert builtin_descriptions["bash_process"]
     assert f"agent:{created.id}" in agent_names
 
 

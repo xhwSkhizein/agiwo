@@ -23,7 +23,7 @@ def extract_content_parts(value: object) -> object:
             if isinstance(data, dict) and data.get("__type") == "content_parts":
                 return data.get("parts", [])
             return data
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError:
             return value
     return value
 
