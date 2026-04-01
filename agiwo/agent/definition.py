@@ -77,7 +77,6 @@ def resolve_agent_definition(
     workspace = build_agent_workspace(
         root_path=config.options.get_effective_root_path(),
         agent_name=config.name,
-        agent_id=agent_id,
     )
     return ResolvedAgentDefinition(
         hooks=resolved_hooks,

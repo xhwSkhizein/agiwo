@@ -33,6 +33,10 @@ List all configured agents.
 ]
 ```
 
+### `GET /api/agents/tools/available`
+
+List all available built-in tools that can be assigned to agents.
+
 ### `POST /api/agents`
 
 Create a new agent configuration.
@@ -84,6 +88,30 @@ data: {"delta": {"content": " Paris."}, "type": "content"}
 data: {"type": "done"}
 ```
 
+### `POST /api/chat/{agent_id}/cancel`
+
+Cancel a running SSE chat for a specific agent.
+
+## Chat Sessions
+
+Chat-level session management (tied to a specific agent).
+
+### `GET /api/chat/{agent_id}/sessions`
+
+List sessions for a specific agent.
+
+### `POST /api/chat/{agent_id}/sessions/create`
+
+Create a new session for an agent.
+
+### `POST /api/chat/{agent_id}/sessions/switch`
+
+Switch the current session for an agent.
+
+### `POST /api/chat/{agent_id}/sessions/{session_id}/fork`
+
+Fork an existing session to create a new branch.
+
 ## Scheduler
 
 ### `GET /api/scheduler/states`
@@ -124,6 +152,10 @@ List pending mailbox/events for a state.
 
 Get aggregate counts for `pending/running/waiting/idle/queued/completed/failed`.
 
+### `POST /api/scheduler/states/create`
+
+Submit a new task to the scheduler.
+
 ### `POST /api/scheduler/states/{state_id}/cancel`
 
 Cancel a running scheduler agent.
@@ -138,6 +170,26 @@ Send steering input to a running agent.
   "message": "Focus on cost analysis instead"
 }
 ```
+
+### `POST /api/scheduler/states/{state_id}/resume`
+
+Resume a persistent (parked) agent.
+
+## Runs
+
+### `GET /api/runs`
+
+List runs with optional filtering.
+
+**Query parameters:**
+- `user_id` — Filter by user ID
+- `session_id` — Filter by session ID
+- `limit` — Max results (default: 20, max: 200)
+- `offset` — Pagination offset (default: 0)
+
+### `GET /api/runs/{run_id}`
+
+Get a single run by ID.
 
 ## Traces
 
@@ -173,8 +225,20 @@ Get detailed trace information including all steps, tool calls, and LLM interact
 
 ### `GET /api/sessions`
 
-List active sessions.
+List sessions by aggregating runs (with pagination).
 
-### `GET /api/sessions/{session_id}`
+**Query parameters:**
+- `limit` — Max results (default: 20, max: 200)
+- `offset` — Pagination offset (default: 0)
 
-Get session details and history.
+### `GET /api/sessions/{session_id}/summary`
+
+Get full aggregated metrics for a specific session.
+
+### `GET /api/sessions/{session_id}/steps`
+
+Get all steps for a session.
+
+**Query parameters:**
+- `agent_id` — Filter by agent ID
+- `limit` — Max results (default: 1000, max: 5000)
