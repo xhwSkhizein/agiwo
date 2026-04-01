@@ -1,3 +1,5 @@
+from datetime import timezone
+
 import pytest
 from pydantic import ValidationError
 
@@ -30,6 +32,23 @@ def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> 
     config = ConsoleConfig()
 
     assert config.channels.feishu.enabled is True
+
+
+def test_console_config_normalizes_legacy_none_trace_type() -> None:
+    config = ConsoleConfig(trace_storage_type="none")
+
+    assert config.storage.trace_type == "memory"
+
+
+def test_agent_config_record_uses_utc_timestamps() -> None:
+    record = AgentConfigRecord(
+        name="tester",
+        model_provider="openai",
+        model_name="gpt-test",
+    )
+
+    assert record.created_at.tzinfo is timezone.utc
+    assert record.updated_at.tzinfo is timezone.utc
 
 
 def test_console_config_rejects_legacy_default_model_provider(

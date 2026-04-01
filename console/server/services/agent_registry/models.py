@@ -1,6 +1,6 @@
 """Shared models for agent registry persistence."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -22,8 +22,8 @@ class AgentConfigRecord(BaseModel):
     tools: list[str] = Field(default_factory=list)
     options: dict[str, Any] = Field(default_factory=dict)
     model_params: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.now)
-    updated_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @model_validator(mode="before")
     @classmethod

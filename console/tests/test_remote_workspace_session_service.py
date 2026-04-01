@@ -196,6 +196,8 @@ async def test_fork_session_by_id() -> None:
     assert result.session.source_task_id == "task-1"
     assert result.session.fork_context_summary == "branching off"
     assert result.chat_context.current_session_id == result.session.id
+    assert result.session.runtime_agent_id == ""
+    assert result.session.scheduler_state_id == ""
 
 
 @pytest.mark.asyncio

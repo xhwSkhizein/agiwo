@@ -54,7 +54,9 @@ class StorageConfig(BaseModel):
     def _normalize_trace_type(cls, value: object) -> str:
         if value == "none":
             return "memory"
-        return value  # type: ignore[return-value]
+        if isinstance(value, str):
+            return value
+        return str(value)
 
 
 class FeishuConfig(BaseModel):

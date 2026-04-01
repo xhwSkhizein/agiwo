@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+import time
 
 from agiwo.agent import ContentPart, ContentType
 from server.channels.feishu.commands.base import CommandResult
@@ -20,7 +21,10 @@ from server.channels.feishu.message_parser import (
     FeishuInboundEnvelope,
     FeishuMessageParser,
 )
-from server.channels.feishu.sender_resolver import FeishuSenderResolver
+from server.channels.feishu.sender_resolver import (
+    FeishuSenderResolver,
+    _SenderNameCacheEntry,
+)
 from server.config import ConsoleConfig
 from server.models.session import Attachment, BatchContext, InboundMessage
 
@@ -185,6 +189,21 @@ async def test_sender_resolver_caches_display_name_lookup() -> None:
     assert first == "Alice"
     assert second == "Alice"
     api.get_user_display_name.assert_awaited_once_with("user-1")
+
+
+@pytest.mark.asyncio
+async def test_sender_resolver_evicts_expired_entries() -> None:
+    api = SimpleNamespace(get_user_display_name=AsyncMock(return_value="Alice"))
+    resolver = FeishuSenderResolver(api=api, cache_ttl_seconds=1)  # type: ignore[arg-type]
+    resolver._sender_name_cache["stale-user"] = _SenderNameCacheEntry(
+        display_name="Old",
+        expire_at=time.time() - 1,
+    )
+
+    result = await resolver.resolve_sender_name("user-1")
+
+    assert result == "Alice"
+    assert "stale-user" not in resolver._sender_name_cache
 
 
 def test_group_history_store_tracks_recent_group_lines() -> None:

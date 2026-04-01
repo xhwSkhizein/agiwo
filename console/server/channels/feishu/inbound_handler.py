@@ -100,7 +100,7 @@ class FeishuInboundHandler:
         # Resolve default agent before ACK/command to catch config errors early
         try:
             default_agent = await self._session_service.resolve_default_agent_config()
-            if default_agent is None and self._default_agent_name:
+            if default_agent is None:
                 raise DefaultAgentNameNotFoundError(self._default_agent_name)
         except DefaultAgentNameNotFoundError:
             # Return user-facing error without ACKing
@@ -123,10 +123,8 @@ class FeishuInboundHandler:
     async def _enqueue_message(
         self,
         inbound: InboundMessage,
-        default_agent: AgentConfigRecord | None,
+        default_agent: AgentConfigRecord,
     ) -> None:
-        if default_agent is None:
-            raise DefaultAgentNameNotFoundError(self._default_agent_name)
         chat_context_scope_id = self._build_chat_context_scope_id(inbound)
         context = BatchContext(
             chat_context_scope_id=chat_context_scope_id,
@@ -142,7 +140,7 @@ class FeishuInboundHandler:
     async def _try_handle_command(
         self,
         inbound: InboundMessage,
-        default_agent: AgentConfigRecord | None,
+        default_agent: AgentConfigRecord,
     ) -> dict[str, object] | None:
         parsed = self._command_registry.try_parse(inbound.text)
         if parsed is None:
@@ -182,7 +180,7 @@ class FeishuInboundHandler:
     async def _build_command_context(
         self,
         inbound: InboundMessage,
-        default_agent: AgentConfigRecord | None,
+        default_agent: AgentConfigRecord,
     ) -> CommandContext:
         chat_context_scope_id = self._build_chat_context_scope_id(inbound)
         (
@@ -191,7 +189,6 @@ class FeishuInboundHandler:
         ) = await self._session_service.get_chat_context_and_current_session(
             chat_context_scope_id
         )
-        base_agent_id = default_agent.id if default_agent is not None else ""
         return CommandContext(
             chat_context_scope_id=chat_context_scope_id,
             channel_instance_id=self._channel_instance_id,
@@ -199,7 +196,7 @@ class FeishuInboundHandler:
             chat_type=inbound.chat_type,
             trigger_user_open_id=inbound.sender_id,
             trigger_message_id=inbound.message_id,
-            base_agent_id=base_agent_id,
+            base_agent_id=default_agent.id,
             chat_context=chat_context,
             current_session=current_session,
         )

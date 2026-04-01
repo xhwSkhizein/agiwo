@@ -1,5 +1,6 @@
 """Integration tests for the Chat API streaming endpoint (scheduler-mediated)."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,6 +20,7 @@ from server.dependencies import (
     clear_console_runtime,
     get_console_runtime_from_app,
 )
+from server.models.session import Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
@@ -129,13 +131,13 @@ async def test_chat_streams_scheduler_events(
         state_id: str | None,
         session_id: str,
         persistent: bool,
-        timeout: int,
+        timeout: int | None,
     ):
         assert agent is fake_agent
         assert message == "hello"
         assert state_id is None
         assert persistent is True
-        assert timeout == 600
+        assert timeout is None
         return type(
             "RouteResultStub",
             (),
@@ -170,3 +172,52 @@ async def test_chat_agent_not_found(client) -> None:
         json={"message": "hello"},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_chat_rejects_session_bound_to_different_agent(client) -> None:
+    runtime = _runtime(client)
+    monkeypatch = pytest.MonkeyPatch()
+    await runtime.agent_registry.create_agent(
+        AgentConfigRecord(
+            id="agent-1",
+            name="chat-agent-1",
+            model_provider="openai",
+            model_name="gpt-test",
+        )
+    )
+    await runtime.agent_registry.create_agent(
+        AgentConfigRecord(
+            id="agent-2",
+            name="chat-agent-2",
+            model_provider="openai",
+            model_name="gpt-test",
+        )
+    )
+    monkeypatch.setattr(
+        "server.routers.chat.build_agent",
+        AsyncMock(return_value=object()),
+    )
+    assert runtime.session_store is not None
+    now = datetime.now(timezone.utc)
+    await runtime.session_store.upsert_session(
+        Session(
+            id="session-1",
+            chat_context_scope_id="session-1",
+            base_agent_id="agent-1",
+            runtime_agent_id="",
+            scheduler_state_id="",
+            created_by="CONSOLE_CHAT",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    response = await client.post(
+        "/api/chat/agent-2",
+        json={"message": "hello", "session_id": "session-1"},
+    )
+
+    assert response.status_code == 409
+    assert "belongs to agent 'agent-1'" in response.text
+    monkeypatch.undo()

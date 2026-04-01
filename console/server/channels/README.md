@@ -23,6 +23,7 @@ channels/
     ├── connection.py     # 长连接适配
     ├── inbound_handler.py
     ├── message_parser.py
+    ├── sender_resolver.py # 发送者解析器（FeishuSenderResolver）
     ├── message_builder.py
     ├── delivery_service.py
     ├── factory.py

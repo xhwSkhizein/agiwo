@@ -31,8 +31,9 @@ class FeishuSenderResolver:
 
     async def resolve_sender_name(self, sender_open_id: str) -> str:
         now = time.time()
+        self._evict_expired_sender_names(now)
         cached = self._sender_name_cache.get(sender_open_id)
-        if cached is not None and now < cached.expire_at:
+        if cached is not None:
             return cached.display_name
 
         fallback = self._format_sender_name(sender_open_id)
@@ -54,6 +55,15 @@ class FeishuSenderResolver:
             expire_at=now + self._cache_ttl_seconds,
         )
         return display_name
+
+    def _evict_expired_sender_names(self, now: float) -> None:
+        expired_keys = [
+            sender_open_id
+            for sender_open_id, entry in self._sender_name_cache.items()
+            if now >= entry.expire_at
+        ]
+        for sender_open_id in expired_keys:
+            del self._sender_name_cache[sender_open_id]
 
     def _format_sender_name(self, sender_open_id: str) -> str:
         normalized = sender_open_id.strip()

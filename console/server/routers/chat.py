@@ -62,7 +62,6 @@ async def chat(
     runtime_service = SessionRuntimeService(
         scheduler=scheduler,
         session_store=runtime.session_store,
-        timeout=600,
     )
     dispatch = await runtime_service.execute(agent, session, body.message)
 
@@ -153,6 +152,14 @@ async def _get_or_create_chat_session(
     assert runtime.session_store is not None
     session = await runtime.session_store.get_session(session_id)
     if session is not None:
+        if session.base_agent_id != agent_id:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Session '{session_id}' belongs to agent "
+                    f"'{session.base_agent_id}', not '{agent_id}'"
+                ),
+            )
         return session
 
     now = datetime.now(timezone.utc)
