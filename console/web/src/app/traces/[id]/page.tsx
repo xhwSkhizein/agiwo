@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Clock, Zap, Cpu, Wrench } from "lucide-react";
@@ -7,7 +8,7 @@ import { BackHeader } from "@/components/back-header";
 import { MetricCard } from "@/components/metric-card";
 import { MonoText } from "@/components/mono-text";
 import { SectionCard } from "@/components/section-card";
-import { FullPageMessage } from "@/components/state-message";
+import { ErrorStateMessage, FullPageMessage } from "@/components/state-message";
 import { TokenMetricsBadges } from "@/components/token-metrics-badges";
 import { TokenSummaryCards } from "@/components/token-summary-cards";
 import { TraceStatusBadge } from "@/components/trace-status-badge";
@@ -169,12 +170,19 @@ export default function TraceDetailPage() {
   const traceId = params.id as string;
   const [trace, setTrace] = useState<TraceDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     getTrace(traceId)
-      .then(setTrace)
-      .catch(() => setTrace(null))
+      .then((value) => {
+        setTrace(value);
+        setError(null);
+      })
+      .catch((err) => {
+        setTrace(null);
+        setError(err instanceof Error ? err.message : "Failed to load trace");
+      })
       .finally(() => setLoading(false));
   }, [traceId]);
 
@@ -207,6 +215,27 @@ export default function TraceDetailPage() {
         title="Trace Detail"
         subtitle={trace.trace_id}
       />
+
+      {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
+
+      <div className="flex flex-wrap gap-2 text-xs text-zinc-500">
+        {trace.session_id && (
+          <Link
+            href={`/sessions/${trace.session_id}`}
+            className="rounded border border-zinc-800 px-2 py-1 hover:border-zinc-700 hover:text-zinc-300"
+          >
+            Open session
+          </Link>
+        )}
+        {trace.agent_id && (
+          <Link
+            href={`/agents/${trace.agent_id}`}
+            className="rounded border border-zinc-800 px-2 py-1 hover:border-zinc-700 hover:text-zinc-300"
+          >
+            Open agent
+          </Link>
+        )}
+      </div>
 
       <TokenSummaryCards
         cost={trace.total_token_cost}

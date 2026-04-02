@@ -1,18 +1,9 @@
 "use client";
 
 import { Bot, Clock, Loader2, User, Wrench } from "lucide-react";
+import type { ChatMessage, ChatRole } from "@/lib/chat-types";
 import type { ToolCallPayload } from "@/lib/api";
-
-type ChatRole = "user" | "assistant" | "tool" | "system";
-
-type ChatMessageLike = {
-  role: ChatRole;
-  content: string;
-  name?: string;
-  tool_calls?: ToolCallPayload[];
-  reasoning_content?: string;
-  isStreaming?: boolean;
-};
+import { UserInputDetail } from "@/components/user-input-detail";
 
 const ROLE_STYLES: Record<
   ChatRole,
@@ -74,7 +65,24 @@ function ToolCallList({ toolCalls }: { toolCalls: ToolCallPayload[] }) {
   );
 }
 
-export function ChatMessageItem({ message }: { message: ChatMessageLike }) {
+function RawPayload({ value }: { value: unknown }) {
+  if (value === null || value === undefined || typeof value === "string") {
+    return null;
+  }
+
+  return (
+    <details className="mt-2 rounded border border-zinc-800 bg-zinc-950/60">
+      <summary className="cursor-pointer px-3 py-2 text-xs text-zinc-500">
+        Raw payload
+      </summary>
+      <pre className="max-h-64 overflow-auto px-3 pb-3 text-xs text-zinc-400 whitespace-pre-wrap break-words">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    </details>
+  );
+}
+
+export function ChatMessageItem({ message }: { message: ChatMessage }) {
   const roleStyle = ROLE_STYLES[message.role];
   const Icon = roleStyle.icon;
 
@@ -93,28 +101,36 @@ export function ChatMessageItem({ message }: { message: ChatMessageLike }) {
           <span className="text-xs font-medium text-zinc-400 uppercase">
             {message.role}
             {message.name && ` — ${message.name}`}
+            {message.sourceAgentId && ` — ${message.sourceAgentId.slice(0, 8)}`}
           </span>
           {message.isStreaming && (
             <Loader2 className="w-3 h-3 text-zinc-500 animate-spin" />
           )}
         </div>
 
-        {message.reasoning_content && (
+        {message.reasoningContent && (
           <div className="mb-2 px-3 py-2 rounded bg-zinc-800/50 text-xs text-zinc-400 whitespace-pre-wrap max-h-32 overflow-auto">
             <span className="text-zinc-500 font-medium">Thinking: </span>
-            {message.reasoning_content}
+            {message.reasoningContent}
           </div>
         )}
 
-        {message.content && (
+        {message.userInput && (
+          <div className="max-h-96 overflow-auto">
+            <UserInputDetail input={message.userInput} maxTextLength={2000} />
+          </div>
+        )}
+
+        {!message.userInput && message.text && (
           <div
             className={`text-sm whitespace-pre-wrap break-words ${roleStyle.contentClassName || ""}`}
           >
-            {message.content}
+            {message.text}
           </div>
         )}
 
-        {message.tool_calls && <ToolCallList toolCalls={message.tool_calls} />}
+        {message.toolCalls && <ToolCallList toolCalls={message.toolCalls} />}
+        <RawPayload value={message.rawContent} />
       </div>
     </div>
   );

@@ -360,7 +360,7 @@ export function UserInputCompact({
 }: UserInputCompactProps) {
   if (typeof input === "string") {
     return (
-      <span className="text-sm text-zinc-300 truncate">
+      <span className="text-sm text-zinc-300 line-clamp-2">
         {formatText(input, maxLength)}
       </span>
     );
@@ -411,7 +411,7 @@ export function UserInputCompact({
               {contextBadge}
             </PillBadge>
           )}
-          <span className="min-w-0 flex-1 text-sm text-zinc-300 truncate">
+          <span className="min-w-0 flex-1 text-sm text-zinc-300 line-clamp-2">
             {formatText(summaryText, maxLength)}
           </span>
           {showAttachmentBadge && hasAttachments && (
@@ -438,7 +438,7 @@ export function UserInputCompact({
 
   if (firstText) {
     return (
-      <span className="text-sm text-zinc-300 truncate">
+      <span className="text-sm text-zinc-300 line-clamp-2">
         {formatText(firstText, maxLength)}
       </span>
     );

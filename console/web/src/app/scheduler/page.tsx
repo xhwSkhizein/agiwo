@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PaginationControls } from "@/components/pagination-controls";
 import { MonoLink, MonoText } from "@/components/mono-text";
 import { SchedulerStatusBadge } from "@/components/scheduler-status-badge";
@@ -55,16 +56,34 @@ const STATUS_FILTERS = [
   { label: "Failed", value: "failed" },
 ];
 
-export default function SchedulerPage() {
+function SchedulerPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [states, setStates] = useState<AgentStateListItem[]>([]);
   const [stats, setStats] = useState<SchedulerStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
-  const [pageSize, setPageSize] = useState(25);
-  const [offset, setOffset] = useState(0);
+  const [filter, setFilter] = useState(searchParams.get("status") || "");
+  const [pageSize, setPageSize] = useState(Number(searchParams.get("limit") || "25"));
+  const [offset, setOffset] = useState(Number(searchParams.get("offset") || "0"));
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+
+  const updateQuery = useCallback(
+    (next: Record<string, string | number | null>) => {
+      const query = new URLSearchParams(searchParams.toString());
+      for (const [key, value] of Object.entries(next)) {
+        if (value === null || value === "") {
+          query.delete(key);
+        } else {
+          query.set(key, String(value));
+        }
+      }
+      router.replace(`/scheduler?${query.toString()}`);
+    },
+    [router, searchParams],
+  );
 
   const loadData = useCallback(async (background = false) => {
     if (background) {
@@ -87,10 +106,12 @@ export default function SchedulerPage() {
         listAgentStates(params),
         getSchedulerStats(),
       ]);
-      setStates(nextStates);
+      setStates(nextStates.items);
+      setHasMore(nextStates.has_more);
       setStats(nextStats);
     } catch (err) {
       setStates([]);
+      setHasMore(false);
       setError(err instanceof Error ? err.message : "Failed to load scheduler states");
     } finally {
       setLoading(false);
@@ -159,6 +180,7 @@ export default function SchedulerPage() {
             onClick={() => {
               setFilter(f.value);
               setOffset(0);
+              updateQuery({ status: f.value || null, offset: 0, limit: pageSize });
             }}
             className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
               filter === f.value
@@ -213,9 +235,21 @@ export default function SchedulerPage() {
                     className="hover:bg-zinc-900/50 transition-colors"
                   >
                     <td className="px-4 py-3">
-                      <MonoLink href={`/scheduler/${s.id}`}>
-                        {s.id}
-                      </MonoLink>
+                      <div className="flex flex-col gap-1">
+                        <MonoLink href={`/scheduler/${s.id}`}>
+                          {s.id}
+                        </MonoLink>
+                        <MonoLink
+                          href={`/scheduler/${s.root_state_id ?? s.id}/tree${
+                            s.root_state_id && s.root_state_id !== s.id
+                              ? `?selected=${s.id}`
+                              : ""
+                          }`}
+                          className="text-[11px] text-zinc-500 hover:text-zinc-200"
+                        >
+                          tree
+                        </MonoLink>
+                      </div>
                     </td>
                     <td className="px-4 py-3 max-w-xs">
                       <UserInputCompact input={s.task} maxLength={60} />
@@ -258,19 +292,37 @@ export default function SchedulerPage() {
         offset={offset}
         pageSize={pageSize}
         itemCount={states.length}
+        hasMore={hasMore}
         itemLabel="states"
         disabled={loading}
         onPageSizeChange={(nextPageSize) => {
           setPageSize(nextPageSize);
           setOffset(0);
+          updateQuery({ limit: nextPageSize, offset: 0 });
         }}
         onPrevious={() => {
-          setOffset((current) => Math.max(0, current - pageSize));
+          setOffset((current) => {
+            const nextOffset = Math.max(0, current - pageSize);
+            updateQuery({ offset: nextOffset, limit: pageSize });
+            return nextOffset;
+          });
         }}
         onNext={() => {
-          setOffset((current) => current + pageSize);
+          setOffset((current) => {
+            const nextOffset = current + pageSize;
+            updateQuery({ offset: nextOffset, limit: pageSize });
+            return nextOffset;
+          });
         }}
       />
     </div>
+  );
+}
+
+export default function SchedulerPage() {
+  return (
+    <Suspense fallback={<TextStateMessage>Loading...</TextStateMessage>}>
+      <SchedulerPageContent />
+    </Suspense>
   );
 }

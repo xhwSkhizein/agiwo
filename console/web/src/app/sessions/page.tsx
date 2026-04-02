@@ -23,15 +23,21 @@ export default function SessionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(25);
   const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState<number | null>(null);
 
   const loadSessions = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const nextSessions = await listSessions(pageSize, offset);
-      setSessions(nextSessions);
+      setSessions(nextSessions.items);
+      setHasMore(nextSessions.has_more);
+      setTotal(nextSessions.total);
     } catch (err) {
       setSessions([]);
+      setHasMore(false);
+      setTotal(null);
       setError(err instanceof Error ? err.message : "Failed to load sessions");
     } finally {
       setLoading(false);
@@ -127,6 +133,8 @@ export default function SessionsPage() {
         offset={offset}
         pageSize={pageSize}
         itemCount={sessions.length}
+        totalCount={total}
+        hasMore={hasMore}
         itemLabel="sessions"
         disabled={loading}
         onPageSizeChange={(nextPageSize) => {

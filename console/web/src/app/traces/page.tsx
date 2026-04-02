@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   EmptyStateMessage,
   ErrorStateMessage,
@@ -22,20 +23,38 @@ const TRACE_STATUS_FILTERS = [
   { label: "Unset", value: "unset" },
 ];
 
-export default function TracesPage() {
+function TracesPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [traces, setTraces] = useState<TraceListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [pageSize, setPageSize] = useState(25);
-  const [offset, setOffset] = useState(0);
-  const [statusInput, setStatusInput] = useState("");
-  const [agentInput, setAgentInput] = useState("");
-  const [sessionInput, setSessionInput] = useState("");
+  const [pageSize, setPageSize] = useState(Number(searchParams.get("limit") || "25"));
+  const [offset, setOffset] = useState(Number(searchParams.get("offset") || "0"));
+  const [statusInput, setStatusInput] = useState(searchParams.get("status") || "");
+  const [agentInput, setAgentInput] = useState(searchParams.get("agent_id") || "");
+  const [sessionInput, setSessionInput] = useState(searchParams.get("session_id") || "");
   const [filters, setFilters] = useState({
-    status: "",
-    agentId: "",
-    sessionId: "",
+    status: searchParams.get("status") || "",
+    agentId: searchParams.get("agent_id") || "",
+    sessionId: searchParams.get("session_id") || "",
   });
+  const [hasMore, setHasMore] = useState(false);
+
+  const updateQuery = useCallback(
+    (next: Record<string, string | number | null>) => {
+      const query = new URLSearchParams(searchParams.toString());
+      for (const [key, value] of Object.entries(next)) {
+        if (value === null || value === "") {
+          query.delete(key);
+        } else {
+          query.set(key, String(value));
+        }
+      }
+      router.replace(`/traces?${query.toString()}`);
+    },
+    [router, searchParams],
+  );
 
   const loadTraces = useCallback(async () => {
     setLoading(true);
@@ -48,9 +67,11 @@ export default function TracesPage() {
         limit: pageSize,
         offset,
       });
-      setTraces(nextTraces);
+      setTraces(nextTraces.items);
+      setHasMore(nextTraces.has_more);
     } catch (err) {
       setTraces([]);
+      setHasMore(false);
       setError(err instanceof Error ? err.message : "Failed to load traces");
     } finally {
       setLoading(false);
@@ -64,10 +85,18 @@ export default function TracesPage() {
   function handleApplyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setOffset(0);
-    setFilters({
+    const nextFilters = {
       status: statusInput,
       agentId: agentInput.trim(),
       sessionId: sessionInput.trim(),
+    };
+    setFilters(nextFilters);
+    updateQuery({
+      status: nextFilters.status || null,
+      agent_id: nextFilters.agentId || null,
+      session_id: nextFilters.sessionId || null,
+      offset: 0,
+      limit: pageSize,
     });
   }
 
@@ -77,6 +106,13 @@ export default function TracesPage() {
     setSessionInput("");
     setOffset(0);
     setFilters({ status: "", agentId: "", sessionId: "" });
+    updateQuery({
+      status: null,
+      agent_id: null,
+      session_id: null,
+      offset: 0,
+      limit: pageSize,
+    });
   }
 
   return (
@@ -240,19 +276,37 @@ export default function TracesPage() {
         offset={offset}
         pageSize={pageSize}
         itemCount={traces.length}
+        hasMore={hasMore}
         itemLabel="traces"
         disabled={loading}
         onPageSizeChange={(nextPageSize) => {
           setPageSize(nextPageSize);
           setOffset(0);
+          updateQuery({ limit: nextPageSize, offset: 0 });
         }}
         onPrevious={() => {
-          setOffset((current) => Math.max(0, current - pageSize));
+          setOffset((current) => {
+            const nextOffset = Math.max(0, current - pageSize);
+            updateQuery({ offset: nextOffset, limit: pageSize });
+            return nextOffset;
+          });
         }}
         onNext={() => {
-          setOffset((current) => current + pageSize);
+          setOffset((current) => {
+            const nextOffset = current + pageSize;
+            updateQuery({ offset: nextOffset, limit: pageSize });
+            return nextOffset;
+          });
         }}
       />
     </div>
+  );
+}
+
+export default function TracesPage() {
+  return (
+    <Suspense fallback={<TextStateMessage>Loading...</TextStateMessage>}>
+      <TracesPageContent />
+    </Suspense>
   );
 }

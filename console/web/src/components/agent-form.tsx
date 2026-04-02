@@ -5,25 +5,13 @@ import Link from "next/link";
 
 import {
   AgentConfig,
+  AgentCapabilities,
   AgentConfigCreate,
+  AgentProviderCapability,
   AvailableTool,
+  getAgentCapabilities,
   listAvailableTools,
 } from "@/lib/api";
-
-const PROVIDERS = [
-  { value: "openai", label: "OpenAI" },
-  { value: "deepseek", label: "DeepSeek" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "openai-compatible", label: "OpenAI-compatible" },
-  { value: "anthropic-compatible", label: "Anthropic-compatible" },
-  { value: "nvidia", label: "Nvidia" },
-  { value: "bedrock-anthropic", label: "Bedrock-anthropic" },
-];
-
-const COMPATIBLE_PROVIDERS = new Set([
-  "openai-compatible",
-  "anthropic-compatible",
-]);
 
 type AgentFormProps = {
   initialAgent?: AgentConfig | null;
@@ -165,6 +153,7 @@ export function AgentForm({
 }: AgentFormProps) {
   const [form, setForm] = useState<AgentFormState>(() => buildFormState(initialAgent));
   const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
+  const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -174,6 +163,10 @@ export function AgentForm({
   useEffect(() => {
     listAvailableTools(excludeAgentId).then(setAvailableTools).catch(() => { });
   }, [excludeAgentId]);
+
+  useEffect(() => {
+    getAgentCapabilities().then(setCapabilities).catch(() => {});
+  }, []);
 
   const builtinTools = useMemo(
     () => availableTools.filter((tool) => tool.type === "builtin"),
@@ -185,6 +178,8 @@ export function AgentForm({
   );
 
   const displayedError = localError ?? error;
+  const providerCapability: AgentProviderCapability | undefined =
+    capabilities?.providers.find((provider) => provider.value === form.modelProvider);
 
   const setField = <K extends keyof AgentFormState>(
     key: K,
@@ -211,14 +206,14 @@ export function AgentForm({
       return;
     }
     if (
-      COMPATIBLE_PROVIDERS.has(form.modelProvider) &&
+      providerCapability?.requires_base_url &&
       form.baseUrl.trim() === ""
     ) {
       setLocalError("Compatible providers require a Base URL");
       return;
     }
     if (
-      COMPATIBLE_PROVIDERS.has(form.modelProvider) &&
+      providerCapability?.requires_api_key_env_name &&
       form.apiKeyEnvName.trim() === ""
     ) {
       setLocalError("Compatible providers require an API Key Env Name");
@@ -304,10 +299,25 @@ export function AgentForm({
           </label>
           <select
             value={form.modelProvider}
-            onChange={(e) => setField("modelProvider", e.target.value)}
+            onChange={(e) => {
+              const nextProvider = e.target.value;
+              const nextCapability = capabilities?.providers.find(
+                (provider) => provider.value === nextProvider,
+              );
+              setField("modelProvider", nextProvider);
+              if (
+                !form.modelName.trim() ||
+                form.modelName === providerCapability?.default_model_name
+              ) {
+                setField(
+                  "modelName",
+                  nextCapability?.default_model_name ?? form.modelName,
+                );
+              }
+            }}
             className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
           >
-            {PROVIDERS.map((provider) => (
+            {(capabilities?.providers ?? []).map((provider) => (
               <option key={provider.value} value={provider.value}>
                 {provider.label}
               </option>
@@ -355,9 +365,10 @@ export function AgentForm({
         </div>
       </div>
       <p className="text-xs text-zinc-500">
-        `openai-compatible` / `anthropic-compatible` should set both Base URL
-        and API Key Env Name. Official providers can leave them empty to use
-        provider defaults.
+        {providerCapability?.requires_base_url ||
+        providerCapability?.requires_api_key_env_name
+          ? "This provider requires both Base URL and API Key Env Name."
+          : "Official providers can leave Base URL and API Key Env Name empty to use provider defaults."}
       </p>
 
       <div>

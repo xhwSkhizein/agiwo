@@ -2,23 +2,26 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Plus, MessageSquare, Trash2, Network, Play } from "lucide-react";
-import { TextStateMessage } from "@/components/state-message";
-import { listAgents, deleteAgent, createPersistentAgent } from "@/lib/api";
+import { Plus, Trash2, Network } from "lucide-react";
+import { ErrorStateMessage, TextStateMessage } from "@/components/state-message";
+import { listAgents, deleteAgent } from "@/lib/api";
 import type { AgentConfig } from "@/lib/api";
 
 export default function AgentsPage() {
-  const router = useRouter();
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
-  const [launchingAgentId, setLaunchingAgentId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchAgents = () =>
     listAgents()
-      .then(setAgents)
-      .catch(() => setAgents([]));
+      .then((items) => {
+        setAgents(items);
+        setLoadError(null);
+      })
+      .catch((err) => {
+        setAgents([]);
+        setLoadError(err instanceof Error ? err.message : "Failed to load agents");
+      });
 
   const loadAgents = (showLoading = true) => {
     if (showLoading) {
@@ -41,21 +44,6 @@ export default function AgentsPage() {
     }
   };
 
-  const handleLaunch = async (agentId: string) => {
-    setActionError(null);
-    setLaunchingAgentId(agentId);
-    try {
-      const result = await createPersistentAgent({ agent_config_id: agentId });
-      router.push(`/scheduler/${result.state_id}`);
-    } catch (err) {
-      setActionError(
-        err instanceof Error ? err.message : "Failed to launch persistent agent",
-      );
-    } finally {
-      setLaunchingAgentId(null);
-    }
-  };
-
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
@@ -74,11 +62,7 @@ export default function AgentsPage() {
         </Link>
       </div>
 
-      {actionError && (
-        <div className="rounded-lg border border-red-900/50 bg-red-950/20 px-4 py-3 text-sm text-red-300">
-          {actionError}
-        </div>
-      )}
+      {loadError && <ErrorStateMessage>{loadError}</ErrorStateMessage>}
 
       {loading ? (
         <TextStateMessage>Loading...</TextStateMessage>
@@ -101,18 +85,28 @@ export default function AgentsPage() {
               className="rounded-lg border border-zinc-800 bg-zinc-900 p-5 flex flex-col"
             >
               <div className="flex items-start justify-between">
-                <div>
-                  <h3 className="font-medium">{agent.name}</h3>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-medium text-zinc-100">{agent.name}</h3>
+                    {agent.is_default && (
+                      <span className="rounded-full border border-emerald-500/30 bg-emerald-950/40 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-emerald-300">
+                        Default
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-zinc-500 mt-0.5">
                     {agent.model_provider}/{agent.model_name}
                   </p>
                 </div>
-                <button
-                  onClick={() => handleDelete(agent.id)}
-                  className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400 transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {!agent.is_default && (
+                  <button
+                    onClick={() => handleDelete(agent.id)}
+                    aria-label={`Delete ${agent.name}`}
+                    className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {agent.description && (
@@ -138,32 +132,17 @@ export default function AgentsPage() {
                 </div>
               )}
 
-              <div className="mt-auto pt-4 flex items-center gap-2">
-                <button
-                  onClick={() => void handleLaunch(agent.id)}
-                  disabled={launchingAgentId === agent.id}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-900/30 text-emerald-400 text-sm hover:bg-emerald-900/50 disabled:opacity-50 transition-colors"
-                >
-                  <Play className="w-3.5 h-3.5" />
-                  {launchingAgentId === agent.id ? "Launching..." : "Launch"}
-                </button>
-                <Link
-                  href={`/agents/${agent.id}/chat`}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-800 text-sm hover:bg-zinc-700 transition-colors"
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  Chat
-                </Link>
+              <div className="mt-auto pt-4 grid grid-cols-2 gap-2">
                 <Link
                   href={`/agents/${agent.id}/scheduler-chat`}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-purple-900/30 text-purple-400 text-sm hover:bg-purple-900/50 transition-colors"
+                  className="col-span-2 flex items-center justify-center gap-1.5 px-3 py-2 rounded-md bg-purple-900/30 text-purple-400 text-sm hover:bg-purple-900/50 transition-colors"
                 >
                   <Network className="w-3.5 h-3.5" />
                   Scheduler
                 </Link>
                 <Link
                   href={`/agents/${agent.id}/edit`}
-                  className="px-3 py-1.5 rounded-md border border-zinc-700 text-sm hover:bg-zinc-800 transition-colors"
+                  className="col-span-2 flex items-center justify-center px-3 py-2 rounded-md border border-zinc-700 text-sm hover:bg-zinc-800 transition-colors"
                 >
                   Edit
                 </Link>

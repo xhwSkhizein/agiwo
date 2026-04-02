@@ -4,6 +4,8 @@ type PaginationControlsProps = {
   offset: number;
   pageSize: number;
   itemCount: number;
+  totalCount?: number | null;
+  hasMore?: boolean;
   itemLabel?: string;
   pageSizeOptions?: number[];
   disabled?: boolean;
@@ -16,6 +18,8 @@ export function PaginationControls({
   offset,
   pageSize,
   itemCount,
+  totalCount = null,
+  hasMore,
   itemLabel = "items",
   pageSizeOptions = [25, 50, 100],
   disabled = false,
@@ -25,12 +29,17 @@ export function PaginationControls({
 }: PaginationControlsProps) {
   const start = itemCount === 0 ? 0 : offset + 1;
   const end = offset + itemCount;
+  const resolvedHasMore = hasMore ?? itemCount >= pageSize;
+  const summaryText =
+    totalCount !== null
+      ? `Showing ${start}-${end} of ${totalCount} ${itemLabel}`
+      : `Showing ${start}-${end} ${itemLabel}`;
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3 text-sm text-zinc-400">
         <span>
-          Showing {start}-{end} {itemLabel}
+          {summaryText}
         </span>
         <label className="flex items-center gap-2">
           <span className="text-xs uppercase tracking-wide text-zinc-500">Page Size</span>
@@ -63,7 +72,7 @@ export function PaginationControls({
         <button
           type="button"
           onClick={onNext}
-          disabled={disabled || itemCount < pageSize}
+          disabled={disabled || !resolvedHasMore}
           className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600"
         >
           Next

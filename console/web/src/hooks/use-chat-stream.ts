@@ -1,22 +1,20 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { parseStreamEventPayload } from "@/lib/api";
 import type {
   AgentStreamEventPayload,
   RunCompletedEventPayload,
-  SchedulerAckEventPayload,
   StreamEventPayload,
   StepResponse,
 } from "@/lib/api";
 import type { ChatMessage } from "@/lib/chat-types";
-import { genMessageId } from "@/lib/chat-types";
+import { contentToText, genMessageId } from "@/lib/chat-types";
 
 export interface ChatStreamCallbacks {
   onSessionCaptured?: (sessionId: string) => void;
-  onRootAgentCaptured?: (agentId: string) => void;
+  onRootStateCaptured?: (stateId: string) => void;
   onChildEvent?: (agentId: string, event: StreamEventPayload) => void;
-  onSchedulerAck?: (event: SchedulerAckEventPayload) => void;
   onSchedulerFailed?: (error: string) => void;
   onRunCompleted?: (event: RunCompletedEventPayload) => void;
   onRunStarted?: (event: AgentStreamEventPayload) => void;
@@ -29,7 +27,20 @@ export function useChatStream(
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const callbacksRef = useRef(callbacks);
+  const abortRef = useRef<AbortController | null>(null);
+  const streamVersionRef = useRef(0);
   callbacksRef.current = callbacks;
+
+  const abortStream = useCallback(() => {
+    streamVersionRef.current += 1;
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    setIsStreaming(false);
+  }, []);
+
+  useEffect(() => abortStream, [abortStream]);
 
   const clearMessages = useCallback(() => {
     setMessages([]);
@@ -40,39 +51,94 @@ export function useChatStream(
   }, []);
 
   const sendMessage = useCallback(
-    async (text: string, sessionId: string | null) => {
-      if (!text.trim() || isStreaming) return;
+    async (text: string) => {
+      if (!text.trim() || isStreaming || !streamUrl) return;
 
+      abortStream();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      streamVersionRef.current += 1;
+      const streamVersion = streamVersionRef.current;
       setIsStreaming(true);
 
       const userMsg: ChatMessage = {
         id: genMessageId(),
         role: "user",
-        content: text,
+        text,
+        userInput: text,
+        rawContent: text,
       };
 
       const assistantMsg: ChatMessage = {
         id: genMessageId(),
         role: "assistant",
-        content: "",
+        text: "",
         isStreaming: true,
       };
 
       setMessages((prev) => [...prev, userMsg, assistantMsg]);
 
-      let currentAssistantContent = "";
-      let currentReasoningContent = "";
-      let currentAssistantId = assistantMsg.id;
-      let rootAgentId: string | null = null;
+      let currentAssistantText = "";
+      let currentReasoningText = "";
+      let currentAssistantId: string | null = assistantMsg.id;
+      let rootStateId: string | null = null;
+      let hasSeenRootRunStarted = false;
+
+      const appendAssistantPlaceholder = () => {
+        const nextAssistant: ChatMessage = {
+          id: genMessageId(),
+          role: "assistant",
+          text: "",
+          isStreaming: true,
+        };
+        currentAssistantId = nextAssistant.id;
+        currentAssistantText = "";
+        currentReasoningText = "";
+        setMessages((prev) => [...prev, nextAssistant]);
+        return nextAssistant.id;
+      };
+
+      const ensureAssistantPlaceholder = () =>
+        currentAssistantId ?? appendAssistantPlaceholder();
+
+      const finishCurrentAssistant = (dropIfEmpty: boolean) => {
+        if (!currentAssistantId) {
+          return;
+        }
+        const assistantId = currentAssistantId;
+        setMessages((prev) =>
+          prev.flatMap((message) => {
+            if (message.id !== assistantId) {
+              return [message];
+            }
+            const hasVisibleContent = Boolean(
+              message.text ||
+                message.toolCalls?.length ||
+                message.reasoningContent ||
+                message.rawContent,
+            );
+            if (dropIfEmpty && !hasVisibleContent) {
+              return [];
+            }
+            return [{ ...message, isStreaming: false }];
+          }),
+        );
+        currentAssistantId = null;
+        currentAssistantText = "";
+        currentReasoningText = "";
+      };
 
       try {
         const res = await fetch(streamUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message: text, session_id: sessionId }),
+          body: JSON.stringify({ message: text }),
+          signal: controller.signal,
         });
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          throw new Error(describeStreamError(res.status));
+        }
 
         const reader = res.body?.getReader();
         const decoder = new TextDecoder();
@@ -80,6 +146,9 @@ export function useChatStream(
 
         let buffer = "";
         while (true) {
+          if (streamVersionRef.current !== streamVersion) {
+            return;
+          }
           const { done, value } = await reader.read();
           if (done) break;
 
@@ -92,228 +161,207 @@ export function useChatStream(
             const dataStr = line.slice(5).trim();
             if (!dataStr) continue;
 
-            try {
-              const data = parseStreamEventPayload(dataStr);
-              if (!data) continue;
+            const data = parseStreamEventPayload(dataStr);
+            if (!data) continue;
 
-              if (data.type === "scheduler_failed") {
-                callbacksRef.current.onSchedulerFailed?.(
-                  "error" in data ? String(data.error) : "Unknown error",
-                );
-                continue;
+            if (data.type === "scheduler_failed") {
+              callbacksRef.current.onSchedulerFailed?.(
+                "error" in data ? String(data.error) : "Unknown error",
+              );
+              continue;
+            }
+
+            if (data.type === "scheduler_ack") {
+              if (data.state_id) {
+                rootStateId = data.state_id;
+                callbacksRef.current.onRootStateCaptured?.(data.state_id);
               }
-
-              if (data.type === "scheduler_ack") {
-                const ackEvent = data as SchedulerAckEventPayload;
-                if (ackEvent.session_id) {
-                  callbacksRef.current.onSessionCaptured?.(ackEvent.session_id);
-                }
-                if (ackEvent.state_id) {
-                  rootAgentId = ackEvent.state_id;
-                  callbacksRef.current.onRootAgentCaptured?.(ackEvent.state_id);
-                }
-
-                const ackMessage = ackEvent.result_summary || ackEvent.message;
-                const aid = currentAssistantId;
-                setMessages((prev) => {
-                  const next = prev.filter((m) => m.id !== aid);
-                  if (!ackMessage) {
-                    return next;
-                  }
-                  return [
-                    ...next,
-                    {
-                      id: genMessageId(),
-                      role: "system",
-                      content: ackMessage,
-                    },
-                  ];
-                });
-                callbacksRef.current.onSchedulerAck?.(ackEvent);
-                continue;
+              if (data.session_id) {
+                callbacksRef.current.onSessionCaptured?.(data.session_id);
               }
+              continue;
+            }
 
-              const agentEvent = data as AgentStreamEventPayload;
-              const eventAgentId =
-                "agent_id" in data && typeof data.agent_id === "string"
-                  ? data.agent_id
-                  : null;
+            const agentEvent = data as AgentStreamEventPayload;
+            const eventAgentId =
+              "agent_id" in data && typeof data.agent_id === "string"
+                ? data.agent_id
+                : null;
 
-              if (agentEvent.type === "run_started" && agentEvent.session_id) {
-                callbacksRef.current.onSessionCaptured?.(agentEvent.session_id);
-                if (!rootAgentId && eventAgentId) {
-                  rootAgentId = eventAgentId;
-                  callbacksRef.current.onRootAgentCaptured?.(eventAgentId);
-                } else if (rootAgentId && eventAgentId === rootAgentId) {
-                  if (!currentAssistantContent) {
-                    const wakeMsg: ChatMessage = {
-                      id: genMessageId(),
-                      role: "system",
-                      content: "Agent woke up — resuming execution",
-                    };
-                    const nextAssistant: ChatMessage = {
-                      id: genMessageId(),
-                      role: "assistant",
-                      content: "",
-                      isStreaming: true,
-                    };
-                    currentAssistantId = nextAssistant.id;
-                    currentAssistantContent = "";
-                    currentReasoningContent = "";
-                    setMessages((prev) => [
-                      ...prev.filter(
-                        (m) =>
-                          !(
-                            m.role === "assistant" &&
-                            !m.content &&
-                            !m.tool_calls
-                          ),
-                      ),
-                      wakeMsg,
-                      nextAssistant,
-                    ]);
-                  }
-                }
-                callbacksRef.current.onRunStarted?.(agentEvent);
+            if (agentEvent.type === "run_started" && agentEvent.session_id) {
+              callbacksRef.current.onSessionCaptured?.(agentEvent.session_id);
+              if (!rootStateId && eventAgentId) {
+                rootStateId = eventAgentId;
+                callbacksRef.current.onRootStateCaptured?.(eventAgentId);
               }
-
-              const isChildEvent =
-                rootAgentId && eventAgentId && eventAgentId !== rootAgentId;
-              if (isChildEvent) {
-                callbacksRef.current.onChildEvent?.(eventAgentId, data);
-                continue;
+              if (hasSeenRootRunStarted) {
+                appendAssistantPlaceholder();
+              } else {
+                hasSeenRootRunStarted = true;
               }
+              callbacksRef.current.onRunStarted?.(agentEvent);
+            }
 
-              if (agentEvent.type === "step_delta" && "delta" in agentEvent && agentEvent.delta) {
-                if (agentEvent.delta.content) {
-                  currentAssistantContent += agentEvent.delta.content;
-                  const snapshot = currentAssistantContent;
-                  const reasoningSnapshot = currentReasoningContent;
-                  const aid = currentAssistantId;
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === aid
-                        ? {
-                            ...m,
-                            content: snapshot,
-                            reasoning_content: reasoningSnapshot || undefined,
-                          }
-                        : m,
-                    ),
-                  );
-                }
-                if (agentEvent.delta.reasoning_content) {
-                  currentReasoningContent += agentEvent.delta.reasoning_content;
-                  const snapshot = currentReasoningContent;
-                  const aid = currentAssistantId;
-                  setMessages((prev) =>
-                    prev.map((m) =>
-                      m.id === aid
-                        ? { ...m, reasoning_content: snapshot }
-                        : m,
-                    ),
-                  );
-                }
-              }
+            const isChildEvent =
+              rootStateId && eventAgentId && eventAgentId !== rootStateId;
+            if (isChildEvent) {
+              callbacksRef.current.onChildEvent?.(eventAgentId, data);
+              continue;
+            }
 
-              if (agentEvent.type === "step_completed" && "step" in agentEvent && agentEvent.step) {
-                const step = agentEvent.step as StepResponse;
-                if (step.role === "assistant") {
-                  const tc = step.tool_calls;
-                  if (tc && tc.length > 0) {
-                    const aid = currentAssistantId;
-                    setMessages((prev) =>
-                      prev.map((m) =>
-                        m.id === aid
-                          ? { ...m, tool_calls: tc, isStreaming: false }
-                          : m,
-                      ),
-                    );
-                  }
-                }
-                if (step.role === "tool") {
-                  const toolMsg: ChatMessage = {
-                    id: genMessageId(),
-                    role: "tool",
-                    content:
-                      typeof step.content === "string"
-                        ? step.content
-                        : JSON.stringify(step.content),
-                    name: step.name || undefined,
-                  };
-                  const nextAssistant: ChatMessage = {
-                    id: genMessageId(),
-                    role: "assistant",
-                    content: "",
-                    isStreaming: true,
-                  };
-                  currentAssistantId = nextAssistant.id;
-                  currentAssistantContent = "";
-                  currentReasoningContent = "";
-                  setMessages((prev) => [...prev, toolMsg, nextAssistant]);
-                }
-              }
-
-              if (agentEvent.type === "run_completed") {
-                const aid = currentAssistantId;
+            if (agentEvent.type === "step_delta" && agentEvent.delta) {
+              const assistantId = ensureAssistantPlaceholder();
+              if (agentEvent.delta.content) {
+                currentAssistantText += agentEvent.delta.content;
+                const textSnapshot = currentAssistantText;
+                const reasoningSnapshot = currentReasoningText;
                 setMessages((prev) =>
-                  prev
-                    .map((m) =>
-                      m.id === aid ? { ...m, isStreaming: false } : m,
-                    )
-                    .filter(
-                      (m) =>
-                        !(
-                          m.role === "assistant" &&
-                          !m.content &&
-                          !m.tool_calls &&
-                          !m.isStreaming
-                        ),
-                    ),
-                );
-                callbacksRef.current.onRunCompleted?.(
-                  agentEvent as RunCompletedEventPayload,
-                );
-              }
-
-              if (agentEvent.type === "run_failed") {
-                const aid = currentAssistantId;
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === aid
+                  prev.map((message) =>
+                    message.id === assistantId
                       ? {
-                          ...m,
-                          content: `Error: ${"error" in agentEvent ? agentEvent.error : "Unknown error"}`,
-                          isStreaming: false,
+                          ...message,
+                          text: textSnapshot,
+                          reasoningContent: reasoningSnapshot || undefined,
                         }
-                      : m,
+                      : message,
                   ),
                 );
               }
-            } catch {
-              // skip non-JSON lines
+              if (agentEvent.delta.reasoning_content) {
+                currentReasoningText += agentEvent.delta.reasoning_content;
+                const reasoningSnapshot = currentReasoningText;
+                setMessages((prev) =>
+                  prev.map((message) =>
+                    message.id === assistantId
+                      ? { ...message, reasoningContent: reasoningSnapshot }
+                      : message,
+                  ),
+                );
+              }
+            }
+
+            if (agentEvent.type === "step_completed" && agentEvent.step) {
+              const step = agentEvent.step as StepResponse;
+              if (step.role === "assistant") {
+                const assistantId = ensureAssistantPlaceholder();
+                setMessages((prev) =>
+                  prev.map((message) =>
+                    message.id === assistantId
+                      ? {
+                          ...message,
+                          stepId: step.id,
+                          sequence: step.sequence,
+                          text:
+                            contentToText(step.content) ??
+                            message.text ??
+                            step.content_for_user ??
+                            "",
+                          rawContent: step.content ?? message.rawContent,
+                          toolCalls: step.tool_calls ?? undefined,
+                          reasoningContent:
+                            step.reasoning_content ?? message.reasoningContent,
+                          isStreaming: false,
+                        }
+                      : message,
+                  ),
+                );
+                currentAssistantText =
+                  contentToText(step.content) ?? currentAssistantText;
+                currentReasoningText =
+                  step.reasoning_content ?? currentReasoningText;
+                currentAssistantId = null;
+              }
+              if (step.role === "tool") {
+                finishCurrentAssistant(true);
+                const toolMsg: ChatMessage = {
+                  id: genMessageId(),
+                  stepId: step.id,
+                  role: "tool",
+                  sequence: step.sequence,
+                  text: contentToText(step.content),
+                  rawContent: step.content,
+                  name: step.name || undefined,
+                  sourceAgentId: step.agent_id ?? undefined,
+                };
+                setMessages((prev) => [...prev, toolMsg]);
+              }
+            }
+
+            if (agentEvent.type === "run_completed") {
+              finishCurrentAssistant(true);
+              callbacksRef.current.onRunCompleted?.(
+                agentEvent as RunCompletedEventPayload,
+              );
+            }
+
+            if (agentEvent.type === "run_failed") {
+              const assistantId = ensureAssistantPlaceholder();
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === assistantId
+                    ? {
+                        ...message,
+                        text: `Error: ${agentEvent.error ?? "Unknown error"}`,
+                        isStreaming: false,
+                      }
+                    : message,
+                ),
+              );
+              currentAssistantId = null;
             }
           }
         }
       } catch (err) {
-        const aid = currentAssistantId;
+        if (controller.signal.aborted) {
+          return;
+        }
+        if (streamVersionRef.current !== streamVersion) {
+          return;
+        }
+        const assistantId = ensureAssistantPlaceholder();
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === aid
+          prev.map((message) =>
+            message.id === assistantId
               ? {
-                  ...m,
-                  content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
+                  ...message,
+                  text: `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
                   isStreaming: false,
                 }
-              : m,
+              : message,
           ),
         );
+        currentAssistantId = null;
       } finally {
-        setIsStreaming(false);
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
+        if (streamVersionRef.current === streamVersion) {
+          setIsStreaming(false);
+        }
       }
     },
-    [streamUrl, isStreaming],
+    [abortStream, isStreaming, streamUrl],
   );
 
-  return { messages, isStreaming, sendMessage, clearMessages, loadHistoryMessages };
+  return {
+    messages,
+    isStreaming,
+    sendMessage,
+    clearMessages,
+    loadHistoryMessages,
+    abortStream,
+  };
+}
+
+function describeStreamError(status: number): string {
+  if (status === 404) {
+    return "Requested session or agent was not found.";
+  }
+  if (status === 422) {
+    return "Request could not be processed by the scheduler.";
+  }
+  if (status >= 500) {
+    return "Scheduler stream failed on the server.";
+  }
+  return `HTTP ${status}`;
 }

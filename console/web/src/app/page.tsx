@@ -61,8 +61,8 @@ export default function DashboardPage() {
         listTraces({ limit: 5, offset: 0 }),
       ]);
       setOverview(nextOverview);
-      setSessions(nextSessions);
-      setTraces(nextTraces);
+      setSessions(nextSessions.items);
+      setTraces(nextTraces.items);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dashboard");
     } finally {
