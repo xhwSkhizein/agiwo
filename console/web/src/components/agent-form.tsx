@@ -102,12 +102,12 @@ function skillsDirsToText(value: string[] | null | undefined): string {
   return (value ?? []).join("\n");
 }
 
-function parseSkillsDirs(text: string): string[] | undefined {
+function parseSkillsDirs(text: string): string[] | null {
   const entries = text
     .split(/\r?\n/)
     .map((entry) => entry.trim())
     .filter(Boolean);
-  return entries.length > 0 ? entries : undefined;
+  return entries.length > 0 ? entries : null;
 }
 
 function buildFormState(agent?: AgentConfig | null): AgentFormState {
@@ -238,11 +238,11 @@ export function AgentForm({
         run_timeout: form.runTimeout,
         max_input_tokens_per_call:
           form.maxInputTokensPerCall.trim() === ""
-            ? undefined
+            ? null
             : Number(form.maxInputTokensPerCall),
         max_run_cost:
           form.maxRunCost.trim() === ""
-            ? undefined
+            ? null
             : Number(form.maxRunCost),
         enable_termination_summary: form.enableTerminationSummary,
         termination_summary_prompt: form.terminationSummaryPrompt,
@@ -253,10 +253,10 @@ export function AgentForm({
         compact_prompt: form.compactPrompt,
       },
       model_params: {
-        base_url: form.baseUrl.trim() === "" ? undefined : form.baseUrl.trim(),
+        base_url: form.baseUrl.trim() === "" ? null : form.baseUrl.trim(),
         api_key_env_name:
           form.apiKeyEnvName.trim() === ""
-            ? undefined
+            ? null
             : form.apiKeyEnvName.trim(),
         max_output_tokens: form.maxOutputTokens,
         max_context_window: form.maxContextWindow,

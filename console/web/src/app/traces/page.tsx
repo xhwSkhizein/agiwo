@@ -1,33 +1,167 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { EmptyStateMessage, TextStateMessage } from "@/components/state-message";
+import {
+  EmptyStateMessage,
+  ErrorStateMessage,
+  TextStateMessage,
+} from "@/components/state-message";
+import { PaginationControls } from "@/components/pagination-controls";
 import { TraceStatusBadge } from "@/components/trace-status-badge";
 import { listTraces } from "@/lib/api";
 import type { TraceListItem } from "@/lib/api";
 import { formatTokenCount, formatUsd } from "@/lib/metrics";
 import { formatRoundedMs } from "@/lib/time";
 
+const TRACE_STATUS_FILTERS = [
+  { label: "All", value: "" },
+  { label: "OK", value: "ok" },
+  { label: "Error", value: "error" },
+  { label: "Running", value: "running" },
+  { label: "Unset", value: "unset" },
+];
+
 export default function TracesPage() {
   const [traces, setTraces] = useState<TraceListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(25);
+  const [offset, setOffset] = useState(0);
+  const [statusInput, setStatusInput] = useState("");
+  const [agentInput, setAgentInput] = useState("");
+  const [sessionInput, setSessionInput] = useState("");
+  const [filters, setFilters] = useState({
+    status: "",
+    agentId: "",
+    sessionId: "",
+  });
+
+  const loadTraces = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const nextTraces = await listTraces({
+        status: filters.status || undefined,
+        agent_id: filters.agentId || undefined,
+        session_id: filters.sessionId || undefined,
+        limit: pageSize,
+        offset,
+      });
+      setTraces(nextTraces);
+    } catch (err) {
+      setTraces([]);
+      setError(err instanceof Error ? err.message : "Failed to load traces");
+    } finally {
+      setLoading(false);
+    }
+  }, [filters, offset, pageSize]);
 
   useEffect(() => {
-    listTraces({ limit: 100 })
-      .then(setTraces)
-      .catch(() => setTraces([]))
-      .finally(() => setLoading(false));
-  }, []);
+    void loadTraces();
+  }, [loadTraces]);
+
+  function handleApplyFilters(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setOffset(0);
+    setFilters({
+      status: statusInput,
+      agentId: agentInput.trim(),
+      sessionId: sessionInput.trim(),
+    });
+  }
+
+  function handleResetFilters() {
+    setStatusInput("");
+    setAgentInput("");
+    setSessionInput("");
+    setOffset(0);
+    setFilters({ status: "", agentId: "", sessionId: "" });
+  }
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Traces</h1>
-        <p className="text-sm text-zinc-400 mt-1">
-          Agent execution traces with timing and token metrics
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Traces</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Agent execution traces with filterable cost and latency breakdowns
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            void loadTraces();
+          }}
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
+        >
+          Refresh
+        </button>
       </div>
+
+      <form
+        onSubmit={handleApplyFilters}
+        className="grid gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        <label className="space-y-1">
+          <span className="text-xs uppercase tracking-wide text-zinc-500">Status</span>
+          <select
+            value={statusInput}
+            onChange={(event) => {
+              setStatusInput(event.target.value);
+            }}
+            className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200"
+          >
+            {TRACE_STATUS_FILTERS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-xs uppercase tracking-wide text-zinc-500">Agent ID</span>
+          <input
+            value={agentInput}
+            onChange={(event) => {
+              setAgentInput(event.target.value);
+            }}
+            placeholder="agent-123"
+            className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
+          />
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-xs uppercase tracking-wide text-zinc-500">Session ID</span>
+          <input
+            value={sessionInput}
+            onChange={(event) => {
+              setSessionInput(event.target.value);
+            }}
+            placeholder="session-123"
+            className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
+          />
+        </label>
+
+        <div className="flex items-end gap-2">
+          <button
+            type="submit"
+            className="rounded-md border border-zinc-700 px-3 py-2 text-sm text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
+          >
+            Apply
+          </button>
+          <button
+            type="button"
+            onClick={handleResetFilters}
+            className="rounded-md border border-zinc-800 px-3 py-2 text-sm text-zinc-500 transition-colors hover:border-zinc-600 hover:text-zinc-300"
+          >
+            Clear
+          </button>
+        </div>
+      </form>
+
+      {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
 
       {loading ? (
         <TextStateMessage>Loading...</TextStateMessage>
@@ -101,6 +235,24 @@ export default function TracesPage() {
           </table>
         </div>
       )}
+
+      <PaginationControls
+        offset={offset}
+        pageSize={pageSize}
+        itemCount={traces.length}
+        itemLabel="traces"
+        disabled={loading}
+        onPageSizeChange={(nextPageSize) => {
+          setPageSize(nextPageSize);
+          setOffset(0);
+        }}
+        onPrevious={() => {
+          setOffset((current) => Math.max(0, current - pageSize));
+        }}
+        onNext={() => {
+          setOffset((current) => current + pageSize);
+        }}
+      />
     </div>
   );
 }

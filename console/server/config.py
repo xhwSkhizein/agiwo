@@ -7,7 +7,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agiwo.config.settings import ModelProvider
 from agiwo.config.settings import settings as sdk_settings
-from agiwo.llm.config_policy import sanitize_model_params_data
+from agiwo.llm.config_policy import (
+    sanitize_model_params_data,
+    validate_provider_model_params,
+)
 
 
 class DefaultAgentConfig(BaseModel):
@@ -125,6 +128,18 @@ _LEGACY_FEISHU_FIELDS: dict[str, str] = {
     "feishu_ack_fallback_text": "ack_fallback_text",
 }
 
+_LEGACY_DEFAULT_AGENT_GROUP_ENV_HINTS: dict[str, tuple[str, str]] = {
+    "default_agent_model": (
+        "AGIWO_CONSOLE_DEFAULT_AGENT_MODEL__*",
+        "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PROVIDER / "
+        "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_NAME",
+    ),
+    "default_agent_system": (
+        "AGIWO_CONSOLE_DEFAULT_AGENT_SYSTEM__PROMPT",
+        "AGIWO_CONSOLE_DEFAULT_AGENT__SYSTEM_PROMPT",
+    ),
+}
+
 
 def _apply_feishu_legacy_fields(
     normalized: dict[str, Any],
@@ -137,6 +152,46 @@ def _apply_feishu_legacy_fields(
     if feishu:
         channels["feishu"] = feishu
         normalized["channels"] = channels
+
+
+def _reject_default_agent_legacy_fields(
+    normalized: dict[str, Any],
+) -> None:
+    for legacy_key, env_hints in _LEGACY_DEFAULT_AGENT_GROUP_ENV_HINTS.items():
+        if normalized.get(legacy_key) is None:
+            continue
+        legacy_env, replacement = env_hints
+        raise ValueError(
+            "Unsupported legacy default-agent env keys "
+            f"({legacy_env}). Use {replacement} instead."
+        )
+
+
+def _validate_default_agent_override(
+    normalized: dict[str, Any],
+) -> None:
+    default_agent = normalized.get("default_agent")
+    if not isinstance(default_agent, dict) or not default_agent:
+        return
+
+    configured_keys = {key for key, value in default_agent.items() if value is not None}
+    if not configured_keys:
+        return
+
+    required_model_keys = {"model_provider", "model_name"}
+    provided_model_keys = configured_keys & required_model_keys
+    if provided_model_keys != required_model_keys:
+        raise ValueError(
+            "When overriding AGIWO_CONSOLE_DEFAULT_AGENT__*, you must also set "
+            "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PROVIDER and "
+            "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_NAME."
+        )
+
+    model_params = sanitize_model_params_data(default_agent.get("model_params") or {})
+    validate_provider_model_params(
+        str(default_agent["model_provider"]),
+        model_params if isinstance(model_params, dict) else {},
+    )
 
 
 class ConsoleConfig(BaseSettings):
@@ -188,6 +243,8 @@ class ConsoleConfig(BaseSettings):
     feishu_scheduler_wait_timeout: int | None = Field(default=None, exclude=True)
     feishu_ack_reaction_emoji: str | None = Field(default=None, exclude=True)
     feishu_ack_fallback_text: str | None = Field(default=None, exclude=True)
+    default_agent_model: dict[str, Any] | None = Field(default=None, exclude=True)
+    default_agent_system: dict[str, Any] | None = Field(default=None, exclude=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -198,6 +255,8 @@ class ConsoleConfig(BaseSettings):
         _apply_server_legacy_fields(normalized)
         _apply_storage_legacy_fields(normalized)
         _apply_feishu_legacy_fields(normalized)
+        _reject_default_agent_legacy_fields(normalized)
+        _validate_default_agent_override(normalized)
         return normalized
 
     @model_validator(mode="after")

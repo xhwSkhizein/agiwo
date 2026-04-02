@@ -32,6 +32,44 @@ def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> 
     assert config.channels.feishu.enabled is True
 
 
+def test_console_config_rejects_legacy_default_agent_group_env_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGIWO_CONSOLE_DEFAULT_AGENT_MODEL__PROVIDER", "deepseek")
+    monkeypatch.setenv("AGIWO_CONSOLE_DEFAULT_AGENT_MODEL__NAME", "deepseek-chat")
+    monkeypatch.setenv(
+        "AGIWO_CONSOLE_DEFAULT_AGENT_SYSTEM__PROMPT",
+        "You are Walaha.",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PROVIDER",
+    ):
+        ConsoleConfig()
+
+
+def test_console_config_rejects_partial_default_agent_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGIWO_CONSOLE_DEFAULT_AGENT__ID", "Walaha000")
+    monkeypatch.setenv("AGIWO_CONSOLE_DEFAULT_AGENT__NAME", "Walaha")
+    monkeypatch.setenv(
+        "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PARAMS__BASE_URL",
+        "https://api.deepseek.com",
+    )
+    monkeypatch.setenv(
+        "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PARAMS__API_KEY_ENV_NAME",
+        "DEEPSEEK_API_KEY",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PROVIDER",
+    ):
+        ConsoleConfig()
+
+
 def test_console_config_rejects_legacy_default_model_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -44,6 +82,14 @@ def test_console_config_rejects_legacy_default_model_provider(
 def test_console_config_rejects_plain_api_key_in_default_model_params(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv(
+        "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PROVIDER",
+        "openai-compatible",
+    )
+    monkeypatch.setenv(
+        "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_NAME",
+        "MiniMax-M2.5",
+    )
     monkeypatch.setenv(
         "AGIWO_CONSOLE_DEFAULT_AGENT__MODEL_PARAMS",
         '{"api_key":"sk-plain-text","base_url":"https://api.example.com/v1"}',

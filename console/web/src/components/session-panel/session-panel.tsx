@@ -33,32 +33,35 @@ export function SessionPanel({
   const [loading, setLoading] = useState(false);
   const [showForkDialog, setShowForkDialog] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const items = await listAgentChatSessions(agentId);
       setSessions(items);
-    } catch {
-      // silently fail
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load sessions");
     } finally {
       setLoading(false);
     }
   }, [agentId]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    void refresh();
+  }, [refresh, currentSessionId]);
 
   const handleCreate = async () => {
     if (actionLoading) return;
     setActionLoading(true);
+    setError(null);
     try {
       const result = await createAgentSession(agentId, scopeId);
       onCreated(result.session_id);
       await refresh();
-    } catch {
-      // silently fail
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create session");
     } finally {
       setActionLoading(false);
     }
@@ -67,12 +70,13 @@ export function SessionPanel({
   const handleSwitch = async (targetSessionId: string) => {
     if (actionLoading) return;
     setActionLoading(true);
+    setError(null);
     try {
       await switchAgentSession(agentId, scopeId, targetSessionId);
       onSwitch(targetSessionId);
       await refresh();
-    } catch {
-      // silently fail
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to switch session");
     } finally {
       setActionLoading(false);
     }
@@ -81,13 +85,14 @@ export function SessionPanel({
   const handleFork = async (contextSummary: string) => {
     if (!currentSessionId || actionLoading) return;
     setActionLoading(true);
+    setError(null);
     try {
       const result = await forkAgentSession(agentId, currentSessionId, contextSummary);
       setShowForkDialog(false);
       onForked(result.session_id);
       await refresh();
-    } catch {
-      // silently fail
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fork session");
     } finally {
       setActionLoading(false);
     }
@@ -123,6 +128,12 @@ export function SessionPanel({
             onConfirm={handleFork}
             onCancel={() => setShowForkDialog(false)}
           />
+        )}
+
+        {error && (
+          <p className="rounded border border-red-900/50 bg-red-950/20 px-3 py-2 text-xs text-red-300">
+            {error}
+          </p>
         )}
 
         {sessions.length === 0 && !loading && (

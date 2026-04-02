@@ -147,7 +147,10 @@ class OpenAIModel(Model):
             )
             raise
 
+        chunk_count = 0
+        logger.info("openai_stream_started", model=actual_model)
         async for chunk in stream:
+            chunk_count += 1
             stream_chunk = StreamChunk()
 
             if chunk.usage:
@@ -156,6 +159,17 @@ class OpenAIModel(Model):
             if chunk.choices and len(chunk.choices) > 0:
                 choice = chunk.choices[0]
                 delta = choice.delta
+
+                logger.debug(
+                    "openai_raw_chunk",
+                    chunk_index=chunk_count,
+                    has_delta_content=bool(delta.content),
+                    delta_content_repr=repr(delta.content) if delta.content else None,
+                    has_reasoning=hasattr(delta, "reasoning_content")
+                    and bool(delta.reasoning_content),
+                    has_tool_calls=bool(delta.tool_calls),
+                    finish_reason=choice.finish_reason,
+                )
 
                 if delta.content:
                     stream_chunk.content = delta.content
@@ -179,3 +193,11 @@ class OpenAIModel(Model):
                 or stream_chunk.usage is not None
             ):
                 yield stream_chunk
+
+        if chunk_count == 0:
+            raise RuntimeError(
+                "OpenAI-compatible stream returned no chunks; "
+                "verify the base_url points at the API root (for example, ends with /v1)"
+            )
+
+        logger.info("openai_stream_ended", model=actual_model, chunk_count=chunk_count)

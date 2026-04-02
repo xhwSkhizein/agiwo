@@ -89,7 +89,7 @@ export default function AgentChatPage() {
     loadHistoryMessages,
   } = useChatStream(chatStreamUrl(agentId), {
     onSessionCaptured: (sid) => {
-      if (!sessionId) {
+      if (sessionId !== sid) {
         setSessionId(sid);
         updateSessionUrl(sid);
       }
@@ -114,7 +114,7 @@ export default function AgentChatPage() {
         })
         .catch(() => {});
     }
-  }, [sessionId]);
+  }, [sessionId, messages.length, isStreaming, loadHistoryMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });

@@ -5,6 +5,7 @@ import { parseStreamEventPayload } from "@/lib/api";
 import type {
   AgentStreamEventPayload,
   RunCompletedEventPayload,
+  SchedulerAckEventPayload,
   StreamEventPayload,
   StepResponse,
 } from "@/lib/api";
@@ -15,6 +16,7 @@ export interface ChatStreamCallbacks {
   onSessionCaptured?: (sessionId: string) => void;
   onRootAgentCaptured?: (agentId: string) => void;
   onChildEvent?: (agentId: string, event: StreamEventPayload) => void;
+  onSchedulerAck?: (event: SchedulerAckEventPayload) => void;
   onSchedulerFailed?: (error: string) => void;
   onRunCompleted?: (event: RunCompletedEventPayload) => void;
   onRunStarted?: (event: AgentStreamEventPayload) => void;
@@ -98,6 +100,36 @@ export function useChatStream(
                 callbacksRef.current.onSchedulerFailed?.(
                   "error" in data ? String(data.error) : "Unknown error",
                 );
+                continue;
+              }
+
+              if (data.type === "scheduler_ack") {
+                const ackEvent = data as SchedulerAckEventPayload;
+                if (ackEvent.session_id) {
+                  callbacksRef.current.onSessionCaptured?.(ackEvent.session_id);
+                }
+                if (ackEvent.state_id) {
+                  rootAgentId = ackEvent.state_id;
+                  callbacksRef.current.onRootAgentCaptured?.(ackEvent.state_id);
+                }
+
+                const ackMessage = ackEvent.result_summary || ackEvent.message;
+                const aid = currentAssistantId;
+                setMessages((prev) => {
+                  const next = prev.filter((m) => m.id !== aid);
+                  if (!ackMessage) {
+                    return next;
+                  }
+                  return [
+                    ...next,
+                    {
+                      id: genMessageId(),
+                      role: "system",
+                      content: ackMessage,
+                    },
+                  ];
+                });
+                callbacksRef.current.onSchedulerAck?.(ackEvent);
                 continue;
               }
 

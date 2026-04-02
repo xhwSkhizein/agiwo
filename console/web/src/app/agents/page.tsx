@@ -2,14 +2,18 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Plus, MessageSquare, Trash2, Network } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Plus, MessageSquare, Trash2, Network, Play } from "lucide-react";
 import { TextStateMessage } from "@/components/state-message";
-import { listAgents, deleteAgent } from "@/lib/api";
+import { listAgents, deleteAgent, createPersistentAgent } from "@/lib/api";
 import type { AgentConfig } from "@/lib/api";
 
 export default function AgentsPage() {
+  const router = useRouter();
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);
+  const [launchingAgentId, setLaunchingAgentId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchAgents = () =>
     listAgents()
@@ -37,6 +41,21 @@ export default function AgentsPage() {
     }
   };
 
+  const handleLaunch = async (agentId: string) => {
+    setActionError(null);
+    setLaunchingAgentId(agentId);
+    try {
+      const result = await createPersistentAgent({ agent_config_id: agentId });
+      router.push(`/scheduler/${result.state_id}`);
+    } catch (err) {
+      setActionError(
+        err instanceof Error ? err.message : "Failed to launch persistent agent",
+      );
+    } finally {
+      setLaunchingAgentId(null);
+    }
+  };
+
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
@@ -54,6 +73,12 @@ export default function AgentsPage() {
           New Agent
         </Link>
       </div>
+
+      {actionError && (
+        <div className="rounded-lg border border-red-900/50 bg-red-950/20 px-4 py-3 text-sm text-red-300">
+          {actionError}
+        </div>
+      )}
 
       {loading ? (
         <TextStateMessage>Loading...</TextStateMessage>
@@ -114,6 +139,14 @@ export default function AgentsPage() {
               )}
 
               <div className="mt-auto pt-4 flex items-center gap-2">
+                <button
+                  onClick={() => void handleLaunch(agent.id)}
+                  disabled={launchingAgentId === agent.id}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-emerald-900/30 text-emerald-400 text-sm hover:bg-emerald-900/50 disabled:opacity-50 transition-colors"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  {launchingAgentId === agent.id ? "Launching..." : "Launch"}
+                </button>
                 <Link
                   href={`/agents/${agent.id}/chat`}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-zinc-800 text-sm hover:bg-zinc-700 transition-colors"

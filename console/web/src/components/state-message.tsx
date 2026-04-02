@@ -32,4 +32,11 @@ export function FullPageMessage({
   );
 }
 
+export function ErrorStateMessage({
+  children,
+  className = "rounded-md border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200",
+}: TextStateMessageProps) {
+  return <div className={className}>{children}</div>;
+}
+
 export default FullPageMessage;

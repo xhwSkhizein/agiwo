@@ -131,6 +131,14 @@ export interface SessionSummary {
   updated_at: string | null;
 }
 
+export interface DashboardOverview {
+  total_sessions: number;
+  total_traces: number;
+  total_agents: number;
+  total_tokens: number;
+  scheduler: SchedulerStats;
+}
+
 export interface RunResponse {
   id: string;
   agent_id: string;
@@ -214,6 +222,14 @@ export interface SchedulerFailedEventPayload {
   error: string;
 }
 
+export interface SchedulerAckEventPayload {
+  type: "scheduler_ack";
+  message?: string | null;
+  result_summary?: string | null;
+  session_id?: string | null;
+  state_id?: string | null;
+}
+
 export type AgentStreamEventPayload =
   | RunStartedEventPayload
   | StepDeltaEventPayload
@@ -223,7 +239,8 @@ export type AgentStreamEventPayload =
 
 export type StreamEventPayload =
   | AgentStreamEventPayload
-  | SchedulerFailedEventPayload;
+  | SchedulerFailedEventPayload
+  | SchedulerAckEventPayload;
 
 export function listSessions(limit = 20, offset = 0) {
   return fetchJSON<SessionSummary[]>(`/api/sessions?limit=${limit}&offset=${offset}`);
@@ -247,6 +264,10 @@ export function getSessionSteps(sessionId: string) {
 
 export function getSessionSummary(sessionId: string) {
   return fetchJSON<SessionSummary>(`/api/sessions/${sessionId}/summary`);
+}
+
+export function getDashboardOverview() {
+  return fetchJSON<DashboardOverview>("/api/overview");
 }
 
 // ── Traces ─────────────────────────────────────────────────────────────
@@ -317,10 +338,19 @@ export interface TraceDetail {
   spans: SpanResponse[];
 }
 
-export function listTraces(params?: { agent_id?: string; session_id?: string; limit?: number; offset?: number }) {
+export function listTraces(params?: {
+  agent_id?: string;
+  session_id?: string;
+  user_id?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}) {
   const q = new URLSearchParams();
   if (params?.agent_id) q.set("agent_id", params.agent_id);
   if (params?.session_id) q.set("session_id", params.session_id);
+  if (params?.user_id) q.set("user_id", params.user_id);
+  if (params?.status) q.set("status", params.status);
   if (params?.limit) q.set("limit", String(params.limit));
   if (params?.offset) q.set("offset", String(params.offset));
   return fetchJSON<TraceListItem[]>(`/api/traces?${q}`);
@@ -578,7 +608,7 @@ export function chatStreamUrl(agentId: string) {
 // ── Scheduler Chat ────────────────────────────────────────────────────
 
 export function schedulerChatStreamUrl(agentId: string) {
-  return `${API_BASE}/api/scheduler/chat/${agentId}`;
+  return `${API_BASE}/api/chat/${agentId}`;
 }
 
 export function parseStreamEventPayload(data: string): StreamEventPayload | null {
@@ -595,7 +625,7 @@ export function parseStreamEventPayload(data: string): StreamEventPayload | null
 
 export function cancelSchedulerChat(agentId: string, stateId: string) {
   return fetchJSON<{ ok: boolean; state_id: string }>(
-    `/api/scheduler/chat/${agentId}/cancel`,
+    `/api/chat/${agentId}/cancel`,
     {
       method: "POST",
       body: JSON.stringify({ state_id: stateId }),

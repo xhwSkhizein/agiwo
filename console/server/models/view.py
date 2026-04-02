@@ -197,6 +197,25 @@ class SchedulerStatsResponse(BaseModel):
     failed: int
 
 
+class DashboardOverviewResponse(BaseModel):
+    total_sessions: int
+    total_traces: int
+    total_agents: int
+    total_tokens: int
+    scheduler: SchedulerStatsResponse = Field(
+        default_factory=lambda: SchedulerStatsResponse(
+            total=0,
+            pending=0,
+            running=0,
+            waiting=0,
+            idle=0,
+            queued=0,
+            completed=0,
+            failed=0,
+        )
+    )
+
+
 class StepResponse(BaseModel):
     id: str
     session_id: str
@@ -293,6 +312,7 @@ __all__ = [
     "CancelRequest",
     "ChatRequest",
     "CreateAgentRequest",
+    "DashboardOverviewResponse",
     "CreateSessionRequest",
     "extract_content_parts",
     "ForkSessionRequest",
