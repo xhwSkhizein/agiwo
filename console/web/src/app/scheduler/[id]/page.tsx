@@ -8,7 +8,7 @@ import { MonoLink, MonoText } from "@/components/mono-text";
 import { PillBadge } from "@/components/pill-badge";
 import { SectionCard } from "@/components/section-card";
 import { SchedulerStatusBadge } from "@/components/scheduler-status-badge";
-import { FullPageMessage } from "@/components/state-message";
+import { ErrorStateMessage, FullPageMessage } from "@/components/state-message";
 import { TokenSummaryCards } from "@/components/token-summary-cards";
 import {
   getAgentState,
@@ -357,7 +357,7 @@ function ControlPanel({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <PillBadge className="rounded bg-zinc-800 px-2 py-1 text-zinc-300">
+        <PillBadge className="rounded bg-zinc-800 px-2 py-1 text-zinc-300 whitespace-nowrap">
           {canResume ? "next action: resume" : isActive ? "next action: steer" : "read only"}
         </PillBadge>
         <span className="text-zinc-500">
@@ -389,6 +389,7 @@ export default function SchedulerDetailPage() {
   const [children, setChildren] = useState<AgentStateListItem[]>([]);
   const [pendingEvents, setPendingEvents] = useState<PendingEventItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const pollTimerRef = useRef<number | null>(null);
 
   const loadStateData = useCallback(async (showLoading = true) => {
@@ -397,10 +398,10 @@ export default function SchedulerDetailPage() {
     }
 
     try {
-      const [nextState, nextChildren, nextPendingEvents] = await Promise.all([
-        getAgentState(stateId).catch(() => null),
-        getAgentStateChildren(stateId).catch(() => []),
-        getPendingEvents(stateId).catch(() => []),
+      const nextState = await getAgentState(stateId);
+      const [nextChildren, nextPendingEvents] = await Promise.all([
+        getAgentStateChildren(stateId),
+        getPendingEvents(stateId),
       ]);
       const nextAgentConfig =
         nextState?.agent_config_id != null
@@ -410,6 +411,12 @@ export default function SchedulerDetailPage() {
       setAgentConfig(nextAgentConfig);
       setChildren(nextChildren);
       setPendingEvents(nextPendingEvents);
+      setError(null);
+    } catch (err) {
+      setState(null);
+      setChildren([]);
+      setPendingEvents([]);
+      setError(err instanceof Error ? err.message : "Failed to load agent state");
     } finally {
       if (showLoading) {
         setLoading(false);
@@ -462,14 +469,24 @@ export default function SchedulerDetailPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
+      {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
       <BackHeader
         href="/scheduler"
         title="Agent State"
         subtitle={state.id}
         rightContent={
           <>
+            <MonoLink
+              href={`/scheduler/${state.root_state_id ?? state.id}/tree${
+                state.root_state_id && state.root_state_id !== state.id
+                  ? `?selected=${state.id}`
+                  : ""
+              }`}
+            >
+              Tree View
+            </MonoLink>
             {state.is_persistent && (
-              <PillBadge className="text-xs px-1.5 py-0.5 rounded bg-indigo-900/50 text-indigo-400">
+              <PillBadge className="text-xs px-1.5 py-0.5 rounded bg-indigo-900/50 text-indigo-400 whitespace-nowrap">
                 persistent
               </PillBadge>
             )}
@@ -523,12 +540,12 @@ export default function SchedulerDetailPage() {
               {hasDetailSignals && (
                 <div className="flex flex-wrap items-center gap-2">
                   {taskContext.source && (
-                    <PillBadge className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">
+                    <PillBadge className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300 whitespace-nowrap">
                       {taskContext.source}
                     </PillBadge>
                   )}
                   {attachmentCount > 0 && (
-                    <PillBadge className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">
+                    <PillBadge className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300 whitespace-nowrap">
                       attachments {attachmentCount}
                     </PillBadge>
                   )}
@@ -649,7 +666,7 @@ export default function SchedulerDetailPage() {
                 className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-3"
               >
                 <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-                  <PillBadge className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300">
+                  <PillBadge className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-300 whitespace-nowrap">
                     {event.event_type}
                   </PillBadge>
                   <span className="font-mono text-zinc-500">{event.id}</span>

@@ -23,6 +23,7 @@ CancelChildOutcome = Literal[
     "requires_force",
     "cancelled",
 ]
+RouteStreamMode = Literal["run_end", "until_settled"]
 
 
 class DispatchReason(str, Enum):
@@ -108,6 +109,7 @@ __all__ = [
     "CancelChildResult",
     "DispatchAction",
     "DispatchReason",
+    "RouteStreamMode",
     "RouteResult",
     "SleepRequest",
     "SleepResult",

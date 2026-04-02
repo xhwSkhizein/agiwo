@@ -9,7 +9,7 @@ type PillBadgeProps = {
 
 export function PillBadge({
   children,
-  className = "text-xs px-1.5 py-0.5 rounded",
+  className = "text-xs px-1.5 py-0.5 rounded whitespace-nowrap",
 }: PillBadgeProps) {
   return <span className={className}>{children}</span>;
 }

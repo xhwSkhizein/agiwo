@@ -18,7 +18,12 @@ from agiwo.agent import (
 from agiwo.scheduler._stream import route_with_stream
 from agiwo.scheduler._tick import dispatch_action, tick as _tick
 from agiwo.scheduler._tree_ops import cancel_subtree, shutdown_subtree
-from agiwo.scheduler.commands import DispatchAction, DispatchReason, RouteResult
+from agiwo.scheduler.commands import (
+    DispatchAction,
+    DispatchReason,
+    RouteResult,
+    RouteStreamMode,
+)
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     ACTIVE_AGENT_STATUSES,
@@ -265,6 +270,36 @@ class Scheduler:
         agent_config_id: str | None = None,
         timeout: float | None = None,
         include_child_events: bool = True,
+        stream_mode: RouteStreamMode = "run_end",
+    ) -> RouteResult:
+        if stream_mode not in {"run_end", "until_settled"}:
+            raise ValueError(f"Unknown scheduler stream mode: {stream_mode}")
+        return await self._route_root_input_impl(
+            user_input,
+            agent=agent,
+            state_id=state_id,
+            session_id=session_id,
+            abort_signal=abort_signal,
+            persistent=persistent,
+            agent_config_id=agent_config_id,
+            timeout=timeout,
+            include_child_events=include_child_events,
+            close_on_root_run_end=stream_mode == "run_end",
+        )
+
+    async def _route_root_input_impl(
+        self,
+        user_input: UserInput,
+        *,
+        agent: Agent,
+        state_id: str | None = None,
+        session_id: str | None = None,
+        abort_signal: AbortSignal | None = None,
+        persistent: bool = True,
+        agent_config_id: str | None = None,
+        timeout: float | None = None,
+        include_child_events: bool = True,
+        close_on_root_run_end: bool,
     ) -> RouteResult:
         lookup_id = state_id or agent.id
         deadline = None if timeout is None else time.monotonic() + timeout
@@ -288,6 +323,7 @@ class Scheduler:
                 action="submitted",
                 timeout=self._deadline_remaining(deadline) if deadline else timeout,
                 include_child_events=include_child_events,
+                close_on_root_run_end=close_on_root_run_end,
                 operation=do_submit,
             )
 
@@ -307,6 +343,7 @@ class Scheduler:
                 user_input,
                 timeout=timeout,
                 include_child_events=include_child_events,
+                close_on_root_run_end=close_on_root_run_end,
             )
 
         if (
@@ -320,6 +357,7 @@ class Scheduler:
                 action="enqueued",
                 timeout=timeout,
                 include_child_events=include_child_events,
+                close_on_root_run_end=close_on_root_run_end,
                 operation=lambda: self._enqueue_and_return_state_id(
                     state_id=current_state.id,
                     agent=agent,
@@ -333,6 +371,7 @@ class Scheduler:
             action="submitted",
             timeout=timeout,
             include_child_events=include_child_events,
+            close_on_root_run_end=close_on_root_run_end,
             operation=do_submit,
         )
 
@@ -359,6 +398,7 @@ class Scheduler:
                 action="submitted",
                 timeout=timeout,
                 include_child_events=include_child_events,
+                close_on_root_run_end=True,
                 operation=lambda: self.submit(
                     agent,
                     user_input,
@@ -375,6 +415,7 @@ class Scheduler:
                 action="enqueued",
                 timeout=timeout,
                 include_child_events=include_child_events,
+                close_on_root_run_end=True,
                 operation=lambda: self._enqueue_and_return_state_id(
                     state_id=state_id,
                     agent=agent,
@@ -509,6 +550,7 @@ class Scheduler:
         *,
         timeout: float | None,
         include_child_events: bool,
+        close_on_root_run_end: bool,
     ) -> RouteResult:
         urgent = state.status == AgentStateStatus.WAITING
         sid = state.id
@@ -525,6 +567,7 @@ class Scheduler:
             action="steered",
             timeout=timeout,
             include_child_events=include_child_events,
+            close_on_root_run_end=close_on_root_run_end,
             operation=_do_steer,
         )
 

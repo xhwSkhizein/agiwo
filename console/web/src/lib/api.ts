@@ -1,5 +1,17 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8422";
 
+export class ApiError extends Error {
+  status: number;
+  detail: string;
+
+  constructor(status: number, detail: string) {
+    super(`API error: ${status} ${detail}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -18,9 +30,17 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       // Ignore non-JSON error bodies and keep the HTTP status text.
     }
-    throw new Error(`API error: ${res.status} ${detail}`);
+    throw new ApiError(res.status, detail);
   }
   return res.json();
+}
+
+export interface PageResponse<T> {
+  items: T[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  total: number | null;
 }
 
 // ── UserInput Types ────────────────────────────────────────────────────
@@ -122,13 +142,49 @@ export interface ToolCallPayload {
 export interface SessionSummary {
   session_id: string;
   agent_id: string | null;
-  last_user_input: UserInput | null;  // 结构化 UserInput
+  last_user_input: UserInput | null;
   last_response: string | null;
   run_count: number;
   step_count: number;
   metrics: RunMetricsSummary;
   created_at: string | null;
   updated_at: string | null;
+  chat_context_scope_id: string | null;
+  created_by: string | null;
+  base_agent_id: string | null;
+  root_state_status: string | null;
+  source_session_id: string | null;
+  fork_context_summary: string | null;
+}
+
+export interface SessionRecord {
+  id: string;
+  chat_context_scope_id: string | null;
+  base_agent_id: string;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  source_session_id: string | null;
+  fork_context_summary: string | null;
+}
+
+export interface ChatContextRecord {
+  scope_id: string;
+  channel_instance_id: string;
+  chat_id: string;
+  chat_type: string;
+  user_open_id: string;
+  base_agent_id: string;
+  current_session_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SessionDetail {
+  summary: SessionSummary;
+  session: SessionRecord | null;
+  chat_context: ChatContextRecord | null;
+  scheduler_state: AgentStateDetail | null;
 }
 
 export interface DashboardOverview {
@@ -243,7 +299,9 @@ export type StreamEventPayload =
   | SchedulerAckEventPayload;
 
 export function listSessions(limit = 20, offset = 0) {
-  return fetchJSON<SessionSummary[]>(`/api/sessions?limit=${limit}&offset=${offset}`);
+  return fetchJSON<PageResponse<SessionSummary>>(
+    `/api/sessions?limit=${limit}&offset=${offset}`,
+  );
 }
 
 export function listRuns(params?: { session_id?: string; limit?: number; offset?: number }) {
@@ -251,19 +309,43 @@ export function listRuns(params?: { session_id?: string; limit?: number; offset?
   if (params?.session_id) q.set("session_id", params.session_id);
   if (params?.limit) q.set("limit", String(params.limit));
   if (params?.offset) q.set("offset", String(params.offset));
-  return fetchJSON<RunResponse[]>(`/api/runs?${q}`);
+  return fetchJSON<PageResponse<RunResponse>>(`/api/runs?${q}`);
 }
 
 export function getRun(runId: string) {
   return fetchJSON<RunResponse>(`/api/runs/${runId}`);
 }
 
-export function getSessionSteps(sessionId: string) {
-  return fetchJSON<StepResponse[]>(`/api/sessions/${sessionId}/steps`);
+export function getSessionSteps(
+  sessionId: string,
+  params?: {
+    start_seq?: number;
+    end_seq?: number;
+    run_id?: string;
+    agent_id?: string;
+    limit?: number;
+    order?: "asc" | "desc";
+  },
+) {
+  const q = new URLSearchParams();
+  if (params?.start_seq) q.set("start_seq", String(params.start_seq));
+  if (params?.end_seq) q.set("end_seq", String(params.end_seq));
+  if (params?.run_id) q.set("run_id", params.run_id);
+  if (params?.agent_id) q.set("agent_id", params.agent_id);
+  if (params?.limit) q.set("limit", String(params.limit));
+  if (params?.order) q.set("order", params.order);
+  const query = q.toString();
+  return fetchJSON<PageResponse<StepResponse>>(
+    `/api/sessions/${sessionId}/steps${query ? `?${query}` : ""}`,
+  );
 }
 
 export function getSessionSummary(sessionId: string) {
   return fetchJSON<SessionSummary>(`/api/sessions/${sessionId}/summary`);
+}
+
+export function getSessionDetail(sessionId: string) {
+  return fetchJSON<SessionDetail>(`/api/sessions/${sessionId}`);
 }
 
 export function getDashboardOverview() {
@@ -353,7 +435,7 @@ export function listTraces(params?: {
   if (params?.status) q.set("status", params.status);
   if (params?.limit) q.set("limit", String(params.limit));
   if (params?.offset) q.set("offset", String(params.offset));
-  return fetchJSON<TraceListItem[]>(`/api/traces?${q}`);
+  return fetchJSON<PageResponse<TraceListItem>>(`/api/traces?${q}`);
 }
 
 export function getTrace(traceId: string) {
@@ -395,6 +477,7 @@ export interface AgentConfig {
   id: string;
   name: string;
   description: string;
+  is_default: boolean;
   model_provider: string;
   model_name: string;
   system_prompt: string;
@@ -423,6 +506,18 @@ export interface AvailableTool {
   agent_name?: string;
 }
 
+export interface AgentProviderCapability {
+  value: string;
+  label: string;
+  default_model_name: string | null;
+  requires_base_url: boolean;
+  requires_api_key_env_name: boolean;
+}
+
+export interface AgentCapabilities {
+  providers: AgentProviderCapability[];
+}
+
 export function listAvailableTools(exclude?: string) {
   const q = exclude ? `?exclude=${encodeURIComponent(exclude)}` : "";
   return fetchJSON<AvailableTool[]>(`/api/agents/tools/available${q}`);
@@ -430,6 +525,10 @@ export function listAvailableTools(exclude?: string) {
 
 export function listAgents() {
   return fetchJSON<AgentConfig[]>("/api/agents");
+}
+
+export function getAgentCapabilities() {
+  return fetchJSON<AgentCapabilities>("/api/agents/capabilities");
 }
 
 export function getAgent(agentId: string) {
@@ -470,6 +569,7 @@ export interface WakeConditionResponse {
 
 export interface AgentStateListItem {
   id: string;
+  root_state_id: string | null;
   status: string;
   task: UserInput;
   parent_id: string | null;
@@ -486,6 +586,7 @@ export interface AgentStateListItem {
 
 export interface AgentStateDetail {
   id: string;
+  root_state_id: string | null;
   session_id: string;
   status: string;
   task: UserInput;
@@ -515,12 +616,50 @@ export interface SchedulerStats {
   failed: number;
 }
 
+export interface SchedulerTreeStats {
+  total: number;
+  running: number;
+  waiting: number;
+  queued: number;
+  idle: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+}
+
+export interface SchedulerTreeNode {
+  state_id: string;
+  root_state_id: string;
+  parent_state_id: string | null;
+  child_ids: string[];
+  session_id: string | null;
+  agent_id: string;
+  task_id: string | null;
+  status: string;
+  depth: number;
+  created_at: string | null;
+  updated_at: string | null;
+  completed_at: string | null;
+  wake_condition: WakeConditionResponse | null;
+  pending_event_count: number;
+  last_error: string | null;
+  result_summary: string | null;
+}
+
+export interface SchedulerTree {
+  root_state_id: string;
+  root_session_id: string | null;
+  nodes: SchedulerTreeNode[];
+  stats: SchedulerTreeStats;
+  generated_at: string;
+}
+
 export function listAgentStates(params?: { status?: string; limit?: number; offset?: number }) {
   const q = new URLSearchParams();
   if (params?.status) q.set("status", params.status);
   if (params?.limit) q.set("limit", String(params.limit));
   if (params?.offset) q.set("offset", String(params.offset));
-  return fetchJSON<AgentStateListItem[]>(`/api/scheduler/states?${q}`);
+  return fetchJSON<PageResponse<AgentStateListItem>>(`/api/scheduler/states?${q}`);
 }
 
 export function getAgentState(stateId: string) {
@@ -531,84 +670,44 @@ export function getAgentStateChildren(stateId: string) {
   return fetchJSON<AgentStateListItem[]>(`/api/scheduler/states/${stateId}/children`);
 }
 
+export function getSchedulerTree(stateId: string) {
+  return fetchJSON<SchedulerTree>(`/api/scheduler/states/${stateId}/tree`);
+}
+
 export function getSchedulerStats() {
   return fetchJSON<SchedulerStats>(`/api/scheduler/stats`);
 }
 
 // ── Chat Sessions ──────────────────────────────────────────────────────
 
-export interface ChatSessionItem {
-  session_id: string;
-  run_count: number;
-  last_input: string | null;
-  last_response: string | null;
-  updated_at: string | null;
-  current_task_id?: string | null;
-  task_message_count?: number;
-  source_session_id?: string | null;
-  fork_context_summary?: string | null;
-}
+export type ChatSessionItem = SessionSummary;
 
 export interface SessionActionResult {
   session_id: string;
-  task_id: string | null;
   source_session_id: string | null;
-  previous_session_id?: string | null;
 }
 
-export function listAgentChatSessions(agentId: string) {
-  return fetchJSON<ChatSessionItem[]>(`/api/chat/${agentId}/sessions`);
+export function listAgentSessions(agentId: string) {
+  return fetchJSON<PageResponse<ChatSessionItem>>(`/api/agents/${agentId}/sessions`);
 }
 
-export function createAgentSession(agentId: string, scopeId: string) {
-  return fetchJSON<SessionActionResult>(`/api/chat/${agentId}/sessions/create`, {
+export function createAgentSession(agentId: string) {
+  return fetchJSON<SessionActionResult>(`/api/agents/${agentId}/sessions`, {
     method: "POST",
-    body: JSON.stringify({
-      chat_context_scope_id: scopeId,
-      channel_instance_id: "console-web",
-      user_open_id: "console-user",
-    }),
   });
 }
 
-export function switchAgentSession(
-  agentId: string,
-  scopeId: string,
-  targetSessionId: string,
-) {
-  return fetchJSON<SessionActionResult>(`/api/chat/${agentId}/sessions/switch`, {
+export function forkSession(sessionId: string, contextSummary: string) {
+  return fetchJSON<SessionActionResult>(`/api/sessions/${sessionId}/fork`, {
     method: "POST",
-    body: JSON.stringify({
-      chat_context_scope_id: scopeId,
-      target_session_id: targetSessionId,
-    }),
+    body: JSON.stringify({ context_summary: contextSummary }),
   });
 }
 
-export function forkAgentSession(
-  agentId: string,
-  sessionId: string,
-  contextSummary: string,
-) {
-  return fetchJSON<SessionActionResult>(
-    `/api/chat/${agentId}/sessions/${sessionId}/fork`,
-    {
-      method: "POST",
-      body: JSON.stringify({ context_summary: contextSummary }),
-    },
-  );
-}
+// ── Session Input Stream ───────────────────────────────────────────────
 
-// ── Chat ───────────────────────────────────────────────────────────────
-
-export function chatStreamUrl(agentId: string) {
-  return `${API_BASE}/api/chat/${agentId}`;
-}
-
-// ── Scheduler Chat ────────────────────────────────────────────────────
-
-export function schedulerChatStreamUrl(agentId: string) {
-  return `${API_BASE}/api/chat/${agentId}`;
+export function sessionInputStreamUrl(sessionId: string) {
+  return `${API_BASE}/api/sessions/${sessionId}/input`;
 }
 
 export function parseStreamEventPayload(data: string): StreamEventPayload | null {
@@ -623,13 +722,13 @@ export function parseStreamEventPayload(data: string): StreamEventPayload | null
   }
 }
 
-export function cancelSchedulerChat(agentId: string, stateId: string) {
-  return fetchJSON<{ ok: boolean; state_id: string }>(
-    `/api/chat/${agentId}/cancel`,
+export function cancelSession(sessionId: string, reason?: string) {
+  return fetchJSON<{ ok: boolean; session_id: string; state_id: string }>(
+    `/api/sessions/${sessionId}/cancel`,
     {
       method: "POST",
-      body: JSON.stringify({ state_id: stateId }),
-    }
+      body: JSON.stringify({ reason }),
+    },
   );
 }
 

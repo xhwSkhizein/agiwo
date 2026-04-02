@@ -1,7 +1,5 @@
 """Stream construction and routing extracted from Scheduler."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -19,17 +17,19 @@ if TYPE_CHECKING:
 
 
 def build_stream(
-    sched: Scheduler,
+    sched: "Scheduler",
     state_id: str,
     *,
     timeout: float | None,
     include_child_events: bool,
+    close_on_root_run_end: bool,
 ) -> AsyncIterator[AgentStreamItem]:
     async def iterator() -> AsyncIterator[AgentStreamItem]:
         open_stream_channel(
             sched._rt.stream_channels,
             state_id,
             include_child_events=include_child_events,
+            close_on_root_run_end=close_on_root_run_end,
         )
         try:
             async for item in consume_stream_channel(
@@ -46,12 +46,13 @@ def build_stream(
 
 
 async def route_with_stream(
-    sched: Scheduler,
+    sched: "Scheduler",
     *,
     root_state_id: str,
     action: str,
     timeout: float | None,
     include_child_events: bool,
+    close_on_root_run_end: bool,
     operation: Callable[[], Awaitable[str]],
 ) -> RouteResult:
     if root_state_id in sched._rt.stream_channels:
@@ -67,11 +68,12 @@ async def route_with_stream(
             root_state_id,
             timeout=timeout,
             include_child_events=include_child_events,
+            close_on_root_run_end=close_on_root_run_end,
         ),
     )
 
 
-async def raise_stream_failure_if_needed(sched: Scheduler, state_id: str) -> None:
+async def raise_stream_failure_if_needed(sched: "Scheduler", state_id: str) -> None:
     state = await sched._store.get_state(state_id)
     if state is not None and state.status == AgentStateStatus.FAILED:
         raise RuntimeError(state.result_summary or "scheduler stream failed")

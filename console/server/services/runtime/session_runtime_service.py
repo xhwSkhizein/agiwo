@@ -2,20 +2,13 @@
 
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
-from uuid import uuid4
 
 from agiwo.agent import Agent, RunOutput, UserInput
-from agiwo.scheduler.commands import RouteResult
+from agiwo.scheduler.commands import RouteResult, RouteStreamMode
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
-from server.models.session import (
-    ChannelChatSessionStore,
-    Session,
-    append_task_message,
-    bind_scheduler_state,
-    start_task,
-)
+from server.models.session import ChannelChatSessionStore, Session
 
 logger = get_logger(__name__)
 
@@ -24,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class SessionRuntimeService:
-    """Route session input into the SDK scheduler while preserving session state."""
+    """Route session input into the SDK scheduler using session-scoped root states."""
 
     def __init__(
         self,
@@ -42,31 +35,26 @@ class SessionRuntimeService:
         agent: Agent,
         session: Session,
         user_input: UserInput,
+        *,
+        stream_mode: RouteStreamMode = "until_settled",
     ) -> RouteResult:
-        if session.current_task_id is None:
-            start_task(session, task_id=str(uuid4()))
-        append_task_message(session)
-
         result = await self._scheduler.route_root_input(
             user_input,
             agent=agent,
-            state_id=session.scheduler_state_id or None,
+            state_id=session.id,
             session_id=session.id,
             persistent=True,
             timeout=self._timeout,
+            stream_mode=stream_mode,
         )
-        if result.state_id != session.scheduler_state_id:
-            bind_scheduler_state(session, result.state_id)
         await self._touch_session(session)
         return result
 
     async def cancel_if_active(self, session: Session, reason: str) -> None:
-        if not session.scheduler_state_id:
-            return
-        state = await self._scheduler.get_state(session.scheduler_state_id)
+        state = await self._scheduler.get_state(session.id)
         if state is None or not state.is_active():
             return
-        await self._scheduler.cancel(session.scheduler_state_id, reason)
+        await self._scheduler.cancel(session.id, reason)
 
     async def get_state(self, state_id: str | None) -> "AgentState | None":
         if not state_id:

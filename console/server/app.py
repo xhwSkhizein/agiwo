@@ -30,7 +30,6 @@ from server.routers import (
     traces,
     overview,
     agents,
-    chat,
     scheduler,
     feishu,
 )
@@ -137,7 +136,6 @@ def create_app() -> FastAPI:
     app.include_router(traces.router)
     app.include_router(overview.router)
     app.include_router(agents.router)
-    app.include_router(chat.router)
     app.include_router(scheduler.router)
     app.include_router(feishu.router)
 

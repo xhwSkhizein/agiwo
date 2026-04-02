@@ -55,6 +55,19 @@ async def client():
 
 
 @pytest.mark.asyncio
+async def test_list_agents_includes_default_env_agent_when_registry_store_is_empty(
+    client,
+) -> None:
+    response = await client.get("/api/agents")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["id"] for item in payload] == ["default-console-agent"]
+    assert payload[0]["name"] == "Console Agent"
+    assert payload[0]["is_default"] is True
+
+
+@pytest.mark.asyncio
 async def test_update_agent_put_replaces_full_agent_config(client) -> None:
     registry = _runtime(client).agent_registry
     created = await registry.create_agent(
@@ -198,3 +211,17 @@ async def test_update_agent_rejects_invalid_agent_tool_reference(client) -> None
 
     assert response.status_code == 422
     assert "Invalid tool reference" in response.text
+
+
+@pytest.mark.asyncio
+async def test_get_agent_capabilities_returns_provider_schema(client) -> None:
+    response = await client.get("/api/agents/capabilities")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "providers" in payload
+    providers = {item["value"]: item for item in payload["providers"]}
+    assert "openai" in providers
+    assert "openai-compatible" in providers
+    assert providers["openai-compatible"]["requires_base_url"] is True
+    assert providers["openai-compatible"]["requires_api_key_env_name"] is True

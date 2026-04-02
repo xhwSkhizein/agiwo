@@ -96,8 +96,7 @@ async def _execute_status(
         return CommandResult(text="加载 Agent 失败: runtime agent unavailable")
 
     state = None
-    if current_session.scheduler_state_id:
-        state = await scheduler.get_state(current_session.scheduler_state_id)
+    state = await scheduler.get_state(current_session.id)
     scheduler_status = format_scheduler_status(state.status) if state else "未启动"
 
     metrics_summary = await summarize_runs_paginated(
@@ -154,7 +153,7 @@ async def _load_session_agent(
     agent_pool: AgentRuntimeCache,
     current_session: Session,
 ) -> tuple[Agent | None, str | None]:
-    agent = agent_pool.runtime_agents.get(current_session.runtime_agent_id)
+    agent = agent_pool.runtime_agents.get(current_session.id)
     if agent is not None:
         return (agent, None)
 

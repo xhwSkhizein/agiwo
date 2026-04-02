@@ -383,7 +383,19 @@ class SchedulerRunner:
         if not action.events:
             return
         try:
-            await self._ctx.store.delete_events([event.id for event in action.events])
+            event_ids = [event.id for event in action.events]
+            await self._ctx.store.delete_events(event_ids)
+            logger.info(
+                "scheduler_events_acknowledged",
+                state_id=action.state.id,
+                reason=action.reason.value,
+                event_ids=event_ids,
+                source_agent_ids=[
+                    event.source_agent_id
+                    for event in action.events
+                    if event.source_agent_id is not None
+                ],
+            )
         except Exception:  # noqa: BLE001
             logger.exception(
                 "scheduler_event_ack_failed",
@@ -405,7 +417,9 @@ class SchedulerRunner:
     async def _cleanup_after_run(self, state: AgentState) -> None:
         self._ctx.rt.dispatched.discard(state.id)
         if state.is_root:
-            await self._finish_stream_channel(state.id)
+            refreshed = await self._ctx.store.get_state(state.id)
+            if self._should_finish_root_stream_channel(state.id, refreshed):
+                await self._finish_stream_channel(state.id)
             return
 
         refreshed = await self._ctx.store.get_state(state.id)
@@ -422,6 +436,24 @@ class SchedulerRunner:
         channel = self._ctx.rt.stream_channels.get(state_id)
         if channel is not None:
             await channel.queue.put(None)
+
+    def _should_finish_root_stream_channel(
+        self,
+        state_id: str,
+        state: AgentState | None,
+    ) -> bool:
+        channel = self._ctx.rt.stream_channels.get(state_id)
+        if channel is None:
+            return False
+        if channel.close_on_root_run_end:
+            return True
+        if state is None:
+            return True
+        return state.status in (
+            AgentStateStatus.IDLE,
+            AgentStateStatus.COMPLETED,
+            AgentStateStatus.FAILED,
+        )
 
     async def _collect_child_results(
         self,

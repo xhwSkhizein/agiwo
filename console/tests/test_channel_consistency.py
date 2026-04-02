@@ -1,8 +1,4 @@
-"""Regression tests for Console and Feishu channel consistency.
-
-Both entrypoints must produce equivalent session/task semantics
-when using the shared SessionRuntimeService.
-"""
+"""Regression tests for shared scheduler-backed session semantics."""
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
@@ -10,32 +6,19 @@ from uuid import uuid4
 
 import pytest
 
-from server.models.session import (
-    ChannelChatContext,
-    Session,
-    append_task_message,
-    start_task,
-)
+from server.models.session import ChannelChatContext, Session
 from server.services.runtime.session_runtime_service import SessionRuntimeService
 
 
-def _session(
-    *,
-    current_task_id: str | None = None,
-    task_message_count: int = 0,
-) -> Session:
+def _session() -> Session:
     now = datetime.now(timezone.utc)
     return Session(
         id="sess-1",
         chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
-        runtime_agent_id="runtime-1",
-        scheduler_state_id="state-1",
         created_by="AUTO",
         created_at=now,
         updated_at=now,
-        current_task_id=current_task_id,
-        task_message_count=task_message_count,
     )
 
 
@@ -54,69 +37,46 @@ def _chat_context() -> ChannelChatContext:
     )
 
 
-def test_console_and_feishu_share_session_first_semantics() -> None:
-    """Both entrypoints produce identical session/task summary shapes."""
+def test_console_and_feishu_share_explicit_session_identity() -> None:
     console_summary = {
         "session_id": "sess-1",
-        "task_id": "task-1",
+        "root_state_id": "sess-1",
         "source_session_id": None,
     }
     feishu_summary = {
         "session_id": "sess-1",
-        "task_id": "task-1",
+        "root_state_id": "sess-1",
         "source_session_id": None,
     }
     assert console_summary == feishu_summary
 
 
-def test_implicit_task_creation_is_consistent_across_channels() -> None:
-    """Both Console and Feishu use the same implicit task creation logic."""
-    session = _session()
-    assert session.current_task_id is None
-
-    start_task(session, task_id="task-1")
-    assert session.current_task_id == "task-1"
-    assert session.task_message_count == 0
-
-    append_task_message(session)
-    assert session.task_message_count == 1
-
-
 def test_fork_lineage_is_consistent_across_channels() -> None:
-    """Fork from Console and Feishu uses the same fork_session logic."""
     chat_context = _chat_context()
-    source = _session(current_task_id="task-1", task_message_count=3)
+    source = _session()
     now = datetime.now(timezone.utc)
 
-    # Inline fork_session logic
     forked_session = Session(
         id=str(uuid4()),
         chat_context_scope_id=chat_context.scope_id,
         base_agent_id=source.base_agent_id,
-        runtime_agent_id="",
-        scheduler_state_id="",
         created_by="CONSOLE_FORK",
         created_at=now,
         updated_at=now,
         source_session_id=source.id,
-        source_task_id=source.current_task_id,
         fork_context_summary="Branch off",
     )
 
     assert forked_session.source_session_id == "sess-1"
-    assert forked_session.source_task_id == "task-1"
     assert forked_session.fork_context_summary == "Branch off"
-    assert forked_session.runtime_agent_id == ""
-    assert forked_session.current_task_id is None
 
 
 @pytest.mark.asyncio
-async def test_executor_applies_task_semantics_uniformly() -> None:
-    """SessionRuntimeService applies the same task logic regardless of entry channel."""
+async def test_executor_routes_all_channels_to_same_root_state_identity() -> None:
     session = _session()
     scheduler = AsyncMock()
     scheduler.route_root_input = AsyncMock(
-        return_value=AsyncMock(action="stream", stream=None, state_id="state-1")
+        return_value=AsyncMock(action="stream", stream=None, state_id="sess-1")
     )
     store = AsyncMock()
     store.upsert_session = AsyncMock()
@@ -129,15 +89,12 @@ async def test_executor_applies_task_semantics_uniformly() -> None:
     await runtime_service.execute(
         agent=AsyncMock(), session=session, user_input="hello from console"
     )
-
-    task_id_after_console = session.current_task_id
-    count_after_console = session.task_message_count
-    assert task_id_after_console is not None
-    assert count_after_console == 1
-
     await runtime_service.execute(
         agent=AsyncMock(), session=session, user_input="hello from feishu"
     )
 
-    assert session.current_task_id == task_id_after_console
-    assert session.task_message_count == 2
+    assert scheduler.route_root_input.await_count == 2
+    for awaited in scheduler.route_root_input.await_args_list:
+        assert awaited.kwargs["state_id"] == session.id
+        assert awaited.kwargs["session_id"] == session.id
+        assert awaited.kwargs["stream_mode"] == "until_settled"

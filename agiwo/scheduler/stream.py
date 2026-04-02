@@ -12,6 +12,7 @@ from agiwo.agent import AgentStreamItem
 class StreamChannelState:
     queue: asyncio.Queue
     include_child_events: bool = True
+    close_on_root_run_end: bool = True
 
 
 async def finish_stream_channel(
@@ -27,12 +28,14 @@ def open_stream_channel(
     state_id: str,
     *,
     include_child_events: bool,
+    close_on_root_run_end: bool,
 ) -> None:
     if state_id in channels:
         raise RuntimeError(f"stream subscriber already active for root '{state_id}'")
     channels[state_id] = StreamChannelState(
         queue=asyncio.Queue(),
         include_child_events=include_child_events,
+        close_on_root_run_end=close_on_root_run_end,
     )
 
 
@@ -65,7 +68,11 @@ async def consume_stream_channel(
         if item is None:
             return
         yield item
-        if item.depth == 0 and item.type in {"run_completed", "run_failed"}:
+        if (
+            item.depth == 0
+            and item.type in {"run_completed", "run_failed"}
+            and channels[state_id].close_on_root_run_end
+        ):
             return
 
 

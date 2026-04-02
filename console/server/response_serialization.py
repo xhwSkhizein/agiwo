@@ -10,12 +10,25 @@ from agiwo.agent.models.run import Run
 from agiwo.observability.trace import Trace
 from agiwo.scheduler.models import AgentState, PendingEvent, WakeCondition
 from server.models.metrics import RunMetricsSummary
+from server.models.session import (
+    ChannelChatContext,
+    Session,
+    SessionDetailRecord,
+    SessionSummaryRecord,
+)
 from server.models.view import (
     AgentStateListItem,
     AgentStateResponse,
+    ChatContextResponse,
     PendingEventResponse,
     RunMetricsResponse,
     RunResponse,
+    SchedulerTreeNodeResponse,
+    SchedulerTreeResponse,
+    SchedulerTreeStatsResponse,
+    SessionDetailResponse,
+    SessionRecordResponse,
+    SessionSummaryResponse,
     SpanResponse,
     StepMetricsResponse,
     StepResponse,
@@ -23,6 +36,7 @@ from server.models.view import (
     TraceResponse,
     WakeConditionResponse,
 )
+from server.services.runtime.scheduler_tree_view_service import SchedulerTreeRecord
 
 
 def step_metrics_response_from_sdk(metrics: step.StepMetrics) -> StepMetricsResponse:
@@ -91,6 +105,80 @@ def run_response_from_sdk(run: Run) -> RunResponse:
     )
 
 
+def session_record_response_from_runtime(session: Session) -> SessionRecordResponse:
+    return SessionRecordResponse(
+        id=session.id,
+        chat_context_scope_id=session.chat_context_scope_id,
+        base_agent_id=session.base_agent_id,
+        created_by=session.created_by,
+        created_at=session.created_at.isoformat(),
+        updated_at=session.updated_at.isoformat(),
+        source_session_id=session.source_session_id,
+        fork_context_summary=session.fork_context_summary,
+    )
+
+
+def chat_context_response_from_runtime(
+    chat_context: ChannelChatContext,
+) -> ChatContextResponse:
+    return ChatContextResponse(
+        scope_id=chat_context.scope_id,
+        channel_instance_id=chat_context.channel_instance_id,
+        chat_id=chat_context.chat_id,
+        chat_type=chat_context.chat_type,
+        user_open_id=chat_context.user_open_id,
+        base_agent_id=chat_context.base_agent_id,
+        current_session_id=chat_context.current_session_id,
+        created_at=chat_context.created_at.isoformat(),
+        updated_at=chat_context.updated_at.isoformat(),
+    )
+
+
+def session_summary_response_from_record(
+    summary: SessionSummaryRecord,
+) -> SessionSummaryResponse:
+    return SessionSummaryResponse(
+        session_id=summary.session_id,
+        agent_id=summary.agent_id,
+        last_user_input=summary.last_user_input,
+        last_response=summary.last_response,
+        run_count=summary.run_count,
+        step_count=summary.step_count,
+        metrics=summary.metrics,
+        created_at=summary.created_at.isoformat() if summary.created_at else None,
+        updated_at=summary.updated_at.isoformat() if summary.updated_at else None,
+        chat_context_scope_id=summary.chat_context_scope_id,
+        created_by=summary.created_by,
+        base_agent_id=summary.base_agent_id,
+        root_state_status=summary.root_state_status,
+        source_session_id=summary.source_session_id,
+        fork_context_summary=summary.fork_context_summary,
+    )
+
+
+def session_detail_response_from_record(
+    detail: SessionDetailRecord,
+) -> SessionDetailResponse:
+    return SessionDetailResponse(
+        summary=session_summary_response_from_record(detail.summary),
+        session=(
+            session_record_response_from_runtime(detail.session)
+            if detail.session is not None
+            else None
+        ),
+        chat_context=(
+            chat_context_response_from_runtime(detail.chat_context)
+            if detail.chat_context is not None
+            else None
+        ),
+        scheduler_state=(
+            agent_state_response_from_sdk(detail.scheduler_state)
+            if detail.scheduler_state is not None
+            else None
+        ),
+    )
+
+
 def _wake_condition_response_from_sdk(
     wake_condition: WakeCondition,
 ) -> WakeConditionResponse:
@@ -118,9 +206,14 @@ def _wake_condition_response_from_sdk(
     )
 
 
-def agent_state_response_from_sdk(state: AgentState) -> AgentStateResponse:
+def agent_state_response_from_sdk(
+    state: AgentState,
+    *,
+    root_state_id: str | None = None,
+) -> AgentStateResponse:
     return AgentStateResponse(
         id=state.id,
+        root_state_id=root_state_id or (state.id if state.parent_id is None else None),
         status=state.status.value
         if hasattr(state.status, "value")
         else str(state.status),
@@ -146,9 +239,14 @@ def agent_state_response_from_sdk(state: AgentState) -> AgentStateResponse:
     )
 
 
-def agent_state_list_item_from_sdk(state: AgentState) -> AgentStateListItem:
+def agent_state_list_item_from_sdk(
+    state: AgentState,
+    *,
+    root_state_id: str | None = None,
+) -> AgentStateListItem:
     return AgentStateListItem(
         id=state.id,
+        root_state_id=root_state_id or (state.id if state.parent_id is None else None),
         status=state.status.value
         if hasattr(state.status, "value")
         else str(state.status),
@@ -163,6 +261,53 @@ def agent_state_list_item_from_sdk(state: AgentState) -> AgentStateListItem:
         metrics=getattr(state, "metrics", None) or RunMetricsSummary(),
         created_at=state.created_at.isoformat() if state.created_at else None,
         updated_at=state.updated_at.isoformat() if state.updated_at else None,
+    )
+
+
+def scheduler_tree_response_from_record(
+    tree: SchedulerTreeRecord,
+) -> SchedulerTreeResponse:
+    return SchedulerTreeResponse(
+        root_state_id=tree.root_state_id,
+        root_session_id=tree.root_session_id,
+        nodes=[
+            SchedulerTreeNodeResponse(
+                state_id=node.state_id,
+                root_state_id=node.root_state_id,
+                parent_state_id=node.parent_state_id,
+                child_ids=node.child_ids,
+                session_id=node.session_id,
+                agent_id=node.agent_id,
+                task_id=node.task_id,
+                status=node.status,
+                depth=node.depth,
+                created_at=node.created_at.isoformat() if node.created_at else None,
+                updated_at=node.updated_at.isoformat() if node.updated_at else None,
+                completed_at=(
+                    node.completed_at.isoformat() if node.completed_at else None
+                ),
+                wake_condition=(
+                    _wake_condition_response_from_sdk(node.wake_condition)
+                    if node.wake_condition is not None
+                    else None
+                ),
+                pending_event_count=node.pending_event_count,
+                last_error=node.last_error,
+                result_summary=node.result_summary,
+            )
+            for node in tree.nodes
+        ],
+        stats=SchedulerTreeStatsResponse(
+            total=tree.stats.total,
+            running=tree.stats.running,
+            waiting=tree.stats.waiting,
+            queued=tree.stats.queued,
+            idle=tree.stats.idle,
+            completed=tree.stats.completed,
+            failed=tree.stats.failed,
+            cancelled=tree.stats.cancelled,
+        ),
+        generated_at=tree.generated_at.isoformat(),
     )
 
 

@@ -45,8 +45,6 @@ def _session(session_id: str) -> Session:
         id=session_id,
         chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
-        runtime_agent_id="runtime-1",
-        scheduler_state_id="state-1",
         created_by="TEST",
         created_at=now,
         updated_at=now,

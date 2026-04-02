@@ -3,10 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 import {
-  listAgentChatSessions,
+  listAgentSessions,
   createAgentSession,
-  switchAgentSession,
-  forkAgentSession,
+  forkSession,
 } from "@/lib/api";
 import type { ChatSessionItem } from "@/lib/api";
 import { SessionItem } from "./session-item";
@@ -14,7 +13,6 @@ import { ForkDialog } from "./fork-dialog";
 
 interface SessionPanelProps {
   agentId: string;
-  scopeId: string;
   currentSessionId: string | null;
   onSwitch: (sessionId: string) => void;
   onCreated: (sessionId: string) => void;
@@ -23,7 +21,6 @@ interface SessionPanelProps {
 
 export function SessionPanel({
   agentId,
-  scopeId,
   currentSessionId,
   onSwitch,
   onCreated,
@@ -39,8 +36,8 @@ export function SessionPanel({
     setLoading(true);
     setError(null);
     try {
-      const items = await listAgentChatSessions(agentId);
-      setSessions(items);
+      const result = await listAgentSessions(agentId);
+      setSessions(result.items);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load sessions");
     } finally {
@@ -57,7 +54,7 @@ export function SessionPanel({
     setActionLoading(true);
     setError(null);
     try {
-      const result = await createAgentSession(agentId, scopeId);
+      const result = await createAgentSession(agentId);
       onCreated(result.session_id);
       await refresh();
     } catch (err) {
@@ -69,17 +66,7 @@ export function SessionPanel({
 
   const handleSwitch = async (targetSessionId: string) => {
     if (actionLoading) return;
-    setActionLoading(true);
-    setError(null);
-    try {
-      await switchAgentSession(agentId, scopeId, targetSessionId);
-      onSwitch(targetSessionId);
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to switch session");
-    } finally {
-      setActionLoading(false);
-    }
+    onSwitch(targetSessionId);
   };
 
   const handleFork = async (contextSummary: string) => {
@@ -87,7 +74,7 @@ export function SessionPanel({
     setActionLoading(true);
     setError(null);
     try {
-      const result = await forkAgentSession(agentId, currentSessionId, contextSummary);
+      const result = await forkSession(currentSessionId, contextSummary);
       setShowForkDialog(false);
       onForked(result.session_id);
       await refresh();

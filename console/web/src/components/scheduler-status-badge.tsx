@@ -16,7 +16,7 @@ export function SchedulerStatusBadge({ status }: { status: string }) {
   const cls = STATUS_STYLES[status] || "bg-zinc-800 text-zinc-400";
 
   return (
-    <PillBadge className={`text-xs px-1.5 py-0.5 rounded ${cls}`}>
+    <PillBadge className={`text-xs px-1.5 py-0.5 rounded whitespace-normal ${cls}`}>
       {status}
     </PillBadge>
   );

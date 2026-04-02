@@ -1,17 +1,32 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { User, Bot, Wrench } from "lucide-react";
+import { Bot, User, Wrench, Workflow } from "lucide-react";
 import { BackHeader } from "@/components/back-header";
-import { getSessionSteps, getSessionSummary, listRuns } from "@/lib/api";
-import type { RunResponse, SessionSummary, StepResponse, ToolCallPayload } from "@/lib/api";
 import { MetricCard } from "@/components/metric-card";
+import { PaginationControls } from "@/components/pagination-controls";
 import { MonoText } from "@/components/mono-text";
-import { EmptyStateMessage, TextStateMessage } from "@/components/state-message";
+import {
+  EmptyStateMessage,
+  ErrorStateMessage,
+  TextStateMessage,
+} from "@/components/state-message";
 import { TokenSummaryCards } from "@/components/token-summary-cards";
 import { TokenMetricsBadges } from "@/components/token-metrics-badges";
 import { UserInputDetail } from "@/components/user-input-detail";
+import {
+  getSessionDetail,
+  getSessionSteps,
+  listRuns,
+} from "@/lib/api";
+import type {
+  RunResponse,
+  SessionDetail,
+  StepResponse,
+  ToolCallPayload,
+} from "@/lib/api";
 import {
   formatDurationMs,
   formatTokenCount,
@@ -41,8 +56,8 @@ function StepCard({ step }: { step: StepResponse }) {
         isUser
           ? "border-blue-800/50 bg-blue-950/20"
           : isTool
-          ? "border-amber-800/50 bg-amber-950/20"
-          : "border-zinc-800 bg-zinc-900"
+            ? "border-amber-800/50 bg-amber-950/20"
+            : "border-zinc-800 bg-zinc-900"
       }`}
     >
       <div className="flex items-center gap-2 mb-2">
@@ -52,6 +67,7 @@ function StepCard({ step }: { step: StepResponse }) {
         <span className="text-xs font-medium uppercase tracking-wide text-zinc-400">
           {step.role}
           {isTool && step.name && ` — ${step.name}`}
+          {step.agent_id && ` — ${step.agent_id}`}
         </span>
         <span className="text-xs text-zinc-600 ml-auto">#{step.sequence}</span>
       </div>
@@ -71,13 +87,11 @@ function StepCard({ step }: { step: StepResponse }) {
 
       {!hasStructuredUserInput && Boolean(content) && (
         <div className="max-h-96 overflow-auto">
-          {(
-            <div className="text-sm whitespace-pre-wrap break-words">
-              {typeof content === "string"
-                ? content
-                : JSON.stringify(content, null, 2)}
-            </div>
-          )}
+          <div className="text-sm whitespace-pre-wrap break-words">
+            {typeof content === "string"
+              ? content
+              : JSON.stringify(content, null, 2)}
+          </div>
         </div>
       )}
 
@@ -89,9 +103,7 @@ function StepCard({ step }: { step: StepResponse }) {
               className="text-xs bg-zinc-800/50 rounded px-3 py-2 font-mono overflow-auto max-h-48"
             >
               <span className="text-amber-400">{getToolLabel(tc)}</span>
-              <span className="text-zinc-500 ml-2">
-                {getToolArgs(tc)}
-              </span>
+              <span className="text-zinc-500 ml-2">{getToolArgs(tc)}</span>
             </div>
           ))}
         </div>
@@ -114,26 +126,71 @@ function StepCard({ step }: { step: StepResponse }) {
 export default function SessionDetailPage() {
   const params = useParams();
   const sessionId = params.id as string;
+  const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [steps, setSteps] = useState<StepResponse[]>([]);
   const [runs, setRuns] = useState<RunResponse[]>([]);
-  const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [runsOffset, setRunsOffset] = useState(0);
+  const [runsPageSize, setRunsPageSize] = useState(50);
+  const [runsHasMore, setRunsHasMore] = useState(false);
+  const [runsTotal, setRunsTotal] = useState<number | null>(null);
+  const [stepsHasMore, setStepsHasMore] = useState(false);
+  const [loadingMoreSteps, setLoadingMoreSteps] = useState(false);
 
   useEffect(() => {
+    setLoading(true);
+    setError(null);
     Promise.all([
-      getSessionSteps(sessionId).catch(() => []),
-      getSessionSummary(sessionId).catch(() => null),
-      listRuns({ session_id: sessionId, limit: 200 }).catch(() => []),
+      getSessionDetail(sessionId),
+      listRuns({ session_id: sessionId, limit: runsPageSize, offset: runsOffset }),
+      getSessionSteps(sessionId, { limit: 100, order: "desc" }),
     ])
-      .then(([sessionSteps, sessionSummary, sessionRuns]) => {
-        setSteps(sessionSteps);
-        setSummary(sessionSummary);
-        setRuns(sessionRuns);
+      .then(([nextDetail, sessionRuns, sessionSteps]) => {
+        setDetail(nextDetail);
+        setRuns(sessionRuns.items);
+        setRunsHasMore(sessionRuns.has_more);
+        setRunsTotal(sessionRuns.total);
+        setSteps([...sessionSteps.items].reverse());
+        setStepsHasMore(sessionSteps.has_more);
+      })
+      .catch((err) => {
+        setDetail(null);
+        setRuns([]);
+        setSteps([]);
+        setRunsHasMore(false);
+        setStepsHasMore(false);
+        setError(err instanceof Error ? err.message : "Failed to load session");
       })
       .finally(() => setLoading(false));
-  }, [sessionId]);
+  }, [runsOffset, runsPageSize, sessionId]);
 
-  const runTotals = normalizeRunMetricsSummary(summary?.metrics);
+  async function loadEarlierSteps() {
+    if (steps.length === 0 || loadingMoreSteps) {
+      return;
+    }
+    const oldestSequence = steps[0]?.sequence;
+    if (!oldestSequence || oldestSequence <= 1) {
+      setStepsHasMore(false);
+      return;
+    }
+    setLoadingMoreSteps(true);
+    try {
+      const nextPage = await getSessionSteps(sessionId, {
+        limit: 100,
+        order: "desc",
+        end_seq: oldestSequence - 1,
+      });
+      setSteps((current) => [...nextPage.items.reverse(), ...current]);
+      setStepsHasMore(nextPage.has_more);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load older steps");
+    } finally {
+      setLoadingMoreSteps(false);
+    }
+  }
+
+  const runTotals = normalizeRunMetricsSummary(detail?.summary.metrics);
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -145,8 +202,42 @@ export default function SessionDetailPage() {
 
       {loading ? (
         <TextStateMessage>Loading session metrics...</TextStateMessage>
+      ) : error ? (
+        <ErrorStateMessage>{error}</ErrorStateMessage>
+      ) : !detail ? (
+        <EmptyStateMessage>Session not found</EmptyStateMessage>
       ) : (
         <div className="space-y-6">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+            {detail.scheduler_state && (
+              <>
+                <Link
+                  href={`/scheduler/${detail.scheduler_state.id}`}
+                  className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 hover:border-zinc-700 hover:text-zinc-300"
+                >
+                  <Workflow className="w-3 h-3" />
+                  Scheduler State
+                </Link>
+                <Link
+                  href={`/scheduler/${
+                    detail.scheduler_state.root_state_id ??
+                    detail.scheduler_state.id
+                  }/tree`}
+                  className="inline-flex items-center gap-1 rounded border border-zinc-800 px-2 py-1 hover:border-zinc-700 hover:text-zinc-300"
+                >
+                  <Workflow className="w-3 h-3" />
+                  Scheduler Tree
+                </Link>
+              </>
+            )}
+            <Link
+              href={`/traces?session_id=${sessionId}`}
+              className="rounded border border-zinc-800 px-2 py-1 hover:border-zinc-700 hover:text-zinc-300"
+            >
+              Related Traces
+            </Link>
+          </div>
+
           <TokenSummaryCards
             cost={runTotals.token_cost}
             inputTokens={runTotals.input_tokens}
@@ -165,10 +256,25 @@ export default function SessionDetailPage() {
                 className="p-3"
                 labelClassName="text-[11px]"
                 valueClassName="text-sm font-medium"
-                value={`${summary?.run_count ?? 0} / ${runTotals.step_count} / ${runTotals.tool_calls_count}`}
+                value={`${detail.summary.run_count} / ${runTotals.step_count} / ${runTotals.tool_calls_count}`}
               />
             }
           />
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <MetricCard
+              label="Base Agent"
+              value={<MonoText>{detail.summary.base_agent_id || "-"}</MonoText>}
+            />
+            <MetricCard
+              label="Root State"
+              value={<MonoText>{detail.scheduler_state?.id || "-"}</MonoText>}
+            />
+            <MetricCard
+              label="Scheduler Status"
+              value={detail.summary.root_state_status || "Not started"}
+            />
+          </div>
 
           <div className="rounded-lg border border-zinc-800 overflow-x-auto">
             <table className="w-full text-sm">
@@ -186,9 +292,7 @@ export default function SessionDetailPage() {
               </thead>
               <tbody className="divide-y divide-zinc-800">
                 {runs.map((run) => {
-                  const metrics = parseGenericMetrics(
-                    run.metrics ?? undefined
-                  );
+                  const metrics = parseGenericMetrics(run.metrics ?? undefined);
                   return (
                     <tr key={run.id} className="hover:bg-zinc-900/50">
                       <td className="px-4 py-2.5 text-zinc-300">
@@ -224,12 +328,45 @@ export default function SessionDetailPage() {
             </table>
           </div>
 
+          <PaginationControls
+            offset={runsOffset}
+            pageSize={runsPageSize}
+            itemCount={runs.length}
+            totalCount={runsTotal}
+            hasMore={runsHasMore}
+            itemLabel="runs"
+            disabled={loading}
+            onPageSizeChange={(nextPageSize) => {
+              setRunsPageSize(nextPageSize);
+              setRunsOffset(0);
+            }}
+            onPrevious={() => {
+              setRunsOffset((current) => Math.max(0, current - runsPageSize));
+            }}
+            onNext={() => {
+              setRunsOffset((current) => current + runsPageSize);
+            }}
+          />
+
           {steps.length === 0 ? (
             <EmptyStateMessage className="text-zinc-500 text-center py-8">
               No steps found
             </EmptyStateMessage>
           ) : (
             <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-medium text-zinc-300">Steps</h2>
+                {stepsHasMore && (
+                  <button
+                    type="button"
+                    onClick={loadEarlierSteps}
+                    disabled={loadingMoreSteps}
+                    className="rounded-md border border-zinc-800 px-3 py-1.5 text-xs text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 disabled:opacity-40"
+                  >
+                    {loadingMoreSteps ? "Loading..." : "Load earlier"}
+                  </button>
+                )}
+              </div>
               {steps.map((step) => (
                 <StepCard key={step.id} step={step} />
               ))}

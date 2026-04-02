@@ -124,12 +124,18 @@
 
 - `console/server/models/view.py` 与 `console/server/response_serialization.py` 只属于 API/SSE 边界。
 - 共享的 Console 数据模型统一放 `console/server/models/`；不要再新增 `schemas.py`、`schema.py` 或平级 `domain/` 目录。
+- `console/server/models/session.py` 中的 `Session` 只表示完整会话线程元数据；它不再承载 runtime agent id、scheduler state id、task id 或消息计数。`Session.id` 直接作为 root persistent scheduler state id 使用。
+- `ChannelChatContext.current_session_id` 是 channel 专用的“当前会话指针”；web console 不使用 server-side current session 语义。
 - Console 自己持有 API/表单 DTO；不要再把 `Input/Patch` 请求模型塞回 SDK。
-- `console/server/channels/session/` 只保留批处理相关能力；渠道代码直接依赖 `server.models.session`，不要再引入 compatibility shim。
-- 渠道运行时由三个独立子服务组成：`SessionContextService`（session/chat-context 生命周期）、`AgentRuntimeCache`（runtime agent 缓存与 config 指纹刷新）、`SessionRuntimeService`（scheduler 交互与状态路由）。Channel service 直接持有这三者，不再经过 facade。
-- `SessionRuntimeService.execute()` 只委托 `scheduler.route_root_input(...)` 做 root 输入路由，不再在 Console 自己编码 scheduler 状态机。timeout 为可选参数，默认不设硬超时。
+- `console/server/channels/batch_manager.py` 只承载渠道批处理/防抖能力；`ChannelBatchManager` 负责按 channel context 聚合消息，不承担 Session CRUD 语义。渠道代码直接依赖 `server.models.session`，不要再引入 compatibility shim。
+- 渠道运行时由三个独立子服务组成：`SessionContextService`（channel session/chat-context 生命周期）、`AgentRuntimeCache`（按 `session.id` 缓存 runtime agent，并在 config 指纹变化时刷新）、`SessionRuntimeService`（scheduler 交互与状态路由）。Channel service 直接持有这三者，不再经过 facade。
+- Console web 与 Feishu channel 的会话输入统一走 `scheduler.route_root_input(...)`；web console 已不再保留独立 `Chat` 执行语义。
+- `SessionRuntimeService.execute()` 只委托 `scheduler.route_root_input(...)` 做 root 输入路由，且固定使用 `state_id=session.id`、`session_id=session.id`、`persistent=True`；Console 不再自己编码 scheduler 状态机。timeout 为可选参数，默认不设硬超时。
+- `SessionRuntimeService.execute()` 统一承载 session 输入路由；当 Console/Web 需要同一 root session 在 `sleep -> wake -> rerun` 后继续沿用当前 HTTP stream 时，通过 `scheduler.route_root_input(..., stream_mode="until_settled")` 实现，不再额外扩展 follow-only API。
+- web console 只使用显式 `session_id`：不会调用 server-side `switch_session`，也不会隐式恢复“当前 session”。channel 才有 `/switch` / `current_session_id` 语义。
 - Channel 消息管线是线性流程：consume stream → deliver output → fallback。SDK `route_root_input` 在 steered+WAITING/QUEUED 时已返回 stream，channel 层不需要 deferred reply 补丁。steered+RUNNING 时无 stream，channel 只发 ack（原 stream subscriber 仍在消费）。
 - Feishu store 实现收口到 `console/server/channels/feishu/store/` 包：`__init__.py`（protocol + factory）、`memory.py`（内存实现）、`sqlite.py`（SQLite 实现）。
+- Feishu/Session SQLite 元数据存储是破坏性 schema 演进：不写 migration、不自动补列。字段变化时直接 fast-fail，并要求清理旧 session 元数据。
 - Feishu 模块约定：`message_parser.py` 只保留 envelope 类型与解析 facade；sender 解析、attachment 解析、delivery、连接管理放在各自具名模块。
 - Console 工具的展示、解析、组装都必须经过 `ConsoleToolCatalog`。
 - **`build_agent` 必须传入稳定 `id`**：`services/runtime/agent_factory.py` 中的 `build_agent()` 构造 Agent 时必须使用 `id=id or config.id`，确保同一个 agent config 在不同请求中拿到相同的 `agent_id`。若遗漏此 fallback，每次 HTTP 请求都会产生随机 agent id，导致 `run_step_storage.get_steps(session_id, agent_id)` 查不到历史步骤，对话上下文无法延续。`repo_guard.py` 中有对应的 `AGW043` 检查。
@@ -196,6 +202,11 @@ uv run pytest tests/ -v
 
 # Console 后端测试
 (cd console && uv run pytest tests/ -v)
+
+# Console 前端测试 / lint / build
+(cd console/web && npm test)
+(cd console/web && npm run lint)
+(cd console/web && npm run build)
 ```
 
 类型检查不是当前仓库默认门槛；只有分支实际接入某个 checker 时，才运行对应工具。

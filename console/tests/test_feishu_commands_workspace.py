@@ -36,13 +36,9 @@ def _session(session_id: str = "sess-1") -> Session:
         id=session_id,
         chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
-        runtime_agent_id="runtime-1",
-        scheduler_state_id="state-1",
         created_by="AUTO",
         created_at=now,
         updated_at=now,
-        current_task_id="task-1",
-        task_message_count=2,
     )
 
 
@@ -142,7 +138,7 @@ async def test_fork_command_requires_active_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_command_shows_task_and_fork_info() -> None:
+async def test_list_command_shows_session_and_fork_info() -> None:
     session = _session()
     session.source_session_id = "sess-0"
     service = SimpleNamespace(

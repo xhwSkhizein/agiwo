@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 
 import { AgentForm } from "@/components/agent-form";
 import { BackHeader } from "@/components/back-header";
-import { FullPageMessage } from "@/components/state-message";
+import { ErrorStateMessage, FullPageMessage } from "@/components/state-message";
 import { AgentConfig, AgentConfigCreate, getAgent, updateAgent } from "@/lib/api";
 
 export default function EditAgentPage() {
@@ -20,8 +20,14 @@ export default function EditAgentPage() {
 
   useEffect(() => {
     getAgent(agentId)
-      .then(setAgent)
-      .catch(() => setError("Agent not found"))
+      .then((value) => {
+        setAgent(value);
+        setError(null);
+      })
+      .catch((err) => {
+        setAgent(null);
+        setError(err instanceof Error ? err.message : "Agent not found");
+      })
       .finally(() => setLoading(false));
   }, [agentId]);
 
@@ -57,6 +63,8 @@ export default function EditAgentPage() {
         title="Edit Agent"
         subtitle={null}
       />
+
+      {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
 
       <AgentForm
         initialAgent={agent}
