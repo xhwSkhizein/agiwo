@@ -1,36 +1,67 @@
 """Sessions and Runs API router."""
 
-from fastapi import APIRouter, HTTPException, Query
+from collections.abc import AsyncIterator
+import json
 
-from server.dependencies import ConsoleRuntimeDep
-from server.response_serialization import run_response_from_sdk, step_response_from_sdk
-from server.models.view import RunResponse, StepResponse
-from server.services.metrics import (
-    SessionSummaryData,
-    collect_session_aggregates,
-    session_aggregate_to_summary_data,
+from fastapi import APIRouter, HTTPException, Query
+from sse_starlette.sse import EventSourceResponse
+
+from server.dependencies import (
+    ConsoleRuntimeDep,
+    get_session_context_service,
+    get_session_view_service,
+)
+from server.response_serialization import (
+    run_response_from_sdk,
+    session_detail_response_from_record,
+    session_summary_response_from_record,
+    step_response_from_sdk,
+    stream_event_to_sse_message,
+)
+from server.models.view import (
+    CancelRequest,
+    ChatRequest,
+    ForkSessionRequest,
+    PageResponse,
+    RunResponse,
+    SessionDetailResponse,
+    SessionSummaryResponse,
+    StepResponse,
+)
+from server.services.runtime import (
+    SessionRuntimeService,
+    build_agent,
 )
 
 router = APIRouter(prefix="/api", tags=["sessions"])
+_STEPS_MAX_LIMIT = 5000
 
 
-@router.get("/runs", response_model=list[RunResponse])
+@router.get("/runs", response_model=PageResponse[RunResponse])
 async def list_runs(
     runtime: ConsoleRuntimeDep,
     user_id: str | None = None,
     session_id: str | None = None,
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-) -> list[RunResponse]:
+) -> PageResponse[RunResponse]:
     """List all runs with optional filtering."""
     storage = runtime.run_step_storage
     runs = await storage.list_runs(
         user_id=user_id,
         session_id=session_id,
-        limit=limit,
+        limit=limit + 1,
         offset=offset,
     )
-    return [run_response_from_sdk(r) for r in runs]
+    has_more = len(runs) > limit
+    page = runs[:limit]
+    return PageResponse(
+        items=[run_response_from_sdk(r) for r in page],
+        limit=limit,
+        offset=offset,
+        has_more=has_more,
+        total=None,
+    )
 
 
 @router.get("/runs/{run_id}", response_model=RunResponse)
@@ -43,48 +74,200 @@ async def get_run(run_id: str, runtime: ConsoleRuntimeDep) -> RunResponse:
     return run_response_from_sdk(run)
 
 
-@router.get("/sessions", response_model=list[SessionSummaryData])
+@router.get("/sessions", response_model=PageResponse[SessionSummaryResponse])
 async def list_sessions(
     runtime: ConsoleRuntimeDep,
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-) -> list[SessionSummaryData]:
+) -> PageResponse[SessionSummaryResponse]:
     """List sessions by aggregating runs.
 
     .. note:: Pagination is applied in-memory after fetching all aggregates.
        See ``collect_session_aggregates`` for performance considerations.
     """
-    storage = runtime.run_step_storage
-    sessions = await collect_session_aggregates(storage)
-    page = sessions[offset : offset + limit]
-    return [session_aggregate_to_summary_data(session) for session in page]
+    page = await get_session_view_service(runtime).list_sessions(
+        limit=limit, offset=offset
+    )
+    return PageResponse(
+        items=[session_summary_response_from_record(item) for item in page.items],
+        limit=page.limit,
+        offset=page.offset,
+        has_more=page.has_more,
+        total=page.total,
+    )
 
 
-@router.get("/sessions/{session_id}/summary", response_model=SessionSummaryData)
+@router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
+async def get_session_detail(
+    session_id: str,
+    runtime: ConsoleRuntimeDep,
+) -> SessionDetailResponse:
+    detail = await get_session_view_service(runtime).get_session_detail(session_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session_detail_response_from_record(detail)
+
+
+@router.post("/sessions/{session_id}/input")
+async def send_session_input(
+    session_id: str,
+    body: ChatRequest,
+    runtime: ConsoleRuntimeDep,
+) -> EventSourceResponse:
+    if runtime.session_store is None:
+        raise RuntimeError("Session store not available")
+    session = await runtime.session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    agent_config = await runtime.agent_registry.get_agent(session.base_agent_id)
+    if agent_config is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    try:
+        agent = await build_agent(
+            agent_config,
+            runtime.config,
+            runtime.agent_registry,
+            id=session.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if runtime.scheduler is None:
+        raise RuntimeError("Scheduler not initialized")
+
+    runtime_service = SessionRuntimeService(
+        scheduler=runtime.scheduler,
+        session_store=runtime.session_store,
+        timeout=600,
+    )
+    dispatch = await runtime_service.execute(
+        agent,
+        session,
+        body.message,
+        stream_mode="until_settled",
+    )
+
+    async def event_generator() -> AsyncIterator[dict[str, str]]:
+        try:
+            if dispatch.stream is not None:
+                async for item in dispatch.stream:
+                    yield stream_event_to_sse_message(item)
+                return
+
+            state = await runtime_service.get_state(session.id)
+            if state is not None and state.result_summary:
+                yield {
+                    "event": "scheduler_ack",
+                    "data": json.dumps(
+                        {
+                            "type": "scheduler_ack",
+                            "session_id": session.id,
+                            "state_id": session.id,
+                            "result_summary": state.result_summary,
+                        },
+                        default=str,
+                    ),
+                }
+                return
+            yield {
+                "event": "scheduler_ack",
+                "data": json.dumps(
+                    {
+                        "type": "scheduler_ack",
+                        "session_id": session.id,
+                        "state_id": session.id,
+                        "message": "消息已收到，正在继续处理。",
+                    },
+                    default=str,
+                ),
+            }
+        finally:
+            await agent.close()
+
+    return EventSourceResponse(event_generator())
+
+
+@router.get("/sessions/{session_id}/summary", response_model=SessionSummaryResponse)
 async def get_session_summary(
     session_id: str,
     runtime: ConsoleRuntimeDep,
-) -> SessionSummaryData:
+) -> SessionSummaryResponse:
     """Get full aggregated metrics for one session."""
-    storage = runtime.run_step_storage
-    sessions = await collect_session_aggregates(storage, session_id=session_id)
-    if not sessions:
+    detail = await get_session_view_service(runtime).get_session_detail(session_id)
+    if detail is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session_aggregate_to_summary_data(sessions[0])
+    return session_summary_response_from_record(detail.summary)
 
 
-@router.get("/sessions/{session_id}/steps", response_model=list[StepResponse])
+@router.post("/sessions/{session_id}/cancel")
+async def cancel_session(
+    session_id: str,
+    body: CancelRequest,
+    runtime: ConsoleRuntimeDep,
+):
+    if runtime.scheduler is None:
+        raise RuntimeError("Scheduler not initialized")
+    success = await runtime.scheduler.cancel(session_id, body.reason)
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No active orchestration found for session_id={session_id}",
+        )
+    return {"ok": True, "session_id": session_id, "state_id": session_id}
+
+
+@router.post("/sessions/{session_id}/fork")
+async def fork_session(
+    session_id: str,
+    body: ForkSessionRequest,
+    runtime: ConsoleRuntimeDep,
+):
+    result = await get_session_context_service(runtime).fork_session_by_id(
+        session_id=session_id,
+        context_summary=body.context_summary,
+        created_by="CONSOLE_FORK",
+        update_chat_context=False,
+    )
+    return {
+        "session_id": result.session.id,
+        "source_session_id": result.session.source_session_id,
+    }
+
+
+@router.get("/sessions/{session_id}/steps", response_model=PageResponse[StepResponse])
 async def get_session_steps(
     session_id: str,
     runtime: ConsoleRuntimeDep,
+    start_seq: int | None = Query(default=None, ge=1),
+    end_seq: int | None = Query(default=None, ge=1),
+    run_id: str | None = None,
     agent_id: str | None = None,
-    limit: int = Query(default=1000, ge=1, le=5000),
-) -> list[StepResponse]:
+    limit: int = Query(default=1000, ge=1, le=_STEPS_MAX_LIMIT),
+    order: str = Query(default="asc", pattern="^(asc|desc)$"),
+) -> PageResponse[StepResponse]:
     """Get all steps for a session."""
     storage = runtime.run_step_storage
-    steps = await storage.get_steps(
+    raw_steps = await storage.get_steps(
         session_id=session_id,
+        start_seq=start_seq,
+        end_seq=end_seq,
+        run_id=run_id,
         agent_id=agent_id,
-        limit=limit,
+        limit=_STEPS_MAX_LIMIT + 1 if order == "desc" else limit + 1,
     )
-    return [step_response_from_sdk(s) for s in steps]
+    if order == "desc":
+        raw_steps = list(reversed(raw_steps))
+    has_more = len(raw_steps) > limit
+    page = raw_steps[:limit]
+    total = None
+    if start_seq is None and end_seq is None and run_id is None and agent_id is None:
+        total = await storage.get_step_count(session_id)
+    return PageResponse(
+        items=[step_response_from_sdk(s) for s in page],
+        limit=limit,
+        offset=0,
+        has_more=has_more,
+        total=total,
+    )

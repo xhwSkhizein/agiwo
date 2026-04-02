@@ -1,29 +1,25 @@
-"""
-Integration tests for the Chat cancel API endpoint.
-
-Tests the /api/chat/{agent_id}/cancel route using httpx TestClient.
-"""
+"""Integration tests for session-scoped cancellation."""
 
 import pytest
-
 from httpx import ASGITransport, AsyncClient
 
+from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     AgentStateStorageConfig,
     SchedulerConfig,
 )
-from agiwo.scheduler.engine import Scheduler
 
 from server.app import create_app
+from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
+from server.config import ConsoleConfig
 from server.dependencies import (
     ConsoleRuntime,
     bind_console_runtime,
     clear_console_runtime,
     get_console_runtime_from_app,
 )
-from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
 from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
@@ -34,7 +30,6 @@ def _runtime(client: AsyncClient) -> ConsoleRuntime:
 
 @pytest.fixture
 async def client():
-    """Create test client with mocked in-memory storage and Scheduler."""
     app = create_app()
 
     config = ConsoleConfig(
@@ -44,15 +39,17 @@ async def client():
     )
     run_step_storage = create_run_step_storage(config)
     trace_storage = create_trace_storage(config)
-
     registry = AgentRegistry(config)
     await registry.initialize()
-
-    scheduler_config = SchedulerConfig(
-        state_storage=AgentStateStorageConfig(storage_type="memory"),
+    scheduler = Scheduler(
+        SchedulerConfig(
+            state_storage=AgentStateStorageConfig(storage_type="memory"),
+        )
     )
-    scheduler = Scheduler(scheduler_config)
     await scheduler.start()
+    session_store = InMemoryFeishuChannelStore()
+    await session_store.connect()
+
     bind_console_runtime(
         app,
         ConsoleRuntime(
@@ -61,6 +58,7 @@ async def client():
             trace_storage=trace_storage,
             agent_registry=registry,
             scheduler=scheduler,
+            session_store=session_store,
         ),
     )
 
@@ -74,126 +72,107 @@ async def client():
     await run_step_storage.close()
 
 
-class TestSchedulerChatCancel:
+class TestSessionCancel:
     @pytest.mark.asyncio
-    async def test_cancel_nonexistent(self, client):
-        """Cancel returns 404 when state_id doesn't exist."""
+    async def test_cancel_nonexistent_session_state(self, client) -> None:
         resp = await client.post(
-            "/api/chat/some-agent/cancel",
-            json={"state_id": "nonexistent-state"},
+            "/api/sessions/nonexistent-session/cancel",
+            json={"reason": "operator stop"},
         )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_cancel_completed_state(self, client):
-        """Cancel returns 404 when state is already completed."""
+    async def test_cancel_completed_state_returns_404(self, client) -> None:
         scheduler = _runtime(client).scheduler
         assert scheduler is not None
-        state = AgentState(
-            id="completed-state",
-            session_id="sess-1",
-            status=AgentStateStatus.COMPLETED,
-            task="Done task",
-            result_summary="All done.",
+        await scheduler._store.save_state(
+            AgentState(
+                id="session-1",
+                session_id="session-1",
+                status=AgentStateStatus.COMPLETED,
+                task="Done task",
+                result_summary="All done.",
+            )
         )
-        await scheduler._store.save_state(state)
 
         resp = await client.post(
-            "/api/chat/some-agent/cancel",
-            json={"state_id": "completed-state"},
+            "/api/sessions/session-1/cancel",
+            json={"reason": "operator stop"},
         )
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_cancel_running_state(self, client):
-        """Cancel succeeds for a running state."""
+    async def test_cancel_running_root_state_by_session_id(self, client) -> None:
         scheduler = _runtime(client).scheduler
         assert scheduler is not None
-        state = AgentState(
-            id="running-state",
-            session_id="sess-2",
-            status=AgentStateStatus.RUNNING,
-            task="Long task",
+        await scheduler._store.save_state(
+            AgentState(
+                id="session-2",
+                session_id="session-2",
+                status=AgentStateStatus.RUNNING,
+                task="Long task",
+            )
         )
-        await scheduler._store.save_state(state)
 
         resp = await client.post(
-            "/api/chat/some-agent/cancel",
-            json={"state_id": "running-state"},
+            "/api/sessions/session-2/cancel",
+            json={"reason": "operator stop"},
         )
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
-        assert data["state_id"] == "running-state"
+        assert data["session_id"] == "session-2"
+        assert data["state_id"] == "session-2"
 
-        updated = await scheduler.get_state("running-state")
+        updated = await scheduler.get_state("session-2")
         assert updated is not None
         assert updated.status == AgentStateStatus.FAILED
 
     @pytest.mark.asyncio
-    async def test_cancel_waiting_state(self, client):
-        """Cancel succeeds for a waiting state."""
-        scheduler = _runtime(client).scheduler
-        assert scheduler is not None
-        state = AgentState(
-            id="sleeping-state",
-            session_id="sess-3",
-            status=AgentStateStatus.WAITING,
-            task="Waiting task",
-        )
-        await scheduler._store.save_state(state)
-
-        resp = await client.post(
-            "/api/chat/some-agent/cancel",
-            json={"state_id": "sleeping-state"},
-        )
-        assert resp.status_code == 200
-        assert resp.json()["ok"] is True
-
-    @pytest.mark.asyncio
-    async def test_cancel_cascades_to_children(self, client):
-        """Cancel cascades to active child states."""
+    async def test_cancel_cascades_to_children(self, client) -> None:
         scheduler = _runtime(client).scheduler
         assert scheduler is not None
 
-        parent = AgentState(
-            id="parent-cancel",
-            session_id="sess-4",
-            status=AgentStateStatus.WAITING,
-            task="Parent task",
-        )
-        child1 = AgentState(
-            id="child-cancel-1",
-            session_id="sess-4",
-            status=AgentStateStatus.RUNNING,
-            task="Child 1",
-            parent_id="parent-cancel",
-        )
-        child2 = AgentState(
-            id="child-cancel-2",
-            session_id="sess-4",
-            status=AgentStateStatus.COMPLETED,
-            task="Child 2",
-            parent_id="parent-cancel",
-            result_summary="Done",
-        )
-        for s in [parent, child1, child2]:
-            await scheduler._store.save_state(s)
+        states = [
+            AgentState(
+                id="session-3",
+                session_id="session-3",
+                status=AgentStateStatus.WAITING,
+                task="Parent task",
+            ),
+            AgentState(
+                id="child-cancel-1",
+                session_id="session-3",
+                status=AgentStateStatus.RUNNING,
+                task="Child 1",
+                parent_id="session-3",
+            ),
+            AgentState(
+                id="child-cancel-2",
+                session_id="session-3",
+                status=AgentStateStatus.COMPLETED,
+                task="Child 2",
+                parent_id="session-3",
+                result_summary="Done",
+            ),
+        ]
+        for state in states:
+            await scheduler._store.save_state(state)
 
         resp = await client.post(
-            "/api/chat/some-agent/cancel",
-            json={"state_id": "parent-cancel"},
+            "/api/sessions/session-3/cancel",
+            json={"reason": "operator stop"},
         )
         assert resp.status_code == 200
 
-        parent_state = await scheduler.get_state("parent-cancel")
+        parent_state = await scheduler.get_state("session-3")
         assert parent_state is not None
         assert parent_state.status == AgentStateStatus.FAILED
 
-        child1_state = await scheduler.get_state("child-cancel-1")
-        assert child1_state is not None
-        assert child1_state.status == AgentStateStatus.FAILED
+        child1 = await scheduler.get_state("child-cancel-1")
+        assert child1 is not None
+        assert child1.status == AgentStateStatus.FAILED
 
-        child2_state = await scheduler.get_state("child-cancel-2")
-        assert child2_state is not None
-        assert child2_state.status == AgentStateStatus.COMPLETED
+        child2 = await scheduler.get_state("child-cancel-2")
+        assert child2 is not None
+        assert child2.status == AgentStateStatus.COMPLETED

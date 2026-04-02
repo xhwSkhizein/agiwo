@@ -40,8 +40,6 @@ def _make_session(
         id=session_id,
         chat_context_scope_id=chat_context_scope_id,
         base_agent_id="base-agent",
-        runtime_agent_id=f"runtime-{session_id}",
-        scheduler_state_id=f"state-{session_id}",
         created_by="AUTO",
         created_at=created_at or (updated_at - timedelta(minutes=1)),
         updated_at=updated_at,
@@ -133,8 +131,6 @@ async def test_feishu_channel_store_applies_session_mutation_atomically(
             id=session_id,
             chat_context_scope_id="scope-atomic",
             base_agent_id="base-agent",
-            runtime_agent_id="",
-            scheduler_state_id="",
             created_by="AUTO",
             created_at=now,
             updated_at=now,
@@ -199,10 +195,12 @@ async def test_feishu_channel_store_keeps_indexes_in_sync_on_upsert(
         new_context_sessions = await store.list_sessions_by_chat_context(
             other_context.scope_id
         )
+        base_agent_sessions = await store.list_sessions_by_base_agent("base-agent")
 
         assert moved_session == session_v2
         assert old_context_sessions == []
         assert [session.id for session in new_context_sessions] == ["sess-1"]
+        assert [session.id for session in base_agent_sessions] == ["sess-1"]
     finally:
         await store.close()
 
@@ -303,7 +301,7 @@ async def test_sqlite_feishu_channel_store_preserves_created_at_on_upsert(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["memory", "sqlite"])
-async def test_feishu_channel_store_round_trips_task_and_fork_fields(
+async def test_feishu_channel_store_round_trips_fork_fields(
     kind: str,
     tmp_path,
 ) -> None:
@@ -319,15 +317,10 @@ async def test_feishu_channel_store_round_trips_task_and_fork_fields(
             id="sess-1",
             chat_context_scope_id="scope-1",
             base_agent_id="base-agent",
-            runtime_agent_id="runtime-1",
-            scheduler_state_id="state-1",
             created_by="AUTO",
             created_at=now,
             updated_at=now,
-            current_task_id="task-42",
-            task_message_count=3,
             source_session_id="sess-0",
-            source_task_id="task-0",
             fork_context_summary="forked for subtask",
         )
 
@@ -336,15 +329,11 @@ async def test_feishu_channel_store_round_trips_task_and_fork_fields(
 
         loaded = await store.get_session("sess-1")
         assert loaded is not None
-        assert loaded.current_task_id == "task-42"
-        assert loaded.task_message_count == 3
         assert loaded.source_session_id == "sess-0"
-        assert loaded.source_task_id == "task-0"
         assert loaded.fork_context_summary == "forked for subtask"
 
         with_context = await store.get_session_with_context("sess-1")
         assert with_context is not None
-        assert with_context.session.current_task_id == "task-42"
         assert with_context.session.source_session_id == "sess-0"
     finally:
         await store.close()

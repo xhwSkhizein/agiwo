@@ -1,7 +1,7 @@
 """Console API view models."""
 
 import json
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -14,6 +14,8 @@ from server.models.agent_config import (
 )
 from server.models.metrics import RunMetricsSummary
 from server.services.tool_catalog.tool_references import parse_tool_references
+
+T = TypeVar("T")
 
 
 def extract_content_parts(value: object) -> object:
@@ -57,6 +59,7 @@ class AgentConfigResponse(BaseModel):
     id: str
     name: str
     description: str = ""
+    is_default: bool = False
     model_provider: str
     model_name: str
     system_prompt: str = ""
@@ -67,20 +70,21 @@ class AgentConfigResponse(BaseModel):
     updated_at: str
 
 
+class PageResponse(BaseModel, Generic[T]):
+    items: list[T] = Field(default_factory=list)
+    limit: int
+    offset: int
+    has_more: bool
+    total: int | None = None
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
 
 
 class CreateSessionRequest(BaseModel):
-    chat_context_scope_id: str
-    channel_instance_id: str = "console-web"
-    user_open_id: str = "console-user"
-
-
-class SwitchSessionRequest(BaseModel):
-    chat_context_scope_id: str
-    target_session_id: str
+    pass
 
 
 class ForkSessionRequest(BaseModel):
@@ -151,6 +155,7 @@ class WakeConditionResponse(BaseModel):
 
 class AgentStateBase(BaseModel):
     id: str
+    root_state_id: str | None = None
     status: str
     task: UserInput
     parent_id: str | None = None
@@ -197,6 +202,44 @@ class SchedulerStatsResponse(BaseModel):
     failed: int
 
 
+class SchedulerTreeStatsResponse(BaseModel):
+    total: int
+    running: int
+    waiting: int
+    queued: int
+    idle: int
+    completed: int
+    failed: int
+    cancelled: int
+
+
+class SchedulerTreeNodeResponse(BaseModel):
+    state_id: str
+    root_state_id: str
+    parent_state_id: str | None = None
+    child_ids: list[str] = Field(default_factory=list)
+    session_id: str | None = None
+    agent_id: str
+    task_id: str | None = None
+    status: str
+    depth: int = 0
+    created_at: str | None = None
+    updated_at: str | None = None
+    completed_at: str | None = None
+    wake_condition: WakeConditionResponse | None = None
+    pending_event_count: int = 0
+    last_error: str | None = None
+    result_summary: str | None = None
+
+
+class SchedulerTreeResponse(BaseModel):
+    root_state_id: str
+    root_session_id: str | None = None
+    nodes: list[SchedulerTreeNodeResponse] = Field(default_factory=list)
+    stats: SchedulerTreeStatsResponse
+    generated_at: str
+
+
 class DashboardOverviewResponse(BaseModel):
     total_sessions: int
     total_traces: int
@@ -214,6 +257,59 @@ class DashboardOverviewResponse(BaseModel):
             failed=0,
         )
     )
+
+
+class SessionSummaryResponse(BaseModel):
+    session_id: str
+    agent_id: str | None = None
+    last_user_input: UserInput | None = None
+    last_response: str | None = None
+    run_count: int = 0
+    step_count: int = 0
+    metrics: RunMetricsSummary = Field(default_factory=RunMetricsSummary)
+    created_at: str | None = None
+    updated_at: str | None = None
+    chat_context_scope_id: str | None = None
+    created_by: str | None = None
+    base_agent_id: str | None = None
+    root_state_status: str | None = None
+    source_session_id: str | None = None
+    fork_context_summary: str | None = None
+
+    @field_validator("last_user_input", mode="before")
+    @classmethod
+    def _extract_last_user_input(cls, value: object) -> object:
+        return extract_content_parts(value)
+
+
+class SessionRecordResponse(BaseModel):
+    id: str
+    chat_context_scope_id: str | None = None
+    base_agent_id: str
+    created_by: str
+    created_at: str
+    updated_at: str
+    source_session_id: str | None = None
+    fork_context_summary: str | None = None
+
+
+class ChatContextResponse(BaseModel):
+    scope_id: str
+    channel_instance_id: str
+    chat_id: str
+    chat_type: str
+    user_open_id: str
+    base_agent_id: str
+    current_session_id: str
+    created_at: str
+    updated_at: str
+
+
+class SessionDetailResponse(BaseModel):
+    summary: SessionSummaryResponse
+    session: SessionRecordResponse | None = None
+    chat_context: ChatContextResponse | None = None
+    scheduler_state: AgentStateResponse | None = None
 
 
 class StepResponse(BaseModel):
@@ -303,12 +399,27 @@ class TraceListItem(TraceBase):
     model_config = {"extra": "ignore"}
 
 
+class AgentProviderCapabilityResponse(BaseModel):
+    value: str
+    label: str
+    default_model_name: str | None = None
+    requires_base_url: bool = False
+    requires_api_key_env_name: bool = False
+
+
+class AgentCapabilitiesResponse(BaseModel):
+    providers: list[AgentProviderCapabilityResponse] = Field(default_factory=list)
+
+
 __all__ = [
+    "AgentCapabilitiesResponse",
     "AgentConfigPayload",
     "AgentConfigResponse",
+    "AgentProviderCapabilityResponse",
     "AgentStateBase",
     "AgentStateListItem",
     "AgentStateResponse",
+    "ChatContextResponse",
     "CancelRequest",
     "ChatRequest",
     "CreateAgentRequest",
@@ -316,16 +427,22 @@ __all__ = [
     "CreateSessionRequest",
     "extract_content_parts",
     "ForkSessionRequest",
+    "PageResponse",
     "PendingEventResponse",
     "RunMetricsResponse",
     "RunResponse",
     "SchedulerChatCancelRequest",
     "SchedulerStatsResponse",
+    "SchedulerTreeNodeResponse",
+    "SchedulerTreeResponse",
+    "SchedulerTreeStatsResponse",
+    "SessionDetailResponse",
+    "SessionRecordResponse",
+    "SessionSummaryResponse",
     "SpanResponse",
     "StepMetricsResponse",
     "StepResponse",
     "SteerRequest",
-    "SwitchSessionRequest",
     "TraceListItem",
     "TraceResponse",
     "WakeConditionResponse",

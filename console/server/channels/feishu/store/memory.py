@@ -49,6 +49,8 @@ class InMemoryFeishuChannelStore:
         session = self._session_map.get(session_id)
         if session is None:
             return None
+        if session.chat_context_scope_id is None:
+            return None
         chat_context = self._chat_context_map.get(session.chat_context_scope_id)
         if chat_context is None:
             return None
@@ -58,7 +60,8 @@ class InMemoryFeishuChannelStore:
         previous = self._session_map.get(session.id)
         if (
             previous is not None
-            and previous.chat_context_scope_id != session.chat_context_scope_id
+            and previous.chat_context_scope_id is not None
+            and (session.chat_context_scope_id != previous.chat_context_scope_id)
         ):
             previous_ids = self._session_ids_by_context.get(
                 previous.chat_context_scope_id
@@ -66,16 +69,19 @@ class InMemoryFeishuChannelStore:
             if previous_ids is not None:
                 previous_ids.discard(session.id)
         self._session_map[session.id] = session
-        ids = self._session_ids_by_context.setdefault(
-            session.chat_context_scope_id, set()
-        )
-        ids.add(session.id)
+        if session.chat_context_scope_id is not None:
+            ids = self._session_ids_by_context.setdefault(
+                session.chat_context_scope_id, set()
+            )
+            ids.add(session.id)
 
     async def list_sessions_by_user(
         self, user_open_id: str
     ) -> list[SessionWithContext]:
         items: list[SessionWithContext] = []
         for session in self._session_map.values():
+            if session.chat_context_scope_id is None:
+                continue
             chat_context = self._chat_context_map.get(session.chat_context_scope_id)
             if chat_context is None or chat_context.user_open_id != user_open_id:
                 continue
@@ -92,6 +98,20 @@ class InMemoryFeishuChannelStore:
             for session_id in session_ids
             if session_id in self._session_map
         ]
+        sessions.sort(key=lambda session: session.updated_at, reverse=True)
+        return sessions
+
+    async def list_sessions_by_base_agent(self, base_agent_id: str) -> list[Session]:
+        sessions = [
+            session
+            for session in self._session_map.values()
+            if session.base_agent_id == base_agent_id
+        ]
+        sessions.sort(key=lambda session: session.updated_at, reverse=True)
+        return sessions
+
+    async def list_sessions(self) -> list[Session]:
+        sessions = list(self._session_map.values())
         sessions.sort(key=lambda session: session.updated_at, reverse=True)
         return sessions
 

@@ -35,7 +35,7 @@ from server.channels.feishu.commands import build_feishu_command_registry
 from server.channels.feishu.factory import FeishuServiceFactory
 from server.channels.feishu.inbound_handler import FeishuInboundHandler
 from server.channels.feishu.message_parser import FeishuInboundEnvelope
-from server.channels.session import SessionManager
+from server.channels.batch_manager import ChannelBatchManager
 from server.config import ConsoleConfig
 from server.models.session import (
     BatchContext,
@@ -80,7 +80,7 @@ class FeishuChannelService:
         self._agent_pool = components.agent_pool
         self._executor = components.executor
         feishu = config.channels.feishu
-        self._session_mgr = SessionManager(
+        self._session_mgr = ChannelBatchManager(
             on_batch_ready=self._on_batch_ready,
             debounce_ms=feishu.debounce_ms,
             max_batch_window_ms=feishu.max_batch_window_ms,
@@ -111,7 +111,7 @@ class FeishuChannelService:
         self._closed = False
 
     @property
-    def session_manager(self) -> SessionManager:
+    def session_manager(self) -> ChannelBatchManager:
         return self._session_mgr
 
     @property
@@ -225,7 +225,7 @@ class FeishuChannelService:
             await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
             return
 
-        state = await self._executor.get_state(session.scheduler_state_id)
+        state = await self._executor.get_state(session.id)
         if state is not None and state.result_summary:
             await self._deliver_stream_text(
                 batch.context,
@@ -241,10 +241,6 @@ class FeishuChannelService:
         resolution = await self._session_service.get_or_create_current_session(
             batch.context,
         )
-        if resolution.retired_runtime_agent_id is not None:
-            await self._agent_pool.close_runtime_agent(
-                resolution.retired_runtime_agent_id,
-            )
         session = resolution.session
         agent = await self._agent_pool.get_or_create_runtime_agent(session)
         return session, agent
@@ -310,10 +306,7 @@ class FeishuChannelService:
         )
         if current_session is None:
             return False
-        return (
-            current_session.id == session.id
-            and current_session.scheduler_state_id == session.scheduler_state_id
-        )
+        return current_session.id == session.id
 
     # -- Feishu-specific hooks --------------------------------------------------
 

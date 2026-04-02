@@ -2,9 +2,16 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
-from agiwo.agent import UserMessage
+from agiwo.agent import UserInput, UserMessage
+
+from server.models.metrics import RunMetricsSummary
+
+if TYPE_CHECKING:
+    from agiwo.scheduler.models import AgentState
+
+T = TypeVar("T")
 
 
 @dataclass(slots=True)
@@ -47,35 +54,15 @@ class ChannelChatContext:
 
 
 @dataclass(slots=True)
-class SessionRuntimeBinding:
-    base_agent_id: str
-    runtime_agent_id: str = ""
-    scheduler_state_id: str = ""
-
-
-@dataclass(slots=True)
 class Session:
     id: str
-    chat_context_scope_id: str
+    chat_context_scope_id: str | None
     base_agent_id: str
-    runtime_agent_id: str
-    scheduler_state_id: str
     created_by: str
     created_at: datetime
     updated_at: datetime
-    current_task_id: str | None = None
-    task_message_count: int = 0
     source_session_id: str | None = None
-    source_task_id: str | None = None
     fork_context_summary: str | None = None
-
-    @property
-    def runtime_binding(self) -> SessionRuntimeBinding:
-        return SessionRuntimeBinding(
-            base_agent_id=self.base_agent_id,
-            runtime_agent_id=self.runtime_agent_id,
-            scheduler_state_id=self.scheduler_state_id,
-        )
 
 
 @dataclass(slots=True)
@@ -101,8 +88,44 @@ class UserSessionItem:
 
 @dataclass(slots=True)
 class SessionCreateResult:
-    chat_context: ChannelChatContext
+    chat_context: ChannelChatContext | None
     session: Session
+
+
+@dataclass(slots=True)
+class SessionSummaryRecord:
+    session_id: str
+    agent_id: str | None = None
+    last_user_input: UserInput | None = None
+    last_response: str | None = None
+    run_count: int = 0
+    step_count: int = 0
+    metrics: RunMetricsSummary = field(default_factory=RunMetricsSummary)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    chat_context_scope_id: str | None = None
+    created_by: str | None = None
+    base_agent_id: str | None = None
+    root_state_status: str | None = None
+    source_session_id: str | None = None
+    fork_context_summary: str | None = None
+
+
+@dataclass(slots=True)
+class SessionDetailRecord:
+    summary: SessionSummaryRecord
+    session: Session | None = None
+    chat_context: ChannelChatContext | None = None
+    scheduler_state: "AgentState | None" = None
+
+
+@dataclass(slots=True)
+class PageSlice(Generic[T]):
+    items: list[T]
+    limit: int
+    offset: int
+    has_more: bool
+    total: int | None = None
 
 
 @dataclass(slots=True)
@@ -138,31 +161,7 @@ class ChannelChatSessionStore(Protocol):
     async def list_sessions_by_chat_context(
         self, chat_context_scope_id: str
     ) -> list[Session]: ...
-
-
-def bind_runtime_agent(session: Session, agent_id: str) -> None:
-    """Bind a runtime agent to a session and default scheduler state to it."""
-    session.runtime_agent_id = agent_id
-    session.scheduler_state_id = agent_id
-
-
-def bind_scheduler_state(session: Session, state_id: str) -> None:
-    """Bind the latest scheduler state to the session."""
-    session.scheduler_state_id = state_id
-
-
-def reset_runtime_binding(session: Session) -> None:
-    """Clear runtime and scheduler bindings while keeping the base agent."""
-    session.runtime_agent_id = ""
-    session.scheduler_state_id = ""
-
-
-def start_task(session: Session, *, task_id: str) -> None:
-    """Start a new task for the session."""
-    session.current_task_id = task_id
-    session.task_message_count = 0
-
-
-def append_task_message(session: Session) -> None:
-    """Increment the message count for the active session task."""
-    session.task_message_count += 1
+    async def list_sessions_by_base_agent(
+        self, base_agent_id: str
+    ) -> list[Session]: ...
+    async def list_sessions(self) -> list[Session]: ...

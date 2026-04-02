@@ -156,7 +156,7 @@ async def test_overview_reports_real_totals_instead_of_recent_samples() -> None:
     assert response.json() == {
         "total_sessions": 2,
         "total_traces": 3,
-        "total_agents": 3,
+        "total_agents": 4,
         "total_tokens": 33,
         "scheduler": {
             "total": 0,

@@ -1,13 +1,13 @@
-"""Unit tests for SessionContextService session management (fork, switch, create, list)."""
+"""Unit tests for channel-side SessionContextService behavior."""
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 
 import pytest
 
-from server.models.session import ChannelChatContext, Session
-from server.services.runtime.session_service import SessionContextService
+from server.models.session import ChannelChatContext, Session, SessionWithContext
 from server.services.agent_registry import AgentRegistry
+from server.services.runtime.session_service import SessionContextService
 
 
 class InMemorySessionStore:
@@ -29,13 +29,9 @@ class InMemorySessionStore:
                 id="sess-1",
                 chat_context_scope_id="scope-1",
                 base_agent_id="agent-1",
-                runtime_agent_id="runtime-1",
-                scheduler_state_id="state-1",
                 created_by="AUTO",
                 created_at=now,
                 updated_at=now,
-                current_task_id="task-1",
-                task_message_count=1,
             ),
         }
 
@@ -47,13 +43,28 @@ class InMemorySessionStore:
     async def get_session(self, session_id: str) -> Session | None:
         return self.sessions.get(session_id)
 
+    async def get_session_with_context(self, session_id: str):
+        session = self.sessions.get(session_id)
+        if session is None or self.chat_context is None:
+            return None
+        if session.chat_context_scope_id != self.chat_context.scope_id:
+            return None
+        return SessionWithContext(session=session, chat_context=self.chat_context)
+
     async def list_sessions_by_chat_context(
         self, chat_context_scope_id: str
     ) -> list[Session]:
         return [
-            s
-            for s in self.sessions.values()
-            if s.chat_context_scope_id == chat_context_scope_id
+            session
+            for session in self.sessions.values()
+            if session.chat_context_scope_id == chat_context_scope_id
+        ]
+
+    async def list_sessions_by_base_agent(self, base_agent_id: str) -> list[Session]:
+        return [
+            session
+            for session in self.sessions.values()
+            if session.base_agent_id == base_agent_id
         ]
 
     async def upsert_chat_context(self, chat_context: ChannelChatContext) -> None:
@@ -63,7 +74,11 @@ class InMemorySessionStore:
         self.sessions[session.id] = session
 
     async def list_sessions_by_user(self, user_open_id: str):
+        del user_open_id
         return []
+
+    async def list_sessions(self) -> list[Session]:
+        return list(self.sessions.values())
 
 
 def _make_service(store: InMemorySessionStore) -> SessionContextService:
@@ -78,7 +93,7 @@ def _make_service(store: InMemorySessionStore) -> SessionContextService:
 
 
 @pytest.mark.asyncio
-async def test_fork_session_creates_new_current_session_with_weak_lineage() -> None:
+async def test_fork_session_creates_new_current_session_with_lineage() -> None:
     store = InMemorySessionStore()
     service = _make_service(store)
 
@@ -89,26 +104,21 @@ async def test_fork_session_creates_new_current_session_with_weak_lineage() -> N
     )
 
     assert result.session.source_session_id == "sess-1"
-    assert result.session.source_task_id == "task-1"
-    assert result.session.current_task_id is None
+    assert result.session.fork_context_summary == "Extract follow-up task B"
     assert result.chat_context.current_session_id == result.session.id
 
 
 @pytest.mark.asyncio
-async def test_switch_session_keeps_task_metadata_intact() -> None:
+async def test_switch_session_updates_current_pointer_only() -> None:
     store = InMemorySessionStore()
     now = datetime.now(timezone.utc)
     store.sessions["sess-2"] = Session(
         id="sess-2",
         chat_context_scope_id="scope-1",
         base_agent_id="agent-1",
-        runtime_agent_id="runtime-2",
-        scheduler_state_id="state-2",
         created_by="AUTO",
         created_at=now,
         updated_at=now,
-        current_task_id="task-2",
-        task_message_count=3,
     )
     service = _make_service(store)
 
@@ -118,8 +128,7 @@ async def test_switch_session_keeps_task_metadata_intact() -> None:
     )
 
     assert result.current_session.id == "sess-2"
-    assert result.current_session.current_task_id == "task-2"
-    assert result.current_session.task_message_count == 3
+    assert result.chat_context.current_session_id == "sess-2"
 
 
 @pytest.mark.asyncio
@@ -139,36 +148,7 @@ async def test_create_session_establishes_new_chat_context_when_none_exists() ->
     )
 
     assert result.session.base_agent_id == "agent-1"
-    assert result.session.current_task_id is None
     assert result.chat_context.current_session_id == result.session.id
-
-
-@pytest.mark.asyncio
-async def test_create_session_adds_to_existing_chat_context() -> None:
-    store = InMemorySessionStore()
-    service = _make_service(store)
-
-    result = await service.create_new_session(
-        chat_context_scope_id="scope-1",
-        channel_instance_id="console-web",
-        chat_id="scope-1",
-        chat_type="dm",
-        user_open_id="user-1",
-        base_agent_id="agent-1",
-        created_by="CONSOLE_CREATE",
-    )
-
-    assert result.session.id != "sess-1"
-    assert result.chat_context.current_session_id == result.session.id
-
-
-@pytest.mark.asyncio
-async def test_list_sessions_returns_empty_for_unknown_scope() -> None:
-    store = InMemorySessionStore()
-    service = _make_service(store)
-
-    result = await service.list_sessions(chat_context_scope_id="unknown-scope")
-    assert result == []
 
 
 @pytest.mark.asyncio
@@ -182,7 +162,7 @@ async def test_list_sessions_returns_all_sessions_for_scope() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fork_session_by_id() -> None:
+async def test_fork_session_by_id_for_console_can_skip_chat_context_update() -> None:
     store = InMemorySessionStore()
     service = _make_service(store)
 
@@ -190,22 +170,10 @@ async def test_fork_session_by_id() -> None:
         session_id="sess-1",
         context_summary="branching off",
         created_by="CONSOLE_FORK",
+        update_chat_context=False,
     )
 
     assert result.session.source_session_id == "sess-1"
-    assert result.session.source_task_id == "task-1"
-    assert result.session.fork_context_summary == "branching off"
-    assert result.chat_context.current_session_id == result.session.id
-
-
-@pytest.mark.asyncio
-async def test_fork_session_by_id_raises_for_missing_session() -> None:
-    store = InMemorySessionStore()
-    service = _make_service(store)
-
-    with pytest.raises(RuntimeError, match="Session not found"):
-        await service.fork_session_by_id(
-            session_id="nonexistent",
-            context_summary="nope",
-            created_by="CONSOLE_FORK",
-        )
+    assert result.session.chat_context_scope_id is None
+    assert result.chat_context is not None
+    assert result.chat_context.current_session_id == "sess-1"

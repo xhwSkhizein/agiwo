@@ -11,12 +11,12 @@ from server.response_serialization import (
     trace_list_item_from_sdk,
     trace_response_from_sdk,
 )
-from server.models.view import TraceListItem, TraceResponse
+from server.models.view import PageResponse, TraceListItem, TraceResponse
 
 router = APIRouter(prefix="/api/traces", tags=["traces"])
 
 
-@router.get("", response_model=list[TraceListItem])
+@router.get("", response_model=PageResponse[TraceListItem])
 async def list_traces(
     runtime: ConsoleRuntimeDep,
     agent_id: str | None = None,
@@ -25,11 +25,11 @@ async def list_traces(
     status: str | None = None,
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-) -> list[TraceListItem]:
+) -> PageResponse[TraceListItem]:
     """Query traces with optional filters."""
     store = runtime.trace_storage
 
-    query: dict[str, Any] = {"limit": limit, "offset": offset}
+    query: dict[str, Any] = {"limit": limit + 1, "offset": offset}
     if agent_id:
         query["agent_id"] = agent_id
     if session_id:
@@ -40,7 +40,15 @@ async def list_traces(
         query["status"] = status
 
     traces = await store.query_traces(query)
-    return [trace_list_item_from_sdk(t) for t in traces]
+    has_more = len(traces) > limit
+    page = traces[:limit]
+    return PageResponse(
+        items=[trace_list_item_from_sdk(t) for t in page],
+        limit=limit,
+        offset=offset,
+        has_more=has_more,
+        total=None,
+    )
 
 
 @router.get("/{trace_id}", response_model=TraceResponse)

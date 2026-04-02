@@ -14,7 +14,7 @@ from server.channels.feishu.message_parser import (
     FeishuMessageParser,
 )
 from server.channels.feishu.store import FeishuChannelStoreBackend
-from server.channels.session import SessionManager
+from server.channels.batch_manager import ChannelBatchManager
 from server.models.session import BatchContext, InboundMessage
 from server.services.agent_registry import AgentConfigRecord
 from server.services.runtime import SessionContextService
@@ -34,7 +34,7 @@ class FeishuInboundHandler:
         group_history_store: FeishuGroupHistoryStore,
         store: FeishuChannelStoreBackend,
         session_service: SessionContextService,
-        session_manager: SessionManager,
+        session_manager: ChannelBatchManager,
         command_registry: CommandRegistry,
         delivery_service: FeishuDeliveryService,
         truncate_for_log: Callable[[str], str],

@@ -11,7 +11,7 @@ from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.exceptions import BaseAgentNotFoundError
-from server.models.session import ChannelChatSessionStore, Session, bind_runtime_agent
+from server.models.session import ChannelChatSessionStore, Session
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.runtime.agent_factory import build_agent
@@ -50,48 +50,42 @@ class AgentRuntimeCache:
             raise BaseAgentNotFoundError(session.base_agent_id)
 
         expected_fingerprint = self._build_runtime_config_fingerprint(base_config)
-        cached = self._cache.get(session.runtime_agent_id)
+        cached = self._cache.get(session.id)
         if cached is not None:
             if cached.config_fingerprint == expected_fingerprint:
                 return cached.agent
             logger.info(
                 "runtime_agent_refresh_on_config_change",
-                runtime_agent_id=session.runtime_agent_id,
+                runtime_agent_id=session.id,
                 base_agent_id=session.base_agent_id,
             )
 
-        previous_runtime_id = session.runtime_agent_id
         agent = await build_agent(
             base_config,
             self._console_config,
             self._agent_registry,
-            id=previous_runtime_id or None,
+            id=session.id,
         )
-        bind_runtime_agent(session, agent.id)
-
-        if previous_runtime_id:
-            rebound = await self._scheduler.rebind_agent(
-                session.scheduler_state_id or previous_runtime_id,
-                agent,
-            )
+        if cached is not None:
+            rebound = await self._scheduler.rebind_agent(session.id, agent)
             if not rebound and cached is not None:
                 logger.info(
                     "runtime_agent_refresh_deferred",
-                    runtime_agent_id=previous_runtime_id,
+                    runtime_agent_id=session.id,
                     base_agent_id=session.base_agent_id,
                     reason="state_active",
                 )
                 await agent.close()
                 return cached.agent
 
-        retired = self._cache.pop(previous_runtime_id, None)
+        retired = self._cache.pop(session.id, None)
         if retired is not None and retired.agent is not agent:
             await retired.agent.close()
 
         session.updated_at = datetime.now(timezone.utc)
         await self._session_store.upsert_session(session)
 
-        self._cache[session.runtime_agent_id] = CachedAgent(
+        self._cache[session.id] = CachedAgent(
             agent=agent,
             config_fingerprint=expected_fingerprint,
         )

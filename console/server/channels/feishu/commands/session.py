@@ -25,14 +25,14 @@ from server.channels.feishu.commands.status_text import (
     format_scheduler_status,
     status_to_emoji,
 )
-from server.channels.session import SessionManager
+from server.channels.batch_manager import ChannelBatchManager
 from server.models.session import Session
 from server.services.runtime import SessionContextService
 
 
 def build_session_command_specs(
     session_context_service: SessionContextService,
-    session_manager: SessionManager,
+    session_manager: ChannelBatchManager,
     scheduler: Scheduler,
 ) -> list[CommandSpec]:
     return [
@@ -77,7 +77,7 @@ def build_session_command_specs(
 
 async def _execute_new_session(
     service: SessionContextService,
-    session_manager: SessionManager,
+    session_manager: ChannelBatchManager,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
@@ -105,7 +105,7 @@ async def _execute_new_session(
 
 async def _execute_switch_session(
     service: SessionContextService,
-    session_manager: SessionManager,
+    session_manager: ChannelBatchManager,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
@@ -132,7 +132,7 @@ async def _execute_switch_session(
 
 async def _execute_fork_session(
     service: SessionContextService,
-    session_manager: SessionManager,
+    session_manager: ChannelBatchManager,
     ctx: CommandContext,
     args: str,
 ) -> CommandResult:
@@ -206,14 +206,6 @@ async def _execute_list_sessions(
                 code(session.id),
             ]
         )
-        if session.current_task_id:
-            content.append(
-                [
-                    text_element("   任务: "),
-                    code(session.current_task_id),
-                    text_element(f"  ({session.task_message_count} 条消息)"),
-                ]
-            )
         if session.source_session_id:
             content.append(
                 [
@@ -221,13 +213,12 @@ async def _execute_list_sessions(
                     code(session.source_session_id),
                 ]
             )
-        if session.scheduler_state_id:
-            content.append(
-                [
-                    text_element("   调度ID: "),
-                    code(session.scheduler_state_id),
-                ]
-            )
+        content.append(
+            [
+                text_element("   调度ID: "),
+                code(session.id),
+            ]
+        )
         content.append(
             [
                 text_element("   更新于: "),
@@ -249,9 +240,7 @@ async def _resolve_status(
     scheduler: Scheduler,
     session: Session,
 ) -> tuple[str, AgentStateStatus | None]:
-    if not session.scheduler_state_id:
-        return "未启动", None
-    state = await scheduler.get_state(session.scheduler_state_id)
+    state = await scheduler.get_state(session.id)
     if state is None:
         return "未启动", None
     return format_scheduler_status(state.status), state.status

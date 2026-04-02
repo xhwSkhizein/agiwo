@@ -81,7 +81,20 @@ class AgentRegistry:
         limit: int = 50,
         offset: int = 0,
     ) -> list[AgentConfigRecord]:
-        return await self._require_store().list_agents(limit=limit, offset=offset)
+        store = self._require_store()
+        default_id = self._config.default_agent.id
+        persisted_default = await store.get_agent(default_id)
+        if persisted_default is not None:
+            return await store.list_agents(limit=limit, offset=offset)
+
+        if limit <= 0:
+            return []
+
+        if offset == 0:
+            records = await store.list_agents(limit=max(limit - 1, 0), offset=0)
+            return [self._build_default_agent_record(), *records]
+
+        return await store.list_agents(limit=limit, offset=offset - 1)
 
     async def get_agent(self, agent_id: str) -> AgentConfigRecord | None:
         """Get agent by id. Returns default agent from .env if not in DB."""

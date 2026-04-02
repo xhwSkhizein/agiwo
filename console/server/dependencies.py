@@ -13,6 +13,7 @@ from server.channels.feishu import FeishuChannelService
 from server.config import ConsoleConfig
 from server.models.session import ChannelChatSessionStore
 from server.services.agent_registry import AgentRegistry
+from server.services.runtime import SessionContextService, SessionViewService
 
 _RUNTIME_STATE_KEY = "console_runtime"
 
@@ -58,6 +59,24 @@ ConsoleRuntimeDep = Annotated[ConsoleRuntime, Depends(get_console_runtime)]
 SchedulerDep = Annotated[Scheduler, Depends(get_scheduler)]
 
 
+def get_session_view_service(runtime: ConsoleRuntime) -> SessionViewService:
+    return SessionViewService(
+        run_storage=runtime.run_step_storage,
+        session_store=runtime.session_store,
+        scheduler=runtime.scheduler,
+    )
+
+
+def get_session_context_service(runtime: ConsoleRuntime) -> SessionContextService:
+    if runtime.session_store is None:
+        raise RuntimeError("Session store not available")
+    return SessionContextService(
+        store=runtime.session_store,
+        agent_registry=runtime.agent_registry,
+        default_agent_name=runtime.config.default_agent.name,
+    )
+
+
 __all__ = [
     "ConsoleRuntime",
     "ConsoleRuntimeDep",
@@ -67,4 +86,6 @@ __all__ = [
     "get_console_runtime",
     "get_console_runtime_from_app",
     "get_scheduler",
+    "get_session_context_service",
+    "get_session_view_service",
 ]

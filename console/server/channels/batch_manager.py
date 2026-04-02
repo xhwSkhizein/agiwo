@@ -1,8 +1,8 @@
 """
-Session message batching and debounce scheduling.
+Channel message batching and debounce scheduling.
 
-Collects incoming messages per session key, applies debounce and max-batch-window
-logic, then fires a callback when the batch is ready for execution.
+Collects incoming messages per chat-context key, applies debounce and
+max-batch-window logic, then fires a callback when the batch is ready.
 """
 
 import asyncio
@@ -24,7 +24,7 @@ OnBatchReady = Callable[
 
 
 @dataclass
-class _SessionState:
+class _BatchState:
     pending_messages: list[InboundMessage] = field(default_factory=list)
     first_pending_at_ms: int | None = None
     flush_task: asyncio.Task[None] | None = None
@@ -32,7 +32,7 @@ class _SessionState:
     latest_context: BatchContext | None = None
 
 
-class SessionManager:
+class ChannelBatchManager:
     def __init__(
         self,
         *,
@@ -44,7 +44,7 @@ class SessionManager:
         self._debounce_ms = debounce_ms
         self._max_batch_window_ms = max_batch_window_ms
 
-        self._states: dict[str, _SessionState] = {}
+        self._states: dict[str, _BatchState] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
     @property
@@ -61,7 +61,7 @@ class SessionManager:
         now_ms = int(time.time() * 1000)
 
         async with lock:
-            state = self._states.setdefault(chat_context_scope_id, _SessionState())
+            state = self._states.setdefault(chat_context_scope_id, _BatchState())
             state.pending_messages.append(message)
             state.latest_context = context
             if state.first_pending_at_ms is None:
@@ -83,8 +83,6 @@ class SessionManager:
         if flush_tasks:
             await asyncio.gather(*flush_tasks, return_exceptions=True)
 
-    # -- Internal ------------------------------------------------------------
-
     def _get_lock(self, chat_context_scope_id: str) -> asyncio.Lock:
         lock = self._locks.get(chat_context_scope_id)
         if lock is None:
@@ -95,7 +93,7 @@ class SessionManager:
     def _reschedule_flush_locked(
         self,
         chat_context_scope_id: str,
-        state: _SessionState,
+        state: _BatchState,
         now_ms: int,
     ) -> None:
         if state.running or not state.pending_messages:

@@ -1,4 +1,4 @@
-"""SQLite-backed Feishu channel metadata store."""
+"""SQLite-backed Feishu/channel metadata store."""
 
 from datetime import datetime, timezone
 import os
@@ -6,10 +6,6 @@ import os
 import aiosqlite
 
 from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
-from server.channels.feishu.store.migrations import (
-    migrate_chat_context_table,
-    migrate_session_table,
-)
 from server.models.session import (
     ChannelChatContext,
     Session,
@@ -21,15 +17,10 @@ SELECT
     s.id AS s_id,
     s.chat_context_scope_id AS s_chat_context_scope_id,
     s.base_agent_id AS s_base_agent_id,
-    s.runtime_agent_id AS s_runtime_agent_id,
-    s.scheduler_state_id AS s_scheduler_state_id,
     s.created_by AS s_created_by,
     s.created_at AS s_created_at,
     s.updated_at AS s_updated_at,
-    s.current_task_id AS s_current_task_id,
-    s.task_message_count AS s_task_message_count,
     s.source_session_id AS s_source_session_id,
-    s.source_task_id AS s_source_task_id,
     s.fork_context_summary AS s_fork_context_summary,
     c.scope_id AS c_scope_id,
     c.channel_instance_id AS c_channel_instance_id,
@@ -65,15 +56,10 @@ def _row_to_session(row: aiosqlite.Row) -> Session:
         id=row["id"],
         chat_context_scope_id=row["chat_context_scope_id"],
         base_agent_id=row["base_agent_id"],
-        runtime_agent_id=row["runtime_agent_id"],
-        scheduler_state_id=row["scheduler_state_id"],
         created_by=row["created_by"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
-        current_task_id=row["current_task_id"],
-        task_message_count=row["task_message_count"],
         source_session_id=row["source_session_id"],
-        source_task_id=row["source_task_id"],
         fork_context_summary=row["fork_context_summary"],
     )
 
@@ -84,15 +70,10 @@ def _joined_row_to_session_with_context(row: aiosqlite.Row) -> SessionWithContex
             id=row["s_id"],
             chat_context_scope_id=row["s_chat_context_scope_id"],
             base_agent_id=row["s_base_agent_id"],
-            runtime_agent_id=row["s_runtime_agent_id"],
-            scheduler_state_id=row["s_scheduler_state_id"],
             created_by=row["s_created_by"],
             created_at=datetime.fromisoformat(row["s_created_at"]),
             updated_at=datetime.fromisoformat(row["s_updated_at"]),
-            current_task_id=row["s_current_task_id"],
-            task_message_count=row["s_task_message_count"],
             source_session_id=row["s_source_session_id"],
-            source_task_id=row["s_source_task_id"],
             fork_context_summary=row["s_fork_context_summary"],
         ),
         chat_context=ChannelChatContext(
@@ -162,7 +143,40 @@ class SqliteFeishuChannelStore:
 
     async def upsert_chat_context(self, chat_context: ChannelChatContext) -> None:
         conn = await self._require_conn()
-        await self._upsert_chat_context_record(conn, chat_context)
+        await conn.execute(
+            """
+            INSERT INTO feishu_channel_chat_context (
+                scope_id,
+                channel_instance_id,
+                chat_id,
+                chat_type,
+                user_open_id,
+                base_agent_id,
+                current_session_id,
+                created_at,
+                updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(scope_id) DO UPDATE SET
+                channel_instance_id = excluded.channel_instance_id,
+                chat_id = excluded.chat_id,
+                chat_type = excluded.chat_type,
+                user_open_id = excluded.user_open_id,
+                base_agent_id = excluded.base_agent_id,
+                current_session_id = excluded.current_session_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                chat_context.scope_id,
+                chat_context.channel_instance_id,
+                chat_context.chat_id,
+                chat_context.chat_type,
+                chat_context.user_open_id,
+                chat_context.base_agent_id,
+                chat_context.current_session_id,
+                chat_context.created_at.isoformat(),
+                chat_context.updated_at.isoformat(),
+            ),
+        )
         await conn.commit()
 
     async def get_session(self, session_id: str) -> Session | None:
@@ -199,7 +213,37 @@ class SqliteFeishuChannelStore:
 
     async def upsert_session(self, session: Session) -> None:
         conn = await self._require_conn()
-        await self._upsert_session_record(conn, session)
+        await conn.execute(
+            """
+            INSERT INTO feishu_session (
+                id,
+                chat_context_scope_id,
+                base_agent_id,
+                created_by,
+                created_at,
+                updated_at,
+                source_session_id,
+                fork_context_summary
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                chat_context_scope_id = excluded.chat_context_scope_id,
+                base_agent_id = excluded.base_agent_id,
+                created_by = excluded.created_by,
+                updated_at = excluded.updated_at,
+                source_session_id = excluded.source_session_id,
+                fork_context_summary = excluded.fork_context_summary
+            """,
+            (
+                session.id,
+                session.chat_context_scope_id,
+                session.base_agent_id,
+                session.created_by,
+                session.created_at.isoformat(),
+                session.updated_at.isoformat(),
+                session.source_session_id,
+                session.fork_context_summary,
+            ),
+        )
         await conn.commit()
 
     async def list_sessions_by_user(
@@ -233,6 +277,32 @@ class SqliteFeishuChannelStore:
             rows = await cursor.fetchall()
         return [_row_to_session(row) for row in rows]
 
+    async def list_sessions_by_base_agent(self, base_agent_id: str) -> list[Session]:
+        conn = await self._require_conn()
+        async with conn.execute(
+            """
+            SELECT *
+            FROM feishu_session
+            WHERE base_agent_id = ?
+            ORDER BY updated_at DESC
+            """,
+            (base_agent_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [_row_to_session(row) for row in rows]
+
+    async def list_sessions(self) -> list[Session]:
+        conn = await self._require_conn()
+        async with conn.execute(
+            """
+            SELECT *
+            FROM feishu_session
+            ORDER BY updated_at DESC
+            """
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [_row_to_session(row) for row in rows]
+
     async def _create_tables(self) -> None:
         conn = await self._require_conn()
         await conn.execute(
@@ -245,9 +315,64 @@ class SqliteFeishuChannelStore:
             )
             """
         )
-        await conn.execute("DROP TABLE IF EXISTS feishu_session_runtime")
-        await migrate_chat_context_table(conn)
-        await migrate_session_table(conn)
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feishu_channel_chat_context (
+                scope_id TEXT PRIMARY KEY,
+                channel_instance_id TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                chat_type TEXT NOT NULL,
+                user_open_id TEXT NOT NULL,
+                base_agent_id TEXT NOT NULL,
+                current_session_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feishu_session (
+                id TEXT PRIMARY KEY,
+                chat_context_scope_id TEXT,
+                base_agent_id TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                source_session_id TEXT,
+                fork_context_summary TEXT
+            )
+            """
+        )
+        await self._validate_schema(
+            conn,
+            "feishu_channel_chat_context",
+            {
+                "scope_id",
+                "channel_instance_id",
+                "chat_id",
+                "chat_type",
+                "user_open_id",
+                "base_agent_id",
+                "current_session_id",
+                "created_at",
+                "updated_at",
+            },
+        )
+        await self._validate_schema(
+            conn,
+            "feishu_session",
+            {
+                "id",
+                "chat_context_scope_id",
+                "base_agent_id",
+                "created_by",
+                "created_at",
+                "updated_at",
+                "source_session_id",
+                "fork_context_summary",
+            },
+        )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_feishu_chat_context_user_open_id "
             "ON feishu_channel_chat_context(user_open_id)"
@@ -257,102 +382,28 @@ class SqliteFeishuChannelStore:
             "ON feishu_session(chat_context_scope_id)"
         )
         await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feishu_session_base_agent_id "
+            "ON feishu_session(base_agent_id)"
+        )
+        await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_feishu_session_updated_at "
             "ON feishu_session(updated_at)"
         )
         await conn.commit()
 
-    async def _upsert_chat_context_record(
+    async def _validate_schema(
         self,
         conn: aiosqlite.Connection,
-        chat_context: ChannelChatContext,
+        table_name: str,
+        expected_columns: set[str],
     ) -> None:
-        await conn.execute(
-            """
-            INSERT INTO feishu_channel_chat_context (
-                scope_id,
-                channel_instance_id,
-                chat_id,
-                chat_type,
-                user_open_id,
-                base_agent_id,
-                current_session_id,
-                created_at,
-                updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(scope_id) DO UPDATE SET
-                channel_instance_id = excluded.channel_instance_id,
-                chat_id = excluded.chat_id,
-                chat_type = excluded.chat_type,
-                user_open_id = excluded.user_open_id,
-                base_agent_id = excluded.base_agent_id,
-                current_session_id = excluded.current_session_id,
-                updated_at = excluded.updated_at
-            """,
-            (
-                chat_context.scope_id,
-                chat_context.channel_instance_id,
-                chat_context.chat_id,
-                chat_context.chat_type,
-                chat_context.user_open_id,
-                chat_context.base_agent_id,
-                chat_context.current_session_id,
-                chat_context.created_at.isoformat(),
-                chat_context.updated_at.isoformat(),
-            ),
-        )
-
-    async def _upsert_session_record(
-        self,
-        conn: aiosqlite.Connection,
-        session: Session,
-    ) -> None:
-        await conn.execute(
-            """
-            INSERT INTO feishu_session (
-                id,
-                chat_context_scope_id,
-                base_agent_id,
-                runtime_agent_id,
-                scheduler_state_id,
-                created_by,
-                created_at,
-                updated_at,
-                current_task_id,
-                task_message_count,
-                source_session_id,
-                source_task_id,
-                fork_context_summary
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                chat_context_scope_id = excluded.chat_context_scope_id,
-                base_agent_id = excluded.base_agent_id,
-                runtime_agent_id = excluded.runtime_agent_id,
-                scheduler_state_id = excluded.scheduler_state_id,
-                created_by = excluded.created_by,
-                updated_at = excluded.updated_at,
-                current_task_id = excluded.current_task_id,
-                task_message_count = excluded.task_message_count,
-                source_session_id = excluded.source_session_id,
-                source_task_id = excluded.source_task_id,
-                fork_context_summary = excluded.fork_context_summary
-            """,
-            (
-                session.id,
-                session.chat_context_scope_id,
-                session.base_agent_id,
-                session.runtime_agent_id,
-                session.scheduler_state_id,
-                session.created_by,
-                session.created_at.isoformat(),
-                session.updated_at.isoformat(),
-                session.current_task_id,
-                session.task_message_count,
-                session.source_session_id,
-                session.source_task_id,
-                session.fork_context_summary,
-            ),
-        )
+        async with conn.execute(f"PRAGMA table_info({table_name})") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+        if columns != expected_columns:
+            raise RuntimeError(
+                f"{table_name} schema is incompatible with current console version; "
+                f"please clear old session metadata before restarting"
+            )
 
     async def _require_conn(self) -> aiosqlite.Connection:
         if self._conn is None:

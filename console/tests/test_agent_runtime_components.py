@@ -4,13 +4,10 @@ from unittest.mock import ANY, AsyncMock
 
 import pytest
 
+from agiwo.agent import RunCompletedEvent
 from agiwo.scheduler.commands import RouteResult
-from agiwo.agent import RunCompletedEvent, RunFailedEvent, StepDelta, StepDeltaEvent
-from server.channels.utils import (
-    safe_close_all,
-    split_text_into_chunks,
-)
-from server.channels.session import SessionManager
+
+from server.channels.batch_manager import ChannelBatchManager
 from server.config import ConsoleConfig
 from server.models.session import (
     BatchContext,
@@ -50,7 +47,7 @@ class FakeChannelChatSessionStore:
         session_id: str,
     ) -> SessionWithContext | None:
         session = self.sessions.get(session_id)
-        if session is None:
+        if session is None or session.chat_context_scope_id is None:
             return None
         chat_context = self.chat_contexts.get(session.chat_context_scope_id)
         if chat_context is None:
@@ -66,6 +63,8 @@ class FakeChannelChatSessionStore:
     ) -> list[SessionWithContext]:
         items: list[SessionWithContext] = []
         for session in self.sessions.values():
+            if session.chat_context_scope_id is None:
+                continue
             chat_context = self.chat_contexts.get(session.chat_context_scope_id)
             if chat_context is None or chat_context.user_open_id != user_open_id:
                 continue
@@ -81,6 +80,16 @@ class FakeChannelChatSessionStore:
             if session.chat_context_scope_id == chat_context_scope_id
         ]
 
+    async def list_sessions_by_base_agent(self, base_agent_id: str) -> list[Session]:
+        return [
+            session
+            for session in self.sessions.values()
+            if session.base_agent_id == base_agent_id
+        ]
+
+    async def list_sessions(self) -> list[Session]:
+        return list(self.sessions.values())
+
 
 class FakeAgent:
     def __init__(self, agent_id: str) -> None:
@@ -92,133 +101,67 @@ class FakeAgent:
 
 
 class _TestChannelService:
-    """Lightweight test stub replicating the channel message pipeline."""
-
     def __init__(self, *, session_service, agent_pool, executor) -> None:
         self.reply_calls: list[tuple[BatchContext, str]] = []
-        self.message_calls: list[tuple[BatchContext, str]] = []
         self._session_service = session_service
         self._agent_pool = agent_pool
         self._executor = executor
-        self._session_mgr = SessionManager(
+        self._batch_mgr = ChannelBatchManager(
             on_batch_ready=lambda *a: None,
             debounce_ms=1,
             max_batch_window_ms=1,
         )
 
     async def close_base(self) -> None:
-        await safe_close_all(self._session_mgr, self._agent_pool)
+        await self._batch_mgr.close()
+        await self._agent_pool.close()
 
     async def _deliver_reply(self, context: BatchContext, text: str) -> None:
         self.reply_calls.append((context, text))
 
-    async def _deliver_message(self, context: BatchContext, text: str) -> None:
-        self.message_calls.append((context, text))
-
     async def _execute_batch(self, batch: BatchPayload) -> None:
-        session, agent = await self._prepare_batch_runtime(batch)
-        dispatch = await self._executor.execute(agent, session, batch.user_message)
-
-        had_output = await self._consume_dispatch_stream(
-            batch, session, dispatch.stream
-        )
-        if had_output:
-            return
-
-        if not await self._can_deliver_target(batch.context, session):
-            return
-
-        if dispatch.stream is None:
-            await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
-            return
-
-        state = await self._executor.get_state(session.scheduler_state_id)
-        if state is not None and state.result_summary:
-            await self._deliver_stream_text(
-                batch.context, state.result_summary, had_output=False
-            )
-            return
-        await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
-
-    async def _prepare_batch_runtime(self, batch):
         resolution = await self._session_service.get_or_create_current_session(
             batch.context
         )
-        if resolution.retired_runtime_agent_id is not None:
-            await self._agent_pool.close_runtime_agent(
-                resolution.retired_runtime_agent_id
-            )
         session = resolution.session
         agent = await self._agent_pool.get_or_create_runtime_agent(session)
-        return session, agent
+        dispatch = await self._executor.execute(agent, session, batch.user_message)
 
-    async def _consume_dispatch_stream(self, batch, session, stream):
-        if stream is None:
-            return False
+        if dispatch.stream is None:
+            if await self._can_deliver_session(batch.context, session):
+                await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
+            return
+
         final_text = None
-        async for item in stream:
-            if isinstance(item, RunCompletedEvent):
-                if item.depth == 0 and item.response:
-                    final_text = item.response
-                continue
-            if isinstance(item, RunFailedEvent):
-                if item.depth == 0 and item.error:
-                    final_text = item.error
-                continue
+        async for item in dispatch.stream:
+            if (
+                isinstance(item, RunCompletedEvent)
+                and item.depth == 0
+                and item.response
+            ):
+                final_text = item.response
+
         if final_text is None:
-            return False
-        if not await self._can_deliver_target(batch.context, session):
-            return False
-        await self._deliver_stream_text(batch.context, final_text, had_output=False)
-        return True
+            return
+        if await self._can_deliver_session(batch.context, session):
+            await self._deliver_reply(batch.context, final_text)
 
-    async def _deliver_stream_text(self, context, text, *, had_output):
-        chunks = split_text_into_chunks(text)
-        for index, chunk in enumerate(chunks):
-            if not had_output and index == 0:
-                await self._deliver_reply(context, chunk)
-                had_output = True
-                continue
-            await self._deliver_message(context, chunk)
-            had_output = True
-        return had_output
-
-    async def _can_deliver_target(self, context, session):
-        return await self._can_deliver_session(
-            context, session_id=session.id, state_id=session.scheduler_state_id
-        )
-
-    async def _can_deliver_session(self, context, *, session_id, state_id):
+    async def _can_deliver_session(
+        self, context: BatchContext, session: Session
+    ) -> bool:
         (
             _,
             current_session,
         ) = await self._session_service.get_chat_context_and_current_session(
             context.chat_context_scope_id
         )
-        if current_session is None:
-            return False
-        return (
-            current_session.id == session_id
-            and current_session.scheduler_state_id == state_id
-        )
-
-
-class _SteeredIntoRunningExecutor:
-    def __init__(self) -> None:
-        pass
-
-    async def execute(self, agent, session, user_input):
-        del agent, session, user_input
-        return RouteResult(action="steered", state_id="runtime-1")
-
-    async def get_state(self, state_id: str | None):
-        del state_id
-        return None
+        return current_session is not None and current_session.id == session.id
 
 
 @pytest.mark.asyncio
-async def test_session_service_returns_retired_agent_id_on_rebind() -> None:
+async def test_session_service_rebinds_missing_base_agent_to_default() -> None:
     store = FakeChannelChatSessionStore()
+    now = datetime.now(timezone.utc)
     chat_context = ChannelChatContext(
         scope_id="scope-1",
         channel_instance_id="feishu-main",
@@ -227,18 +170,16 @@ async def test_session_service_returns_retired_agent_id_on_rebind() -> None:
         user_open_id="user-1",
         base_agent_id="old-context-base",
         current_session_id="sess-1",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=now,
+        updated_at=now,
     )
     session = Session(
         id="sess-1",
         chat_context_scope_id="scope-1",
         base_agent_id="missing-base",
-        runtime_agent_id="runtime-old",
-        scheduler_state_id="runtime-old",
         created_by="AUTO",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=now,
+        updated_at=now,
     )
     await store.upsert_chat_context(chat_context)
     await store.upsert_session(session)
@@ -272,51 +213,28 @@ async def test_session_service_returns_retired_agent_id_on_rebind() -> None:
     )
 
     assert result.session.base_agent_id == "agent-default"
-    assert result.retired_runtime_agent_id == "runtime-old"
     assert result.chat_context.base_agent_id == "agent-default"
 
 
 @pytest.mark.asyncio
-async def test_session_service_create_new_session_honors_explicit_base_agent() -> None:
-    store = FakeChannelChatSessionStore()
-    now = datetime.now(timezone.utc)
-    existing_context = ChannelChatContext(
-        scope_id="scope-1",
-        channel_instance_id="feishu-main",
-        chat_id="chat-1",
-        chat_type="p2p",
-        user_open_id="user-1",
-        base_agent_id="old-base",
-        current_session_id="sess-old",
-        created_at=now,
-        updated_at=now,
-    )
-    await store.upsert_chat_context(existing_context)
-
+async def test_session_service_create_standalone_session_has_no_chat_context() -> None:
     service = SessionContextService(
-        store=store,
+        store=FakeChannelChatSessionStore(),
         agent_registry=SimpleNamespace(),
         default_agent_name="default",
     )
 
-    created = await service.create_new_session(
-        chat_context_scope_id="scope-1",
-        channel_instance_id="feishu-main",
-        chat_id="chat-1",
-        chat_type="p2p",
-        user_open_id="user-1",
-        base_agent_id="new-base",
-        created_by="COMMAND_NEW",
+    session = await service.create_standalone_session(
+        base_agent_id="agent-1",
+        created_by="CONSOLE_CREATE",
     )
 
-    assert created.chat_context.base_agent_id == "new-base"
-    assert created.session.base_agent_id == "new-base"
-    assert created.chat_context.current_session_id == created.session.id
-    assert store.upserted_sessions[-1] is created.session
+    assert session.base_agent_id == "agent-1"
+    assert session.chat_context_scope_id is None
 
 
 @pytest.mark.asyncio
-async def test_agent_runtime_cache_assigns_runtime_identity_and_persists_session(
+async def test_agent_runtime_cache_uses_session_id_as_runtime_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FakeChannelChatSessionStore()
@@ -328,7 +246,7 @@ async def test_agent_runtime_cache_assigns_runtime_identity_and_persists_session
     )
     registry = SimpleNamespace(get_agent=AsyncMock(return_value=base_config))
     scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=True))
-    built_agent = FakeAgent("generated-agent")
+    built_agent = FakeAgent("sess-1")
 
     async def fake_build_agent(*args, **kwargs):
         return built_agent
@@ -346,10 +264,8 @@ async def test_agent_runtime_cache_assigns_runtime_identity_and_persists_session
     )
     session = Session(
         id="sess-1",
-        chat_context_scope_id="scope-1",
+        chat_context_scope_id=None,
         base_agent_id="base-agent",
-        runtime_agent_id="",
-        scheduler_state_id="",
         created_by="AUTO",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -358,14 +274,12 @@ async def test_agent_runtime_cache_assigns_runtime_identity_and_persists_session
     agent = await pool.get_or_create_runtime_agent(session)
 
     assert agent is built_agent
-    assert session.runtime_agent_id == "generated-agent"
-    assert session.scheduler_state_id == "generated-agent"
     assert store.sessions["sess-1"] is session
-    assert pool.runtime_agents["generated-agent"] is built_agent
+    assert pool.runtime_agents["sess-1"] is built_agent
 
 
 @pytest.mark.asyncio
-async def test_agent_runtime_cache_defers_refresh_while_state_running(
+async def test_agent_runtime_cache_defers_refresh_while_state_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FakeChannelChatSessionStore()
@@ -378,7 +292,7 @@ async def test_agent_runtime_cache_defers_refresh_while_state_running(
     )
     registry = SimpleNamespace(get_agent=AsyncMock(return_value=base_config))
     scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=False))
-    replacement_agent = FakeAgent("runtime-1")
+    replacement_agent = FakeAgent("sess-1")
 
     async def fake_build_agent(*args, **kwargs):
         return replacement_agent
@@ -394,16 +308,15 @@ async def test_agent_runtime_cache_defers_refresh_while_state_running(
         console_config=ConsoleConfig(),
         session_store=store,
     )
-    existing_agent = FakeAgent("runtime-1")
-    pool._cache["runtime-1"] = CachedAgent(
-        agent=existing_agent, config_fingerprint="stale-fingerprint"
+    existing_agent = FakeAgent("sess-1")
+    pool._cache["sess-1"] = CachedAgent(
+        agent=existing_agent,
+        config_fingerprint="stale-fingerprint",
     )
     session = Session(
         id="sess-1",
-        chat_context_scope_id="scope-1",
+        chat_context_scope_id=None,
         base_agent_id="base-agent",
-        runtime_agent_id="runtime-1",
-        scheduler_state_id="runtime-1",
         created_by="AUTO",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -412,17 +325,14 @@ async def test_agent_runtime_cache_defers_refresh_while_state_running(
     agent = await pool.get_or_create_runtime_agent(session)
 
     assert agent is existing_agent
-    assert existing_agent.closed is False
     assert replacement_agent.closed is True
-    scheduler.rebind_agent.assert_awaited_once()
+    scheduler.rebind_agent.assert_awaited_once_with("sess-1", replacement_agent)
 
 
 @pytest.mark.asyncio
-async def test_session_runtime_service_steers_running_state_and_returns_steered_dispatch() -> (
-    None
-):
+async def test_session_runtime_service_routes_with_session_id_as_root_state() -> None:
     store = FakeChannelChatSessionStore()
-    route_result = SimpleNamespace(action="steered", state_id="runtime-1", stream=None)
+    route_result = SimpleNamespace(action="steered", state_id="sess-1", stream=None)
     scheduler = SimpleNamespace(
         route_root_input=AsyncMock(return_value=route_result),
         wait_for=AsyncMock(),
@@ -434,76 +344,30 @@ async def test_session_runtime_service_steers_running_state_and_returns_steered_
     )
     session = Session(
         id="sess-1",
-        chat_context_scope_id="scope-1",
+        chat_context_scope_id=None,
         base_agent_id="base-agent",
-        runtime_agent_id="runtime-1",
-        scheduler_state_id="runtime-1",
         created_by="AUTO",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
 
-    dispatch = await runtime_service.execute(FakeAgent("runtime-1"), session, "hello")
+    dispatch = await runtime_service.execute(FakeAgent("sess-1"), session, "hello")
 
     assert dispatch.action == "steered"
-    assert dispatch.stream is None
-    assert session.current_task_id is not None
-    assert session.task_message_count == 1
     scheduler.route_root_input.assert_awaited_once_with(
         "hello",
         agent=ANY,
-        state_id="runtime-1",
+        state_id="sess-1",
         session_id="sess-1",
         persistent=True,
         timeout=60,
+        stream_mode="until_settled",
     )
     assert store.sessions["sess-1"] is session
 
 
 @pytest.mark.asyncio
-async def test_session_runtime_service_updates_scheduler_binding_on_new_state_id() -> (
-    None
-):
-    store = FakeChannelChatSessionStore()
-    route_result = SimpleNamespace(
-        action="submitted",
-        state_id="state-2",
-        stream=None,
-    )
-    scheduler = SimpleNamespace(
-        route_root_input=AsyncMock(return_value=route_result),
-    )
-    runtime_service = SessionRuntimeService(
-        scheduler=scheduler,
-        session_store=store,
-        timeout=None,
-    )
-    session = Session(
-        id="sess-1",
-        chat_context_scope_id="scope-1",
-        base_agent_id="base-agent",
-        runtime_agent_id="runtime-1",
-        scheduler_state_id="state-1",
-        created_by="AUTO",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
-        current_task_id="task-1",
-        task_message_count=2,
-    )
-
-    dispatch = await runtime_service.execute(FakeAgent("runtime-1"), session, "next")
-
-    assert dispatch is route_result
-    assert session.scheduler_state_id == "state-2"
-    assert session.current_task_id == "task-1"
-    assert session.task_message_count == 3
-    assert store.sessions["sess-1"] is session
-
-
-@pytest.mark.asyncio
-async def test_session_runtime_service_cancel_if_active_only_cancels_live_state() -> (
-    None
-):
+async def test_session_runtime_service_cancel_if_active_uses_session_id() -> None:
     active_state = SimpleNamespace(is_active=lambda: True)
     inactive_state = SimpleNamespace(is_active=lambda: False)
     scheduler = SimpleNamespace(
@@ -516,20 +380,16 @@ async def test_session_runtime_service_cancel_if_active_only_cancels_live_state(
     )
     active_session = Session(
         id="sess-active",
-        chat_context_scope_id="scope-1",
+        chat_context_scope_id=None,
         base_agent_id="base-agent",
-        runtime_agent_id="runtime-1",
-        scheduler_state_id="state-active",
         created_by="AUTO",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
     inactive_session = Session(
         id="sess-inactive",
-        chat_context_scope_id="scope-1",
+        chat_context_scope_id=None,
         base_agent_id="base-agent",
-        runtime_agent_id="runtime-2",
-        scheduler_state_id="state-inactive",
         created_by="AUTO",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
@@ -537,104 +397,8 @@ async def test_session_runtime_service_cancel_if_active_only_cancels_live_state(
 
     await runtime_service.cancel_if_active(active_session, "stop")
     await runtime_service.cancel_if_active(inactive_session, "stop")
-    await runtime_service.cancel_if_active(
-        Session(
-            id="sess-empty",
-            chat_context_scope_id="scope-1",
-            base_agent_id="base-agent",
-            runtime_agent_id="",
-            scheduler_state_id="",
-            created_by="AUTO",
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        ),
-        "stop",
-    )
 
-    scheduler.cancel.assert_awaited_once_with("state-active", "stop")
-
-
-@pytest.mark.asyncio
-async def test_session_runtime_service_wait_and_get_state_delegate_to_scheduler() -> (
-    None
-):
-    scheduler = SimpleNamespace(
-        get_state=AsyncMock(return_value=SimpleNamespace(id="state-1")),
-        wait_for=AsyncMock(return_value=SimpleNamespace(status="completed")),
-    )
-    runtime_service = SessionRuntimeService(
-        scheduler=scheduler,
-        session_store=FakeChannelChatSessionStore(),
-    )
-
-    assert await runtime_service.get_state(None) is None
-    state = await runtime_service.get_state("state-1")
-    result = await runtime_service.wait_for("state-1")
-
-    assert state.id == "state-1"
-    assert result.status == "completed"
-    scheduler.get_state.assert_awaited_once_with("state-1")
-    scheduler.wait_for.assert_awaited_once_with("state-1", timeout=None)
-
-
-@pytest.mark.asyncio
-async def test_base_channel_service_acks_steered_into_running() -> None:
-    now = datetime.now(timezone.utc)
-    session = Session(
-        id="sess-1",
-        chat_context_scope_id="scope-1",
-        base_agent_id="base-agent",
-        runtime_agent_id="runtime-1",
-        scheduler_state_id="runtime-1",
-        created_by="AUTO",
-        created_at=now,
-        updated_at=now,
-    )
-    executor = _SteeredIntoRunningExecutor()
-    session_service = SimpleNamespace(
-        get_or_create_current_session=AsyncMock(
-            return_value=SimpleNamespace(
-                session=session,
-                retired_runtime_agent_id=None,
-            )
-        ),
-        get_chat_context_and_current_session=AsyncMock(
-            return_value=(SimpleNamespace(id="ctx-1"), session)
-        ),
-    )
-    agent_pool = SimpleNamespace(
-        get_or_create_runtime_agent=AsyncMock(return_value=FakeAgent("runtime-1")),
-        close=AsyncMock(),
-    )
-    service = _TestChannelService(
-        session_service=session_service,
-        agent_pool=agent_pool,
-        executor=executor,
-    )
-    batch_context = BatchContext(
-        chat_context_scope_id="scope-1",
-        channel_instance_id="feishu-main",
-        chat_id="chat-1",
-        chat_type="p2p",
-        trigger_user_id="user-1",
-        trigger_message_id="msg-1",
-        base_agent_id="agent-1",
-    )
-
-    try:
-        await service._execute_batch(
-            BatchPayload(
-                context=batch_context,
-                messages=[],
-                user_message="hello",
-            )
-        )
-        assert [text for _, text in service.reply_calls] == [
-            "消息已收到，正在继续处理。"
-        ]
-        assert service.message_calls == []
-    finally:
-        await service.close_base()
+    scheduler.cancel.assert_awaited_once_with("sess-active", "stop")
 
 
 @pytest.mark.asyncio
@@ -644,8 +408,6 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
         id="sess-current",
         chat_context_scope_id="scope-1",
         base_agent_id="base-agent",
-        runtime_agent_id="runtime-current",
-        scheduler_state_id="runtime-current",
         created_by="AUTO",
         created_at=now,
         updated_at=now,
@@ -654,8 +416,6 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
         id="sess-stale",
         chat_context_scope_id="scope-1",
         base_agent_id="base-agent",
-        runtime_agent_id="runtime-stale",
-        scheduler_state_id="runtime-stale",
         created_by="AUTO",
         created_at=now,
         updated_at=now,
@@ -665,7 +425,7 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
         yield RunCompletedEvent(
             session_id=stale_session.id,
             run_id="run-1",
-            agent_id="agent-1",
+            agent_id=stale_session.id,
             parent_run_id=None,
             depth=0,
             response="stale output",
@@ -675,28 +435,21 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
         execute=AsyncMock(
             return_value=RouteResult(
                 action="submitted",
-                state_id="runtime-stale",
+                state_id=stale_session.id,
                 stream=_stream(),
             )
         ),
-        get_state=AsyncMock(
-            return_value=SimpleNamespace(is_active=lambda: False, result_summary=None)
-        ),
-        wait_for=AsyncMock(),
     )
     session_service = SimpleNamespace(
         get_or_create_current_session=AsyncMock(
-            return_value=SimpleNamespace(
-                session=stale_session,
-                retired_runtime_agent_id=None,
-            )
+            return_value=SimpleNamespace(session=stale_session)
         ),
         get_chat_context_and_current_session=AsyncMock(
             return_value=(SimpleNamespace(id="ctx-1"), current_session)
         ),
     )
     agent_pool = SimpleNamespace(
-        get_or_create_runtime_agent=AsyncMock(return_value=FakeAgent("runtime-stale")),
+        get_or_create_runtime_agent=AsyncMock(return_value=FakeAgent(stale_session.id)),
         close=AsyncMock(),
     )
     service = _TestChannelService(
@@ -723,94 +476,5 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
             )
         )
         assert service.reply_calls == []
-        assert service.message_calls == []
-    finally:
-        await service.close_base()
-
-
-@pytest.mark.asyncio
-async def test_base_channel_service_delivers_only_root_terminal_text() -> None:
-    now = datetime.now(timezone.utc)
-    session = Session(
-        id="sess-1",
-        chat_context_scope_id="scope-1",
-        base_agent_id="base-agent",
-        runtime_agent_id="runtime-1",
-        scheduler_state_id="runtime-1",
-        created_by="AUTO",
-        created_at=now,
-        updated_at=now,
-    )
-
-    async def _stream():
-        yield StepDeltaEvent(
-            session_id=session.id,
-            run_id="run-1",
-            agent_id="runtime-1",
-            parent_run_id=None,
-            depth=0,
-            step_id="step-1",
-            delta=StepDelta(content="partial"),
-        )
-        yield RunCompletedEvent(
-            session_id=session.id,
-            run_id="run-1",
-            agent_id="runtime-1",
-            parent_run_id=None,
-            depth=0,
-            response="final",
-        )
-
-    executor = SimpleNamespace(
-        execute=AsyncMock(
-            return_value=RouteResult(
-                action="submitted",
-                state_id="runtime-1",
-                stream=_stream(),
-            )
-        ),
-        get_state=AsyncMock(return_value=None),
-        wait_for=AsyncMock(),
-    )
-    session_service = SimpleNamespace(
-        get_or_create_current_session=AsyncMock(
-            return_value=SimpleNamespace(
-                session=session,
-                retired_runtime_agent_id=None,
-            )
-        ),
-        get_chat_context_and_current_session=AsyncMock(
-            return_value=(SimpleNamespace(id="ctx-1"), session)
-        ),
-    )
-    agent_pool = SimpleNamespace(
-        get_or_create_runtime_agent=AsyncMock(return_value=FakeAgent("runtime-1")),
-        close=AsyncMock(),
-    )
-    service = _TestChannelService(
-        session_service=session_service,
-        agent_pool=agent_pool,
-        executor=executor,
-    )
-    batch_context = BatchContext(
-        chat_context_scope_id="scope-1",
-        channel_instance_id="feishu-main",
-        chat_id="chat-1",
-        chat_type="p2p",
-        trigger_user_id="user-1",
-        trigger_message_id="msg-1",
-        base_agent_id="agent-1",
-    )
-
-    try:
-        await service._execute_batch(
-            BatchPayload(
-                context=batch_context,
-                messages=[],
-                user_message="1+1=?",
-            )
-        )
-        assert [text for _, text in service.reply_calls] == ["final"]
-        assert service.message_calls == []
     finally:
         await service.close_base()
