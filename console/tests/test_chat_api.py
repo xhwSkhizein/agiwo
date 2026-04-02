@@ -170,3 +170,106 @@ async def test_chat_agent_not_found(client) -> None:
         json={"message": "hello"},
     )
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_chat_without_session_id_creates_agent_scoped_session_context(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Console chat should create sessions inside the agent-scoped chat context."""
+    registry = _runtime(client).agent_registry
+    await registry.create_agent(
+        AgentConfigRecord(
+            id="agent-ctx",
+            name="ctx-agent",
+            model_provider="openai",
+            model_name="gpt-test",
+        )
+    )
+
+    class FakeAgent:
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "server.routers.chat.build_agent",
+        AsyncMock(return_value=FakeAgent()),
+    )
+
+    scheduler = _runtime(client).scheduler
+    assert scheduler is not None
+
+    async def fake_route_root_input(
+        message: str,
+        *,
+        agent,
+        state_id: str | None,
+        session_id: str,
+        persistent: bool,
+        timeout: int,
+    ):
+        del message, agent, state_id, persistent, timeout
+        return type(
+            "RouteResultStub",
+            (),
+            {
+                "action": "submitted",
+                "state_id": "state-created",
+                "stream": None,
+            },
+        )()
+
+    monkeypatch.setattr(scheduler, "route_root_input", fake_route_root_input)
+
+    async with client.stream(
+        "POST",
+        "/api/chat/agent-ctx",
+        json={"message": "hello"},
+    ) as response:
+        assert response.status_code == 200
+        _ = [line async for line in response.aiter_lines()]
+
+    runtime = _runtime(client)
+    assert runtime.session_store is not None
+    chat_context = await runtime.session_store.get_chat_context("agent-ctx")
+    assert chat_context is not None
+    session = await runtime.session_store.get_session(chat_context.current_session_id)
+    assert session is not None
+    assert session.chat_context_scope_id == "agent-ctx"
+    assert session.base_agent_id == "agent-ctx"
+
+
+@pytest.mark.asyncio
+async def test_list_agent_sessions_includes_store_backed_sessions_without_runs(
+    client,
+) -> None:
+    """Session listing should surface session-store records even before any run exists."""
+    registry = _runtime(client).agent_registry
+    await registry.create_agent(
+        AgentConfigRecord(
+            id="agent-sessions",
+            name="sessions-agent",
+            model_provider="openai",
+            model_name="gpt-test",
+        )
+    )
+
+    create_resp = await client.post(
+        "/api/chat/agent-sessions/sessions/create",
+        json={
+            "chat_context_scope_id": "agent-sessions",
+            "channel_instance_id": "console-web",
+            "user_open_id": "console-user",
+        },
+    )
+    assert create_resp.status_code == 200
+    created_session_id = create_resp.json()["session_id"]
+
+    list_resp = await client.get("/api/chat/agent-sessions/sessions")
+    assert list_resp.status_code == 200
+
+    data = list_resp.json()
+    assert [item["session_id"] for item in data] == [created_session_id]
+    assert data[0]["current_task_id"] is None
+    assert data[0]["task_message_count"] == 0

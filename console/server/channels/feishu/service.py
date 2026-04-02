@@ -14,13 +14,14 @@ from typing import Any
 from agiwo.agent import (
     Agent,
     AgentStreamItem,
+    RunCompletedEvent,
+    RunFailedEvent,
     UserMessage,
 )
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.utils import (
-    extract_stream_text,
     safe_close_all,
     split_text_into_chunks,
     truncate_for_log,
@@ -257,19 +258,27 @@ class FeishuChannelService:
         if stream is None:
             return False
 
-        had_output = False
+        final_text: str | None = None
         async for item in stream:
-            if not await self._can_deliver_session(batch.context, session):
+            if isinstance(item, RunCompletedEvent):
+                if item.depth == 0 and item.response:
+                    final_text = item.response
                 continue
-            text = extract_stream_text(item)
-            if text is None:
+            if isinstance(item, RunFailedEvent):
+                if item.depth == 0 and item.error:
+                    final_text = item.error
                 continue
-            had_output = await self._deliver_stream_text(
-                batch.context,
-                text,
-                had_output=had_output,
-            )
-        return had_output
+
+        if final_text is None:
+            return False
+        if not await self._can_deliver_session(batch.context, session):
+            return False
+        await self._deliver_stream_text(
+            batch.context,
+            final_text,
+            had_output=False,
+        )
+        return True
 
     async def _deliver_stream_text(
         self,

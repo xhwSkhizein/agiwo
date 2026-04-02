@@ -45,6 +45,24 @@ async def stream_assistant_step(
     metrics_resolver = ModelUsageEstimator(model)
     request_estimate = metrics_resolver.estimate_request(messages, tools_resolved)
 
+    logger.debug(
+        "llm_request",
+        model=model,
+        messages_count=len(messages),
+        tools_count=len(tools_resolved) if tools_resolved else 0,
+        detail=_get_request_params(model),
+    )
+    logger.info(
+        "llm_messages_preview",
+        model=model,
+        messages_count=len(messages),
+        first_message_role=messages[0].get("role") if messages else None,
+        last_message_role=messages[-1].get("role") if messages else None,
+        last_message_content_preview=messages[-1].get("content", "")[:200]
+        if messages and isinstance(messages[-1].get("content"), str)
+        else None,
+    )
+
     llm_context = LLMCallContext(
         messages=list(messages),
         tools=list(tools_resolved) if tools_resolved else None,

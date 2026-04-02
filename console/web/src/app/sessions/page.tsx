@@ -1,8 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { EmptyStateMessage, TextStateMessage } from "@/components/state-message";
+import {
+  EmptyStateMessage,
+  ErrorStateMessage,
+  TextStateMessage,
+} from "@/components/state-message";
+import { PaginationControls } from "@/components/pagination-controls";
 import { UserInputCompact } from "@/components/user-input-detail";
 import { listSessions } from "@/lib/api";
 import type { SessionSummary } from "@/lib/api";
@@ -15,20 +20,49 @@ import {
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(25);
+  const [offset, setOffset] = useState(0);
+
+  const loadSessions = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const nextSessions = await listSessions(pageSize, offset);
+      setSessions(nextSessions);
+    } catch (err) {
+      setSessions([]);
+      setError(err instanceof Error ? err.message : "Failed to load sessions");
+    } finally {
+      setLoading(false);
+    }
+  }, [offset, pageSize]);
 
   useEffect(() => {
-    listSessions(50)
-      .then(setSessions)
-      .catch(() => setSessions([]))
-      .finally(() => setLoading(false));
-  }, []);
+    void loadSessions();
+  }, [loadSessions]);
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Sessions</h1>
-        <p className="text-sm text-zinc-400 mt-1">All conversation sessions</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Sessions</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Session history with cost and token rollups
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            void loadSessions();
+          }}
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
+        >
+          Refresh
+        </button>
       </div>
+
+      {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
 
       {loading ? (
         <TextStateMessage>Loading...</TextStateMessage>
@@ -88,6 +122,24 @@ export default function SessionsPage() {
           })}
         </div>
       )}
+
+      <PaginationControls
+        offset={offset}
+        pageSize={pageSize}
+        itemCount={sessions.length}
+        itemLabel="sessions"
+        disabled={loading}
+        onPageSizeChange={(nextPageSize) => {
+          setPageSize(nextPageSize);
+          setOffset(0);
+        }}
+        onPrevious={() => {
+          setOffset((current) => Math.max(0, current - pageSize));
+        }}
+        onNext={() => {
+          setOffset((current) => current + pageSize);
+        }}
+      />
     </div>
   );
 }

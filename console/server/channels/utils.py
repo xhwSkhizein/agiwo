@@ -6,6 +6,7 @@ from agiwo.agent import (
     AgentStreamItem,
     RunCompletedEvent,
     RunFailedEvent,
+    StepDeltaEvent,
 )
 from agiwo.utils.logging import get_logger
 
@@ -65,6 +66,8 @@ def split_text_into_chunks(text: str, max_len: int = _MAX_CHUNK_LEN) -> list[str
 
 
 def extract_stream_text(item: AgentStreamItem) -> str | None:
+    if isinstance(item, StepDeltaEvent):
+        return item.delta.content
     if isinstance(item, RunCompletedEvent):
         if not item.response:
             return None

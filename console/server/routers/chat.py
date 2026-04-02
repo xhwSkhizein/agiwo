@@ -1,10 +1,7 @@
 """Chat API router — real-time Agent conversation via SSE."""
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
 import json
-from uuid import uuid4
-
 from fastapi import APIRouter, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
@@ -19,6 +16,7 @@ from server.models.view import (
     SwitchSessionRequest,
 )
 from server.services.metrics import (
+    SessionAggregate,
     collect_session_aggregates,
     session_aggregate_to_chat_summary,
 )
@@ -54,8 +52,8 @@ async def chat(
     if runtime.session_store is None:
         raise RuntimeError("Session store not available")
 
-    session = await _get_or_create_chat_session(
-        session_id=body.session_id or str(uuid4()),
+    session = await _get_or_create_console_chat_session(
+        requested_session_id=body.session_id,
         agent_id=agent_id,
         runtime=runtime,
     )
@@ -80,6 +78,8 @@ async def chat(
                     "data": json.dumps(
                         {
                             "type": "scheduler_ack",
+                            "session_id": session.id,
+                            "state_id": session.scheduler_state_id or None,
                             "result_summary": state.result_summary,
                         },
                         default=str,
@@ -91,6 +91,8 @@ async def chat(
                 "data": json.dumps(
                     {
                         "type": "scheduler_ack",
+                        "session_id": session.id,
+                        "state_id": session.scheduler_state_id or None,
                         "message": "消息已收到，正在继续处理。",
                     },
                     default=str,
@@ -125,9 +127,20 @@ async def list_agent_sessions(
     runtime: ConsoleRuntimeDep,
 ):
     """Get conversation sessions for a specific agent."""
+    if runtime.session_store is None:
+        raise RuntimeError("Session store not available")
+
+    sessions = await runtime.session_store.list_sessions_by_chat_context(agent_id)
     storage = runtime.run_step_storage
-    sessions = await collect_session_aggregates(storage, agent_id=agent_id)
-    return [session_aggregate_to_chat_summary(session) for session in sessions]
+    aggregates = await collect_session_aggregates(storage, agent_id=agent_id)
+    aggregate_map = {session.session_id: session for session in aggregates}
+    return [
+        _session_to_chat_summary(
+            session,
+            aggregate_map.get(session.id),
+        )
+        for session in sessions
+    ]
 
 
 # ── Session Management ──────────────────────────────────────────────────
@@ -144,30 +157,59 @@ def _get_session_service(runtime: ConsoleRuntime) -> SessionContextService:
     )
 
 
-async def _get_or_create_chat_session(
+async def _get_or_create_console_chat_session(
     *,
-    session_id: str,
+    requested_session_id: str | None,
     agent_id: str,
     runtime: ConsoleRuntime,
 ) -> Session:
     assert runtime.session_store is not None
-    session = await runtime.session_store.get_session(session_id)
-    if session is not None:
-        return session
+    if requested_session_id:
+        session = await runtime.session_store.get_session(requested_session_id)
+        if session is not None and session.base_agent_id == agent_id:
+            return session
 
-    now = datetime.now(timezone.utc)
-    session = Session(
-        id=session_id,
-        chat_context_scope_id=session_id,
+    service = _get_session_service(runtime)
+    _, current_session = await service.get_chat_context_and_current_session(agent_id)
+    if current_session is not None:
+        return current_session
+
+    result = await service.create_new_session(
+        chat_context_scope_id=agent_id,
+        channel_instance_id="console-web",
+        chat_id=agent_id,
+        chat_type="dm",
+        user_open_id="console-user",
         base_agent_id=agent_id,
-        runtime_agent_id="",
-        scheduler_state_id="",
         created_by="CONSOLE_CHAT",
-        created_at=now,
-        updated_at=now,
     )
-    await runtime.session_store.upsert_session(session)
-    return session
+    return result.session
+
+
+def _session_to_chat_summary(
+    session: Session,
+    aggregate: SessionAggregate | None,
+) -> dict[str, object]:
+    summary = (
+        session_aggregate_to_chat_summary(aggregate)
+        if aggregate is not None
+        else {
+            "session_id": session.id,
+            "run_count": 0,
+            "last_input": None,
+            "last_response": None,
+            "updated_at": session.updated_at.isoformat()
+            if session.updated_at
+            else None,
+        }
+    )
+    return {
+        **summary,
+        "current_task_id": session.current_task_id,
+        "task_message_count": session.task_message_count,
+        "source_session_id": session.source_session_id,
+        "fork_context_summary": session.fork_context_summary,
+    }
 
 
 @router.post("/{agent_id}/sessions/create")

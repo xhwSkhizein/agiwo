@@ -36,6 +36,7 @@ import type {
   AgentConfig,
   AgentStateListItem,
   RunCompletedEventPayload,
+  SchedulerAckEventPayload,
   StreamEventPayload,
   StepResponse,
 } from "@/lib/api";
@@ -259,7 +260,7 @@ export default function SchedulerChatPage() {
     loadHistoryMessages,
   } = useChatStream(schedulerChatStreamUrl(agentId), {
     onSessionCaptured: (sid) => {
-      if (!sessionId) {
+      if (sessionId !== sid) {
         setSessionId(sid);
         updateSessionUrl(sid);
       }
@@ -269,7 +270,15 @@ export default function SchedulerChatPage() {
       pollChildren(aid);
     },
     onChildEvent: handleChildEvent,
-    onSchedulerFailed: (error) => {
+    onSchedulerAck: (event: SchedulerAckEventPayload) => {
+      if (event.state_id) {
+        setStateId(event.state_id);
+      }
+      setOrchestrationStatus((prev) =>
+        prev === "failed" || prev === "cancelled" ? prev : "running",
+      );
+    },
+    onSchedulerFailed: () => {
       setOrchestrationStatus("failed");
       stopPolling();
     },
@@ -309,7 +318,7 @@ export default function SchedulerChatPage() {
         })
         .catch(() => {});
     }
-  }, [sessionId]);
+  }, [sessionId, messages.length, isStreaming, loadHistoryMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -431,7 +440,10 @@ export default function SchedulerChatPage() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {isStreaming && (
+            {stateId &&
+              (isStreaming ||
+                orchestrationStatus === "running" ||
+                orchestrationStatus === "waiting") && (
               <button
                 onClick={handleCancel}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/30 text-red-400 text-xs font-medium hover:bg-red-900/50 transition-colors"

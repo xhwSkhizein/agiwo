@@ -228,3 +228,32 @@ async def test_openai_model_arun_stream_multiple_chunks(
     assert result_chunks[1].content == " "
     assert result_chunks[2].content == "World"
     assert result_chunks[2].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+@patch("agiwo.llm.openai.get_settings")
+async def test_openai_model_arun_stream_rejects_empty_stream(
+    mock_get_settings, mock_openai_client
+):
+    mock_settings = mock_get_settings.return_value
+    mock_settings.openai_api_key = None
+    model = OpenAIModel(
+        id="qwen3.6-plus-preview",
+        name="qwen3.6-plus-preview",
+        api_key="test-key",
+        base_url="https://embed.o-ai.tech",
+    )
+    model.client = mock_openai_client
+
+    async def async_iter(self):
+        if False:
+            yield None
+
+    mock_stream = AsyncMock()
+    mock_stream.__aiter__ = async_iter
+    mock_openai_client.chat.completions.create = AsyncMock(return_value=mock_stream)
+
+    messages = [{"role": "user", "content": "Hello"}]
+    with pytest.raises(RuntimeError, match="returned no chunks"):
+        async for _ in model.arun_stream(messages):
+            pass

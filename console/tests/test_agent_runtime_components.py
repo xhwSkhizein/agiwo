@@ -5,9 +5,8 @@ from unittest.mock import ANY, AsyncMock
 import pytest
 
 from agiwo.scheduler.commands import RouteResult
-from agiwo.agent import RunCompletedEvent
+from agiwo.agent import RunCompletedEvent, RunFailedEvent, StepDelta, StepDeltaEvent
 from server.channels.utils import (
-    extract_stream_text,
     safe_close_all,
     split_text_into_chunks,
 )
@@ -156,17 +155,22 @@ class _TestChannelService:
     async def _consume_dispatch_stream(self, batch, session, stream):
         if stream is None:
             return False
-        had_output = False
+        final_text = None
         async for item in stream:
-            if not await self._can_deliver_target(batch.context, session):
+            if isinstance(item, RunCompletedEvent):
+                if item.depth == 0 and item.response:
+                    final_text = item.response
                 continue
-            text = extract_stream_text(item)
-            if text is None:
+            if isinstance(item, RunFailedEvent):
+                if item.depth == 0 and item.error:
+                    final_text = item.error
                 continue
-            had_output = await self._deliver_stream_text(
-                batch.context, text, had_output=had_output
-            )
-        return had_output
+        if final_text is None:
+            return False
+        if not await self._can_deliver_target(batch.context, session):
+            return False
+        await self._deliver_stream_text(batch.context, final_text, had_output=False)
+        return True
 
     async def _deliver_stream_text(self, context, text, *, had_output):
         chunks = split_text_into_chunks(text)
@@ -719,6 +723,94 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
             )
         )
         assert service.reply_calls == []
+        assert service.message_calls == []
+    finally:
+        await service.close_base()
+
+
+@pytest.mark.asyncio
+async def test_base_channel_service_delivers_only_root_terminal_text() -> None:
+    now = datetime.now(timezone.utc)
+    session = Session(
+        id="sess-1",
+        chat_context_scope_id="scope-1",
+        base_agent_id="base-agent",
+        runtime_agent_id="runtime-1",
+        scheduler_state_id="runtime-1",
+        created_by="AUTO",
+        created_at=now,
+        updated_at=now,
+    )
+
+    async def _stream():
+        yield StepDeltaEvent(
+            session_id=session.id,
+            run_id="run-1",
+            agent_id="runtime-1",
+            parent_run_id=None,
+            depth=0,
+            step_id="step-1",
+            delta=StepDelta(content="partial"),
+        )
+        yield RunCompletedEvent(
+            session_id=session.id,
+            run_id="run-1",
+            agent_id="runtime-1",
+            parent_run_id=None,
+            depth=0,
+            response="final",
+        )
+
+    executor = SimpleNamespace(
+        execute=AsyncMock(
+            return_value=RouteResult(
+                action="submitted",
+                state_id="runtime-1",
+                stream=_stream(),
+            )
+        ),
+        get_state=AsyncMock(return_value=None),
+        wait_for=AsyncMock(),
+    )
+    session_service = SimpleNamespace(
+        get_or_create_current_session=AsyncMock(
+            return_value=SimpleNamespace(
+                session=session,
+                retired_runtime_agent_id=None,
+            )
+        ),
+        get_chat_context_and_current_session=AsyncMock(
+            return_value=(SimpleNamespace(id="ctx-1"), session)
+        ),
+    )
+    agent_pool = SimpleNamespace(
+        get_or_create_runtime_agent=AsyncMock(return_value=FakeAgent("runtime-1")),
+        close=AsyncMock(),
+    )
+    service = _TestChannelService(
+        session_service=session_service,
+        agent_pool=agent_pool,
+        executor=executor,
+    )
+    batch_context = BatchContext(
+        chat_context_scope_id="scope-1",
+        channel_instance_id="feishu-main",
+        chat_id="chat-1",
+        chat_type="p2p",
+        trigger_user_id="user-1",
+        trigger_message_id="msg-1",
+        base_agent_id="agent-1",
+    )
+
+    try:
+        await service._execute_batch(
+            BatchPayload(
+                context=batch_context,
+                messages=[],
+                user_message="1+1=?",
+            )
+        )
+        assert [text for _, text in service.reply_calls] == ["final"]
         assert service.message_calls == []
     finally:
         await service.close_base()

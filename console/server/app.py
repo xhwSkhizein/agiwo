@@ -28,6 +28,7 @@ from server.services.storage_wiring import (
 from server.routers import (
     sessions,
     traces,
+    overview,
     agents,
     chat,
     scheduler,
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
 
     app.include_router(sessions.router)
     app.include_router(traces.router)
+    app.include_router(overview.router)
     app.include_router(agents.router)
     app.include_router(chat.router)
     app.include_router(scheduler.router)

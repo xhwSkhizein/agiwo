@@ -1,9 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { PaginationControls } from "@/components/pagination-controls";
 import { MonoLink, MonoText } from "@/components/mono-text";
 import { SchedulerStatusBadge } from "@/components/scheduler-status-badge";
-import { EmptyStateMessage, TextStateMessage } from "@/components/state-message";
+import {
+  EmptyStateMessage,
+  ErrorStateMessage,
+  TextStateMessage,
+} from "@/components/state-message";
 import { UserInputCompact } from "@/components/user-input-detail";
 import {
   listAgentStates,
@@ -54,42 +59,88 @@ export default function SchedulerPage() {
   const [states, setStates] = useState<AgentStateListItem[]>([]);
   const [stats, setStats] = useState<SchedulerStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [pageSize, setPageSize] = useState(25);
+  const [offset, setOffset] = useState(0);
+  const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const loadData = useCallback(async (statusFilter: string) => {
-    setLoading(true);
-    const params: { status?: string; limit?: number } = { limit: 200 };
-    if (statusFilter) {
+  const loadData = useCallback(async (background = false) => {
+    if (background) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+    const params: { status?: string; limit: number; offset: number } = {
+      limit: pageSize,
+      offset,
+    };
+    if (filter) {
+      const statusFilter = filter;
       params.status = statusFilter;
     }
 
     try {
       const [nextStates, nextStats] = await Promise.all([
-        listAgentStates(params).catch(() => []),
-        getSchedulerStats().catch(() => null),
+        listAgentStates(params),
+        getSchedulerStats(),
       ]);
       setStates(nextStates);
       setStats(nextStats);
+    } catch (err) {
+      setStates([]);
+      setError(err instanceof Error ? err.message : "Failed to load scheduler states");
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, []);
+  }, [filter, offset, pageSize]);
 
   useEffect(() => {
-    void loadData(filter);
-  }, [filter, loadData]);
+    void loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    if (!autoRefresh) {
+      return;
+    }
+    const timerId = window.setInterval(() => {
+      void loadData(true);
+    }, 10000);
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [autoRefresh, loadData]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Scheduler</h1>
-        <p className="text-sm text-zinc-400 mt-1">
-          Agent execution states and orchestration overview
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Scheduler</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Agent execution states and orchestration overview
+          </p>
+        </div>
+        <div className="flex items-center gap-3 text-sm text-zinc-400">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(event) => {
+                setAutoRefresh(event.target.checked);
+              }}
+              className="rounded border-zinc-700 bg-zinc-950 text-zinc-200"
+            />
+            Auto refresh
+          </label>
+          {refreshing && <span className="text-zinc-500">Refreshing…</span>}
+        </div>
       </div>
 
       {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
           <StatMini label="Total" value={stats.total} />
           <StatMini label="Pending" value={stats.pending} active={filter === "pending"} />
           <StatMini label="Running" value={stats.running} active={filter === "running"} />
@@ -107,6 +158,7 @@ export default function SchedulerPage() {
             key={f.value}
             onClick={() => {
               setFilter(f.value);
+              setOffset(0);
             }}
             className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
               filter === f.value
@@ -119,13 +171,15 @@ export default function SchedulerPage() {
         ))}
         <button
           onClick={() => {
-            void loadData(filter);
+            void loadData();
           }}
           className="ml-auto px-3 py-1.5 text-xs rounded-md bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
         >
           Refresh
         </button>
       </div>
+
+      {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
 
       {loading ? (
         <TextStateMessage>Loading...</TextStateMessage>
@@ -199,6 +253,24 @@ export default function SchedulerPage() {
           </table>
         </div>
       )}
+
+      <PaginationControls
+        offset={offset}
+        pageSize={pageSize}
+        itemCount={states.length}
+        itemLabel="states"
+        disabled={loading}
+        onPageSizeChange={(nextPageSize) => {
+          setPageSize(nextPageSize);
+          setOffset(0);
+        }}
+        onPrevious={() => {
+          setOffset((current) => Math.max(0, current - pageSize));
+        }}
+        onNext={() => {
+          setOffset((current) => current + pageSize);
+        }}
+      />
     </div>
   );
 }

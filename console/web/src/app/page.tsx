@@ -1,14 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { MessageSquare, Activity, Bot, Zap, CalendarClock } from "lucide-react";
-import { listSessions, listTraces, listAgents, getSchedulerStats } from "@/lib/api";
-import { EmptyStateMessage, FullPageMessage } from "@/components/state-message";
+import { getDashboardOverview, listSessions, listTraces } from "@/lib/api";
+import {
+  EmptyStateMessage,
+  ErrorStateMessage,
+  FullPageMessage,
+} from "@/components/state-message";
 import { SectionCard } from "@/components/section-card";
 import { TraceStatusBadge } from "@/components/trace-status-badge";
 import { UserInputCompact } from "@/components/user-input-detail";
-import type { SessionSummary, TraceListItem, AgentConfig, SchedulerStats } from "@/lib/api";
+import type {
+  DashboardOverview,
+  SessionSummary,
+  TraceListItem,
+} from "@/lib/api";
 import { formatRoundedMs } from "@/lib/time";
 
 function StatCard({
@@ -37,44 +45,82 @@ function StatCard({
 }
 
 export default function DashboardPage() {
+  const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [traces, setTraces] = useState<TraceListItem[]>([]);
-  const [agents, setAgents] = useState<AgentConfig[]>([]);
-  const [schedulerStats, setSchedulerStats] = useState<SchedulerStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([
-      listSessions(5).catch(() => []),
-      listTraces({ limit: 5 }).catch(() => []),
-      listAgents().catch(() => []),
-      getSchedulerStats().catch(() => null),
-    ]).then(([s, t, a, ss]) => {
-      setSessions(s);
-      setTraces(t);
-      setAgents(a);
-      setSchedulerStats(ss);
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [nextOverview, nextSessions, nextTraces] = await Promise.all([
+        getDashboardOverview(),
+        listSessions(5, 0),
+        listTraces({ limit: 5, offset: 0 }),
+      ]);
+      setOverview(nextOverview);
+      setSessions(nextSessions);
+      setTraces(nextTraces);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load dashboard");
+    } finally {
       setLoading(false);
-    });
+    }
   }, []);
 
-  if (loading) {
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
+
+  if (loading && overview === null) {
     return <FullPageMessage>Loading...</FullPageMessage>;
   }
 
+  const schedulerStats = overview?.scheduler;
+
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <p className="text-sm text-zinc-400 mt-1">
-          Agiwo Agent SDK overview
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">Dashboard</h1>
+          <p className="text-sm text-zinc-400 mt-1">
+            Real-time control plane overview and recent activity
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            void loadDashboard();
+          }}
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
+        >
+          Refresh
+        </button>
       </div>
 
+      {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <StatCard label="Sessions" value={sessions.length} icon={MessageSquare} href="/sessions" />
-        <StatCard label="Traces" value={traces.length} icon={Activity} href="/traces" />
-        <StatCard label="Agents" value={agents.length} icon={Bot} href="/agents" />
+        <StatCard
+          label="Sessions"
+          value={overview?.total_sessions ?? 0}
+          icon={MessageSquare}
+          href="/sessions"
+        />
+        <StatCard
+          label="Traces"
+          value={overview?.total_traces ?? 0}
+          icon={Activity}
+          href="/traces"
+        />
+        <StatCard
+          label="Agents"
+          value={overview?.total_agents ?? 0}
+          icon={Bot}
+          href="/agents"
+        />
         <StatCard
           label="Scheduled"
           value={
@@ -87,7 +133,7 @@ export default function DashboardPage() {
         />
         <StatCard
           label="Total Tokens"
-          value={traces.reduce((sum, t) => sum + t.total_tokens, 0).toLocaleString()}
+          value={(overview?.total_tokens ?? 0).toLocaleString()}
           icon={Zap}
           href="/traces"
         />
