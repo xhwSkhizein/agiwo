@@ -1,7 +1,5 @@
 """Tick loop and dispatch logic extracted from Scheduler."""
 
-from __future__ import annotations
-
 import asyncio
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -12,6 +10,7 @@ from agiwo.scheduler.models import (
     AgentStateStatus,
     PendingEvent,
     SchedulerEventType,
+    WakeType,
 )
 from agiwo.scheduler.runtime_state import (
     build_mailbox_input,
@@ -26,8 +25,42 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+_ACKABLE_CHILD_EVENT_TYPES = frozenset(
+    {
+        SchedulerEventType.CHILD_COMPLETED,
+        SchedulerEventType.CHILD_FAILED,
+        SchedulerEventType.CHILD_SLEEP_RESULT,
+    }
+)
 
-async def tick(sched: Scheduler) -> None:
+
+def _ackable_wait_events(
+    state: AgentState,
+    event_groups: dict[tuple[str, str], list[PendingEvent]],
+) -> tuple[PendingEvent, ...]:
+    grouped_events = tuple(event_groups.get((state.id, state.session_id), []))
+    if not grouped_events:
+        return ()
+
+    wake_condition = state.wake_condition
+    if wake_condition is None or wake_condition.type != WakeType.WAITSET:
+        return ()
+
+    wait_for_ids = set(wake_condition.wait_for)
+    if not wait_for_ids:
+        return ()
+
+    ackable: list[PendingEvent] = []
+    for event in grouped_events:
+        if event.event_type not in _ACKABLE_CHILD_EVENT_TYPES:
+            continue
+        if event.source_agent_id not in wait_for_ids:
+            continue
+        ackable.append(event)
+    return tuple(ackable)
+
+
+async def tick(sched: "Scheduler") -> None:
     await propagate_signals(sched)
     states = await list_all_states(
         sched._store,
@@ -45,7 +78,7 @@ async def tick(sched: Scheduler) -> None:
 
 
 def plan_tick(
-    sched: Scheduler,
+    sched: "Scheduler",
     states: list[AgentState],
     events: list[PendingEvent],
     *,
@@ -102,13 +135,21 @@ def plan_tick(
         if state.wake_condition is not None:
             if state.wake_condition.is_timed_out(now):
                 actions.append(
-                    DispatchAction(state=state, reason=DispatchReason.WAKE_TIMEOUT)
+                    DispatchAction(
+                        state=state,
+                        reason=DispatchReason.WAKE_TIMEOUT,
+                        events=_ackable_wait_events(state, event_groups),
+                    )
                 )
                 continue
 
             if state.wake_condition.is_satisfied(now):
                 actions.append(
-                    DispatchAction(state=state, reason=DispatchReason.WAKE_READY)
+                    DispatchAction(
+                        state=state,
+                        reason=DispatchReason.WAKE_READY,
+                        events=_ackable_wait_events(state, event_groups),
+                    )
                 )
                 continue
 
@@ -127,7 +168,7 @@ def plan_tick(
     return actions
 
 
-async def dispatch_action(sched: Scheduler, action: DispatchAction) -> None:
+async def dispatch_action(sched: "Scheduler", action: DispatchAction) -> None:
     state = action.state
     if state.id in sched._rt.dispatched:
         return
@@ -147,7 +188,7 @@ async def dispatch_action(sched: Scheduler, action: DispatchAction) -> None:
     sched._track_active_task(task)
 
 
-async def propagate_signals(sched: Scheduler) -> None:
+async def propagate_signals(sched: "Scheduler") -> None:
     candidates = await sched._store.list_states(
         statuses=(AgentStateStatus.COMPLETED, AgentStateStatus.FAILED),
         signal_propagated=False,

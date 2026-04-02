@@ -978,6 +978,131 @@ class TestSchedulerDebounce:
 
         # No new dispatch should have happened
         assert after_dispatched == before_dispatched
+
+    @pytest.mark.asyncio
+    async def test_wait_ready_acknowledges_consumed_child_events(self):
+        """Waitset wake should clear child lifecycle events once consumed."""
+        scheduler = Scheduler(_fast_config(event_debounce_min_count=1))
+        store = scheduler._store
+        model = MockModel([_simple_completion("woke")])
+        prepared_agent = await _make_agent(
+            name="parent", model=model, id="parent-wake-ready", tools=[]
+        ).create_child_agent(
+            child_id="parent-wake-ready",
+            system_prompt_override="",
+            exclude_tool_names=set(),
+            extra_tools=list(scheduler._scheduling_tools),
+        )
+        scheduler._rt.agents[prepared_agent.id] = prepared_agent
+
+        parent = AgentState(
+            id="parent-wake-ready",
+            session_id="sess",
+            status=AgentStateStatus.WAITING,
+            task="parent",
+            parent_id=None,
+            wake_condition=WakeCondition(
+                type=WakeType.WAITSET,
+                wait_for=("child-x",),
+                completed_ids=("child-x",),
+            ),
+        )
+        await store.save_state(parent)
+        await store.save_event(
+            PendingEvent(
+                id="evt-ready",
+                target_agent_id="parent-wake-ready",
+                session_id="sess",
+                event_type=SchedulerEventType.CHILD_COMPLETED,
+                payload={"result": "done", "child_agent_id": "child-x"},
+                source_agent_id="child-x",
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+
+        await scheduler.tick()
+        await asyncio.sleep(_TEST_SETTLE_WAIT)
+
+        remaining = await store.list_events(
+            target_agent_id="parent-wake-ready",
+            session_id="sess",
+        )
+        assert remaining == []
+
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_wait_timeout_acknowledges_only_waitset_child_events(self):
+        """Timeout wake should clear only child lifecycle events for the active waitset."""
+        scheduler = Scheduler(_fast_config(event_debounce_min_count=1))
+        store = scheduler._store
+        model = MockModel([_simple_completion("timed out")])
+        prepared_agent = await _make_agent(
+            name="parent", model=model, id="parent-timeout", tools=[]
+        ).create_child_agent(
+            child_id="parent-timeout",
+            system_prompt_override="",
+            exclude_tool_names=set(),
+            extra_tools=list(scheduler._scheduling_tools),
+        )
+        scheduler._rt.agents[prepared_agent.id] = prepared_agent
+
+        parent = AgentState(
+            id="parent-timeout",
+            session_id="sess",
+            status=AgentStateStatus.WAITING,
+            task="parent",
+            parent_id=None,
+            wake_condition=WakeCondition(
+                type=WakeType.WAITSET,
+                wait_for=("child-x",),
+                timeout_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+            ),
+        )
+        await store.save_state(parent)
+        await store.save_event(
+            PendingEvent(
+                id="evt-timeout",
+                target_agent_id="parent-timeout",
+                session_id="sess",
+                event_type=SchedulerEventType.CHILD_COMPLETED,
+                payload={"result": "done", "child_agent_id": "child-x"},
+                source_agent_id="child-x",
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        await store.save_event(
+            PendingEvent(
+                id="evt-other-child",
+                target_agent_id="parent-timeout",
+                session_id="sess",
+                event_type=SchedulerEventType.CHILD_COMPLETED,
+                payload={"result": "other", "child_agent_id": "child-y"},
+                source_agent_id="child-y",
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        await store.save_event(
+            PendingEvent(
+                id="evt-user-hint",
+                target_agent_id="parent-timeout",
+                session_id="sess",
+                event_type=SchedulerEventType.USER_HINT,
+                payload={"hint": "still here"},
+                source_agent_id=None,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+
+        await scheduler.tick()
+        await asyncio.sleep(_TEST_SETTLE_WAIT)
+
+        remaining = await store.list_events(
+            target_agent_id="parent-timeout",
+            session_id="sess",
+        )
+        assert [event.id for event in remaining] == ["evt-other-child", "evt-user-hint"]
+
         await scheduler.stop()
 
 
