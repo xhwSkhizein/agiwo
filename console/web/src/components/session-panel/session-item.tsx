@@ -5,6 +5,12 @@ import type { ChatSessionItem } from "@/lib/api";
 import { UserInputCompact } from "@/components/user-input-detail";
 import { cn } from "@/lib/utils";
 
+/**
+ * Format a timestamp string into a concise human-readable relative time.
+ *
+ * @param dateStr - A parseable date/time string or `null`; if falsy the function returns an empty string.
+ * @returns `""` for falsy input; `"just now"` for < 1 minute; `"{N}m ago"` for minutes < 60; `"{N}h ago"` for hours < 24; `"{N}d ago"` otherwise.
+ */
 function formatRelativeTime(dateStr: string | null): string {
   if (!dateStr) return "";
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -24,6 +30,15 @@ interface SessionItemProps {
   onFork: () => void;
 }
 
+/**
+ * Renders a session list item showing session metadata, status badges, and actions.
+ *
+ * @param session - Session data to display (id, counts, timestamps, status, and optional fork/source info)
+ * @param isCurrent - Whether this session is the currently active session
+ * @param onSwitch - Callback invoked when a non-current session item is clicked to switch sessions
+ * @param onFork - Callback invoked when the Fork control is activated for the current session
+ * @returns The rendered session item element
+ */
 export function SessionItem({
   session,
   isCurrent,

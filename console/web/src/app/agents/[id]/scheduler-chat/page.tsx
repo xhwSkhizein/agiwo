@@ -112,6 +112,18 @@ function statusFromSchedulerState(
   }
 }
 
+/**
+ * Render the scheduler chat page UI for interacting with an agent's sessions, orchestration state, and child agents.
+ *
+ * Provides a full client-side interface that:
+ * - loads agent metadata and session state,
+ * - manages session selection, creation, and URL synchronization,
+ * - streams and paginates session messages while reconciling remote session steps,
+ * - polls and displays orchestration/root state, pending events, and child agents (with per-child streamed messages),
+ * - exposes controls for sending messages, cancelling runs, and toggling session/child panels.
+ *
+ * @returns The rendered scheduler chat page UI element.
+ */
 function SchedulerChatPageContent() {
   const params = useParams();
   const router = useRouter();

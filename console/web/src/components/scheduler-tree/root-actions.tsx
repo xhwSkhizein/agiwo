@@ -13,6 +13,17 @@ type RootActionsProps = {
 
 const ACTIVE_ROOT_STATUSES = new Set(["pending", "running", "waiting", "queued"]);
 
+/**
+ * Render root-only orchestration controls for a selected AgentStateDetail.
+ *
+ * Shows a message input and the appropriate action buttons (steer, resume, cancel)
+ * when the provided `state` represents a root agent and the state allows those actions.
+ * On successful action execution the input is cleared and `onActionComplete` is invoked.
+ *
+ * @param state - AgentStateDetail used to determine which controls are shown. Controls are shown only for root states (parent_id === null); steering/cancel are available for active root statuses, and resume is available for persistent roots in `idle` or `failed` status.
+ * @param onActionComplete - Callback invoked after a successful action to let the parent refresh or update state.
+ * @returns The rendered Root Controls panel JSX when actions are applicable, or `null` when no root actions should be shown.
+ */
 export function RootActions({ state, onActionComplete }: RootActionsProps) {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);

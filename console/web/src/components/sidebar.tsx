@@ -19,6 +19,13 @@ const NAV_ITEMS = [
   { href: "/scheduler", label: "Scheduler", icon: CalendarClock },
 ];
 
+/**
+ * Renders the application's left navigation sidebar with a header, primary navigation, and footer version label.
+ *
+ * The primary navigation highlights the active route: the Dashboard item is active when the pathname is "/", and other items are active when the pathname starts with the item's `href`. Active links receive aria-current="page" and a visual accent.
+ *
+ * @returns The sidebar JSX element containing the header, primary nav, and footer version label.
+ */
 export function Sidebar() {
   const pathname = usePathname();
 

@@ -27,6 +27,15 @@ import { formatLocalDateTime } from "@/lib/time";
 import { formatWakeConditionSummary } from "@/lib/wake-condition";
 import { usePageVisibility } from "@/hooks/use-page-visibility";
 
+/**
+ * Render a clickable metric tile that displays an uppercase label and a large numeric value.
+ *
+ * @param label - Short label shown above the value (displayed in uppercase).
+ * @param value - Numeric metric to display prominently.
+ * @param active - If true, visually marks the tile as active and sets `aria-pressed` accordingly.
+ * @param onClick - Callback invoked when the tile is clicked.
+ * @returns The rendered button element representing the metric tile.
+ */
 function StatMini({
   label,
   value,
@@ -58,6 +67,12 @@ function StatMini({
   );
 }
 
+/**
+ * Render a compact, styled summary of an agent state's wake condition.
+ *
+ * @param wc - The wake condition value from an agent state (may be `null` or `undefined`)
+ * @returns A <span> element containing the formatted wake-condition text; uses muted styling when `wc` is present and faint styling when absent.
+ */
 function WakeInfo({ wc }: { wc: AgentStateListItem["wake_condition"] }) {
   return (
     <span className={wc ? "text-xs text-ink-muted" : "text-ink-faint"}>
@@ -66,6 +81,13 @@ function WakeInfo({ wc }: { wc: AgentStateListItem["wake_condition"] }) {
   );
 }
 
+/**
+ * Render the scheduler page content including agent state metrics, the agent states table, filters, pagination, and refresh controls.
+ *
+ * Manages loading scheduler stats and agent states, applies status filtering and pagination, and supports optional auto-refresh when the page is visible.
+ *
+ * @returns The rendered scheduler page content as a React element.
+ */
 function SchedulerPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -340,6 +362,11 @@ function SchedulerPageContent() {
   );
 }
 
+/**
+ * Renders the Scheduler page wrapped in a Suspense fallback.
+ *
+ * @returns A React element containing the scheduler content and a loading fallback message.
+ */
 export default function SchedulerPage() {
   return (
     <Suspense fallback={<FullPageMessage loading>Loading scheduler...</FullPageMessage>}>

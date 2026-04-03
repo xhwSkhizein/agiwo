@@ -8,6 +8,14 @@ import { BackHeader } from "@/components/back-header";
 import { ErrorStateMessage, FullPageMessage } from "@/components/state-message";
 import { AgentConfig, AgentConfigCreate, getAgent, updateAgent } from "@/lib/api";
 
+/**
+ * Page component for editing an agent specified by the route `id`.
+ *
+ * Fetches the agent configuration on mount, displays loading or error states,
+ * and renders an editable form that updates the agent and navigates back to the agents list on success.
+ *
+ * @returns The page JSX for editing an agent, including loading/error UI and an AgentForm for saving changes.
+ */
 export default function EditAgentPage() {
   const params = useParams();
   const agentId = params.id as string;

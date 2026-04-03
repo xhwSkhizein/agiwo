@@ -21,6 +21,15 @@ import type {
 } from "@/lib/api";
 import { formatRoundedMs } from "@/lib/time";
 
+/**
+ * Renders a clickable statistic card that links to `href` and displays a label, an icon, and a value.
+ *
+ * @param label - Text label shown above the value
+ * @param value - Numeric or string value displayed prominently
+ * @param icon - Icon component to render to the right of the label
+ * @param href - Destination URL for the card link
+ * @returns A link element styled as a statistic card containing the provided label, icon, and value
+ */
 function StatCard({
   label,
   value,
@@ -49,6 +58,13 @@ function StatCard({
   );
 }
 
+/**
+ * Renders the dashboard page with top-level statistics, recent sessions, and recent traces.
+ *
+ * Loads overview, recent sessions, and recent traces on mount; shows a full-page loading message while initially loading, displays an error message if loading fails, and provides a manual refresh control.
+ *
+ * @returns The rendered dashboard page element containing stats, recent activity lists, and controls.
+ */
 export default function DashboardPage() {
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);

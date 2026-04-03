@@ -21,6 +21,12 @@ import {
 } from "@/lib/metrics";
 import { formatRoundedMs } from "@/lib/time";
 
+/**
+ * Render a small Lucide icon representing the span `kind`.
+ *
+ * @param kind - The span kind; expected values: `"agent"`, `"llm_call"`, `"tool_call"`. Any other value renders the default icon.
+ * @returns A JSX element for the corresponding icon: `Cpu` for `"agent"`, `Zap` for `"llm_call"`, `Wrench` for `"tool_call"`, and `Clock` for other kinds. Icons are rendered with the component's standard sizing and semantic color classes.
+ */
 function KindIcon({ kind }: { kind: string }) {
   if (kind === "agent") return <Cpu className="h-3.5 w-3.5 text-accent" />;
   if (kind === "llm_call") return <Zap className="h-3.5 w-3.5 text-success" />;
@@ -28,6 +34,19 @@ function KindIcon({ kind }: { kind: string }) {
   return <Clock className="h-3.5 w-3.5 text-ink-faint" />;
 }
 
+/**
+ * Render a clickable span row in the trace waterfall with an inline duration bar and optional expandable details.
+ *
+ * The row is indented by `span.depth`, positions and sizes the bar using `traceStartMs` and `traceDurationMs`,
+ * and when expanded displays span metadata, error message, metrics/LLM/tool JSON disclosures, and an output preview.
+ *
+ * @param span - The span object to display
+ * @param traceStartMs - Trace start time in milliseconds since epoch; used to compute the span's offset within the trace
+ * @param traceDurationMs - Total trace duration in milliseconds; used to compute the span bar's width and left offset
+ * @param expanded - Whether the span's details panel is currently expanded
+ * @param onToggle - Callback invoked when the row's expand/collapse button is clicked
+ * @returns The rendered span row element
+ */
 function SpanRow({
   span,
   traceStartMs,
@@ -159,6 +178,15 @@ function SpanRow({
   );
 }
 
+/**
+ * Renders the Trace Detail page for a single trace, showing summary metrics, links to related session/agent,
+ * the span waterfall with expandable span rows, and optional input/final output panels.
+ *
+ * The component reads `id` from route params, fetches the trace detail, and manages loading, error, and expanded-span state.
+ * While loading it shows a full-page loading message; if the trace is not found it shows a not-found message.
+ *
+ * @returns The React element for the trace detail page.
+ */
 export default function TraceDetailPage() {
   const params = useParams();
   const traceId = params.id as string;

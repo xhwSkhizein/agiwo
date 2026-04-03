@@ -42,6 +42,13 @@ import {
 } from "@/lib/wake-condition";
 import { usePageVisibility } from "@/hooks/use-page-visibility";
 
+/**
+ * Renders a horizontal labeled row with a fixed-width label column and a flexible content area.
+ *
+ * @param label - Text displayed in the left, fixed-width label column.
+ * @param children - Content rendered in the right, flexible column.
+ * @returns The row element containing the label and its associated content.
+ */
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-4 border-b border-line py-2.5 last:border-0">
@@ -88,6 +95,14 @@ function isActiveStatus(status: string): boolean {
   return ["pending", "running", "waiting", "queued"].includes(status);
 }
 
+/**
+ * Renders a compact labeled information chip showing a small uppercase label and a value.
+ *
+ * @param label - The label text displayed above the value (rendered uppercase).
+ * @param value - The content shown beneath the label; can be any React node.
+ * @param tone - Visual tone for the chip; `"accent"` applies accent styling, `"default"` uses muted styling.
+ * @returns A styled JSX element containing the label and value.
+ */
 function DetailChip({
   label,
   value,
@@ -110,6 +125,17 @@ function DetailChip({
   );
 }
 
+/**
+ * Render a Wake Condition card for an agent state when a wake condition is present.
+ *
+ * Displays the wake condition type. For `waitset` it shows progress, wait mode,
+ * and a progress bar when `wait_for` contains entries. For `timer` or `periodic`
+ * it shows the duration/interval and `wakeup_at` when available. Always shows
+ * `timeout_at` when present.
+ *
+ * @param wc - The agent state's wake condition; if falsy, the component returns `null`.
+ * @returns The Wake Condition card element, or `null` when `wc` is falsy.
+ */
 function WakeConditionCard({ wc }: { wc: AgentStateDetail["wake_condition"] }) {
   if (!wc) return null;
 
@@ -184,6 +210,15 @@ function WakeConditionCard({ wc }: { wc: AgentStateDetail["wake_condition"] }) {
   );
 }
 
+/**
+ * Render a table of child agent rows for the provided items.
+ *
+ * Each row links to the child's scheduler page and shows the task preview, status badge,
+ * normalized cost, token counts (input / output / total), and a short result summary.
+ *
+ * @param items - Array of child agent summary objects to display
+ * @returns A table element containing one row per child agent, or `null` when `items` is empty
+ */
 function ChildrenTable({ items }: { items: AgentStateListItem[] }) {
   if (items.length === 0) return null;
   return (
@@ -238,6 +273,16 @@ function ChildrenTable({ items }: { items: AgentStateListItem[] }) {
   );
 }
 
+/**
+ * Render the control panel for steering, resuming, or canceling a root agent state.
+ *
+ * Displays a message input, context-sensitive action buttons (Steer, Resume, Cancel),
+ * and transient success/error feedback. The panel is rendered only for root states.
+ *
+ * @param state - The agent state detail to control; used to determine root status, activity, and action targets.
+ * @param onAction - Called after a successful control action to allow the parent to refresh state.
+ * @returns The control panel UI when `state.parent_id` is `null`, or `null` for non-root states.
+ */
 function ControlPanel({
   state,
   onAction,
@@ -392,6 +437,13 @@ function ControlPanel({
   );
 }
 
+/**
+ * Renders the Agent State detail page for the state ID taken from route parameters.
+ *
+ * Displays the agent state, linked agent config, child states, and pending events; provides steering/resume/cancel controls when applicable and auto-refreshes while the agent is active and the page is visible.
+ *
+ * @returns The React element for the Scheduler "Agent State" detail page.
+ */
 export default function SchedulerDetailPage() {
   const params = useParams();
   const stateId = params.id as string;

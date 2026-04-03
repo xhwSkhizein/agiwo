@@ -13,6 +13,20 @@ type ChatInputBarProps = {
   submitLabel?: string;
 };
 
+/**
+ * Render a chat input bar with a controlled text input and a send button.
+ *
+ * The input is associated with a visually hidden label for accessibility. The submit button is disabled when the input is empty (only whitespace) or when `disabled` is `true`.
+ *
+ * @param value - Current text value of the input.
+ * @param onChange - Handler invoked with the updated text when the input changes.
+ * @param onSubmit - Handler invoked when the form is submitted.
+ * @param disabled - When `true`, disables user interaction on the input and submit button.
+ * @param placeholder - Placeholder text displayed inside the input.
+ * @param label - Accessible label text for the input (rendered visually hidden).
+ * @param submitLabel - Accessible label text for the submit button.
+ * @returns The JSX element representing the chat input bar.
+ */
 export function ChatInputBar({
   value,
   onChange,

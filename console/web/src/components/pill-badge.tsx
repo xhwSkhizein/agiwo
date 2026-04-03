@@ -22,6 +22,15 @@ type PillBadgeProps = {
   dot?: boolean;
 };
 
+/**
+ * Renders a pill-shaped badge with variant-specific styling and an optional status dot.
+ *
+ * @param children - Content displayed inside the badge
+ * @param className - Additional class names appended to the badge container
+ * @param variant - Visual style variant to apply (e.g., "default", "success", "error", "running")
+ * @param dot - When `true`, renders a small colored dot indicating status
+ * @returns The rendered badge element
+ */
 export function PillBadge({
   children,
   className,

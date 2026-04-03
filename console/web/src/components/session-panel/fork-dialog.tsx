@@ -8,6 +8,17 @@ interface ForkDialogProps {
   onCancel: () => void;
 }
 
+/**
+ * Renders a dialog that collects a fork summary and invokes confirm or cancel callbacks.
+ *
+ * The dialog associates its label with the text input for accessibility, autofocuses the input,
+ * disables submission when the trimmed summary is empty, and supports keyboard actions:
+ * pressing Enter submits when the trimmed summary is non-empty, and pressing Escape cancels.
+ *
+ * @param onConfirm - Called with the trimmed summary when the user confirms creation
+ * @param onCancel - Called when the user cancels or closes the dialog
+ * @returns The fork session dialog element
+ */
 export function ForkDialog({ onConfirm, onCancel }: ForkDialogProps) {
   const [summary, setSummary] = useState("");
   const inputId = useId();

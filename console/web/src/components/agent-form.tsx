@@ -101,6 +101,17 @@ function parseSkillsDirs(text: string): string[] | null {
   return entries.length > 0 ? entries : null;
 }
 
+/**
+ * Create an AgentFormState populated from an existing AgentConfig or default values.
+ *
+ * When `agent` is provided, maps its fields into the form-shaped representation, converting
+ * model/option parameters into the form-friendly types and applying sensible defaults for
+ * missing values. When `agent` is not provided, returns a shallow copy of DEFAULT_FORM_STATE.
+ *
+ * @param agent - Optional source AgentConfig to populate the form state from
+ * @returns An AgentFormState reflecting `agent`'s values with fallbacks; certain numeric option
+ * fields are converted to strings where the form expects text input (e.g., `maxInputTokensPerCall`, `maxRunCost`).
+ */
 function buildFormState(agent?: AgentConfig | null): AgentFormState {
   if (!agent) {
     return { ...DEFAULT_FORM_STATE };
@@ -154,6 +165,16 @@ type FieldProps = {
   children: ReactNode;
 };
 
+/**
+ * Renders a labeled form field wrapper with an optional required marker and hint.
+ *
+ * @param id - The HTML id used for the associated input element and for hint aria linking.
+ * @param label - The visible label text shown for the field.
+ * @param hint - Optional explanatory text shown beneath the field.
+ * @param required - If `true`, displays a required marker next to the label.
+ * @param children - The input or control elements to render inside the field wrapper.
+ * @returns A JSX element containing the label, the provided children, and the optional hint.
+ */
 function Field({ id, label, hint, required = false, children }: FieldProps) {
   const hintId = hint ? `${id}-hint` : undefined;
 
@@ -180,6 +201,12 @@ type DisclosureSectionProps = {
   children: ReactNode;
 };
 
+/**
+ * Renders a collapsible section with a title, descriptive subtitle, and content.
+ *
+ * @param open - If `true`, the section is expanded. If `false` or `undefined`, the section is collapsed.
+ * @returns A `<details>` element containing the section header (title and description) and the provided children.
+ */
 function DisclosureSection({
   title,
   description,
@@ -210,6 +237,16 @@ type ToggleCardProps = {
   onChange: (checked: boolean) => void;
 };
 
+/**
+ * A labeled checkbox styled as a selectable card for toggling a boolean option.
+ *
+ * @param id - The HTML id applied to the underlying checkbox input.
+ * @param label - Primary text displayed for the card.
+ * @param description - Secondary explanatory text shown under the label.
+ * @param checked - Whether the checkbox is currently checked.
+ * @param onChange - Callback invoked with the new checked state when the user toggles the checkbox.
+ * @returns The rendered toggle card element.
+ */
 function ToggleCard({
   id,
   label,
@@ -240,6 +277,17 @@ type ToolToggleProps = {
   onToggle: () => void;
 };
 
+/**
+ * Renders a toggleable chip button representing a tool.
+ *
+ * Displays the tool's label and a meta string ("Agent tool" or "Builtin tool"), indicates its selected state, and calls `onToggle` when clicked.
+ *
+ * @param tool - The tool to render; its `agent_name` (preferred) or `name` is shown and `type` determines the meta label.
+ * @param selected - Whether the tool is currently selected; reflected in the button's pressed/selected state.
+ * @param onToggle - Click handler invoked to toggle the tool's selection.
+ *
+ * @returns A button element that represents and toggles the provided tool.
+ */
 function ToolToggle({ tool, selected, onToggle }: ToolToggleProps) {
   return (
     <button
@@ -258,6 +306,21 @@ function ToolToggle({ tool, selected, onToggle }: ToolToggleProps) {
   );
 }
 
+/**
+ * Render a form UI for creating or editing an agent configuration.
+ *
+ * The form loads available tools and provider capabilities, maintains local editable state,
+ * validates required fields on submit, and converts inputs into an `AgentConfigCreate`
+ * payload passed to `onSubmit`.
+ *
+ * @param initialAgent - Optional existing agent used to populate the form for editing.
+ * @param excludeAgentId - Optional agent ID to exclude from available-agent tool choices.
+ * @param submitLabel - Label for the primary submit button.
+ * @param submitting - When `true`, the submit button is disabled and shows a saving state.
+ * @param error - Optional external error message to display in the form.
+ * @param onSubmit - Callback invoked with the constructed `AgentConfigCreate` payload when the form is submitted.
+ * @returns A React element rendering the agent configuration form.
+ */
 export function AgentForm({
   initialAgent,
   excludeAgentId,

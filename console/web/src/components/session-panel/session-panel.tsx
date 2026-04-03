@@ -20,6 +20,20 @@ interface SessionPanelProps {
   onForked: (sessionId: string) => void;
 }
 
+/**
+ * Renders a sessions management panel for a given agent, including list, refresh,
+ * create, and fork UI with loading and error states.
+ *
+ * The component loads and displays the agent's sessions, allows creating a new
+ * session, selecting an existing session, and forking the current session via a dialog.
+ *
+ * @param agentId - Agent identifier used to load, create, or fork sessions
+ * @param currentSessionId - Currently selected session id, or `null` if none
+ * @param onSwitch - Called with the session id when the user selects a session
+ * @param onCreated - Called with the new session id after a session is created
+ * @param onForked - Called with the new session id after a session is forked
+ * @returns The rendered session panel JSX element
+ */
 export function SessionPanel({
   agentId,
   currentSessionId,

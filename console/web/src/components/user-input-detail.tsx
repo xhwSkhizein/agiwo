@@ -218,7 +218,14 @@ function ResourceView({ part }: { part: ContentPartPayload }) {
 }
 
 /**
- * Render a single content part
+ * Render a single ContentPartPayload as an appropriate UI fragment for its type.
+ *
+ * Renders text parts as truncated paragraphs, media/resource parts via ResourceView,
+ * and unknown types with a type label and a JSON disclosure of the full part payload.
+ *
+ * @param part - The content part to render; its `type` determines the rendered element.
+ * @param maxTextLength - Optional maximum number of characters to show for text parts.
+ * @returns The React element representing the given content part.
  */
 function ContentPartView({
   part,
@@ -283,13 +290,14 @@ function ChannelContextView({ context }: { context: ChannelContextPayload }) {
 }
 
 /**
- * Comprehensive UserInput display component.
+ * Render a user-provided input as a detailed block view with optional channel context.
  *
- * Features:
- * - Displays text, image, file, and other content types
- * - Shows ChannelContext (source and metadata)
- * - Handles multiple UserInput formats
- * - Optional text truncation
+ * Renders text, media, files, and other content parts; displays channel source and metadata when available; falls back to a JSON disclosure for unrecognized shapes. Handles string inputs, null/undefined, and various serialized user-input object shapes.
+ *
+ * @param input - The user input to render (string, null/undefined, array of content parts, or serialized user message/content parts shape)
+ * @param showContext - If true, include rendered channel context when present
+ * @param maxTextLength - Maximum number of characters to show for text parts before truncation
+ * @returns The JSX element representing the detailed user input view
  */
 export function UserInputDetail({
   input,

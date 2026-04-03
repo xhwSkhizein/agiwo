@@ -14,6 +14,12 @@ const STATUS_VARIANTS: Record<string, { variant: Parameters<typeof PillBadge>[0]
   error: { variant: "error", dot: false },
 };
 
+/**
+ * Render a pill-style badge representing the given trace status.
+ *
+ * @param status - Status key that determines the badge's visual variant. Supported values: `pending`, `running`, `waiting`, `idle`, `queued`, `completed`, `failed`, `ok`, `error`. If an unknown status is provided, the badge uses the `"default"` variant with no dot.
+ * @returns A JSX element rendering a PillBadge whose variant and optional dot reflect the provided status.
+ */
 export function TraceStatusBadge({ status }: { status: string }) {
   const config = STATUS_VARIANTS[status] || { variant: "default", dot: false };
 

@@ -14,6 +14,22 @@ type PaginationControlsProps = {
   onNext: () => void;
 };
 
+/**
+ * Renders pagination controls: a current-range summary, a page-size selector, and Previous/Next buttons.
+ *
+ * @param offset - Zero-based index of the first item in the current page.
+ * @param pageSize - Number of items per page currently selected.
+ * @param itemCount - Number of items in the current page.
+ * @param totalCount - Optional total number of items across all pages; `null` indicates unknown.
+ * @param hasMore - Optional flag indicating whether there are more pages; when omitted the component infers availability from `itemCount` and `pageSize`.
+ * @param itemLabel - Label used for the items in the summary (default: `"items"`).
+ * @param pageSizeOptions - Options shown in the page-size selector (default: `[25, 50, 100]`).
+ * @param disabled - When `true`, disables the selector and navigation buttons (default: `false`).
+ * @param onPageSizeChange - Handler called with the new page size when the selector value changes.
+ * @param onPrevious - Handler called when the "Previous" button is clicked.
+ * @param onNext - Handler called when the "Next" button is clicked.
+ * @returns A React element that displays pagination information and controls.
+ */
 export function PaginationControls({
   offset,
   pageSize,

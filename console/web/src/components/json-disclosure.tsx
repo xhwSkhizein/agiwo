@@ -12,6 +12,12 @@ type JsonDisclosureProps = {
   contentClassName?: string;
 };
 
+/**
+ * Produce a concise, human-readable summary of a value's shape or type.
+ *
+ * @param value - The value to summarize
+ * @returns A string describing the value: "`<n> item(s)`" for arrays, "`<n> field(s)`" for non-null objects, "`<n> chars`" for strings, or the result of `typeof` for other values
+ */
 function summarizeValue(value: unknown): string {
   if (Array.isArray(value)) {
     return `${value.length} item${value.length === 1 ? "" : "s"}`;
@@ -28,6 +34,15 @@ function summarizeValue(value: unknown): string {
   return typeof value;
 }
 
+/**
+ * Renders a labeled, collapsible JSON viewer that shows a short summary when closed and pretty-printed JSON when opened.
+ *
+ * @param label - Text shown on the toggle button
+ * @param value - Data to summarize and (optionally) display as JSON when expanded
+ * @param className - Optional CSS classes applied to the outer container
+ * @param contentClassName - Optional CSS classes applied to the expandable `<pre>` content
+ * @returns A React element containing the toggle button and, when expanded, the formatted JSON content
+ */
 export function JsonDisclosure({
   label,
   value,

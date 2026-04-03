@@ -9,6 +9,15 @@ import { MonoText } from "@/components/mono-text";
 import { listAgents, deleteAgent } from "@/lib/api";
 import type { AgentConfig } from "@/lib/api";
 
+/**
+ * Render the Agents management page with listing, creation, and deletion controls.
+ *
+ * Loads agent configurations on mount and displays loading, empty, and error states.
+ * Provides UI actions to create a new agent, open an agent's scheduler or configuration,
+ * and delete agents via an inline confirmation flow (with per-item pending/error state).
+ *
+ * @returns The rendered Agents page as a JSX element
+ */
 export default function AgentsPage() {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [loading, setLoading] = useState(true);

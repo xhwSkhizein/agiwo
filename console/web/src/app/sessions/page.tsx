@@ -21,6 +21,13 @@ import {
   normalizeRunMetricsSummary,
 } from "@/lib/metrics";
 
+/**
+ * Render the Sessions page which lists session summaries with cost and token rollups, supports pagination, refresh, and error/loading states.
+ *
+ * Loads session data on mount and whenever pagination changes; displays a refresh control, per-session metadata (run count, agent id, cost, token counts), and pagination controls.
+ *
+ * @returns The page's JSX element.
+ */
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);

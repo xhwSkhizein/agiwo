@@ -11,6 +11,20 @@ type MetricCardProps = {
   valueClassName?: string;
 };
 
+/**
+ * Renders a styled metric card with a header label and a main value.
+ *
+ * The component applies a default rounded panel style and merges any provided
+ * `className`, `labelClassName`, and `valueClassName` with those defaults to
+ * allow visual overrides.
+ *
+ * @param label - Text displayed in the card header
+ * @param value - Content rendered as the card's main value (any ReactNode)
+ * @param className - Optional classes appended to the card container
+ * @param labelClassName - Optional classes appended to the label element
+ * @param valueClassName - Optional classes appended to the value element
+ * @returns The rendered JSX element for the metric card
+ */
 export function MetricCard({
   label,
   value,

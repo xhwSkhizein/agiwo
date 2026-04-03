@@ -66,6 +66,12 @@ function ToolCallList({ toolCalls }: { toolCalls: ToolCallPayload[] }) {
   );
 }
 
+/**
+ * Render a collapsible JSON disclosure for non-null, non-string payloads.
+ *
+ * @param value - The payload to display; ignored when `null`, `undefined`, or a `string`.
+ * @returns A React element showing a labeled JSON disclosure of `value`, or `null` when the value is `null`, `undefined`, or a `string`.
+ */
 function RawPayload({ value }: { value: unknown }) {
   if (value === null || value === undefined || typeof value === "string") {
     return null;
@@ -74,6 +80,17 @@ function RawPayload({ value }: { value: unknown }) {
   return <JsonDisclosure className="mt-2" label="Raw payload" value={value} />;
 }
 
+/**
+ * Render a single chat message with a role-specific avatar, header, and conditional content sections.
+ *
+ * The rendered content may include a streaming indicator, a "Thinking" reasoning block, a user input detail,
+ * the message text (when no `userInput` is present), a list of tool calls, and a raw payload disclosure depending
+ * on which fields are present on `message`.
+ *
+ * @param message - The chat message to render. Relevant fields: `role`, `name`, `sourceAgentId`, `isStreaming`,
+ *   `reasoningContent`, `userInput`, `text`, `toolCalls`, and `rawContent`.
+ * @returns A JSX element representing the formatted chat message.
+ */
 export function ChatMessageItem({ message }: { message: ChatMessage }) {
   const roleStyle = ROLE_STYLES[message.role];
   const Icon = roleStyle.icon;
