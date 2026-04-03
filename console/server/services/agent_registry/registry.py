@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from agiwo.llm.config_policy import validate_provider_model_params
+from agiwo.skill.manager import get_global_skill_manager
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from server.config import ConsoleConfig
@@ -111,6 +112,9 @@ class AgentRegistry:
     def _build_default_agent_record(self) -> AgentConfigRecord:
         """Build default agent from .env config (not persisted to DB)."""
         template = self._config.default_agent
+        allowed_skills = get_global_skill_manager().expand_allowed_skills(
+            template.allowed_skills
+        )
         return AgentConfigRecord(
             id=template.id,
             name=template.name,
@@ -119,6 +123,7 @@ class AgentRegistry:
             model_name=template.model_name,
             system_prompt=template.system_prompt,
             tools=list(template.tools),
+            allowed_skills=allowed_skills or [],
             options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
             model_params=ModelParamsInput.model_validate(
                 template.model_params or {}

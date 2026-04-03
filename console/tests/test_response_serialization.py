@@ -100,7 +100,7 @@ def test_scheduler_state_response_normalizes_serialized_user_input() -> None:
 
 
 def test_agent_config_view_model_and_registry_share_normalization_policy() -> None:
-    option_input = {"skills_dirs": " ./skills "}
+    option_input = {"max_steps": 42}
     option_schema = AgentOptionsInput.model_validate(option_input)
     model_param_input = {
         "base_url": " https://api.example.com/v1 ",

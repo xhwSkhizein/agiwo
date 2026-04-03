@@ -32,12 +32,14 @@ def deserialize_user_input_for_store(value: str) -> UserInput:
 
 def serialize_child_agent_config_overrides(
     overrides: ChildAgentConfigOverrides,
-) -> dict[str, str]:
-    data: dict[str, str] = {}
+) -> dict[str, Any]:
+    data: dict[str, Any] = {}
     if overrides.instruction:
         data["instruction"] = overrides.instruction
     if overrides.system_prompt:
         data["system_prompt"] = overrides.system_prompt
+    if overrides.allowed_skills is not None:
+        data["allowed_skills"] = list(overrides.allowed_skills)
     return data
 
 
@@ -49,6 +51,7 @@ def deserialize_child_agent_config_overrides(
     return ChildAgentConfigOverrides(
         instruction=data.get("instruction"),
         system_prompt=data.get("system_prompt"),
+        allowed_skills=data.get("allowed_skills"),
     )
 
 

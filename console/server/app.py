@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import SchedulerConfig
+from agiwo.skill.manager import get_global_skill_manager
 
 from server.dependencies import (
     ConsoleRuntime,
@@ -20,6 +21,7 @@ from server.channels.feishu import FeishuChannelService
 from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
+from server.services.runtime_config import RuntimeConfigService
 from server.services.storage_wiring import (
     build_agent_state_storage_config,
     create_run_step_storage,
@@ -30,6 +32,7 @@ from server.routers import (
     traces,
     overview,
     agents,
+    config,
     scheduler,
     feishu,
 )
@@ -45,12 +48,15 @@ async def lifespan(app: FastAPI):
     trace_storage = create_trace_storage(config)
     agent_registry = AgentRegistry(config)
     await agent_registry.initialize()
+    runtime_config_service = RuntimeConfigService(config)
 
     scheduler_config = SchedulerConfig(
         state_storage=build_agent_state_storage_config(config),
     )
     sched = Scheduler(scheduler_config)
     await sched.start()
+
+    await get_global_skill_manager().initialize()
 
     console_session_store = InMemoryFeishuChannelStore()
     await console_session_store.connect()
@@ -97,6 +103,7 @@ async def lifespan(app: FastAPI):
             scheduler=sched,
             feishu_channel_service=feishu_channel_service,
             session_store=console_session_store,
+            runtime_config_service=runtime_config_service,
         ),
     )
 
@@ -136,6 +143,7 @@ def create_app() -> FastAPI:
     app.include_router(traces.router)
     app.include_router(overview.router)
     app.include_router(agents.router)
+    app.include_router(config.router)
     app.include_router(scheduler.router)
     app.include_router(feishu.router)
 

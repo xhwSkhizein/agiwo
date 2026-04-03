@@ -33,17 +33,14 @@ class SkillTool(BaseTool):
         self,
         registry: SkillRegistry,
         loader: SkillLoader,
+        allowed_skills: list[str] | None = None,
     ) -> None:
-        """
-        Initialize Skill tool.
-
-        Args:
-            registry: SkillRegistry instance for metadata lookup
-            loader: SkillLoader instance for loading skill content
-        """
         super().__init__()
         self.registry = registry
         self.loader = loader
+        self._allowed_skills = (
+            frozenset(allowed_skills) if allowed_skills is not None else None
+        )
 
     name = "skill"
     description = (
@@ -85,31 +82,28 @@ class SkillTool(BaseTool):
         """
         start_time = time.time()
         skill_name = parameters.get("skill_name")
+        error: str | None = None
 
         if not skill_name:
-            return ToolResult.failed(
-                tool_name=self.name,
-                error="Missing required parameter: skill_name",
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
-                start_time=start_time,
+            error = "Missing required parameter: skill_name"
+        elif not isinstance(skill_name, str):
+            error = f"Invalid skill_name type: expected string, got {type(skill_name)}"
+        elif (
+            self._allowed_skills is not None and skill_name not in self._allowed_skills
+        ):
+            error = f"Skill '{skill_name}' is not allowed by the configured allowlist."
+
+        metadata = self.registry.get_metadata(skill_name) if error is None else None
+        if error is None and not metadata:
+            error = (
+                f"Skill '{skill_name}' not found. Available skills: "
+                f"{', '.join(self.registry.list_available())}"
             )
 
-        if not isinstance(skill_name, str):
+        if error is not None:
             return ToolResult.failed(
                 tool_name=self.name,
-                error=f"Invalid skill_name type: expected string, got {type(skill_name)}",
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
-                start_time=start_time,
-            )
-
-        # Check if skill exists
-        metadata = self.registry.get_metadata(skill_name)
-        if not metadata:
-            return ToolResult.failed(
-                tool_name=self.name,
-                error=f"Skill '{skill_name}' not found. Available skills: {', '.join(self.registry.list_available())}",
+                error=error,
                 tool_call_id=context.tool_call_id,
                 input_args=parameters,
                 start_time=start_time,

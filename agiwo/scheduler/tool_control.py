@@ -23,6 +23,7 @@ from agiwo.scheduler.models import (
 from agiwo.scheduler.runtime_state import RuntimeState
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.codec import serialize_child_agent_config_overrides
+from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.process import AgentProcessRegistry
 
 
@@ -59,6 +60,26 @@ class SchedulerToolControl:
         if await self._store.get_state(child_id) is not None:
             raise ValueError(f"Child state '{child_id}' already exists")
 
+        allowed_skills = get_global_skill_manager().validate_explicit_allowed_skills(
+            request.allowed_skills
+        )
+        parent_agent = self._rt.agents.get(request.parent_agent_id)
+        if allowed_skills is not None:
+            if (
+                parent_agent is not None
+                and parent_agent.config.allowed_skills is not None
+            ):
+                parent_allowed = set(parent_agent.config.allowed_skills)
+                disallowed = [
+                    skill for skill in allowed_skills if skill not in parent_allowed
+                ]
+                if disallowed:
+                    skill_list = ", ".join(disallowed)
+                    raise ValueError(
+                        "Child allowed_skills must be a subset of the parent's "
+                        f"allowed_skills: {skill_list}"
+                    )
+
         state = AgentState(
             id=child_id,
             session_id=request.session_id,
@@ -69,6 +90,7 @@ class SchedulerToolControl:
                 ChildAgentConfigOverrides(
                     instruction=request.instruction,
                     system_prompt=request.system_prompt,
+                    allowed_skills=allowed_skills,
                 )
             ),
             depth=parent_state.depth + 1,

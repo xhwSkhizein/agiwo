@@ -452,8 +452,6 @@ export interface AgentOptionsPayload {
   max_run_cost: number | null;
   enable_termination_summary: boolean;
   termination_summary_prompt: string;
-  enable_skill: boolean;
-  skills_dirs: string[] | null;
   relevant_memory_max_token: number;
   stream_cleanup_timeout: number;
   compact_prompt: string;
@@ -482,6 +480,7 @@ export interface AgentConfig {
   model_name: string;
   system_prompt: string;
   tools: string[];
+  allowed_skills: string[];
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
   created_at: string;
@@ -495,6 +494,7 @@ export interface AgentConfigCreate {
   model_name: string;
   system_prompt: string;
   tools: string[];
+  allowed_skills: string[];
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
 }
@@ -504,6 +504,11 @@ export interface AvailableTool {
   description: string;
   type: "builtin" | "agent";
   agent_name?: string;
+}
+
+export interface AvailableSkill {
+  name: string;
+  description: string;
 }
 
 export interface AgentProviderCapability {
@@ -518,9 +523,38 @@ export interface AgentCapabilities {
   providers: AgentProviderCapability[];
 }
 
+export interface RuntimeDefaultAgentConfig {
+  id: string;
+  name: string;
+  description: string;
+  model_provider: string;
+  model_name: string;
+  system_prompt: string;
+  tools: string[];
+  allowed_skills: string[];
+  model_params: ModelParamsPayload;
+}
+
+export interface RuntimeConfigEditable {
+  skills_dirs: string[];
+  default_agent: RuntimeDefaultAgentConfig;
+}
+
+export interface RuntimeConfigSnapshot {
+  editable: RuntimeConfigEditable;
+  effective: Record<string, unknown>;
+  readonly: Record<string, unknown>;
+  runtime_only: boolean;
+  restart_required: string[];
+}
+
 export function listAvailableTools(exclude?: string) {
   const q = exclude ? `?exclude=${encodeURIComponent(exclude)}` : "";
   return fetchJSON<AvailableTool[]>(`/api/agents/tools/available${q}`);
+}
+
+export function listAvailableSkills() {
+  return fetchJSON<AvailableSkill[]>("/api/agents/skills/available");
 }
 
 export function listAgents() {
@@ -529,6 +563,17 @@ export function listAgents() {
 
 export function getAgentCapabilities() {
   return fetchJSON<AgentCapabilities>("/api/agents/capabilities");
+}
+
+export function getRuntimeConfig() {
+  return fetchJSON<RuntimeConfigSnapshot>("/api/config/runtime");
+}
+
+export function updateRuntimeConfig(data: RuntimeConfigEditable) {
+  return fetchJSON<RuntimeConfigSnapshot>("/api/config/runtime", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
 }
 
 export function getAgent(agentId: string) {

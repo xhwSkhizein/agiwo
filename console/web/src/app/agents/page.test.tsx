@@ -34,6 +34,7 @@ describe("AgentsPage", () => {
         model_name: "qwen3.6-plus-preview",
         system_prompt: "",
         tools: ["bash", "web_search"],
+        allowed_skills: [],
         options: {
           config_root: "",
           max_steps: 50,
@@ -42,8 +43,6 @@ describe("AgentsPage", () => {
           max_run_cost: null,
           enable_termination_summary: true,
           termination_summary_prompt: "",
-          enable_skill: true,
-          skills_dirs: null,
           relevant_memory_max_token: 0,
           stream_cleanup_timeout: 0,
           compact_prompt: "",
@@ -73,6 +72,7 @@ describe("AgentsPage", () => {
         model_name: "gpt-4o-mini",
         system_prompt: "",
         tools: [],
+        allowed_skills: [],
         options: {
           config_root: "",
           max_steps: 50,
@@ -81,8 +81,6 @@ describe("AgentsPage", () => {
           max_run_cost: null,
           enable_termination_summary: true,
           termination_summary_prompt: "",
-          enable_skill: true,
-          skills_dirs: null,
           relevant_memory_max_token: 0,
           stream_cleanup_timeout: 0,
           compact_prompt: "",

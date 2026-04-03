@@ -4,7 +4,7 @@ Global settings from environment variables.
 
 import os
 from pathlib import Path
-from typing import Any, Literal, cast, get_args
+from typing import Literal, cast, get_args
 
 from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -239,7 +239,6 @@ class AgiwoSettings(BaseSettings):
         default_factory=lambda: ["examples/skills", "skills"],
         description="Skill directories to scan (relative to root_path if not absolute)",
     )
-    is_skills_enabled: bool = True
 
     # === Scheduler ===
     event_debounce_min_count: int = Field(
@@ -372,12 +371,6 @@ class AgiwoSettings(BaseSettings):
             return value
         return None
 
-    def get_env_skills_dirs(self) -> list[str]:
-        """Get skill dirs only when explicitly set by environment."""
-        if "skills_dirs" not in self.model_fields_set:
-            return []
-        return [item.strip() for item in self.skills_dirs if str(item).strip()]
-
 
 def load_settings(*, include_env_file: bool = False) -> AgiwoSettings:
     """Load settings from current process environment.
@@ -402,6 +395,15 @@ def get_settings() -> AgiwoSettings:
     return _settings_instance
 
 
+def replace_settings(settings_obj: AgiwoSettings) -> AgiwoSettings:
+    """Atomically replace the process-global settings instance."""
+    global _settings_instance
+    _settings_instance = settings_obj
+    if isinstance(settings, _LazySettingsProxy):
+        object.__setattr__(settings, "_instance", settings_obj)
+    return settings_obj
+
+
 class _LazySettingsProxy:
     """Proxy that defers ``get_settings()`` until first attribute access.
 
@@ -422,7 +424,7 @@ class _LazySettingsProxy:
             object.__setattr__(self, "_instance", inst)
         return inst
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name: str) -> object:
         return getattr(self._resolve(), name)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -435,4 +437,10 @@ class _LazySettingsProxy:
 settings: AgiwoSettings = cast(AgiwoSettings, _LazySettingsProxy())
 
 
-__all__ = ["AgiwoSettings", "get_settings", "load_settings", "settings"]
+__all__ = [
+    "AgiwoSettings",
+    "get_settings",
+    "load_settings",
+    "replace_settings",
+    "settings",
+]

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from agiwo.agent import UserInput
 from agiwo.config.settings import ModelProvider
 from agiwo.llm.config_policy import validate_provider_model_params
+from agiwo.skill.allowlist import normalize_allowed_skills
 from server.models.agent_config import (
     AgentOptionsInput,
     ModelParamsInput,
@@ -37,6 +38,7 @@ class AgentConfigPayload(BaseModel):
     model_name: str
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
+    allowed_skills: list[str] = Field(default_factory=list)
     options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
 
@@ -46,8 +48,19 @@ class AgentConfigPayload(BaseModel):
         if value is None:
             return []
         if not isinstance(value, list):
-            raise TypeError("tools must be a list")
+            raise ValueError("tools must be a list")
         return parse_tool_references(value)
+
+    @field_validator("allowed_skills", mode="before")
+    @classmethod
+    def _validate_allowed_skills(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            raise ValueError("allowed_skills must be a list")
+        return list(normalize_allowed_skills(value) or ())
 
     @model_validator(mode="after")
     def _validate_model_connection(self) -> "AgentConfigPayload":
@@ -64,6 +77,7 @@ class AgentConfigResponse(BaseModel):
     model_name: str
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
+    allowed_skills: list[str] = Field(default_factory=list)
     options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
     created_at: str

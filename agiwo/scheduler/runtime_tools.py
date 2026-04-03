@@ -54,6 +54,11 @@ class SpawnAgentTool(BaseTool):
                     "type": "string",
                     "description": "Optional instruction: guide the child agent to finish the task in a more efficient, elegant, and effective way.",
                 },
+                "allowed_skills": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional explicit skill name list the child agent is allowed to use. Must already be expanded and must be a subset of the parent's allowed skills. If omitted, inherits the parent's skills.",
+                },
             },
             "required": ["task"],
         }
@@ -80,6 +85,7 @@ class SpawnAgentTool(BaseTool):
         instruction = parameters.get("instruction")
         custom_child_id = parameters.get("child_id")
         system_prompt = parameters.get("system_prompt")
+        allowed_skills = parameters.get("allowed_skills")
         try:
             state = await self._port.spawn_child(
                 SpawnChildRequest(
@@ -89,6 +95,7 @@ class SpawnAgentTool(BaseTool):
                     instruction=instruction,
                     system_prompt=system_prompt,
                     custom_child_id=custom_child_id,
+                    allowed_skills=allowed_skills,
                 )
             )
         except ValueError as exc:

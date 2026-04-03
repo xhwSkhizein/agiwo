@@ -15,6 +15,10 @@ from types import MappingProxyType
 from typing import Any
 
 from agiwo.agent import UserInput
+from agiwo.skill.allowlist import (
+    normalize_allowed_skills,
+    validate_expanded_allowed_skills,
+)
 
 
 def _deepcopy_mapping_proxy(
@@ -123,6 +127,16 @@ class ChildAgentConfigOverrides:
 
     instruction: str | None = None
     system_prompt: str | None = None
+    allowed_skills: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        normalized = normalize_allowed_skills(self.allowed_skills)
+        validate_expanded_allowed_skills(normalized)
+        object.__setattr__(
+            self,
+            "allowed_skills",
+            tuple(normalized) if normalized is not None else None,
+        )
 
 
 @dataclass(frozen=True, slots=True)

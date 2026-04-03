@@ -9,6 +9,7 @@ from agiwo.config.settings import (
     COMPATIBLE_MODEL_PROVIDERS,
     load_settings,
 )
+from agiwo.skill.manager import get_global_skill_manager
 from agiwo.utils.serialization import serialize_optional_datetime
 from server.dependencies import (
     ConsoleRuntimeDep,
@@ -56,6 +57,10 @@ def _body_to_record(body: AgentConfigPayload) -> AgentConfigRecord:
         model_name=body.model_name,
         system_prompt=body.system_prompt,
         tools=body.tools,
+        allowed_skills=get_global_skill_manager().expand_allowed_skills(
+            body.allowed_skills
+        )
+        or [],
         options=body.options.model_dump(exclude_none=True),
         model_params=body.model_params.model_dump(exclude_none=True),
     )
@@ -75,6 +80,7 @@ def _record_to_response(
         model_name=record.model_name,
         system_prompt=record.system_prompt,
         tools=record.tools,
+        allowed_skills=record.allowed_skills,
         options=AgentOptionsInput.model_validate(record.options or {}),
         model_params=ModelParamsInput.model_validate(record.model_params or {}),
         created_at=serialize_optional_datetime(record.created_at) or "",
@@ -106,6 +112,17 @@ def _provider_default_model_name(provider: str) -> str | None:
     if attr_name is None:
         return None
     return getattr(settings, attr_name, None)
+
+
+@router.get("/skills/available")
+async def list_available_skills() -> list[dict[str, str]]:
+    """Return all globally discovered skills."""
+    skill_manager = get_global_skill_manager()
+    await skill_manager.initialize()
+    return [
+        {"name": meta.name, "description": meta.description}
+        for meta in skill_manager.list_available_skills()
+    ]
 
 
 @router.get("", response_model=list[AgentConfigResponse])
@@ -177,13 +194,15 @@ async def create_agent(
     runtime: ConsoleRuntimeDep,
 ) -> AgentConfigResponse:
     """Create a new agent configuration."""
-    record = _body_to_record(body)
     try:
+        record = _body_to_record(body)
         created = await runtime.agent_registry.create_agent(record)
     except ValidationError as exc:
         raise HTTPException(
             status_code=422, detail=jsonable_encoder(exc.errors())
         ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _record_to_response(
         created,
         default_agent_id=runtime.config.default_agent.id,
@@ -211,12 +230,15 @@ async def update_agent(
     """Replace an existing agent configuration."""
     try:
         record = await runtime.agent_registry.replace_agent(
-            agent_id, _body_to_record(body)
+            agent_id,
+            _body_to_record(body),
         )
     except ValidationError as exc:
         raise HTTPException(
             status_code=422, detail=jsonable_encoder(exc.errors())
         ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if record is None:
         raise HTTPException(status_code=404, detail="Agent not found")
     return _record_to_response(

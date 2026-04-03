@@ -16,8 +16,9 @@ from agiwo.agent.hooks import filter_relevant_memories
 from agiwo.agent.models.input import ChannelContext, UserMessage
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.step import StepRecord
+from agiwo.skill.allowlist import skills_enabled
+from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
-from agiwo.skill.prompt_catalog import SkillPromptProvider
 from agiwo.utils.logging import get_logger
 from agiwo.workspace import WorkspaceBootstrapper, WorkspaceDocumentStore
 from agiwo.workspace.documents import WorkspaceDocuments
@@ -234,11 +235,14 @@ async def build_system_prompt(
     base_prompt: str,
     workspace: AgentWorkspace,
     tools: list[BaseTool] | None = None,
-    skill_manager: SkillPromptProvider | None = None,
+    allowed_skills: list[str] | None = None,
     bootstrapper: WorkspaceBootstrapper,
     document_store: WorkspaceDocumentStore,
 ) -> str:
     await bootstrapper.ensure_prompt_ready(workspace)
+    skill_manager = (
+        get_global_skill_manager() if skills_enabled(allowed_skills) else None
+    )
     if skill_manager is not None:
         await skill_manager.initialize()
         await skill_manager.refresh_if_changed()
@@ -246,7 +250,7 @@ async def build_system_prompt(
     current_dt = datetime.now().astimezone()
     skills_section = ""
     if skill_manager is not None:
-        skills_section = skill_manager.render_skills_section()
+        skills_section = skill_manager.render_skills_section(allowed_skills)
 
     documents = document_store.read(workspace)
     sections = [

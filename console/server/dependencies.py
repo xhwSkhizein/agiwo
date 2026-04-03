@@ -14,6 +14,7 @@ from server.config import ConsoleConfig
 from server.models.session import ChannelChatSessionStore
 from server.services.agent_registry import AgentRegistry
 from server.services.runtime import SessionContextService, SessionViewService
+from server.services.runtime_config import RuntimeConfigService
 
 _RUNTIME_STATE_KEY = "console_runtime"
 
@@ -27,6 +28,7 @@ class ConsoleRuntime:
     scheduler: Scheduler | None = None
     feishu_channel_service: FeishuChannelService | None = None
     session_store: ChannelChatSessionStore | None = None
+    runtime_config_service: RuntimeConfigService | None = None
 
 
 def bind_console_runtime(app: FastAPI, runtime: ConsoleRuntime) -> None:

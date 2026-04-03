@@ -11,8 +11,10 @@ import {
   AgentConfig,
   AgentConfigCreate,
   AgentProviderCapability,
+  AvailableSkill,
   AvailableTool,
   getAgentCapabilities,
+  listAvailableSkills,
   listAvailableTools,
 } from "@/lib/api";
 
@@ -40,8 +42,6 @@ type AgentFormState = {
   maxRunCost: string;
   enableTerminationSummary: boolean;
   terminationSummaryPrompt: string;
-  enableSkill: boolean;
-  skillsDirsText: string;
   relevantMemoryMaxToken: number;
   streamCleanupTimeout: number;
   compactPrompt: string;
@@ -55,6 +55,7 @@ type AgentFormState = {
   inputPrice: number;
   outputPrice: number;
   selectedTools: string[];
+  selectedSkills: string[];
 };
 
 const DEFAULT_FORM_STATE: AgentFormState = {
@@ -72,8 +73,6 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   maxRunCost: "",
   enableTerminationSummary: true,
   terminationSummaryPrompt: "",
-  enableSkill: false,
-  skillsDirsText: "",
   relevantMemoryMaxToken: 2048,
   streamCleanupTimeout: 300,
   compactPrompt: "",
@@ -87,19 +86,8 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   inputPrice: 0,
   outputPrice: 0,
   selectedTools: [],
+  selectedSkills: [],
 };
-
-function skillsDirsToText(value: string[] | null | undefined): string {
-  return (value ?? []).join("\n");
-}
-
-function parseSkillsDirs(text: string): string[] | null {
-  const entries = text
-    .split(/\r?\n/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-  return entries.length > 0 ? entries : null;
-}
 
 /**
  * Create an AgentFormState populated from an existing AgentConfig or default values.
@@ -139,8 +127,6 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     enableTerminationSummary:
       agent.options?.enable_termination_summary ?? true,
     terminationSummaryPrompt: agent.options?.termination_summary_prompt ?? "",
-    enableSkill: agent.options?.enable_skill ?? false,
-    skillsDirsText: skillsDirsToText(agent.options?.skills_dirs),
     relevantMemoryMaxToken: agent.options?.relevant_memory_max_token ?? 2048,
     streamCleanupTimeout: agent.options?.stream_cleanup_timeout ?? 300,
     compactPrompt: agent.options?.compact_prompt ?? "",
@@ -154,6 +140,7 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     inputPrice: agent.model_params?.input_price ?? 0,
     outputPrice: agent.model_params?.output_price ?? 0,
     selectedTools: agent.tools ?? [],
+    selectedSkills: agent.allowed_skills ?? [],
   };
 }
 
@@ -331,6 +318,7 @@ export function AgentForm({
 }: AgentFormProps) {
   const [form, setForm] = useState<AgentFormState>(() => buildFormState(initialAgent));
   const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<AvailableSkill[]>([]);
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const formId = useId();
@@ -342,6 +330,10 @@ export function AgentForm({
   useEffect(() => {
     listAvailableTools(excludeAgentId).then(setAvailableTools).catch(() => {});
   }, [excludeAgentId]);
+
+  useEffect(() => {
+    listAvailableSkills().then(setAvailableSkills).catch(() => {});
+  }, []);
 
   useEffect(() => {
     getAgentCapabilities().then(setCapabilities).catch(() => {});
@@ -378,6 +370,16 @@ export function AgentForm({
     }));
   };
 
+  const toggleSkill = (skillName: string) => {
+    setLocalError(null);
+    setForm((prev) => ({
+      ...prev,
+      selectedSkills: prev.selectedSkills.includes(skillName)
+        ? prev.selectedSkills.filter((s) => s !== skillName)
+        : [...prev.selectedSkills, skillName],
+    }));
+  };
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
 
@@ -404,6 +406,7 @@ export function AgentForm({
       model_name: form.modelName,
       system_prompt: form.systemPrompt,
       tools: form.selectedTools,
+      allowed_skills: form.selectedSkills,
       options: {
         config_root: form.configRoot,
         max_steps: form.maxSteps,
@@ -418,8 +421,6 @@ export function AgentForm({
             : Number(form.maxRunCost),
         enable_termination_summary: form.enableTerminationSummary,
         termination_summary_prompt: form.terminationSummaryPrompt,
-        enable_skill: form.enableSkill,
-        skills_dirs: parseSkillsDirs(form.skillsDirsText),
         relevant_memory_max_token: form.relevantMemoryMaxToken,
         stream_cleanup_timeout: form.streamCleanupTimeout,
         compact_prompt: form.compactPrompt,
@@ -451,8 +452,6 @@ export function AgentForm({
     providerCapability?.requires_api_key_env_name;
   const openCompatibilitySection = compatibilityRequired || hasCompatibilitySettings;
   const openWorkflowSection =
-    form.enableSkill ||
-    form.skillsDirsText.trim() !== "" ||
     form.terminationSummaryPrompt.trim() !== "" ||
     form.compactPrompt.trim() !== "";
 
@@ -468,7 +467,9 @@ export function AgentForm({
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <PillBadge variant="default">{form.modelProvider}</PillBadge>
           <PillBadge variant="info">{form.selectedTools.length} tools selected</PillBadge>
-          {form.enableSkill && <PillBadge variant="success">Skills enabled</PillBadge>}
+          {form.selectedSkills.length > 0 && (
+            <PillBadge variant="success">{form.selectedSkills.length} skills</PillBadge>
+          )}
         </div>
       </div>
 
@@ -679,44 +680,51 @@ export function AgentForm({
         </div>
       </section>
 
+      {availableSkills.length > 0 && (
+        <section className="space-y-5">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="ui-section-kicker">Skills</p>
+                <p className="ui-section-copy">
+                  Select which globally discovered skills this agent may use.
+                </p>
+              </div>
+              <PillBadge variant="default">{form.selectedSkills.length} selected</PillBadge>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {availableSkills.map((skill) => (
+              <button
+                key={skill.name}
+                type="button"
+                title={skill.description}
+                aria-pressed={form.selectedSkills.includes(skill.name)}
+                data-selected={form.selectedSkills.includes(skill.name)}
+                onClick={() => toggleSkill(skill.name)}
+                className="ui-chip-toggle"
+              >
+                <span className="font-medium">{skill.name}</span>
+                <span className="ui-chip-toggle__meta">Skill</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       <DisclosureSection
         title="Workflow helpers"
-        description="Summaries, skill discovery, and context compacting live here so they don’t crowd the main setup."
+        description="Summaries and context compacting live here so they don't crowd the main setup."
         open={openWorkflowSection}
       >
-        <div className="grid gap-3 md:grid-cols-2">
-          <ToggleCard
-            id={fieldId("enable-skill")}
-            label="Enable Skills"
-            description="Allow the agent to discover and use skill directories."
-            checked={form.enableSkill}
-            onChange={(checked) => setField("enableSkill", checked)}
-          />
-          <ToggleCard
-            id={fieldId("enable-termination-summary")}
-            label="Enable Termination Summary"
-            description="Generate a short summary when the run settles."
-            checked={form.enableTerminationSummary}
-            onChange={(checked) => setField("enableTerminationSummary", checked)}
-          />
-        </div>
-
-        {form.enableSkill && (
-          <Field
-            id={fieldId("skills-dirs")}
-            label="Skill Directories"
-            hint="One directory per line. Leave empty to use the default global locations."
-          >
-            <textarea
-              id={fieldId("skills-dirs")}
-              value={form.skillsDirsText}
-              onChange={(event) => setField("skillsDirsText", event.target.value)}
-              rows={3}
-              className="ui-input ui-textarea"
-              placeholder={"skills\n~/.agent/skills"}
-            />
-          </Field>
-        )}
+        <ToggleCard
+          id={fieldId("enable-termination-summary")}
+          label="Enable Termination Summary"
+          description="Generate a short summary when the run settles."
+          checked={form.enableTerminationSummary}
+          onChange={(checked) => setField("enableTerminationSummary", checked)}
+        />
 
         {form.enableTerminationSummary && (
           <Field

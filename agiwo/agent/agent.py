@@ -26,6 +26,7 @@ from agiwo.agent.models.stream import AgentStreamItem
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.factory import create_run_step_storage
 from agiwo.agent.trace_writer import AgentTraceCollector
+from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
 from agiwo.llm.base import Model
 from agiwo.observability.base import BaseTraceStorage
@@ -95,6 +96,11 @@ class Agent:
         self._config = copy.deepcopy(config)
         self._id = id or _generate_default_id(self._config.name)
         self._model = model
+        self._config.allowed_skills = (
+            get_global_skill_manager().validate_explicit_allowed_skills(
+                self._config.allowed_skills
+            )
+        )
         resolved_definition = resolve_agent_definition(
             config=self._config,
             agent_id=self._id,
@@ -102,7 +108,6 @@ class Agent:
             hooks=hooks,
         )
         self._hooks = resolved_definition.hooks
-        self._skill_manager = resolved_definition.skill_manager
         self._tools = resolved_definition.tools
         self._workspace = resolved_definition.workspace
         self._run_step_storage = create_run_step_storage(
@@ -170,7 +175,7 @@ class Agent:
             base_prompt=base_prompt,
             workspace=self._workspace,
             tools=list(self._tools),
-            skill_manager=self._skill_manager,
+            allowed_skills=self._config.allowed_skills,
             bootstrapper=WorkspaceBootstrapper(),
             document_store=WorkspaceDocumentStore(),
         )
@@ -234,8 +239,13 @@ class Agent:
             user_input,
             context=context,
             model=self._model,
-            system_prompt=await self._build_system_prompt(
-                resolved_child.config.system_prompt
+            system_prompt=await build_system_prompt(
+                base_prompt=resolved_child.config.system_prompt,
+                workspace=self._workspace,
+                tools=list(resolved_child.tools),
+                allowed_skills=resolved_child.config.allowed_skills,
+                bootstrapper=WorkspaceBootstrapper(),
+                document_store=WorkspaceDocumentStore(),
             ),
             tools=list(resolved_child.tools),
             hooks=build_agent_hooks(self._config, self._hooks),
@@ -252,6 +262,7 @@ class Agent:
         system_prompt_override: str | None = None,
         exclude_tool_names: set[str] | None = None,
         extra_tools: list[BaseTool] | None = None,
+        child_allowed_skills: list[str] | None = None,
     ) -> "Agent":
         resolved_child = resolve_child_definition(
             self,
@@ -259,6 +270,7 @@ class Agent:
             system_prompt_override=system_prompt_override,
             exclude_tool_names=exclude_tool_names,
             extra_tools=extra_tools,
+            child_allowed_skills=child_allowed_skills,
         )
         return self.__class__(
             resolved_child.config,

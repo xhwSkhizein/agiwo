@@ -6,6 +6,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from agiwo.config.settings import settings
+from agiwo.skill.allowlist import (
+    normalize_allowed_skills,
+    validate_expanded_allowed_skills,
+)
 
 
 @dataclass
@@ -62,8 +66,6 @@ class AgentOptions(BaseModel):
     max_run_cost: float | None = None
     enable_termination_summary: bool = True
     termination_summary_prompt: str = ""
-    enable_skill: bool = False
-    skills_dirs: str | list[str] | None = None
     relevant_memory_max_token: int = 2048
     stream_cleanup_timeout: float = 300.0
     compact_prompt: str = ""
@@ -84,3 +86,9 @@ class AgentConfig:
     system_prompt: str = ""
     options: AgentOptions = field(default_factory=AgentOptions)
     disabled_sdk_tool_names: set[str] = field(default_factory=set)
+    allowed_skills: list[str] | None = None
+
+    def __post_init__(self) -> None:
+        normalized = normalize_allowed_skills(self.allowed_skills)
+        validate_expanded_allowed_skills(normalized)
+        self.allowed_skills = list(normalized) if normalized is not None else None

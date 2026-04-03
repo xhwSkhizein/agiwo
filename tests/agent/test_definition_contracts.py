@@ -1,12 +1,19 @@
 import inspect
-import pytest
 from pathlib import Path
+
+import pytest
+
 import agiwo.agent.agent as agent_module
+import agiwo.agent.definition as definition_module
+import agiwo.tool.registry as tool_registry_module
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig, AgentOptions
-from agiwo.agent.definition import resolve_child_definition
 from agiwo.agent import AgentHooks
+from agiwo.agent.definition import resolve_child_definition
 from agiwo.llm.base import Model
+from agiwo.skill.loader import SkillLoader
+from agiwo.skill.registry import SkillRegistry
+from agiwo.skill.skill_tool import SkillTool
 from agiwo.tool.base import BaseTool, ToolResult
 
 
@@ -32,13 +39,55 @@ class DummyTool(BaseTool):
         )
 
 
+class DummySkillManager:
+    def expand_allowed_skills(
+        self,
+        allowed_skills,
+        *,
+        available_skill_names=None,
+    ):
+        del available_skill_names
+        if allowed_skills is None:
+            return None
+        return list(allowed_skills)
+
+    def create_skill_tool(self, allowed_skills=None) -> SkillTool:
+        registry = SkillRegistry()
+        loader = SkillLoader(registry)
+        return SkillTool(registry, loader, allowed_skills)
+
+    def validate_explicit_allowed_skills(
+        self,
+        allowed_skills,
+        *,
+        available_skill_names=None,
+    ):
+        del available_skill_names
+        if allowed_skills is None:
+            return None
+        return list(allowed_skills)
+
+
+@pytest.fixture
+def stub_skill_manager(monkeypatch: pytest.MonkeyPatch) -> DummySkillManager:
+    manager = DummySkillManager()
+    monkeypatch.setattr(agent_module, "get_global_skill_manager", lambda: manager)
+    monkeypatch.setattr(definition_module, "get_global_skill_manager", lambda: manager)
+    monkeypatch.setattr(
+        tool_registry_module,
+        "get_global_skill_manager",
+        lambda: manager,
+    )
+    return manager
+
+
 def _build_agent() -> Agent:
     return Agent(
         config=AgentConfig(
             name="definition-agent",
             description="definition contract test",
             system_prompt="Base prompt",
-            options=AgentOptions(enable_skill=False),
+            options=AgentOptions(),
         ),
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
@@ -62,6 +111,29 @@ async def test_create_child_agent_applies_overrides() -> None:
     assert "Handle only child work" in clone.config.system_prompt
     assert "dummy_tool" not in tool_names
     assert clone.config.options.enable_termination_summary is True
+
+
+def test_agent_constructor_does_not_expose_skill_manager(
+    stub_skill_manager: DummySkillManager,
+) -> None:
+    del stub_skill_manager
+    agent = Agent(
+        config=AgentConfig(
+            name="definition-agent",
+            description="definition contract test",
+            system_prompt="Base prompt",
+            options=AgentOptions(),
+            allowed_skills=["alpha"],
+        ),
+        id="definition-agent",
+        model=MockModel(id="mock", name="mock", provider="openai"),
+        hooks=AgentHooks(),
+    )
+
+    skill_tool = next(tool for tool in agent.tools if tool.name == "skill")
+
+    assert "skill_manager" not in inspect.signature(Agent.__init__).parameters
+    assert skill_tool._allowed_skills == frozenset({"alpha"})
 
 
 @pytest.mark.asyncio
@@ -99,8 +171,105 @@ async def test_create_child_agent_and_child_resolution_stay_in_sync() -> None:
     )
 
     assert clone.config.system_prompt == resolved.config.system_prompt
-    assert {tool.name for tool in clone.tools} == {tool.name for tool in resolved.tools}
+    assert {tool.name for tool in resolved.tools} == {tool.name for tool in clone.tools}
     assert clone.config.options.enable_termination_summary is True
+
+
+@pytest.mark.asyncio
+async def test_create_child_agent_rebuilds_skill_tool_with_narrowed_allowlist(
+    stub_skill_manager: DummySkillManager,
+) -> None:
+    del stub_skill_manager
+    agent = Agent(
+        config=AgentConfig(
+            name="definition-agent",
+            description="definition contract test",
+            system_prompt="Base prompt",
+            options=AgentOptions(),
+            allowed_skills=["alpha", "beta"],
+        ),
+        id="definition-agent",
+        model=MockModel(id="mock", name="mock", provider="openai"),
+        hooks=AgentHooks(),
+    )
+
+    clone = await agent.create_child_agent(
+        child_id="child-agent",
+        child_allowed_skills=["alpha"],
+    )
+
+    skill_tool = next(tool for tool in clone.tools if tool.name == "skill")
+
+    assert clone.config.allowed_skills == ["alpha"]
+    assert skill_tool._allowed_skills == frozenset({"alpha"})
+
+
+@pytest.mark.asyncio
+async def test_create_child_agent_skips_skill_tool_for_empty_allowlist(
+    stub_skill_manager: DummySkillManager,
+) -> None:
+    del stub_skill_manager
+    agent = Agent(
+        config=AgentConfig(
+            name="definition-agent",
+            description="definition contract test",
+            system_prompt="Base prompt",
+            options=AgentOptions(),
+            allowed_skills=["alpha", "beta"],
+        ),
+        id="definition-agent",
+        model=MockModel(id="mock", name="mock", provider="openai"),
+        hooks=AgentHooks(),
+    )
+
+    clone = await agent.create_child_agent(
+        child_id="child-agent",
+        child_allowed_skills=[],
+    )
+
+    assert clone.config.allowed_skills == []
+    assert all(tool.name != "skill" for tool in clone.tools)
+
+
+@pytest.mark.asyncio
+async def test_create_child_agent_rejects_wildcard_child_allowlist(
+    stub_skill_manager: DummySkillManager,
+) -> None:
+    del stub_skill_manager
+    agent = Agent(
+        config=AgentConfig(
+            name="definition-agent",
+            description="definition contract test",
+            system_prompt="Base prompt",
+            options=AgentOptions(),
+            allowed_skills=["skill-review", "skill-build"],
+        ),
+        id="definition-agent",
+        model=MockModel(id="mock", name="mock", provider="openai"),
+        hooks=AgentHooks(),
+    )
+
+    with pytest.raises(ValueError, match="explicit skill names"):
+        await agent.create_child_agent(
+            child_id="child-agent",
+            child_allowed_skills=["*review"],
+        )
+
+
+def test_agent_rejects_wildcard_allowed_skills_in_constructor() -> None:
+    with pytest.raises(ValueError, match="explicit skill names"):
+        Agent(
+            config=AgentConfig(
+                name="definition-agent",
+                description="definition contract test",
+                system_prompt="Base prompt",
+                options=AgentOptions(),
+                allowed_skills=["skill*"],
+            ),
+            id="definition-agent",
+            model=MockModel(id="mock", name="mock", provider="openai"),
+            hooks=AgentHooks(),
+        )
 
 
 def test_agent_resolves_definition_once_during_init(
@@ -121,7 +290,7 @@ def test_agent_resolves_definition_once_during_init(
             name="definition-agent",
             description="definition contract test",
             system_prompt="Base prompt",
-            options=AgentOptions(enable_skill=True),
+            options=AgentOptions(),
         ),
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
@@ -142,7 +311,7 @@ def test_agent_config_owns_disabled_sdk_tool_names_for_default_sdk_tools() -> No
             name="definition-agent",
             description="definition contract test",
             system_prompt="Base prompt",
-            options=AgentOptions(enable_skill=False),
+            options=AgentOptions(),
             disabled_sdk_tool_names={"bash"},
         ),
         id="definition-agent",

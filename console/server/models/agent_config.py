@@ -2,9 +2,7 @@
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agiwo.config.settings import settings
 from agiwo.llm.config_policy import sanitize_model_params_data
-from agiwo.skill.config import normalize_skill_dirs
 
 
 def sanitize_agent_options_data(
@@ -14,13 +12,7 @@ def sanitize_agent_options_data(
 ) -> object:
     if not isinstance(data, dict):
         return data if preserve_non_dict else {}
-    sanitized = dict(data)
-    skills_dirs = normalize_skill_dirs(sanitized.get("skills_dirs"))
-    if skills_dirs is None:
-        sanitized.pop("skills_dirs", None)
-    else:
-        sanitized["skills_dirs"] = skills_dirs
-    return sanitized
+    return dict(data)
 
 
 class AgentOptionsInput(BaseModel):
@@ -33,8 +25,6 @@ class AgentOptionsInput(BaseModel):
     max_run_cost: float | None = Field(default=None, ge=0)
     enable_termination_summary: bool = True
     termination_summary_prompt: str = ""
-    enable_skill: bool = Field(default_factory=lambda: settings.is_skills_enabled)
-    skills_dirs: list[str] | None = None
     relevant_memory_max_token: int = Field(default=2048, ge=1)
     stream_cleanup_timeout: float = Field(default=300.0, gt=0)
     compact_prompt: str = ""
