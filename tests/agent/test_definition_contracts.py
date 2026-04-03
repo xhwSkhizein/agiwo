@@ -2,7 +2,6 @@ import inspect
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 import agiwo.agent.agent as agent_module
 import agiwo.agent.definition as definition_module
@@ -135,12 +134,6 @@ def test_agent_constructor_does_not_expose_skill_manager(
 
     assert "skill_manager" not in inspect.signature(Agent.__init__).parameters
     assert skill_tool._allowed_skills == frozenset({"alpha"})
-
-
-def test_agent_options_reject_legacy_skill_flags() -> None:
-    with pytest.raises(ValidationError, match="allowed_skills"):
-        AgentOptions(enable_skill=False)
-
 
 @pytest.mark.asyncio
 async def test_create_child_agent_clones_runtime_configuration() -> None:

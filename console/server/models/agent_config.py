@@ -12,15 +12,7 @@ def sanitize_agent_options_data(
 ) -> object:
     if not isinstance(data, dict):
         return data if preserve_non_dict else {}
-    sanitized = dict(data)
-    legacy_keys = [key for key in ("enable_skill", "skills_dirs") if key in sanitized]
-    if legacy_keys:
-        key_list = ", ".join(legacy_keys)
-        raise ValueError(
-            "Legacy skill option(s) are no longer supported: "
-            f"{key_list}. Configure skills with allowed_skills instead."
-        )
-    return sanitized
+    return dict(data)
 
 
 class AgentOptionsInput(BaseModel):

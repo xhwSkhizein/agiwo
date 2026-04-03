@@ -188,12 +188,6 @@ def test_agent_options_input_defaults() -> None:
     assert options.max_steps == 50
     assert options.enable_termination_summary is True
 
-
-def test_agent_options_input_rejects_legacy_skill_fields() -> None:
-    with pytest.raises(ValidationError, match="allowed_skills"):
-        AgentOptionsInput.model_validate({"enable_skill": False})
-
-
 def test_default_agent_record_uses_shared_option_defaults() -> None:
     template = DefaultAgentConfig()
 

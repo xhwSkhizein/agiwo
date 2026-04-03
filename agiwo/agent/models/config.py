@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from agiwo.config.settings import settings
 from agiwo.skill.allowlist import (
@@ -70,28 +70,6 @@ class AgentOptions(BaseModel):
     stream_cleanup_timeout: float = 300.0
     compact_prompt: str = ""
     storage: AgentStorageOptions = Field(default_factory=AgentStorageOptions)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _reject_legacy_skill_options(cls, data: object) -> object:
-        if not isinstance(data, dict):
-            return data
-        legacy_keys = [key for key in ("enable_skill", "skills_dirs") if key in data]
-        if legacy_keys:
-            key_list = ", ".join(legacy_keys)
-            if "skills_dirs" in legacy_keys:
-                guidance = (
-                    "Migrate skill discovery configuration to the SDK-level "
-                    "settings.skills_dirs / AGIWO_* config entry; per-agent "
-                    "skills_dirs is no longer supported."
-                )
-            else:
-                guidance = "Configure skills with allowed_skills instead."
-            raise ValueError(
-                "Legacy skill option(s) are no longer supported: "
-                f"{key_list}. {guidance}"
-            )
-        return data
 
     def get_effective_root_path(self) -> str:
         if self.config_root:
