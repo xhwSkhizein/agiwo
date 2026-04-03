@@ -7,6 +7,7 @@ import type {
   UserInput,
   UserMessage,
 } from "@/lib/api";
+import { JsonDisclosure } from "@/components/json-disclosure";
 import { PillBadge } from "@/components/pill-badge";
 
 interface UserInputDetailProps {
@@ -247,9 +248,7 @@ function ContentPartView({
       return (
         <div className="space-y-1">
           <span className="text-xs text-zinc-500">{getContentTypeLabel(part)}</span>
-          <pre className="text-xs text-zinc-400 overflow-x-auto">
-            {JSON.stringify(part, null, 2)}
-          </pre>
+          <JsonDisclosure label="Part payload" value={part} />
         </div>
       );
   }
@@ -318,9 +317,7 @@ export function UserInputDetail({
   if (!contentParts) {
     return (
       <div className="space-y-2">
-        <pre className="text-xs text-zinc-400 overflow-x-auto bg-zinc-900 p-2 rounded">
-          {JSON.stringify(input, null, 2)}
-        </pre>
+        <JsonDisclosure label="User input payload" value={input} />
       </div>
     );
   }

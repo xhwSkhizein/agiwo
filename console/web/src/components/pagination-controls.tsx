@@ -36,19 +36,19 @@ export function PaginationControls({
       : `Showing ${start}-${end} ${itemLabel}`;
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex items-center gap-3 text-sm text-zinc-400">
+    <div className="flex flex-col gap-3 rounded-2xl border border-line bg-panel px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-center gap-3 text-sm text-ink-muted">
         <span>
           {summaryText}
         </span>
         <label className="flex items-center gap-2">
-          <span className="text-xs uppercase tracking-wide text-zinc-500">Page Size</span>
+          <span className="text-xs uppercase tracking-[0.16em] text-ink-faint">Page Size</span>
           <select
             value={pageSize}
             onChange={(event) => {
               onPageSizeChange(Number(event.target.value));
             }}
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-200"
+            className="ui-input w-auto min-w-[5rem] px-2 py-1"
             disabled={disabled}
           >
             {pageSizeOptions.map((option) => (
@@ -65,7 +65,7 @@ export function PaginationControls({
           type="button"
           onClick={onPrevious}
           disabled={disabled || offset === 0}
-          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600"
+          className="ui-button ui-button-secondary min-h-10 px-3 py-1.5 text-sm"
         >
           Previous
         </button>
@@ -73,7 +73,7 @@ export function PaginationControls({
           type="button"
           onClick={onNext}
           disabled={disabled || !resolvedHasMore}
-          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white disabled:cursor-not-allowed disabled:border-zinc-800 disabled:text-zinc-600"
+          className="ui-button ui-button-secondary min-h-10 px-3 py-1.5 text-sm"
         >
           Next
         </button>

@@ -2,17 +2,23 @@
 
 import { PillBadge } from "@/components/pill-badge";
 
-const STATUS_STYLES: Record<string, string> = {
-  ok: "bg-green-900/50 text-green-400",
-  error: "bg-red-900/50 text-red-400",
-  running: "bg-blue-900/50 text-blue-400",
+const STATUS_VARIANTS: Record<string, { variant: Parameters<typeof PillBadge>[0]["variant"]; dot?: boolean }> = {
+  pending: { variant: "pending", dot: false },
+  running: { variant: "running", dot: true },
+  waiting: { variant: "warning", dot: false },
+  idle: { variant: "info", dot: false },
+  queued: { variant: "info", dot: true },
+  completed: { variant: "success", dot: false },
+  failed: { variant: "error", dot: false },
+  ok: { variant: "success", dot: false },
+  error: { variant: "error", dot: false },
 };
 
 export function TraceStatusBadge({ status }: { status: string }) {
-  const cls = STATUS_STYLES[status] || "bg-zinc-800 text-zinc-400";
+  const config = STATUS_VARIANTS[status] || { variant: "default", dot: false };
 
   return (
-    <PillBadge className={`text-xs px-1.5 py-0.5 rounded whitespace-nowrap ${cls}`}>
+    <PillBadge variant={config.variant} dot={config.dot}>
       {status}
     </PillBadge>
   );

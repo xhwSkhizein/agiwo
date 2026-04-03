@@ -12,6 +12,7 @@ type BackHeaderProps = {
   className?: string;
   titleClassName?: string;
   subtitleClassName?: string;
+  backLabel?: string;
 };
 
 export function BackHeader({
@@ -21,13 +22,15 @@ export function BackHeader({
   rightContent,
   className = "flex items-center gap-3",
   titleClassName = "text-xl font-semibold",
-  subtitleClassName = "text-xs text-zinc-500 font-mono mt-0.5",
+  subtitleClassName = "mt-0.5 font-mono text-xs text-ink-muted",
+  backLabel = "Go back",
 }: BackHeaderProps) {
   return (
     <div className={className}>
       <Link
         href={href}
-        className="p-1.5 rounded hover:bg-zinc-800 transition-colors"
+        aria-label={backLabel}
+        className="ui-button ui-button-ghost ui-button-icon"
       >
         <ArrowLeft className="w-4 h-4" />
       </Link>

@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 
+import { ErrorStateMessage } from "@/components/state-message";
+import { PillBadge } from "@/components/pill-badge";
+import { cn } from "@/lib/utils";
 import {
-  AgentConfig,
   AgentCapabilities,
+  AgentConfig,
   AgentConfigCreate,
   AgentProviderCapability,
   AvailableTool,
@@ -143,6 +146,118 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
   };
 }
 
+type FieldProps = {
+  id: string;
+  label: string;
+  hint?: ReactNode;
+  required?: boolean;
+  children: ReactNode;
+};
+
+function Field({ id, label, hint, required = false, children }: FieldProps) {
+  const hintId = hint ? `${id}-hint` : undefined;
+
+  return (
+    <div>
+      <label htmlFor={id} className="ui-field-label">
+        {label}
+        {required && <span className="ml-1 text-danger">*</span>}
+      </label>
+      {children}
+      {hint && (
+        <p id={hintId} className="ui-field-hint">
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+type DisclosureSectionProps = {
+  title: string;
+  description: string;
+  open?: boolean;
+  children: ReactNode;
+};
+
+function DisclosureSection({
+  title,
+  description,
+  open,
+  children,
+}: DisclosureSectionProps) {
+  return (
+    <details
+      className="rounded-2xl border border-line bg-panel p-4"
+      open={open || undefined}
+    >
+      <summary className="cursor-pointer list-none">
+        <div className="space-y-1">
+          <div className="ui-section-title">{title}</div>
+          <p className="ui-section-copy text-sm">{description}</p>
+        </div>
+      </summary>
+      <div className="mt-4 space-y-4">{children}</div>
+    </details>
+  );
+}
+
+type ToggleCardProps = {
+  id: string;
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+};
+
+function ToggleCard({
+  id,
+  label,
+  description,
+  checked,
+  onChange,
+}: ToggleCardProps) {
+  return (
+    <label className="flex items-start gap-3 rounded-2xl border border-line bg-panel p-3">
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 h-4 w-4 rounded border-line bg-panel-strong text-accent"
+      />
+      <span className="space-y-1">
+        <span className="block text-sm font-medium text-foreground">{label}</span>
+        <span className="block text-xs text-ink-muted">{description}</span>
+      </span>
+    </label>
+  );
+}
+
+type ToolToggleProps = {
+  tool: AvailableTool;
+  selected: boolean;
+  onToggle: () => void;
+};
+
+function ToolToggle({ tool, selected, onToggle }: ToolToggleProps) {
+  return (
+    <button
+      type="button"
+      title={tool.description}
+      aria-pressed={selected}
+      data-selected={selected}
+      onClick={onToggle}
+      className="ui-chip-toggle"
+    >
+      <span className="font-medium">{tool.agent_name || tool.name}</span>
+      <span className="ui-chip-toggle__meta">
+        {tool.type === "agent" ? "Agent tool" : "Builtin tool"}
+      </span>
+    </button>
+  );
+}
+
 export function AgentForm({
   initialAgent,
   excludeAgentId,
@@ -155,13 +270,14 @@ export function AgentForm({
   const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const formId = useId();
 
   useEffect(() => {
     setForm(buildFormState(initialAgent));
   }, [initialAgent]);
 
   useEffect(() => {
-    listAvailableTools(excludeAgentId).then(setAvailableTools).catch(() => { });
+    listAvailableTools(excludeAgentId).then(setAvailableTools).catch(() => {});
   }, [excludeAgentId]);
 
   useEffect(() => {
@@ -170,11 +286,11 @@ export function AgentForm({
 
   const builtinTools = useMemo(
     () => availableTools.filter((tool) => tool.type === "builtin"),
-    [availableTools]
+    [availableTools],
   );
   const agentTools = useMemo(
     () => availableTools.filter((tool) => tool.type === "agent"),
-    [availableTools]
+    [availableTools],
   );
 
   const displayedError = localError ?? error;
@@ -183,7 +299,7 @@ export function AgentForm({
 
   const setField = <K extends keyof AgentFormState>(
     key: K,
-    value: AgentFormState[K]
+    value: AgentFormState[K],
   ) => {
     setLocalError(null);
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -199,16 +315,14 @@ export function AgentForm({
     }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+
     if (!form.name.trim()) {
       setLocalError("Name is required");
       return;
     }
-    if (
-      providerCapability?.requires_base_url &&
-      form.baseUrl.trim() === ""
-    ) {
+    if (providerCapability?.requires_base_url && form.baseUrl.trim() === "") {
       setLocalError("Compatible providers require a Base URL");
       return;
     }
@@ -266,492 +380,612 @@ export function AgentForm({
     });
   };
 
+  const fieldId = (name: string) => `${formId}-${name}`;
+  const hasCompatibilitySettings =
+    form.baseUrl.trim() !== "" || form.apiKeyEnvName.trim() !== "";
+  const compatibilityRequired =
+    providerCapability?.requires_base_url ||
+    providerCapability?.requires_api_key_env_name;
+  const openCompatibilitySection = compatibilityRequired || hasCompatibilitySettings;
+  const openWorkflowSection =
+    form.enableSkill ||
+    form.skillsDirsText.trim() !== "" ||
+    form.terminationSummaryPrompt.trim() !== "" ||
+    form.compactPrompt.trim() !== "";
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
-      <div>
-        <label className="block text-sm text-zinc-400 mb-1.5">Name *</label>
-        <input
-          type="text"
-          value={form.name}
-          onChange={(e) => setField("name", e.target.value)}
-          className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          placeholder="My Assistant"
-        />
-      </div>
-
-      <div>
-        <label className="block text-sm text-zinc-400 mb-1.5">
-          Description
-        </label>
-        <input
-          type="text"
-          value={form.description}
-          onChange={(e) => setField("description", e.target.value)}
-          className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          placeholder="A helpful assistant"
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Model Provider
-          </label>
-          <select
-            value={form.modelProvider}
-            onChange={(e) => {
-              const nextProvider = e.target.value;
-              const nextCapability = capabilities?.providers.find(
-                (provider) => provider.value === nextProvider,
-              );
-              setField("modelProvider", nextProvider);
-              if (
-                !form.modelName.trim() ||
-                form.modelName === providerCapability?.default_model_name
-              ) {
-                setField(
-                  "modelName",
-                  nextCapability?.default_model_name ?? form.modelName,
-                );
-              }
-            }}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          >
-            {(capabilities?.providers ?? []).map((provider) => (
-              <option key={provider.value} value={provider.value}>
-                {provider.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Model Name
-          </label>
-          <input
-            type="text"
-            value={form.modelName}
-            onChange={(e) => setField("modelName", e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            placeholder="deepseek-chat"
-          />
+    <form onSubmit={handleSubmit} className="space-y-8">
+      <div className="space-y-2">
+        <p className="ui-section-kicker">Agent Setup</p>
+        <h2 className="text-2xl font-semibold text-foreground">Start with the essentials</h2>
+        <p className="ui-section-copy max-w-2xl">
+          Name the agent, pick the model, choose the tools it can use, and leave the
+          runtime tuning collapsed until you actually need it.
+        </p>
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          <PillBadge variant="default">{form.modelProvider}</PillBadge>
+          <PillBadge variant="info">{form.selectedTools.length} tools selected</PillBadge>
+          {form.enableSkill && <PillBadge variant="success">Skills enabled</PillBadge>}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Base URL
-          </label>
-          <input
-            type="text"
-            value={form.baseUrl}
-            onChange={(e) => setField("baseUrl", e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            placeholder="https://api.example.com/v1"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            API Key Env Name
-          </label>
-          <input
-            type="text"
-            value={form.apiKeyEnvName}
-            onChange={(e) => setField("apiKeyEnvName", e.target.value)}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-            placeholder="MINIMAX_API_KEY"
-          />
-        </div>
-      </div>
-      <p className="text-xs text-zinc-500">
-        {providerCapability?.requires_base_url ||
-        providerCapability?.requires_api_key_env_name
-          ? "This provider requires both Base URL and API Key Env Name."
-          : "Official providers can leave Base URL and API Key Env Name empty to use provider defaults."}
-      </p>
+      {displayedError && <ErrorStateMessage>{displayedError}</ErrorStateMessage>}
 
-      <div>
-        <label className="block text-sm text-zinc-400 mb-1.5">
-          System Prompt
-        </label>
-        <textarea
-          value={form.systemPrompt}
-          onChange={(e) => setField("systemPrompt", e.target.value)}
-          rows={5}
-          className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600 resize-y"
-          placeholder="You are a helpful assistant..."
-        />
-      </div>
-
-      <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">
-        Builtin Tools
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {builtinTools.map((tool) => (
-          <button
-            key={tool.name}
-            type="button"
-            onClick={() => toggleTool(tool.name)}
-            className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${form.selectedTools.includes(tool.name)
-                ? "bg-white text-black border-white"
-                : "bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-zinc-500"
-              }`}
-            title={tool.description}
-          >
-            {tool.name}
-          </button>
-        ))}
-        {builtinTools.length === 0 && (
-          <span className="text-xs text-zinc-600">No builtin tools available</span>
-        )}
-      </div>
-
-      <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">
-        Agent Tools
-      </p>
-      <div className="flex flex-wrap gap-2">
-        {agentTools.map((tool) => (
-          <button
-            key={tool.name}
-            type="button"
-            onClick={() => toggleTool(tool.name)}
-            className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${form.selectedTools.includes(tool.name)
-                ? "bg-blue-600 text-white border-blue-500"
-                : "bg-zinc-900 text-zinc-400 border-zinc-700 hover:border-zinc-500"
-              }`}
-            title={tool.description}
-          >
-            {tool.agent_name || tool.name}
-          </button>
-        ))}
-        {agentTools.length === 0 && (
-          <span className="text-xs text-zinc-600">
-            No other agents available as tools
-          </span>
-        )}
-      </div>
-
-      <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">
-        Runtime
-      </p>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Config Root
-          </label>
-          <input
-            type="text"
-            value={form.configRoot}
-            onChange={(e) => setField("configRoot", e.target.value)}
-            placeholder="Optional override for workspace root"
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">Max Steps</label>
-          <input
-            type="number"
-            value={form.maxSteps}
-            onChange={(e) => setField("maxSteps", Number(e.target.value))}
-            min={1}
-            max={100}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Run Timeout (s)
-          </label>
-          <input
-            type="number"
-            value={form.runTimeout}
-            onChange={(e) => setField("runTimeout", Number(e.target.value))}
-            min={10}
-            max={3600}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Max Input Tokens Per Call
-          </label>
-          <input
-            type="number"
-            value={form.maxInputTokensPerCall}
-            onChange={(e) => setField("maxInputTokensPerCall", e.target.value)}
-            min={1}
-            max={512000}
-            placeholder="Auto (max_context_window - max_output_tokens)"
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Max Run Cost (USD)
-          </label>
-          <input
-            type="number"
-            value={form.maxRunCost}
-            onChange={(e) => setField("maxRunCost", e.target.value)}
-            min={0}
-            step={0.000001}
-            placeholder="Optional"
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Relevant Memory Max Token
-          </label>
-          <input
-            type="number"
-            value={form.relevantMemoryMaxToken}
-            onChange={(e) =>
-              setField("relevantMemoryMaxToken", Number(e.target.value))
-            }
-            min={1}
-            max={32768}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Stream Cleanup Timeout (s)
-          </label>
-          <input
-            type="number"
-            value={form.streamCleanupTimeout}
-            onChange={(e) =>
-              setField("streamCleanupTimeout", Number(e.target.value))
-            }
-            min={1}
-            step={0.1}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-      </div>
-
-      <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">
-        Skills
-      </p>
-      <div className="space-y-3">
-        <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={form.enableSkill}
-            onChange={(e) => setField("enableSkill", e.target.checked)}
-            className="rounded border-zinc-700 bg-zinc-900"
-          />
-          Enable Skills
-        </label>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Skill Directories
-          </label>
-          <textarea
-            value={form.skillsDirsText}
-            onChange={(e) => setField("skillsDirsText", e.target.value)}
-            rows={3}
-            placeholder={"One directory per line\nskills\n~/.agent/skills"}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600 resize-y"
-          />
-          <p className="mt-1 text-xs text-zinc-500">
-            Leave empty to use global and default skill directories.
+      <section className="space-y-5">
+        <div className="space-y-1">
+          <p className="ui-section-kicker">Basics</p>
+          <p className="ui-section-copy">
+            These are the only fields required to create a working agent.
           </p>
         </div>
-      </div>
 
-      <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">
-        Summaries & Compact
-      </p>
-      <div className="space-y-3">
-        <label className="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={form.enableTerminationSummary}
-            onChange={(e) =>
-              setField("enableTerminationSummary", e.target.checked)
-            }
-            className="rounded border-zinc-700 bg-zinc-900"
-          />
-          Enable Termination Summary
-        </label>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Termination Summary Prompt
-          </label>
-          <textarea
-            value={form.terminationSummaryPrompt}
-            onChange={(e) =>
-              setField("terminationSummaryPrompt", e.target.value)
-            }
-            rows={3}
-            placeholder="Optional custom prompt for termination summary"
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600 resize-y"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Compact Prompt
-          </label>
-          <textarea
-            value={form.compactPrompt}
-            onChange={(e) => setField("compactPrompt", e.target.value)}
-            rows={4}
-            placeholder="Optional custom prompt used during context compact"
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600 resize-y"
-          />
-        </div>
-      </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field
+            id={fieldId("name")}
+            label="Name"
+            required={true}
+            hint="Use a stable name that operators can recognize in traces and sessions."
+          >
+            <input
+              id={fieldId("name")}
+              type="text"
+              value={form.name}
+              onChange={(event) => setField("name", event.target.value)}
+              className="ui-input"
+              placeholder="Support triage agent"
+              aria-invalid={displayedError === "Name is required"}
+            />
+          </Field>
 
-      <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider pt-2">
-        Model Parameters
-      </p>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Max Output Tokens
-          </label>
-          <input
-            type="number"
-            value={form.maxOutputTokens}
-            onChange={(e) =>
-              setField("maxOutputTokens", Number(e.target.value))
-            }
-            min={1}
-            max={128000}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
+          <Field
+            id={fieldId("description")}
+            label="Description"
+            hint="Optional. Keep it short and operational."
+          >
+            <input
+              id={fieldId("description")}
+              type="text"
+              value={form.description}
+              onChange={(event) => setField("description", event.target.value)}
+              className="ui-input"
+              placeholder="Handles scheduling and session triage"
+            />
+          </Field>
         </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Max Context Window
-          </label>
-          <input
-            type="number"
-            value={form.maxContextWindow}
-            onChange={(e) =>
-              setField("maxContextWindow", Number(e.target.value))
-            }
-            min={1}
-            max={512000}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Temperature
-          </label>
-          <input
-            type="number"
-            value={form.temperature}
-            onChange={(e) => setField("temperature", Number(e.target.value))}
-            min={0}
-            max={2}
-            step={0.1}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">Top P</label>
-          <input
-            type="number"
-            value={form.topP}
-            onChange={(e) => setField("topP", Number(e.target.value))}
-            min={0}
-            max={1}
-            step={0.01}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Frequency Penalty
-          </label>
-          <input
-            type="number"
-            value={form.frequencyPenalty}
-            onChange={(e) =>
-              setField("frequencyPenalty", Number(e.target.value))
-            }
-            min={-2}
-            max={2}
-            step={0.1}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Presence Penalty
-          </label>
-          <input
-            type="number"
-            value={form.presencePenalty}
-            onChange={(e) =>
-              setField("presencePenalty", Number(e.target.value))
-            }
-            min={-2}
-            max={2}
-            step={0.1}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Cache-Hit Price (USD / 1M Tokens)
-          </label>
-          <input
-            type="number"
-            value={form.cacheHitPrice}
-            onChange={(e) => setField("cacheHitPrice", Number(e.target.value))}
-            min={0}
-            step={0.000001}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Input Price (USD / 1M Tokens)
-          </label>
-          <input
-            type="number"
-            value={form.inputPrice}
-            onChange={(e) => setField("inputPrice", Number(e.target.value))}
-            min={0}
-            step={0.000001}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1.5">
-            Output Price (USD / 1M Tokens)
-          </label>
-          <input
-            type="number"
-            value={form.outputPrice}
-            onChange={(e) => setField("outputPrice", Number(e.target.value))}
-            min={0}
-            step={0.000001}
-            className="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 text-sm focus:outline-none focus:border-zinc-600"
-          />
-        </div>
-      </div>
 
-      {displayedError && <p className="text-sm text-red-400">{displayedError}</p>}
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field
+            id={fieldId("model-provider")}
+            label="Model Provider"
+            hint={
+              compatibilityRequired
+                ? "This provider needs explicit endpoint credentials."
+                : "Official providers can keep endpoint settings empty."
+            }
+          >
+            <select
+              id={fieldId("model-provider")}
+              value={form.modelProvider}
+              onChange={(event) => {
+                const nextProvider = event.target.value;
+                const nextCapability = capabilities?.providers.find(
+                  (provider) => provider.value === nextProvider,
+                );
+                setField("modelProvider", nextProvider);
+                if (
+                  !form.modelName.trim() ||
+                  form.modelName === providerCapability?.default_model_name
+                ) {
+                  setField(
+                    "modelName",
+                    nextCapability?.default_model_name ?? form.modelName,
+                  );
+                }
+              }}
+              className="ui-input"
+            >
+              {(capabilities?.providers ?? []).map((provider) => (
+                <option key={provider.value} value={provider.value}>
+                  {provider.label}
+                </option>
+              ))}
+            </select>
+          </Field>
 
-      <div className="flex gap-3 pt-2">
-        <button
-          type="submit"
-          disabled={submitting}
-          className="px-5 py-2 rounded-md bg-white text-black text-sm font-medium hover:bg-zinc-200 transition-colors disabled:opacity-50"
+          <Field
+            id={fieldId("model-name")}
+            label="Model Name"
+            hint="Use the provider default unless you have a reason to override it."
+          >
+            <input
+              id={fieldId("model-name")}
+              type="text"
+              value={form.modelName}
+              onChange={(event) => setField("modelName", event.target.value)}
+              className="ui-input"
+              placeholder="deepseek-chat"
+            />
+          </Field>
+        </div>
+
+        <Field
+          id={fieldId("system-prompt")}
+          label="System Prompt"
+          hint="Defines the agent’s role, tone, and operating constraints."
         >
+          <textarea
+            id={fieldId("system-prompt")}
+            value={form.systemPrompt}
+            onChange={(event) => setField("systemPrompt", event.target.value)}
+            rows={6}
+            className="ui-input ui-textarea"
+            placeholder="You are a helpful operations assistant..."
+          />
+        </Field>
+      </section>
+
+      <DisclosureSection
+        title="Compatibility endpoint"
+        description="Only open this when the provider needs a custom base URL or custom API key environment variable."
+        open={openCompatibilitySection}
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field
+            id={fieldId("base-url")}
+            label="Base URL"
+            hint="Required for explicit compatible providers."
+          >
+            <input
+              id={fieldId("base-url")}
+              type="text"
+              value={form.baseUrl}
+              onChange={(event) => setField("baseUrl", event.target.value)}
+              className="ui-input"
+              placeholder="https://api.example.com/v1"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("api-key-env-name")}
+            label="API Key Env Name"
+            hint="The environment variable that stores the provider key."
+          >
+            <input
+              id={fieldId("api-key-env-name")}
+              type="text"
+              value={form.apiKeyEnvName}
+              onChange={(event) => setField("apiKeyEnvName", event.target.value)}
+              className="ui-input"
+              placeholder="MINIMAX_API_KEY"
+            />
+          </Field>
+        </div>
+      </DisclosureSection>
+
+      <section className="space-y-5">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="ui-section-kicker">Tools</p>
+              <p className="ui-section-copy">
+                Start with only the capabilities this agent actually needs.
+              </p>
+            </div>
+            <PillBadge variant="default">{form.selectedTools.length} selected</PillBadge>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-foreground">Builtin tools</h3>
+            <div className="flex flex-wrap gap-2">
+              {builtinTools.length === 0 ? (
+                <span className="text-sm text-ink-faint">No builtin tools available</span>
+              ) : (
+                builtinTools.map((tool) => (
+                  <ToolToggle
+                    key={tool.name}
+                    tool={tool}
+                    selected={form.selectedTools.includes(tool.name)}
+                    onToggle={() => toggleTool(tool.name)}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium text-foreground">Agent tools</h3>
+            <div className="flex flex-wrap gap-2">
+              {agentTools.length === 0 ? (
+                <span className="text-sm text-ink-faint">
+                  No other agents available as tools
+                </span>
+              ) : (
+                agentTools.map((tool) => (
+                  <ToolToggle
+                    key={tool.name}
+                    tool={tool}
+                    selected={form.selectedTools.includes(tool.name)}
+                    onToggle={() => toggleTool(tool.name)}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <DisclosureSection
+        title="Workflow helpers"
+        description="Summaries, skill discovery, and context compacting live here so they don’t crowd the main setup."
+        open={openWorkflowSection}
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          <ToggleCard
+            id={fieldId("enable-skill")}
+            label="Enable Skills"
+            description="Allow the agent to discover and use skill directories."
+            checked={form.enableSkill}
+            onChange={(checked) => setField("enableSkill", checked)}
+          />
+          <ToggleCard
+            id={fieldId("enable-termination-summary")}
+            label="Enable Termination Summary"
+            description="Generate a short summary when the run settles."
+            checked={form.enableTerminationSummary}
+            onChange={(checked) => setField("enableTerminationSummary", checked)}
+          />
+        </div>
+
+        {form.enableSkill && (
+          <Field
+            id={fieldId("skills-dirs")}
+            label="Skill Directories"
+            hint="One directory per line. Leave empty to use the default global locations."
+          >
+            <textarea
+              id={fieldId("skills-dirs")}
+              value={form.skillsDirsText}
+              onChange={(event) => setField("skillsDirsText", event.target.value)}
+              rows={3}
+              className="ui-input ui-textarea"
+              placeholder={"skills\n~/.agent/skills"}
+            />
+          </Field>
+        )}
+
+        {form.enableTerminationSummary && (
+          <Field
+            id={fieldId("termination-summary-prompt")}
+            label="Termination Summary Prompt"
+            hint="Optional custom summary prompt. Leave empty to use the default summary behavior."
+          >
+            <textarea
+              id={fieldId("termination-summary-prompt")}
+              value={form.terminationSummaryPrompt}
+              onChange={(event) =>
+                setField("terminationSummaryPrompt", event.target.value)
+              }
+              rows={3}
+              className="ui-input ui-textarea"
+              placeholder="Optional custom prompt for the final summary"
+            />
+          </Field>
+        )}
+
+        <Field
+          id={fieldId("compact-prompt")}
+          label="Compact Prompt"
+          hint="Optional prompt used when the runtime compacts long context."
+        >
+          <textarea
+            id={fieldId("compact-prompt")}
+            value={form.compactPrompt}
+            onChange={(event) => setField("compactPrompt", event.target.value)}
+            rows={4}
+            className="ui-input ui-textarea"
+            placeholder="Optional compact prompt"
+          />
+        </Field>
+      </DisclosureSection>
+
+      <DisclosureSection
+        title="Runtime limits"
+        description="Resource and orchestration limits. Leave these alone unless you need tighter operational guardrails."
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field
+            id={fieldId("config-root")}
+            label="Config Root"
+            hint="Optional workspace root override."
+          >
+            <input
+              id={fieldId("config-root")}
+              type="text"
+              value={form.configRoot}
+              onChange={(event) => setField("configRoot", event.target.value)}
+              className="ui-input"
+              placeholder="Optional override for workspace root"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("max-steps")}
+            label="Max Steps"
+            hint="Stops runaway runs before they become expensive."
+          >
+            <input
+              id={fieldId("max-steps")}
+              type="number"
+              value={form.maxSteps}
+              onChange={(event) => setField("maxSteps", Number(event.target.value))}
+              min={1}
+              max={100}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("run-timeout")}
+            label="Run Timeout (s)"
+            hint="How long a single run can stay active before timing out."
+          >
+            <input
+              id={fieldId("run-timeout")}
+              type="number"
+              value={form.runTimeout}
+              onChange={(event) => setField("runTimeout", Number(event.target.value))}
+              min={10}
+              max={3600}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("max-input-per-call")}
+            label="Max Input Tokens Per Call"
+            hint="Leave empty to derive from the context and output limits."
+          >
+            <input
+              id={fieldId("max-input-per-call")}
+              type="number"
+              value={form.maxInputTokensPerCall}
+              onChange={(event) =>
+                setField("maxInputTokensPerCall", event.target.value)
+              }
+              min={1}
+              max={512000}
+              className="ui-input"
+              placeholder="Auto"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("max-run-cost")}
+            label="Max Run Cost (USD)"
+            hint="Optional hard ceiling for token cost."
+          >
+            <input
+              id={fieldId("max-run-cost")}
+              type="number"
+              value={form.maxRunCost}
+              onChange={(event) => setField("maxRunCost", event.target.value)}
+              min={0}
+              step={0.000001}
+              className="ui-input"
+              placeholder="Optional"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("relevant-memory-max-token")}
+            label="Relevant Memory Max Token"
+            hint="Upper bound for relevant memory retrieval."
+          >
+            <input
+              id={fieldId("relevant-memory-max-token")}
+              type="number"
+              value={form.relevantMemoryMaxToken}
+              onChange={(event) =>
+                setField("relevantMemoryMaxToken", Number(event.target.value))
+              }
+              min={1}
+              max={32768}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("stream-cleanup-timeout")}
+            label="Stream Cleanup Timeout (s)"
+            hint="How long the runtime keeps stream cleanup watchers alive."
+          >
+            <input
+              id={fieldId("stream-cleanup-timeout")}
+              type="number"
+              value={form.streamCleanupTimeout}
+              onChange={(event) =>
+                setField("streamCleanupTimeout", Number(event.target.value))
+              }
+              min={1}
+              step={0.1}
+              className="ui-input"
+            />
+          </Field>
+        </div>
+      </DisclosureSection>
+
+      <DisclosureSection
+        title="Model tuning"
+        description="Sampling, context, and pricing overrides. Keep the defaults until you have a concrete reason to tune them."
+      >
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field
+            id={fieldId("max-output-tokens")}
+            label="Max Output Tokens"
+            hint="Upper bound for each model response."
+          >
+            <input
+              id={fieldId("max-output-tokens")}
+              type="number"
+              value={form.maxOutputTokens}
+              onChange={(event) =>
+                setField("maxOutputTokens", Number(event.target.value))
+              }
+              min={1}
+              max={128000}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("max-context-window")}
+            label="Max Context Window"
+            hint="Provider-specific context limit."
+          >
+            <input
+              id={fieldId("max-context-window")}
+              type="number"
+              value={form.maxContextWindow}
+              onChange={(event) =>
+                setField("maxContextWindow", Number(event.target.value))
+              }
+              min={1}
+              max={512000}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("temperature")}
+            label="Temperature"
+            hint="Higher values produce more varied output."
+          >
+            <input
+              id={fieldId("temperature")}
+              type="number"
+              value={form.temperature}
+              onChange={(event) => setField("temperature", Number(event.target.value))}
+              min={0}
+              max={2}
+              step={0.1}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("top-p")}
+            label="Top P"
+            hint="Alternative sampling control. Usually left at 1."
+          >
+            <input
+              id={fieldId("top-p")}
+              type="number"
+              value={form.topP}
+              onChange={(event) => setField("topP", Number(event.target.value))}
+              min={0}
+              max={1}
+              step={0.01}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("frequency-penalty")}
+            label="Frequency Penalty"
+            hint="Discourages repeated tokens."
+          >
+            <input
+              id={fieldId("frequency-penalty")}
+              type="number"
+              value={form.frequencyPenalty}
+              onChange={(event) =>
+                setField("frequencyPenalty", Number(event.target.value))
+              }
+              min={-2}
+              max={2}
+              step={0.1}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("presence-penalty")}
+            label="Presence Penalty"
+            hint="Encourages the model to introduce new topics."
+          >
+            <input
+              id={fieldId("presence-penalty")}
+              type="number"
+              value={form.presencePenalty}
+              onChange={(event) =>
+                setField("presencePenalty", Number(event.target.value))
+              }
+              min={-2}
+              max={2}
+              step={0.1}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("cache-hit-price")}
+            label="Cache-Hit Price (USD / 1M Tokens)"
+            hint="Optional pricing override for cache hits."
+          >
+            <input
+              id={fieldId("cache-hit-price")}
+              type="number"
+              value={form.cacheHitPrice}
+              onChange={(event) =>
+                setField("cacheHitPrice", Number(event.target.value))
+              }
+              min={0}
+              step={0.000001}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("input-price")}
+            label="Input Price (USD / 1M Tokens)"
+            hint="Optional pricing override for prompt tokens."
+          >
+            <input
+              id={fieldId("input-price")}
+              type="number"
+              value={form.inputPrice}
+              onChange={(event) => setField("inputPrice", Number(event.target.value))}
+              min={0}
+              step={0.000001}
+              className="ui-input"
+            />
+          </Field>
+
+          <Field
+            id={fieldId("output-price")}
+            label="Output Price (USD / 1M Tokens)"
+            hint="Optional pricing override for completion tokens."
+          >
+            <input
+              id={fieldId("output-price")}
+              type="number"
+              value={form.outputPrice}
+              onChange={(event) => setField("outputPrice", Number(event.target.value))}
+              min={0}
+              step={0.000001}
+              className="ui-input"
+            />
+          </Field>
+        </div>
+      </DisclosureSection>
+
+      <div className="flex flex-wrap gap-3 pt-2">
+        <button type="submit" disabled={submitting} className="ui-button ui-button-primary">
           {submitting ? "Saving..." : submitLabel}
         </button>
-        <Link
-          href="/agents"
-          className="px-5 py-2 rounded-md border border-zinc-700 text-sm hover:bg-zinc-800 transition-colors"
-        >
+        <Link href="/agents" className={cn("ui-button ui-button-secondary")}>
           Cancel
         </Link>
       </div>

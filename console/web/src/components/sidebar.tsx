@@ -23,15 +23,15 @@ export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-56 shrink-0 border-r border-zinc-800 bg-zinc-900 flex flex-col">
-      <div className="px-4 py-5 border-b border-zinc-800">
-        <h1 className="text-lg font-semibold tracking-tight text-white">
+    <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-panel">
+      <div className="border-b border-line px-4 py-5">
+        <h1 className="text-lg font-semibold tracking-tight text-foreground">
           Agiwo Console
         </h1>
-        <p className="text-xs text-zinc-500 mt-0.5">Agent SDK Control Plane</p>
+        <p className="mt-0.5 text-xs text-ink-muted">Agent SDK Control Plane</p>
       </div>
 
-      <nav className="flex-1 px-2 py-3 space-y-0.5">
+      <nav aria-label="Primary" className="flex-1 space-y-0.5 px-2 py-3">
         {NAV_ITEMS.map((item) => {
           const isActive =
             item.href === "/"
@@ -41,21 +41,31 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              aria-current={isActive ? "page" : undefined}
               className={cn(
-                "flex items-center gap-2.5 px-3 py-2 rounded-md text-sm transition-colors",
+                "group flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-all duration-150",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
                 isActive
-                  ? "bg-zinc-800 text-white"
-                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                  ? "bg-panel-strong text-foreground font-medium"
+                  : "text-ink-muted hover:bg-panel-muted hover:text-ink-soft"
               )}
             >
-              <item.icon className="w-4 h-4" />
+              <item.icon
+                className={cn(
+                  "w-4 h-4 transition-colors duration-150",
+                  isActive ? "text-ink-soft" : "text-ink-faint group-hover:text-ink-muted"
+                )}
+              />
               {item.label}
+              {isActive && (
+                <span className="ml-auto h-1.5 w-1.5 rounded-full bg-accent" />
+              )}
             </Link>
           );
         })}
       </nav>
 
-      <div className="px-4 py-3 border-t border-zinc-800 text-xs text-zinc-600">
+      <div className="border-t border-line px-4 py-3 text-xs text-ink-faint">
         v0.1.0
       </div>
     </aside>

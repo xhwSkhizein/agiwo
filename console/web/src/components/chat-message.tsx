@@ -3,6 +3,7 @@
 import { Bot, Clock, Loader2, User, Wrench } from "lucide-react";
 import type { ChatMessage, ChatRole } from "@/lib/chat-types";
 import type { ToolCallPayload } from "@/lib/api";
+import { JsonDisclosure } from "@/components/json-disclosure";
 import { UserInputDetail } from "@/components/user-input-detail";
 
 const ROLE_STYLES: Record<
@@ -70,16 +71,7 @@ function RawPayload({ value }: { value: unknown }) {
     return null;
   }
 
-  return (
-    <details className="mt-2 rounded border border-zinc-800 bg-zinc-950/60">
-      <summary className="cursor-pointer px-3 py-2 text-xs text-zinc-500">
-        Raw payload
-      </summary>
-      <pre className="max-h-64 overflow-auto px-3 pb-3 text-xs text-zinc-400 whitespace-pre-wrap break-words">
-        {JSON.stringify(value, null, 2)}
-      </pre>
-    </details>
-  );
+  return <JsonDisclosure className="mt-2" label="Raw payload" value={value} />;
 }
 
 export function ChatMessageItem({ message }: { message: ChatMessage }) {

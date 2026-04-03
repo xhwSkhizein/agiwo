@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { GitBranch, X } from "lucide-react";
 
 interface ForkDialogProps {
@@ -10,27 +10,37 @@ interface ForkDialogProps {
 
 export function ForkDialog({ onConfirm, onCancel }: ForkDialogProps) {
   const [summary, setSummary] = useState("");
+  const inputId = useId();
 
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-3 space-y-2">
+    <section
+      aria-label="Fork session"
+      className="space-y-2 rounded-2xl border border-line bg-panel p-3"
+    >
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-300">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-ink-soft">
           <GitBranch className="w-3.5 h-3.5" />
           Fork Session
         </div>
         <button
+          type="button"
           onClick={onCancel}
-          className="p-0.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors"
+          aria-label="Close fork form"
+          className="ui-button ui-button-ghost ui-button-icon min-h-8 min-w-8 rounded-md p-1"
         >
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
+      <label htmlFor={inputId} className="ui-field-label mb-0">
+        Fork summary
+      </label>
       <input
+        id={inputId}
         type="text"
         value={summary}
         onChange={(e) => setSummary(e.target.value)}
         placeholder="Describe the fork context..."
-        className="w-full px-2.5 py-1.5 rounded bg-zinc-800 border border-zinc-700 text-xs focus:outline-none focus:border-zinc-500"
+        className="ui-input"
         onKeyDown={(e) => {
           if (e.key === "Enter" && summary.trim()) {
             onConfirm(summary.trim());
@@ -42,12 +52,13 @@ export function ForkDialog({ onConfirm, onCancel }: ForkDialogProps) {
         autoFocus
       />
       <button
+        type="button"
         onClick={() => summary.trim() && onConfirm(summary.trim())}
         disabled={!summary.trim()}
-        className="w-full py-1.5 rounded text-xs font-medium bg-blue-900/50 text-blue-400 hover:bg-blue-900/70 transition-colors disabled:opacity-30"
+        className="ui-button ui-button-primary w-full"
       >
         Create Fork
       </button>
-    </div>
+    </section>
   );
 }

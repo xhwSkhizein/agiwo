@@ -8,6 +8,7 @@ import {
   forkSession,
 } from "@/lib/api";
 import type { ChatSessionItem } from "@/lib/api";
+import { ErrorStateMessage } from "@/components/state-message";
 import { SessionItem } from "./session-item";
 import { ForkDialog } from "./fork-dialog";
 
@@ -87,22 +88,26 @@ export function SessionPanel({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-        <h2 className="text-xs font-medium text-zinc-400 uppercase">Sessions</h2>
+      <div className="flex items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="text-xs font-medium uppercase tracking-[0.16em] text-ink-muted">
+          Sessions
+        </h2>
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={refresh}
             disabled={loading}
-            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-30"
-            title="Refresh"
+            aria-label="Refresh sessions"
+            className="ui-button ui-button-ghost ui-button-icon"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
           </button>
           <button
+            type="button"
             onClick={handleCreate}
             disabled={actionLoading}
-            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-30"
-            title="New session"
+            aria-label="Create session"
+            className="ui-button ui-button-ghost ui-button-icon"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -117,14 +122,10 @@ export function SessionPanel({
           />
         )}
 
-        {error && (
-          <p className="rounded border border-red-900/50 bg-red-950/20 px-3 py-2 text-xs text-red-300">
-            {error}
-          </p>
-        )}
+        {error && <ErrorStateMessage className="text-xs">{error}</ErrorStateMessage>}
 
         {sessions.length === 0 && !loading && (
-          <p className="text-xs text-zinc-600 text-center py-4">
+          <p className="py-4 text-center text-xs text-ink-faint">
             No sessions yet
           </p>
         )}

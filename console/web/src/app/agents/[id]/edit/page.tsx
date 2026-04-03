@@ -57,7 +57,7 @@ export default function EditAgentPage() {
   }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6 p-6">
       <BackHeader
         href="/agents"
         title="Edit Agent"

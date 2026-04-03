@@ -2,13 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { RefreshCw } from "lucide-react";
 import {
   EmptyStateMessage,
   ErrorStateMessage,
-  TextStateMessage,
+  FullPageMessage,
 } from "@/components/state-message";
 import { PaginationControls } from "@/components/pagination-controls";
 import { UserInputCompact } from "@/components/user-input-detail";
+import { PillBadge } from "@/components/pill-badge";
+import { MonoText } from "@/components/mono-text";
+import { cn } from "@/lib/utils";
 import { listSessions } from "@/lib/api";
 import type { SessionSummary } from "@/lib/api";
 import {
@@ -62,8 +66,15 @@ export default function SessionsPage() {
           onClick={() => {
             void loadSessions();
           }}
-          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
+          disabled={loading}
+          className={cn(
+            "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm",
+            "transition-all duration-150",
+            "border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-white",
+            "disabled:opacity-50 disabled:cursor-not-allowed"
+          )}
         >
+          <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
           Refresh
         </button>
       </div>
@@ -71,22 +82,25 @@ export default function SessionsPage() {
       {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
 
       {loading ? (
-        <TextStateMessage>Loading...</TextStateMessage>
+        <FullPageMessage loading>Loading sessions...</FullPageMessage>
       ) : sessions.length === 0 ? (
         <EmptyStateMessage>No sessions found</EmptyStateMessage>
       ) : (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900 divide-y divide-zinc-800">
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 divide-y divide-zinc-800 overflow-hidden">
           {sessions.map((s) => {
             const metrics = normalizeRunMetricsSummary(s.metrics);
             return (
               <Link
                 key={s.session_id}
                 href={`/sessions/${s.session_id}`}
-                className="block px-5 py-4 hover:bg-zinc-800/50 transition-colors"
+                className={cn(
+                  "group block px-5 py-4 transition-colors duration-150",
+                  "hover:bg-zinc-800/50"
+                )}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm">
+                    <div className="text-sm text-zinc-200">
                       <UserInputCompact
                         input={s.last_user_input}
                         maxLength={160}
@@ -101,24 +115,24 @@ export default function SessionsPage() {
                       </p>
                     )}
                   </div>
-                  <div className="text-right shrink-0">
-                    <p className="text-xs text-zinc-400">{s.run_count} runs</p>
-                    <p className="text-xs text-zinc-600 mt-0.5">
-                      {s.agent_id || "unknown"}
-                    </p>
-                    <div className="mt-2 space-y-0.5">
-                      <p className="text-[11px] text-zinc-400">
-                        cost {formatUsd(metrics.token_cost)}
+                  <div className="text-right shrink-0 space-y-1.5">
+                    <div className="flex items-center justify-end gap-2">
+                      <PillBadge variant="default">{s.run_count} runs</PillBadge>
+                      <MonoText truncate className="max-w-[120px]">{s.agent_id || "unknown"}</MonoText>
+                    </div>
+                    <div className="mt-2 space-y-0.5 text-[11px]">
+                      <p className="text-zinc-400">
+                        cost <span className="text-zinc-300">{formatUsd(metrics.token_cost)}</span>
                       </p>
-                      <p className="text-[11px] text-zinc-500">
-                        in/out {formatTokenCount(metrics.input_tokens)}
-                        {" / "}
-                        {formatTokenCount(metrics.output_tokens)}
+                      <p className="text-zinc-500">
+                        in/out <span className="text-zinc-400">{formatTokenCount(metrics.input_tokens)}</span>
+                        <span className="text-zinc-700 mx-1">/</span>
+                        <span className="text-zinc-400">{formatTokenCount(metrics.output_tokens)}</span>
                       </p>
-                      <p className="text-[11px] text-zinc-600">
-                        cache r/c {formatTokenCount(metrics.cache_read_tokens)}
-                        {" / "}
-                        {formatTokenCount(metrics.cache_creation_tokens)}
+                      <p className="text-zinc-600">
+                        cache r/c <span className="text-zinc-500">{formatTokenCount(metrics.cache_read_tokens)}</span>
+                        <span className="text-zinc-700 mx-1">/</span>
+                        <span className="text-zinc-500">{formatTokenCount(metrics.cache_creation_tokens)}</span>
                       </p>
                     </div>
                   </div>

@@ -560,6 +560,7 @@ function SchedulerChatPageContent() {
           <div className="flex items-center gap-3">
             <Link
               href="/agents"
+              aria-label="Back to agents"
               className="p-1.5 rounded hover:bg-zinc-800 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -591,13 +592,14 @@ function SchedulerChatPageContent() {
               </button>
             )}
             <button
+              type="button"
               onClick={() => setShowSessionPanel((v) => !v)}
+              aria-label={showSessionPanel ? "Hide sessions" : "Show sessions"}
               className={`p-1.5 rounded transition-colors ${
                 showSessionPanel
                   ? "bg-zinc-700 text-white"
                   : "hover:bg-zinc-800 text-zinc-500"
               }`}
-              title="Toggle session panel"
             >
               <PanelRight className="w-4 h-4" />
             </button>
@@ -649,6 +651,8 @@ function SchedulerChatPageContent() {
             onChange={setInput}
             onSubmit={handleSend}
             disabled={isStreaming || !sessionId}
+            label="Scheduler message"
+            submitLabel="Send scheduler message"
           />
         </div>
       </div>
@@ -776,6 +780,8 @@ function SchedulerChatPageContent() {
                   className="rounded-lg bg-zinc-900/50 border border-zinc-800"
                 >
                   <button
+                    type="button"
+                    aria-expanded={expandedChildren.has(child.id)}
                     onClick={() => toggleChild(child.id)}
                     className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-zinc-800/50 transition-colors rounded-lg"
                   >
