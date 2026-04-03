@@ -135,6 +135,7 @@ def test_agent_constructor_does_not_expose_skill_manager(
     assert "skill_manager" not in inspect.signature(Agent.__init__).parameters
     assert skill_tool._allowed_skills == frozenset({"alpha"})
 
+
 @pytest.mark.asyncio
 async def test_create_child_agent_clones_runtime_configuration() -> None:
     agent = _build_agent()

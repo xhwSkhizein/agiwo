@@ -306,6 +306,7 @@ async def test_create_agent_rejects_unknown_exact_allowed_skill(
     assert response.status_code == 422
     assert response.json()["detail"] == "Unknown allowed skill(s): missing-skill"
 
+
 @pytest.mark.asyncio
 async def test_get_agent_capabilities_returns_provider_schema(client) -> None:
     response = await client.get("/api/agents/capabilities")
