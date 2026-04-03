@@ -16,7 +16,10 @@ router = APIRouter(prefix="/api/config/runtime", tags=["config"])
 @router.get("", response_model=RuntimeConfigResponse)
 async def get_runtime_config(runtime: ConsoleRuntimeDep) -> RuntimeConfigResponse:
     if runtime.runtime_config_service is None:
-        raise RuntimeError("RuntimeConfigService not initialized")
+        raise HTTPException(
+            status_code=503,
+            detail="Runtime config service not initialized",
+        )
     return await runtime.runtime_config_service.get_snapshot()
 
 
@@ -26,7 +29,10 @@ async def update_runtime_config(
     runtime: ConsoleRuntimeDep,
 ) -> RuntimeConfigResponse:
     if runtime.runtime_config_service is None:
-        raise RuntimeError("RuntimeConfigService not initialized")
+        raise HTTPException(
+            status_code=503,
+            detail="Runtime config service not initialized",
+        )
     try:
         return await runtime.runtime_config_service.update(body)
     except ValidationError as exc:

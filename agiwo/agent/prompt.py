@@ -16,6 +16,7 @@ from agiwo.agent.hooks import filter_relevant_memories
 from agiwo.agent.models.input import ChannelContext, UserMessage
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.step import StepRecord
+from agiwo.skill.allowlist import skills_enabled
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
 from agiwo.utils.logging import get_logger
@@ -24,10 +25,6 @@ from agiwo.workspace.documents import WorkspaceDocuments
 from agiwo.workspace.layout import AgentWorkspace
 
 logger = get_logger(__name__)
-
-
-def _skills_enabled(allowed_skills: list[str] | None) -> bool:
-    return allowed_skills is None or bool(allowed_skills)
 
 
 def _get_os_info() -> str:
@@ -244,7 +241,7 @@ async def build_system_prompt(
 ) -> str:
     await bootstrapper.ensure_prompt_ready(workspace)
     skill_manager = (
-        get_global_skill_manager() if _skills_enabled(allowed_skills) else None
+        get_global_skill_manager() if skills_enabled(allowed_skills) else None
     )
     if skill_manager is not None:
         await skill_manager.initialize()

@@ -51,7 +51,7 @@ class DefaultAgentConfig(BaseModel):
         if isinstance(value, str):
             value = [value]
         if not isinstance(value, list):
-            raise TypeError("allowed_skills must be a list")
+            raise ValueError("allowed_skills must be a list")
         return list(normalize_allowed_skills(value) or ())
 
 

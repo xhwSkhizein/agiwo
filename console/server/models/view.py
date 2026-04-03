@@ -48,7 +48,7 @@ class AgentConfigPayload(BaseModel):
         if value is None:
             return []
         if not isinstance(value, list):
-            raise TypeError("tools must be a list")
+            raise ValueError("tools must be a list")
         return parse_tool_references(value)
 
     @field_validator("allowed_skills", mode="before")
@@ -59,7 +59,7 @@ class AgentConfigPayload(BaseModel):
         if isinstance(value, str):
             value = [value]
         if not isinstance(value, list):
-            raise TypeError("allowed_skills must be a list")
+            raise ValueError("allowed_skills must be a list")
         return list(normalize_allowed_skills(value) or ())
 
     @model_validator(mode="after")

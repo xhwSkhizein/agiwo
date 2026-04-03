@@ -27,7 +27,7 @@ class DefaultAgentConfigPayload(BaseModel):
         if value is None:
             return []
         if not isinstance(value, list):
-            raise TypeError("tools must be a list")
+            raise ValueError("tools must be a list")
         return parse_tool_references(value)
 
     @field_validator("allowed_skills", mode="before")
@@ -38,7 +38,7 @@ class DefaultAgentConfigPayload(BaseModel):
         if isinstance(value, str):
             value = [value]
         if not isinstance(value, list):
-            raise TypeError("allowed_skills must be a list")
+            raise ValueError("allowed_skills must be a list")
         return list(normalize_allowed_skills(value) or ())
 
 
@@ -54,11 +54,11 @@ class RuntimeConfigEditablePayload(BaseModel):
         if isinstance(value, str):
             value = [value]
         if not isinstance(value, list):
-            raise TypeError("skills_dirs must be a list")
+            raise ValueError("skills_dirs must be a list")
         normalized: list[str] = []
         for item in value:
             if not isinstance(item, str):
-                raise TypeError("skills_dirs entries must be strings")
+                raise ValueError("skills_dirs entries must be strings")
             stripped = item.strip()
             if stripped:
                 normalized.append(stripped)

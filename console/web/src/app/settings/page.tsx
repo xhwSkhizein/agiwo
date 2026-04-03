@@ -87,6 +87,12 @@ export default function SettingsPage() {
     }
   };
 
+  const refreshSkills = async () => {
+    const availableSkills = await listAvailableSkills();
+    setSkills(availableSkills);
+    return availableSkills;
+  };
+
   useEffect(() => {
     void reload();
   }, []);
@@ -131,7 +137,13 @@ export default function SettingsPage() {
         },
       });
       setSnapshot(nextSnapshot);
-      setForm(buildFormState(nextSnapshot.editable));
+      const refreshedSkills = await refreshSkills();
+      const allowedSkillSet = new Set(refreshedSkills.map((skill) => skill.name));
+      const nextForm = buildFormState(nextSnapshot.editable);
+      nextForm.selectedSkills = nextForm.selectedSkills.filter((skill) =>
+        allowedSkillSet.has(skill)
+      );
+      setForm(nextForm);
       setSaveMessage("Runtime config updated. Changes apply to new work after this save.");
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to update runtime config");
@@ -335,6 +347,7 @@ export default function SettingsPage() {
                     <button
                       key={tool.name}
                       type="button"
+                      aria-pressed={checked}
                       onClick={() =>
                         toggleSelection(tool.name, form.selectedTools, (next) =>
                           setForm({ ...form, selectedTools: next })
@@ -358,6 +371,7 @@ export default function SettingsPage() {
                     <button
                       key={skill.name}
                       type="button"
+                      aria-pressed={checked}
                       onClick={() =>
                         toggleSelection(skill.name, form.selectedSkills, (next) =>
                           setForm({ ...form, selectedSkills: next })

@@ -16,12 +16,31 @@ def normalize_allowed_skills(
     return tuple(normalized)
 
 
+def skills_enabled(allowed_skills: list[str] | tuple[str, ...] | None) -> bool:
+    normalized = normalize_allowed_skills(allowed_skills)
+    return normalized is None or bool(normalized)
+
+
+def _validate_allowed_skill_pattern(pattern: str) -> None:
+    if "*" not in pattern:
+        return
+    if pattern == "*":
+        return
+    if pattern.count("*") != 1:
+        raise ValueError(f"Malformed wildcard pattern: {pattern}")
+    if pattern.startswith("*") ^ pattern.endswith("*"):
+        return
+    raise ValueError(f"Malformed wildcard pattern: {pattern}")
+
+
 def contains_allowed_skill_patterns(
     skills: list[str] | tuple[str, ...] | None,
 ) -> bool:
     normalized = normalize_allowed_skills(skills)
     if normalized is None:
         return False
+    for skill in normalized:
+        _validate_allowed_skill_pattern(skill)
     return any("*" in skill for skill in normalized)
 
 
@@ -60,6 +79,7 @@ def validate_known_allowed_skills(
 
 
 def matches_allowed_skill(pattern: str, skill_name: str) -> bool:
+    _validate_allowed_skill_pattern(pattern)
     if pattern == "*":
         return True
     if pattern.endswith("*") and not pattern.startswith("*"):
@@ -86,6 +106,7 @@ def expand_allowed_skills(
 
     expanded: list[str] = []
     for pattern in normalized:
+        _validate_allowed_skill_pattern(pattern)
         if "*" not in pattern:
             if pattern not in expanded:
                 expanded.append(pattern)
@@ -104,6 +125,7 @@ __all__ = [
     "expand_allowed_skills",
     "matches_allowed_skill",
     "normalize_allowed_skills",
+    "skills_enabled",
     "validate_expanded_allowed_skills",
     "validate_known_allowed_skills",
 ]

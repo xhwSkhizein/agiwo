@@ -79,9 +79,17 @@ class AgentOptions(BaseModel):
         legacy_keys = [key for key in ("enable_skill", "skills_dirs") if key in data]
         if legacy_keys:
             key_list = ", ".join(legacy_keys)
+            if "skills_dirs" in legacy_keys:
+                guidance = (
+                    "Migrate skill discovery configuration to the SDK-level "
+                    "settings.skills_dirs / AGIWO_* config entry; per-agent "
+                    "skills_dirs is no longer supported."
+                )
+            else:
+                guidance = "Configure skills with allowed_skills instead."
             raise ValueError(
                 "Legacy skill option(s) are no longer supported: "
-                f"{key_list}. Configure skills with allowed_skills instead."
+                f"{key_list}. {guidance}"
             )
         return data
 

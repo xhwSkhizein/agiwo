@@ -127,7 +127,7 @@ class ChildAgentConfigOverrides:
 
     instruction: str | None = None
     system_prompt: str | None = None
-    allowed_skills: list[str] | None = None
+    allowed_skills: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         normalized = normalize_allowed_skills(self.allowed_skills)
@@ -135,7 +135,7 @@ class ChildAgentConfigOverrides:
         object.__setattr__(
             self,
             "allowed_skills",
-            list(normalized) if normalized is not None else None,
+            tuple(normalized) if normalized is not None else None,
         )
 
 

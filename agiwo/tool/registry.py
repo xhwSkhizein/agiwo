@@ -4,6 +4,7 @@ Functions moved here from ``agiwo.agent.definition`` so that tool-assembly
 logic lives closer to the rest of the tool subsystem.
 """
 
+from agiwo.skill.allowlist import skills_enabled
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
 from agiwo.tool.builtin import ensure_builtin_tools_loaded
@@ -41,9 +42,7 @@ def build_agent_tools(
         default_tools.append(tool_cls())
 
     resolved_base_tools = ensure_bash_tool_pair([*provided_tools, *default_tools])
-    if (
-        allowed_skills is None or bool(allowed_skills)
-    ) and "skill" not in disabled_names:
+    if skills_enabled(allowed_skills) and "skill" not in disabled_names:
         if all(tool.name != "skill" for tool in resolved_base_tools):
             resolved_base_tools.append(
                 get_global_skill_manager().create_skill_tool(allowed_skills)

@@ -139,7 +139,11 @@ class SkillManager:
         available_skill_names: list[str] | None = None,
     ) -> list[str] | None:
         self.initialize_sync()
-        universe = available_skill_names or self.list_available_skill_names()
+        universe = (
+            available_skill_names
+            if available_skill_names is not None
+            else self.list_available_skill_names()
+        )
         return expand_allowed_skills(allowed_skills, universe)
 
     def validate_explicit_allowed_skills(
@@ -151,7 +155,11 @@ class SkillManager:
         self.initialize_sync()
         normalized = normalize_allowed_skills(allowed_skills)
         validate_expanded_allowed_skills(normalized)
-        universe = available_skill_names or self.list_available_skill_names()
+        universe = (
+            available_skill_names
+            if available_skill_names is not None
+            else self.list_available_skill_names()
+        )
         validate_known_allowed_skills(normalized, universe)
         return list(normalized) if normalized is not None else None
 

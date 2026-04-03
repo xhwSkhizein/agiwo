@@ -12,6 +12,7 @@ from agiwo.skill.allowlist import (
     expand_allowed_skills,
     matches_allowed_skill,
     normalize_allowed_skills,
+    skills_enabled,
     validate_expanded_allowed_skills,
 )
 from agiwo.skill.loader import SkillContent, SkillLoader
@@ -44,6 +45,7 @@ __all__ = [
     "get_global_skill_manager",
     "matches_allowed_skill",
     "normalize_allowed_skills",
+    "skills_enabled",
     "validate_expanded_allowed_skills",
     "SkillPromptCatalog",
     "SkillPromptProvider",

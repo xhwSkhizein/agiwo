@@ -89,11 +89,17 @@ def resolve_child_definition(
     ]
     if extra_tools:
         child_tools.extend(extra_tools)
+    parent_disabled_tool_names = normalize_disabled_sdk_tool_names(
+        agent.config.disabled_sdk_tool_names
+    )
     child_disabled_tool_names = normalize_disabled_sdk_tool_names(
         {
-            name
-            for name in set(exclude_tool_names or set())
-            if name in exact_tool_disable_set()
+            *parent_disabled_tool_names,
+            *{
+                name
+                for name in set(exclude_tool_names or set())
+                if name in exact_tool_disable_set()
+            },
         }
     )
 

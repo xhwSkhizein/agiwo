@@ -1,3 +1,5 @@
+import pytest
+
 from agiwo.skill.allowlist import (
     contains_allowed_skill_patterns,
     expand_allowed_skills,
@@ -34,12 +36,9 @@ def test_expand_allowed_skills_preserves_exact_names() -> None:
 
 
 def test_expand_allowed_skills_rejects_unknown_exact_names() -> None:
-    try:
+    with pytest.raises(ValueError) as excinfo:
         expand_allowed_skills(["custom-skill"], ["skill-review"])
-    except ValueError as exc:
-        assert "Unknown allowed skill(s): custom-skill" in str(exc)
-    else:
-        raise AssertionError("expected unknown exact skill failure")
+    assert "Unknown allowed skill(s): custom-skill" in str(excinfo.value)
 
 
 def test_expand_allowed_skills_empty_patterns_deny_all() -> None:
@@ -47,20 +46,24 @@ def test_expand_allowed_skills_empty_patterns_deny_all() -> None:
 
 
 def test_normalize_allowed_skills_rejects_non_list_input() -> None:
-    try:
+    with pytest.raises(ValueError) as excinfo:
         normalize_allowed_skills("skill-review")
-    except ValueError as exc:
-        assert "list of strings" in str(exc)
-    else:
-        raise AssertionError("expected invalid allowed_skills type failure")
+    assert "list of strings" in str(excinfo.value)
 
 
 def test_validate_expanded_allowed_skills_rejects_wildcard_patterns() -> None:
     assert contains_allowed_skill_patterns(["skill-review", "*audit"]) is True
 
-    try:
+    with pytest.raises(ValueError) as excinfo:
         validate_expanded_allowed_skills(["skill-review", "*audit"])
-    except ValueError as exc:
-        assert "explicit skill names" in str(exc)
-    else:
-        raise AssertionError("expected wildcard validation failure")
+    assert "explicit skill names" in str(excinfo.value)
+
+
+def test_matches_allowed_skill_rejects_malformed_wildcard_patterns() -> None:
+    with pytest.raises(ValueError, match="Malformed wildcard pattern: foo\\*bar"):
+        matches_allowed_skill("foo*bar", "foobar")
+
+
+def test_expand_allowed_skills_rejects_malformed_wildcard_patterns() -> None:
+    with pytest.raises(ValueError, match="Malformed wildcard pattern: foo\\*bar"):
+        expand_allowed_skills(["foo*bar"], ["foobar"])

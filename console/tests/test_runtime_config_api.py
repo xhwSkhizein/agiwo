@@ -50,6 +50,11 @@ async def client(monkeypatch: pytest.MonkeyPatch):
         "get_global_skill_manager",
         lambda: DummySkillManager(),
     )
+    monkeypatch.setattr(
+        RuntimeConfigService,
+        "_build_skill_manager_for_settings",
+        lambda self, runtime_settings: DummySkillManager(),
+    )
     settings = get_settings()
     original_skills_dirs = list(settings.skills_dirs)
     settings.skills_dirs = ["examples/skills", "skills"]
@@ -72,6 +77,7 @@ async def client(monkeypatch: pytest.MonkeyPatch):
     settings.skills_dirs = original_skills_dirs
     clear_console_runtime(app)
     await registry.close()
+    await trace_storage.close()
     await run_step_storage.close()
 
 
