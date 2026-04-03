@@ -1,5 +1,6 @@
 "use client";
 
+import { useId } from "react";
 import { Send } from "lucide-react";
 
 type ChatInputBarProps = {
@@ -8,15 +9,35 @@ type ChatInputBarProps = {
   onSubmit: () => void;
   disabled?: boolean;
   placeholder?: string;
+  label?: string;
+  submitLabel?: string;
 };
 
+/**
+ * Render a chat input bar with a controlled text input and a send button.
+ *
+ * The input is associated with a visually hidden label for accessibility. The submit button is disabled when the input is empty (only whitespace) or when `disabled` is `true`.
+ *
+ * @param value - Current text value of the input.
+ * @param onChange - Handler invoked with the updated text when the input changes.
+ * @param onSubmit - Handler invoked when the form is submitted.
+ * @param disabled - When `true`, disables user interaction on the input and submit button.
+ * @param placeholder - Placeholder text displayed inside the input.
+ * @param label - Accessible label text for the input (rendered visually hidden).
+ * @param submitLabel - Accessible label text for the submit button.
+ * @returns The JSX element representing the chat input bar.
+ */
 export function ChatInputBar({
   value,
   onChange,
   onSubmit,
   disabled = false,
   placeholder = "Type a message...",
+  label = "Message",
+  submitLabel = "Send message",
 }: ChatInputBarProps) {
+  const inputId = useId();
+
   return (
     <form
       onSubmit={(event) => {
@@ -25,18 +46,25 @@ export function ChatInputBar({
       }}
       className="flex items-center gap-3"
     >
-      <input
-        type="text"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        disabled={disabled}
-        className="flex-1 px-4 py-2.5 rounded-lg bg-zinc-800 border border-zinc-700 text-sm focus:outline-none focus:border-zinc-500 disabled:opacity-50"
-      />
+      <div className="min-w-0 flex-1">
+        <label htmlFor={inputId} className="sr-only">
+          {label}
+        </label>
+        <input
+          id={inputId}
+          type="text"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          className="ui-input"
+        />
+      </div>
       <button
         type="submit"
         disabled={disabled || !value.trim()}
-        className="p-2.5 rounded-lg bg-white text-black hover:bg-zinc-200 transition-colors disabled:opacity-30"
+        aria-label={submitLabel}
+        className="ui-button ui-button-primary ui-button-icon"
       >
         <Send className="w-4 h-4" />
       </button>

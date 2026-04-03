@@ -3,7 +3,14 @@
 import { GitBranch, Workflow } from "lucide-react";
 import type { ChatSessionItem } from "@/lib/api";
 import { UserInputCompact } from "@/components/user-input-detail";
+import { cn } from "@/lib/utils";
 
+/**
+ * Format a timestamp string into a concise human-readable relative time.
+ *
+ * @param dateStr - A parseable date/time string or `null`; if falsy the function returns an empty string.
+ * @returns `""` for falsy input; `"just now"` for < 1 minute; `"{N}m ago"` for minutes < 60; `"{N}h ago"` for hours < 24; `"{N}d ago"` otherwise.
+ */
 function formatRelativeTime(dateStr: string | null): string {
   if (!dateStr) return "";
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -23,6 +30,15 @@ interface SessionItemProps {
   onFork: () => void;
 }
 
+/**
+ * Renders a session list item showing session metadata, status badges, and actions.
+ *
+ * @param session - Session data to display (id, counts, timestamps, status, and optional fork/source info)
+ * @param isCurrent - Whether this session is the currently active session
+ * @param onSwitch - Callback invoked when a non-current session item is clicked to switch sessions
+ * @param onFork - Callback invoked when the Fork control is activated for the current session
+ * @returns The rendered session item element
+ */
 export function SessionItem({
   session,
   isCurrent,
@@ -30,28 +46,27 @@ export function SessionItem({
   onFork,
 }: SessionItemProps) {
   const schedulerActive = Boolean(session.root_state_status);
+  const containerClassName = cn(
+    "rounded-2xl border p-3 transition-colors",
+    isCurrent
+      ? "border-accent bg-panel-strong"
+      : "border-line bg-panel hover:border-line-strong",
+  );
 
-  return (
-    <div
-      className={`rounded-lg border p-3 transition-colors ${
-        isCurrent
-          ? "border-blue-700 bg-blue-950/30"
-          : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700 cursor-pointer"
-      }`}
-      onClick={isCurrent ? undefined : onSwitch}
-    >
-      <div className="flex items-center justify-between mb-1.5">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono text-zinc-300">
+  const content = (
+    <>
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-xs font-mono text-ink-soft">
             {session.session_id.slice(0, 8)}
           </span>
           {isCurrent && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/50 text-blue-300 font-medium">
+            <span className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">
               current
             </span>
           )}
           {schedulerActive && (
-            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/60 text-emerald-300">
+            <span className="inline-flex items-center gap-1 rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] text-success">
               <Workflow className="w-3 h-3" />
               {session.root_state_status}
             </span>
@@ -59,12 +74,10 @@ export function SessionItem({
         </div>
         {isCurrent && (
           <button
-            onClick={(event) => {
-              event.stopPropagation();
-              onFork();
-            }}
-            className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors px-1.5 py-0.5 rounded hover:bg-zinc-800"
-            title="Fork session"
+            type="button"
+            onClick={onFork}
+            className="ui-button ui-button-ghost min-h-7 rounded-full px-2 py-1 text-[10px]"
+            aria-label={`Fork session ${session.session_id.slice(0, 8)}`}
           >
             <GitBranch className="w-3 h-3" />
             Fork
@@ -79,14 +92,14 @@ export function SessionItem({
       )}
 
       {session.source_session_id && (
-        <div className="flex items-center gap-1.5 text-[11px] text-zinc-500 mb-1">
+        <div className="mb-1 flex items-center gap-1.5 text-[11px] text-ink-muted">
           <GitBranch className="w-3 h-3" />
           <span>from</span>
           <span className="font-mono">{session.source_session_id.slice(0, 8)}</span>
         </div>
       )}
 
-      <div className="flex items-center justify-between text-[11px] text-zinc-600">
+      <div className="flex items-center justify-between text-[11px] text-ink-faint">
         <span>
           {session.run_count} runs / {session.step_count} steps
         </span>
@@ -95,11 +108,28 @@ export function SessionItem({
 
       {session.fork_context_summary && (
         <div
-          className="mt-1.5 text-[10px] text-zinc-600 truncate"
+          className="mt-1.5 truncate text-[10px] text-ink-faint"
           title={session.fork_context_summary}
         >
           {session.fork_context_summary}
         </div>
+      )}
+    </>
+  );
+
+  return (
+    <div className={containerClassName}>
+      {isCurrent ? (
+        content
+      ) : (
+        <button
+          type="button"
+          onClick={onSwitch}
+          className="block w-full text-left"
+          aria-label={`Switch to session ${session.session_id.slice(0, 8)}`}
+        >
+          {content}
+        </button>
       )}
     </div>
   );

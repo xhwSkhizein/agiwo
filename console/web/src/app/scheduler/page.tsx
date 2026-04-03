@@ -2,15 +2,17 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { RefreshCw } from "lucide-react";
 import { PaginationControls } from "@/components/pagination-controls";
 import { MonoLink, MonoText } from "@/components/mono-text";
 import { SchedulerStatusBadge } from "@/components/scheduler-status-badge";
 import {
   EmptyStateMessage,
   ErrorStateMessage,
-  TextStateMessage,
+  FullPageMessage,
 } from "@/components/state-message";
 import { UserInputCompact } from "@/components/user-input-detail";
+import { cn } from "@/lib/utils";
 import {
   listAgentStates,
   getSchedulerStats,
@@ -23,42 +25,73 @@ import {
 } from "@/lib/metrics";
 import { formatLocalDateTime } from "@/lib/time";
 import { formatWakeConditionSummary } from "@/lib/wake-condition";
+import { usePageVisibility } from "@/hooks/use-page-visibility";
 
-function StatMini({ label, value, active }: { label: string; value: number; active?: boolean }) {
+/**
+ * Render a clickable metric tile that displays an uppercase label and a large numeric value.
+ *
+ * @param label - Short label shown above the value (displayed in uppercase).
+ * @param value - Numeric metric to display prominently.
+ * @param active - If true, visually marks the tile as active and sets `aria-pressed` accordingly.
+ * @param onClick - Callback invoked when the tile is clicked.
+ * @returns The rendered button element representing the metric tile.
+ */
+function StatMini({
+  label,
+  value,
+  active,
+  onClick,
+}: {
+  label: string;
+  value: number;
+  active?: boolean;
+  onClick: () => void;
+}) {
   return (
-    <div
-      className={`rounded-lg border p-4 transition-colors ${
-        active ? "border-zinc-600 bg-zinc-800" : "border-zinc-800 bg-zinc-900"
-      }`}
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "rounded-lg border p-4 text-left transition-all duration-150",
+        active
+          ? "border-line-strong bg-panel-strong"
+          : "border-line bg-panel hover:border-line-strong hover:bg-panel-muted"
+      )}
     >
-      <p className="text-xs text-zinc-500 uppercase tracking-wide">{label}</p>
-      <p className="text-2xl font-semibold mt-1">{value}</p>
-    </div>
+      <p className="text-xs font-medium uppercase tracking-wide text-ink-faint">{label}</p>
+      <p className={cn("mt-1 text-2xl font-semibold", active ? "text-foreground" : "text-ink-soft")}>
+        {value}
+      </p>
+    </button>
   );
 }
 
+/**
+ * Render a compact, styled summary of an agent state's wake condition.
+ *
+ * @param wc - The wake condition value from an agent state (may be `null` or `undefined`)
+ * @returns A <span> element containing the formatted wake-condition text; uses muted styling when `wc` is present and faint styling when absent.
+ */
 function WakeInfo({ wc }: { wc: AgentStateListItem["wake_condition"] }) {
   return (
-    <span className={wc ? "text-xs text-zinc-400" : "text-zinc-600"}>
+    <span className={wc ? "text-xs text-ink-muted" : "text-ink-faint"}>
       {formatWakeConditionSummary(wc)}
     </span>
   );
 }
 
-const STATUS_FILTERS = [
-  { label: "All", value: "" },
-  { label: "Pending", value: "pending" },
-  { label: "Running", value: "running" },
-  { label: "Waiting", value: "waiting" },
-  { label: "Idle", value: "idle" },
-  { label: "Queued", value: "queued" },
-  { label: "Completed", value: "completed" },
-  { label: "Failed", value: "failed" },
-];
-
+/**
+ * Render the scheduler page content including agent state metrics, the agent states table, filters, pagination, and refresh controls.
+ *
+ * Manages loading scheduler stats and agent states, applies status filtering and pagination, and supports optional auto-refresh when the page is visible.
+ *
+ * @returns The rendered scheduler page content as a React element.
+ */
 function SchedulerPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isPageVisible = usePageVisibility();
   const [states, setStates] = useState<AgentStateListItem[]>([]);
   const [stats, setStats] = useState<SchedulerStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -127,24 +160,39 @@ function SchedulerPageContent() {
     if (!autoRefresh) {
       return;
     }
+    if (!isPageVisible) {
+      return;
+    }
     const timerId = window.setInterval(() => {
       void loadData(true);
     }, 10000);
     return () => {
       window.clearInterval(timerId);
     };
-  }, [autoRefresh, loadData]);
+  }, [autoRefresh, isPageVisible, loadData]);
+
+  useEffect(() => {
+    if (autoRefresh && isPageVisible) {
+      void loadData(true);
+    }
+  }, [autoRefresh, isPageVisible, loadData]);
+
+  const applyFilter = (nextFilter: string) => {
+    setFilter(nextFilter);
+    setOffset(0);
+    updateQuery({ status: nextFilter || null, offset: 0, limit: pageSize });
+  };
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Scheduler</h1>
-          <p className="text-sm text-zinc-400 mt-1">
+          <p className="mt-1 text-sm text-ink-muted">
             Agent execution states and orchestration overview
           </p>
         </div>
-        <div className="flex items-center gap-3 text-sm text-zinc-400">
+        <div className="flex items-center gap-3 text-sm text-ink-muted">
           <label className="flex items-center gap-2">
             <input
               type="checkbox"
@@ -152,51 +200,43 @@ function SchedulerPageContent() {
               onChange={(event) => {
                 setAutoRefresh(event.target.checked);
               }}
-              className="rounded border-zinc-700 bg-zinc-950 text-zinc-200"
+              className="h-4 w-4 rounded border-line bg-panel-strong text-accent"
             />
             Auto refresh
           </label>
-          {refreshing && <span className="text-zinc-500">Refreshing…</span>}
+          {!isPageVisible && autoRefresh && (
+            <span className="text-ink-faint">Paused in background</span>
+          )}
+          {refreshing && isPageVisible && <span className="text-ink-faint">Refreshing…</span>}
         </div>
       </div>
 
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-          <StatMini label="Total" value={stats.total} />
-          <StatMini label="Pending" value={stats.pending} active={filter === "pending"} />
-          <StatMini label="Running" value={stats.running} active={filter === "running"} />
-          <StatMini label="Waiting" value={stats.waiting} active={filter === "waiting"} />
-          <StatMini label="Idle" value={stats.idle} active={filter === "idle"} />
-          <StatMini label="Queued" value={stats.queued} active={filter === "queued"} />
-          <StatMini label="Completed" value={stats.completed} active={filter === "completed"} />
-          <StatMini label="Failed" value={stats.failed} active={filter === "failed"} />
+          <StatMini label="Total" value={stats.total} active={filter === ""} onClick={() => applyFilter("")} />
+          <StatMini label="Pending" value={stats.pending} active={filter === "pending"} onClick={() => applyFilter("pending")} />
+          <StatMini label="Running" value={stats.running} active={filter === "running"} onClick={() => applyFilter("running")} />
+          <StatMini label="Waiting" value={stats.waiting} active={filter === "waiting"} onClick={() => applyFilter("waiting")} />
+          <StatMini label="Idle" value={stats.idle} active={filter === "idle"} onClick={() => applyFilter("idle")} />
+          <StatMini label="Queued" value={stats.queued} active={filter === "queued"} onClick={() => applyFilter("queued")} />
+          <StatMini label="Completed" value={stats.completed} active={filter === "completed"} onClick={() => applyFilter("completed")} />
+          <StatMini label="Failed" value={stats.failed} active={filter === "failed"} onClick={() => applyFilter("failed")} />
         </div>
       )}
 
       <div className="flex items-center gap-2">
-        {STATUS_FILTERS.map((f) => (
-          <button
-            key={f.value}
-            onClick={() => {
-              setFilter(f.value);
-              setOffset(0);
-              updateQuery({ status: f.value || null, offset: 0, limit: pageSize });
-            }}
-            className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
-              filter === f.value
-                ? "bg-zinc-700 text-white"
-                : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
+        <span className="text-xs text-ink-muted">
+          {filter ? `Filtered by ${filter}` : "All scheduler states"}
+        </span>
         <button
+          type="button"
           onClick={() => {
             void loadData();
           }}
-          className="ml-auto px-3 py-1.5 text-xs rounded-md bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200 transition-colors"
+          disabled={loading || refreshing}
+          className="ui-button ui-button-secondary min-h-9 px-3 py-1.5 text-xs"
         >
+          <RefreshCw className={cn("w-3 h-3", (loading || refreshing) && "animate-spin")} />
           Refresh
         </button>
       </div>
@@ -204,15 +244,18 @@ function SchedulerPageContent() {
       {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
 
       {loading ? (
-        <TextStateMessage>Loading...</TextStateMessage>
+        <FullPageMessage loading>Loading scheduler states...</FullPageMessage>
       ) : states.length === 0 ? (
         <EmptyStateMessage>
-          No agent states found
+          <div className="space-y-2">
+            <p>No agent states found</p>
+            {filter && <p className="text-ink-faint">Try clearing the status filter</p>}
+          </div>
         </EmptyStateMessage>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-zinc-800">
+        <div className="overflow-x-auto rounded-lg border border-line bg-panel">
           <table className="w-full text-sm">
-            <thead className="bg-zinc-900 text-zinc-400 text-xs uppercase tracking-wide">
+            <thead className="bg-panel-muted text-xs uppercase tracking-wide text-ink-faint">
               <tr>
                 <th className="text-left px-4 py-3">Agent</th>
                 <th className="text-left px-4 py-3">Task</th>
@@ -226,13 +269,13 @@ function SchedulerPageContent() {
                 <th className="text-right px-4 py-3">Updated</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800">
+            <tbody className="divide-y divide-line">
               {states.map((s) => {
                 const metrics = normalizeRunMetricsSummary(s.metrics);
                 return (
                   <tr
                     key={s.id}
-                    className="hover:bg-zinc-900/50 transition-colors"
+                    className="transition-colors hover:bg-panel-muted"
                   >
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">
@@ -245,7 +288,7 @@ function SchedulerPageContent() {
                               ? `?selected=${s.id}`
                               : ""
                           }`}
-                          className="text-[11px] text-zinc-500 hover:text-zinc-200"
+                          className="text-[11px] text-ink-faint hover:text-foreground"
                         >
                           tree
                         </MonoLink>
@@ -257,27 +300,27 @@ function SchedulerPageContent() {
                     <td className="px-4 py-3 text-center">
                       <SchedulerStatusBadge status={s.status} />
                     </td>
-                    <td className="px-4 py-3 text-right text-zinc-200">
+                    <td className="px-4 py-3 text-right text-ink-soft">
                       {formatUsd(metrics.token_cost)}
                     </td>
-                    <td className="px-4 py-3 text-right text-zinc-400 text-xs">
+                    <td className="px-4 py-3 text-right text-xs text-ink-muted">
                       {formatTokenCount(metrics.input_tokens)} / {formatTokenCount(metrics.output_tokens)} / {formatTokenCount(metrics.total_tokens)}
                     </td>
-                    <td className="px-4 py-3 text-right text-zinc-500 text-xs">
+                    <td className="px-4 py-3 text-right text-xs text-ink-faint">
                       {formatTokenCount(metrics.cache_read_tokens)} / {formatTokenCount(metrics.cache_creation_tokens)}
                     </td>
-                    <td className="px-4 py-3 text-right text-zinc-500 text-xs">
+                    <td className="px-4 py-3 text-right text-xs text-ink-faint">
                       {metrics.run_count}
                     </td>
                     <td className="px-4 py-3">
                       <WakeInfo wc={s.wake_condition} />
                     </td>
-                    <td className="px-4 py-3 text-zinc-500">
-                      <MonoText className="text-zinc-500 text-xs font-mono">
+                    <td className="px-4 py-3 text-ink-faint">
+                      <MonoText className="text-xs font-mono text-ink-faint">
                         {s.parent_id || "-"}
                       </MonoText>
                     </td>
-                    <td className="px-4 py-3 text-right text-zinc-500 text-xs">
+                    <td className="px-4 py-3 text-right text-xs text-ink-faint">
                       {formatLocalDateTime(s.updated_at)}
                     </td>
                   </tr>
@@ -319,9 +362,14 @@ function SchedulerPageContent() {
   );
 }
 
+/**
+ * Renders the Scheduler page wrapped in a Suspense fallback.
+ *
+ * @returns A React element containing the scheduler content and a loading fallback message.
+ */
 export default function SchedulerPage() {
   return (
-    <Suspense fallback={<TextStateMessage>Loading...</TextStateMessage>}>
+    <Suspense fallback={<FullPageMessage loading>Loading scheduler...</FullPageMessage>}>
       <SchedulerPageContent />
     </Suspense>
   );

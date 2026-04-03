@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { Clock, Zap, Cpu, Wrench } from "lucide-react";
 import { BackHeader } from "@/components/back-header";
+import { JsonDisclosure } from "@/components/json-disclosure";
 import { MetricCard } from "@/components/metric-card";
 import { MonoText } from "@/components/mono-text";
 import { SectionCard } from "@/components/section-card";
@@ -20,13 +21,32 @@ import {
 } from "@/lib/metrics";
 import { formatRoundedMs } from "@/lib/time";
 
+/**
+ * Render a small Lucide icon representing the span `kind`.
+ *
+ * @param kind - The span kind; expected values: `"agent"`, `"llm_call"`, `"tool_call"`. Any other value renders the default icon.
+ * @returns A JSX element for the corresponding icon: `Cpu` for `"agent"`, `Zap` for `"llm_call"`, `Wrench` for `"tool_call"`, and `Clock` for other kinds. Icons are rendered with the component's standard sizing and semantic color classes.
+ */
 function KindIcon({ kind }: { kind: string }) {
-  if (kind === "agent") return <Cpu className="w-3.5 h-3.5 text-purple-400" />;
-  if (kind === "llm_call") return <Zap className="w-3.5 h-3.5 text-blue-400" />;
-  if (kind === "tool_call") return <Wrench className="w-3.5 h-3.5 text-amber-400" />;
-  return <Clock className="w-3.5 h-3.5 text-zinc-400" />;
+  if (kind === "agent") return <Cpu className="h-3.5 w-3.5 text-accent" />;
+  if (kind === "llm_call") return <Zap className="h-3.5 w-3.5 text-success" />;
+  if (kind === "tool_call") return <Wrench className="h-3.5 w-3.5 text-warning" />;
+  return <Clock className="h-3.5 w-3.5 text-ink-faint" />;
 }
 
+/**
+ * Render a clickable span row in the trace waterfall with an inline duration bar and optional expandable details.
+ *
+ * The row is indented by `span.depth`, positions and sizes the bar using `traceStartMs` and `traceDurationMs`,
+ * and when expanded displays span metadata, error message, metrics/LLM/tool JSON disclosures, and an output preview.
+ *
+ * @param span - The span object to display
+ * @param traceStartMs - Trace start time in milliseconds since epoch; used to compute the span's offset within the trace
+ * @param traceDurationMs - Total trace duration in milliseconds; used to compute the span bar's width and left offset
+ * @param expanded - Whether the span's details panel is currently expanded
+ * @param onToggle - Callback invoked when the row's expand/collapse button is clicked
+ * @returns The rendered span row element
+ */
 function SpanRow({
   span,
   traceStartMs,
@@ -53,17 +73,20 @@ function SpanRow({
 
   const barColor =
     span.kind === "agent"
-      ? "bg-purple-500"
+      ? "bg-accent"
       : span.kind === "llm_call"
-      ? "bg-blue-500"
+      ? "bg-success"
       : span.kind === "tool_call"
-      ? "bg-amber-500"
-      : "bg-zinc-500";
+      ? "bg-warning"
+      : "bg-line-strong";
 
   return (
     <>
-      <div
-        className="flex items-center gap-2 px-4 py-2.5 hover:bg-zinc-800/50 cursor-pointer transition-colors border-b border-zinc-800/50"
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={`${span.span_id}-details`}
+        className="flex w-full items-center gap-2 border-b border-line px-4 py-2.5 text-left transition-colors hover:bg-panel-muted"
         onClick={onToggle}
       >
         <div
@@ -75,7 +98,7 @@ function SpanRow({
           <TraceStatusBadge status={span.status} />
         </div>
 
-        <div className="flex-1 h-5 relative bg-zinc-800/30 rounded overflow-hidden">
+        <div className="relative h-5 flex-1 overflow-hidden rounded bg-panel-muted">
           <div
             className={`absolute h-full rounded ${barColor} opacity-80`}
             style={{
@@ -85,34 +108,37 @@ function SpanRow({
           />
         </div>
 
-        <div className="w-20 text-right text-xs text-zinc-400 shrink-0">
+        <div className="w-20 shrink-0 text-right text-xs text-ink-muted">
           {spanDuration ? `${Math.round(spanDuration)}ms` : "-"}
         </div>
-      </div>
+      </button>
 
       {expanded && (
-        <div className="px-4 py-3 bg-zinc-900/50 border-b border-zinc-800 text-xs space-y-2">
+        <div
+          id={`${span.span_id}-details`}
+          className="space-y-2 border-b border-line bg-panel-muted px-4 py-3 text-xs"
+        >
           <div className="grid grid-cols-2 gap-x-6 gap-y-1">
             <div>
-              <span className="text-zinc-500">Span ID: </span>
+              <span className="text-ink-faint">Span ID: </span>
               <MonoText className="font-mono">
                 {span.span_id.slice(0, 12)}
               </MonoText>
             </div>
             <div>
-              <span className="text-zinc-500">Kind: </span>
+              <span className="text-ink-faint">Kind: </span>
               <span>{span.kind}</span>
             </div>
             {span.duration_ms != null && (
               <div>
-                <span className="text-zinc-500">Duration: </span>
+                <span className="text-ink-faint">Duration: </span>
                 <span>{formatRoundedMs(span.duration_ms)}</span>
               </div>
             )}
             {span.error_message && (
               <div className="col-span-2">
-                <span className="text-red-400">Error: </span>
-                <span className="text-red-300">{span.error_message}</span>
+                <span className="text-danger">Error: </span>
+                <span className="text-danger">{span.error_message}</span>
               </div>
             )}
           </div>
@@ -123,38 +149,25 @@ function SpanRow({
                 metrics={spanMetrics}
                 showCacheRead={false}
                 showCacheCreation={false}
-                chipClassName="bg-zinc-800"
+                chipClassName="bg-panel-strong"
                 className="mb-2 grid grid-cols-2 sm:grid-cols-4 gap-2"
               />
-              <p className="text-zinc-500 mb-1">Metrics:</p>
-              <div className="bg-zinc-800/50 rounded px-3 py-2 font-mono overflow-auto max-h-32">
-                {JSON.stringify(span.metrics, null, 2)}
-              </div>
+              <JsonDisclosure label="Metrics JSON" value={span.metrics} />
             </div>
           )}
 
           {span.llm_details && (
-            <div>
-              <p className="text-zinc-500 mb-1">LLM Details:</p>
-              <div className="bg-zinc-800/50 rounded px-3 py-2 font-mono overflow-auto max-h-64 whitespace-pre-wrap">
-                {JSON.stringify(span.llm_details, null, 2)}
-              </div>
-            </div>
+            <JsonDisclosure label="LLM Details" value={span.llm_details} />
           )}
 
           {span.tool_details && (
-            <div>
-              <p className="text-zinc-500 mb-1">Tool Details:</p>
-              <div className="bg-zinc-800/50 rounded px-3 py-2 font-mono overflow-auto max-h-64 whitespace-pre-wrap">
-                {JSON.stringify(span.tool_details, null, 2)}
-              </div>
-            </div>
+            <JsonDisclosure label="Tool Details" value={span.tool_details} />
           )}
 
           {span.output_preview && (
             <div>
-              <p className="text-zinc-500 mb-1">Output Preview:</p>
-              <div className="bg-zinc-800/50 rounded px-3 py-2 whitespace-pre-wrap max-h-48 overflow-auto">
+              <p className="mb-1 text-ink-faint">Output Preview:</p>
+              <div className="max-h-48 overflow-auto rounded bg-panel px-3 py-2 whitespace-pre-wrap">
                 {span.output_preview}
               </div>
             </div>
@@ -165,6 +178,15 @@ function SpanRow({
   );
 }
 
+/**
+ * Renders the Trace Detail page for a single trace, showing summary metrics, links to related session/agent,
+ * the span waterfall with expandable span rows, and optional input/final output panels.
+ *
+ * The component reads `id` from route params, fetches the trace detail, and manages loading, error, and expanded-span state.
+ * While loading it shows a full-page loading message; if the trace is not found it shows a not-found message.
+ *
+ * @returns The React element for the trace detail page.
+ */
 export default function TraceDetailPage() {
   const params = useParams();
   const traceId = params.id as string;
@@ -218,11 +240,11 @@ export default function TraceDetailPage() {
 
       {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
 
-      <div className="flex flex-wrap gap-2 text-xs text-zinc-500">
+      <div className="flex flex-wrap gap-2 text-xs text-ink-muted">
         {trace.session_id && (
           <Link
             href={`/sessions/${trace.session_id}`}
-            className="rounded border border-zinc-800 px-2 py-1 hover:border-zinc-700 hover:text-zinc-300"
+            className="ui-button ui-button-secondary min-h-9 px-3 py-1.5 text-xs"
           >
             Open session
           </Link>
@@ -230,7 +252,7 @@ export default function TraceDetailPage() {
         {trace.agent_id && (
           <Link
             href={`/agents/${trace.agent_id}`}
-            className="rounded border border-zinc-800 px-2 py-1 hover:border-zinc-700 hover:text-zinc-300"
+            className="ui-button ui-button-secondary min-h-9 px-3 py-1.5 text-xs"
           >
             Open agent
           </Link>
@@ -268,7 +290,7 @@ export default function TraceDetailPage() {
 
       {trace.input_query && (
         <SectionCard className="p-4">
-          <p className="text-xs text-zinc-500 mb-1">Input</p>
+          <p className="mb-1 text-xs text-ink-faint">Input</p>
           <p className="text-sm">{trace.input_query}</p>
         </SectionCard>
       )}
@@ -276,7 +298,7 @@ export default function TraceDetailPage() {
       <SectionCard
         className="overflow-hidden"
         title={`Span Waterfall (${trace.spans.length} spans)`}
-        headerClassName="px-4 py-3 border-b border-zinc-800"
+        headerClassName="border-b border-line px-4 py-3"
       >
         <div>
           {trace.spans.map((span) => (
@@ -294,7 +316,7 @@ export default function TraceDetailPage() {
 
       {trace.final_output && (
         <SectionCard className="p-4">
-          <p className="text-xs text-zinc-500 mb-1">Final Output</p>
+          <p className="mb-1 text-xs text-ink-faint">Final Output</p>
           <p className="text-sm whitespace-pre-wrap">{trace.final_output}</p>
         </SectionCard>
       )}

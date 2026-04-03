@@ -7,6 +7,14 @@ import { BackHeader } from "@/components/back-header";
 import { createAgent, AgentConfigCreate } from "@/lib/api";
 import { useState } from "react";
 
+/**
+ * Render the Create Agent page and manage form submission state.
+ *
+ * Handles creating an agent using the API client, navigates to `/agents` on success,
+ * exposes submission error messages on failure, and disables the form while saving.
+ *
+ * @returns The JSX element for the Create Agent page
+ */
 export default function NewAgentPage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -26,7 +34,7 @@ export default function NewAgentPage() {
   };
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6 p-6">
       <BackHeader
         href="/agents"
         title="Create Agent"
