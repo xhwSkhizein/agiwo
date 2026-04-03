@@ -8,6 +8,13 @@ with available skills for agents.
 
 from pathlib import Path
 
+from agiwo.config.settings import get_settings
+from agiwo.skill.allowlist import (
+    expand_allowed_skills,
+    normalize_allowed_skills,
+    validate_expanded_allowed_skills,
+    validate_known_allowed_skills,
+)
 from agiwo.skill.config import SkillDiscoveryConfig, resolve_skill_dirs
 from agiwo.skill.loader import SkillLoader
 from agiwo.skill.prompt_catalog import SkillPromptCatalog
@@ -16,6 +23,39 @@ from agiwo.skill.skill_tool import SkillTool
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+_GLOBAL_SKILL_MANAGER: "SkillManager | None" = None
+_GLOBAL_SKILL_MANAGER_KEY: tuple[str, tuple[str, ...]] | None = None
+
+
+def _global_skill_manager_key() -> tuple[str, tuple[str, ...]]:
+    runtime_settings = get_settings()
+    return (
+        runtime_settings.root_path,
+        tuple(runtime_settings.skills_dirs),
+    )
+
+
+def build_global_skill_manager() -> "SkillManager":
+    root_path, skills_dirs = _global_skill_manager_key()
+    return SkillManager(
+        SkillDiscoveryConfig(
+            skills_dirs=list(skills_dirs),
+            root_path=root_path,
+        )
+    )
+
+
+def get_global_skill_manager() -> "SkillManager":
+    global _GLOBAL_SKILL_MANAGER
+    global _GLOBAL_SKILL_MANAGER_KEY
+
+    key = _global_skill_manager_key()
+    if _GLOBAL_SKILL_MANAGER is None or _GLOBAL_SKILL_MANAGER_KEY != key:
+        _GLOBAL_SKILL_MANAGER = build_global_skill_manager()
+        _GLOBAL_SKILL_MANAGER_KEY = key
+    return _GLOBAL_SKILL_MANAGER
 
 
 class SkillManager:
@@ -55,38 +95,65 @@ class SkillManager:
         This should be called during agent startup to populate the
         metadata cache with all available skills.
         """
+        self.initialize_sync()
+
+    def initialize_sync(self) -> None:
+        if self._initialized:
+            return
         skills_dirs = self.get_resolved_skills_dirs()
-        self._metadata_cache = await self.registry.discover_skills(skills_dirs)
+        self._metadata_cache = self.registry.discover_skills_sync(skills_dirs)
         self._change_token = self._prompt_catalog.compute_change_token(skills_dirs)
         self._initialized = True
         logger.info("skill_manager_initialized", skill_count=len(self._metadata_cache))
 
-    def get_skill_tool(self) -> SkillTool:
-        """
-        Get the SkillTool instance for agent integration.
+    def create_skill_tool(
+        self,
+        allowed_skills: list[str] | None = None,
+    ) -> SkillTool:
+        return SkillTool(
+            registry=self.registry,
+            loader=self.loader,
+            allowed_skills=allowed_skills,
+        )
 
-        Returns:
-            SkillTool instance
-        """
-        if self._skill_tool is None:
-            self._skill_tool = SkillTool(
-                registry=self.registry,
-                loader=self.loader,
-            )
-        return self._skill_tool
+    def render_skills_section(
+        self,
+        allowed_skills: list[str] | None = None,
+    ) -> str:
+        items = self._metadata_cache
+        if allowed_skills is not None:
+            allowed_set = set(allowed_skills)
+            items = [item for item in items if item.name in allowed_set]
+        return self._prompt_catalog.render_section(items)
 
-    def render_skills_section(self) -> str:
-        """
-        Generate system prompt section listing available skills.
+    def list_available_skills(self) -> list[SkillMetadata]:
+        return list(self._metadata_cache)
 
-        Returns a Markdown-formatted section that can be appended to
-        agent system prompts. Only includes metadata (name + description)
-        to keep context size small.
+    def list_available_skill_names(self) -> list[str]:
+        return [item.name for item in self._metadata_cache]
 
-        Returns:
-            Markdown string with skills list, empty string if no skills
-        """
-        return self._prompt_catalog.render_section(self._metadata_cache)
+    def expand_allowed_skills(
+        self,
+        allowed_skills: list[str] | None,
+        *,
+        available_skill_names: list[str] | None = None,
+    ) -> list[str] | None:
+        self.initialize_sync()
+        universe = available_skill_names or self.list_available_skill_names()
+        return expand_allowed_skills(allowed_skills, universe)
+
+    def validate_explicit_allowed_skills(
+        self,
+        allowed_skills: list[str] | None,
+        *,
+        available_skill_names: list[str] | None = None,
+    ) -> list[str] | None:
+        self.initialize_sync()
+        normalized = normalize_allowed_skills(allowed_skills)
+        validate_expanded_allowed_skills(normalized)
+        universe = available_skill_names or self.list_available_skill_names()
+        validate_known_allowed_skills(normalized, universe)
+        return list(normalized) if normalized is not None else None
 
     async def reload(self) -> None:
         """

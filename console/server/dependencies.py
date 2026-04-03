@@ -1,7 +1,7 @@
 """Console runtime container and FastAPI dependency helpers."""
 
 from dataclasses import dataclass
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, FastAPI, Request
 
@@ -15,6 +15,9 @@ from server.models.session import ChannelChatSessionStore
 from server.services.agent_registry import AgentRegistry
 from server.services.runtime import SessionContextService, SessionViewService
 
+if TYPE_CHECKING:
+    from server.services.runtime_config import RuntimeConfigService
+
 _RUNTIME_STATE_KEY = "console_runtime"
 
 
@@ -27,6 +30,7 @@ class ConsoleRuntime:
     scheduler: Scheduler | None = None
     feishu_channel_service: FeishuChannelService | None = None
     session_store: ChannelChatSessionStore | None = None
+    runtime_config_service: "RuntimeConfigService | None" = None
 
 
 def bind_console_runtime(app: FastAPI, runtime: ConsoleRuntime) -> None:

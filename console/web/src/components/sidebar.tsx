@@ -8,6 +8,7 @@ import {
   Activity,
   Bot,
   CalendarClock,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { href: "/traces", label: "Traces", icon: Activity },
   { href: "/agents", label: "Agents", icon: Bot },
   { href: "/scheduler", label: "Scheduler", icon: CalendarClock },
+  { href: "/settings", label: "Settings", icon: SlidersHorizontal },
 ];
 
 /**

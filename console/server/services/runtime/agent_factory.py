@@ -11,6 +11,7 @@ from agiwo.llm import create_model_from_dict
 from agiwo.llm.base import Model
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import AgentState
+from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
 
 from server.config import ConsoleConfig, DefaultAgentConfig
@@ -53,6 +54,9 @@ def agent_options_input_to_agent_options(
 
 
 def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecord:
+    allowed_skills = get_global_skill_manager().expand_allowed_skills(
+        template.allowed_skills
+    )
     return AgentConfigRecord(
         id=template.id,
         name=template.name,
@@ -61,6 +65,7 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
         model_name=template.model_name,
         system_prompt=template.system_prompt,
         tools=list(template.tools),
+        allowed_skills=allowed_skills or [],
         options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
         model_params=dict(template.model_params),
     )
@@ -121,6 +126,7 @@ async def build_agent(
         description=config.description,
         system_prompt=config.system_prompt,
         options=options,
+        allowed_skills=list(config.allowed_skills),
     )
     return Agent(
         agent_config,
@@ -143,7 +149,12 @@ async def rehydrate_agent(
             f"config '{config_id}' not found in registry"
         )
 
-    return await build_agent(config, console_config, registry, id=state.id)
+    return await build_agent(
+        config,
+        console_config,
+        registry,
+        id=state.id,
+    )
 
 
 async def resume_persistent_agent(
@@ -167,6 +178,10 @@ async def resume_persistent_agent(
 
     agent = scheduler.get_registered_agent(state_id)
     if agent is None:
-        agent = await rehydrate_agent(state, registry, console_config)
+        agent = await rehydrate_agent(
+            state,
+            registry,
+            console_config,
+        )
 
     await scheduler.enqueue_input(state_id, message, agent=agent)

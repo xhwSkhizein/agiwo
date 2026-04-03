@@ -7,6 +7,8 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
 
 from agiwo.llm.config_policy import sanitize_model_params_data
+from agiwo.skill.allowlist import normalize_allowed_skills
+from agiwo.skill.manager import get_global_skill_manager
 from server.models.agent_config import sanitize_agent_options_data
 
 
@@ -20,6 +22,7 @@ class AgentConfigRecord(BaseModel):
     model_name: str
     system_prompt: str = ""
     tools: list[str] = Field(default_factory=list)
+    allowed_skills: list[str] = Field(default_factory=list)
     options: dict[str, Any] = Field(default_factory=dict)
     model_params: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
@@ -35,6 +38,12 @@ class AgentConfigRecord(BaseModel):
         normalized["model_params"] = sanitize_model_params_data(
             normalized.get("model_params"),
             reject_plain_api_key=False,
+        )
+        normalized["allowed_skills"] = (
+            get_global_skill_manager().validate_explicit_allowed_skills(
+                list(normalize_allowed_skills(normalized.get("allowed_skills")) or ())
+            )
+            or []
         )
         return normalized
 

@@ -11,6 +11,7 @@ from agiwo.llm.config_policy import (
     sanitize_model_params_data,
     validate_provider_model_params,
 )
+from agiwo.skill.allowlist import normalize_allowed_skills
 
 
 class DefaultAgentConfig(BaseModel):
@@ -32,6 +33,7 @@ class DefaultAgentConfig(BaseModel):
             "memory_retrieval",
         ]
     )
+    allowed_skills: list[str] = Field(default_factory=list)
 
     @field_validator("model_params", mode="before")
     @classmethod
@@ -40,6 +42,17 @@ class DefaultAgentConfig(BaseModel):
         if not isinstance(sanitized, dict):
             return {}
         return sanitized
+
+    @field_validator("allowed_skills", mode="before")
+    @classmethod
+    def _normalize_allowed_skills(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            raise TypeError("allowed_skills must be a list")
+        return list(normalize_allowed_skills(value) or ())
 
 
 class ServerConfig(BaseModel):

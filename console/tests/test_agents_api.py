@@ -6,6 +6,8 @@ import pytest
 
 from httpx import ASGITransport, AsyncClient
 
+import server.routers.agents as agents_router
+import server.services.agent_registry.models as registry_models_module
 from server.app import create_app
 from server.config import ConsoleConfig
 from server.dependencies import (
@@ -211,6 +213,115 @@ async def test_update_agent_rejects_invalid_agent_tool_reference(client) -> None
 
     assert response.status_code == 422
     assert "Invalid tool reference" in response.text
+
+
+@pytest.mark.asyncio
+async def test_create_agent_expands_allowed_skill_patterns_at_api_boundary(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DummySkillManager:
+        def expand_allowed_skills(self, allowed_skills):
+            assert allowed_skills == ["skill*", "*review"]
+            return ["skill-review", "skill-build", "code-review"]
+
+        def validate_explicit_allowed_skills(self, allowed_skills, *, available_skill_names=None):
+            del available_skill_names
+            return list(allowed_skills)
+
+    monkeypatch.setattr(
+        agents_router,
+        "get_global_skill_manager",
+        lambda: DummySkillManager(),
+    )
+    monkeypatch.setattr(
+        registry_models_module,
+        "get_global_skill_manager",
+        lambda: DummySkillManager(),
+    )
+
+    response = await client.post(
+        "/api/agents",
+        json={
+            "name": "tester",
+            "description": "",
+            "model_provider": "openai",
+            "model_name": "gpt-4o-mini",
+            "system_prompt": "",
+            "tools": [],
+            "allowed_skills": ["skill*", "*review"],
+            "options": {},
+            "model_params": {},
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["allowed_skills"] == [
+        "skill-review",
+        "skill-build",
+        "code-review",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_agent_rejects_unknown_exact_allowed_skill(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class DummySkillManager:
+        def expand_allowed_skills(self, allowed_skills):
+            assert allowed_skills == ["missing-skill"]
+            raise ValueError("Unknown allowed skill(s): missing-skill")
+
+        def validate_explicit_allowed_skills(self, allowed_skills, *, available_skill_names=None):
+            del available_skill_names
+            return list(allowed_skills)
+
+    monkeypatch.setattr(
+        agents_router,
+        "get_global_skill_manager",
+        lambda: DummySkillManager(),
+    )
+
+    response = await client.post(
+        "/api/agents",
+        json={
+            "name": "tester",
+            "description": "",
+            "model_provider": "openai",
+            "model_name": "gpt-4o-mini",
+            "system_prompt": "",
+            "tools": [],
+            "allowed_skills": ["missing-skill"],
+            "options": {},
+            "model_params": {},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Unknown allowed skill(s): missing-skill"
+
+
+@pytest.mark.asyncio
+async def test_create_agent_rejects_legacy_skill_option_fields(client) -> None:
+    response = await client.post(
+        "/api/agents",
+        json={
+            "name": "tester",
+            "description": "",
+            "model_provider": "openai",
+            "model_name": "gpt-4o-mini",
+            "system_prompt": "",
+            "tools": [],
+            "allowed_skills": [],
+            "options": {"enable_skill": False},
+            "model_params": {},
+        },
+    )
+
+    assert response.status_code == 422
+    assert "allowed_skills" in response.text
 
 
 @pytest.mark.asyncio

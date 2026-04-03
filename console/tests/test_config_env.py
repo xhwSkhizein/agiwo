@@ -1,14 +1,22 @@
 import pytest
 from pydantic import ValidationError
 
+import agiwo.agent.agent as agent_module
+import agiwo.tool.registry as tool_registry_module
+import server.services.agent_registry.models as registry_models_module
 from agiwo.agent import AgentOptions
-from agiwo.config.settings import settings
+from agiwo.llm.base import Model
 from agiwo.llm.openai import OpenAIModel
+from agiwo.skill.loader import SkillLoader
+from agiwo.skill.registry import SkillRegistry
+from agiwo.skill.skill_tool import SkillTool
+import server.services.runtime.agent_factory as agent_factory_module
 from server.config import ConsoleConfig, DefaultAgentConfig
 from server.models.agent_config import AgentOptionsInput
 from server.models.view import AgentConfigPayload
 from server.services.runtime.agent_factory import (
     agent_options_input_to_agent_options,
+    build_agent,
     build_default_agent_record,
     build_model,
 )
@@ -22,6 +30,71 @@ from server.services.tool_catalog.tool_references import (
     InvalidToolReferenceError,
     parse_tool_references,
 )
+
+
+class MockModel(Model):
+    async def arun_stream(self, messages, tools=None):
+        if False:
+            yield None
+
+
+class DummyRegistry:
+    def __init__(self, records: dict[str, AgentConfigRecord] | None = None) -> None:
+        self._records = records or {}
+
+    async def get_agent(self, agent_id: str) -> AgentConfigRecord | None:
+        return self._records.get(agent_id)
+
+
+class DummySkillManager:
+    def expand_allowed_skills(
+        self,
+        allowed_skills,
+        *,
+        available_skill_names=None,
+    ):
+        del available_skill_names
+        if allowed_skills is None:
+            return None
+        return list(allowed_skills)
+
+    def create_skill_tool(self, allowed_skills=None) -> SkillTool:
+        registry = SkillRegistry()
+        loader = SkillLoader(registry)
+        return SkillTool(registry, loader, allowed_skills)
+
+    def validate_explicit_allowed_skills(
+        self,
+        allowed_skills,
+        *,
+        available_skill_names=None,
+    ):
+        del available_skill_names
+        if allowed_skills is None:
+            return None
+        return list(allowed_skills)
+
+
+@pytest.fixture
+def stub_skill_manager(monkeypatch: pytest.MonkeyPatch) -> DummySkillManager:
+    manager = DummySkillManager()
+    monkeypatch.setattr(agent_module, "get_global_skill_manager", lambda: manager)
+    monkeypatch.setattr(
+        tool_registry_module,
+        "get_global_skill_manager",
+        lambda: manager,
+    )
+    monkeypatch.setattr(
+        agent_factory_module,
+        "get_global_skill_manager",
+        lambda: manager,
+    )
+    monkeypatch.setattr(
+        registry_models_module,
+        "get_global_skill_manager",
+        lambda: manager,
+    )
+    return manager
 
 
 def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -99,11 +172,7 @@ def test_console_config_rejects_plain_api_key_in_default_model_params(
         ConsoleConfig()
 
 
-def test_agent_options_input_uses_global_skills_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(settings, "is_skills_enabled", False)
-
+def test_agent_options_input_defaults() -> None:
     console_config = ConsoleConfig(
         run_step_storage_type="memory",
         trace_storage_type="memory",
@@ -116,8 +185,13 @@ def test_agent_options_input_uses_global_skills_default(
         trace_storage=build_trace_storage_config(console_config),
     )
 
-    assert options.enable_skill is False
-    assert options.skills_dirs is None
+    assert options.max_steps == 50
+    assert options.enable_termination_summary is True
+
+
+def test_agent_options_input_rejects_legacy_skill_fields() -> None:
+    with pytest.raises(ValidationError, match="allowed_skills"):
+        AgentOptionsInput.model_validate({"enable_skill": False})
 
 
 def test_default_agent_record_uses_shared_option_defaults() -> None:
@@ -128,19 +202,22 @@ def test_default_agent_record_uses_shared_option_defaults() -> None:
     expected = AgentOptionsInput.model_validate({}).model_dump(exclude_none=True)
     assert record.options == expected
     assert record.options["max_steps"] == AgentOptions().max_steps
+    assert record.allowed_skills == []
 
 
-def test_agent_options_payload_normalizes_single_skills_dirs() -> None:
-    payload = AgentOptionsInput.model_validate({"skills_dirs": "skills"})
+def test_console_default_agent_config_normalizes_allowed_skills() -> None:
+    config = ConsoleConfig(
+        default_agent={
+            "model_provider": "openai",
+            "model_name": "gpt-4o-mini",
+            "allowed_skills": [" skill*", "", "*review ", "skill*"],
+        }
+    )
 
-    assert payload.skills_dirs == ["skills"]
+    assert config.default_agent.allowed_skills == ["skill*", "*review"]
 
 
-def test_agent_options_input_normalizes_skills_dirs_and_maps_all_fields(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(settings, "is_skills_enabled", True)
-
+def test_agent_options_input_maps_all_fields() -> None:
     console_config = ConsoleConfig(
         run_step_storage_type="memory",
         trace_storage_type="memory",
@@ -155,8 +232,6 @@ def test_agent_options_input_normalizes_skills_dirs_and_maps_all_fields(
             "max_run_cost": 1.25,
             "enable_termination_summary": False,
             "termination_summary_prompt": "Summarize before exit",
-            "enable_skill": True,
-            "skills_dirs": "skills",
             "relevant_memory_max_token": 1024,
             "stream_cleanup_timeout": 90.5,
             "compact_prompt": "Compact the context",
@@ -175,8 +250,6 @@ def test_agent_options_input_normalizes_skills_dirs_and_maps_all_fields(
     assert options.max_run_cost == 1.25
     assert options.enable_termination_summary is False
     assert options.termination_summary_prompt == "Summarize before exit"
-    assert options.enable_skill is True
-    assert options.skills_dirs == ["skills"]
     assert options.relevant_memory_max_token == 1024
     assert options.stream_cleanup_timeout == 90.5
     assert options.compact_prompt == "Compact the context"
@@ -237,6 +310,93 @@ def test_build_model_uses_shared_model_factory_for_compatible_provider(
     assert model.api_key == "test-minimax-key"
     assert model.max_output_tokens == 123
     assert model.temperature == 0.25
+
+
+@pytest.mark.asyncio
+async def test_build_agent_preserves_empty_allowed_skills(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        agent_factory_module,
+        "build_model",
+        lambda _config: MockModel(id="mock", name="mock", provider="openai"),
+    )
+    console_config = ConsoleConfig(
+        run_step_storage_type="memory",
+        trace_storage_type="memory",
+        metadata_storage_type="memory",
+    )
+
+    agent = await build_agent(
+        AgentConfigRecord(
+            name="tester",
+            model_provider="openai",
+            model_name="gpt-4o-mini",
+            allowed_skills=[],
+        ),
+        console_config,
+        DummyRegistry(),
+    )
+
+    assert agent.config.allowed_skills == []
+    assert all(tool.name != "skill" for tool in agent.tools)
+
+
+@pytest.mark.asyncio
+async def test_build_agent_tool_preserves_delegate_skill_access(
+    monkeypatch: pytest.MonkeyPatch,
+    stub_skill_manager: DummySkillManager,
+) -> None:
+    del stub_skill_manager
+    monkeypatch.setattr(
+        agent_factory_module,
+        "build_model",
+        lambda _config: MockModel(id="mock", name="mock", provider="openai"),
+    )
+    console_config = ConsoleConfig(
+        run_step_storage_type="memory",
+        trace_storage_type="memory",
+        metadata_storage_type="memory",
+    )
+    child = AgentConfigRecord(
+        id="child",
+        name="child",
+        model_provider="openai",
+        model_name="gpt-4o-mini",
+        allowed_skills=["alpha"],
+    )
+    parent = AgentConfigRecord(
+        id="parent",
+        name="parent",
+        model_provider="openai",
+        model_name="gpt-4o-mini",
+        tools=["agent:child"],
+    )
+
+    agent = await build_agent(
+        parent,
+        console_config,
+        DummyRegistry({"child": child}),
+    )
+
+    agent_tool = next(tool for tool in agent.tools if tool.name == "child")
+    wrapped_agent = agent_tool._agent
+    skill_tool = next(tool for tool in wrapped_agent.tools if tool.name == "skill")
+
+    assert wrapped_agent.config.allowed_skills == ["alpha"]
+    assert skill_tool._allowed_skills == frozenset({"alpha"})
+
+
+def test_agent_config_record_rejects_unknown_allowed_skills() -> None:
+    with pytest.raises(ValidationError, match="Unknown allowed skill"):
+        AgentConfigRecord.model_validate(
+            {
+                "name": "tester",
+                "model_provider": "openai",
+                "model_name": "gpt-4o-mini",
+                "allowed_skills": ["definitely-not-a-real-skill"],
+            }
+        )
 
 
 def test_build_model_does_not_fallback_to_openai_credentials_for_compatible_provider(
@@ -303,6 +463,18 @@ def test_agent_config_record_sanitizes_model_params_and_strips_plain_api_key() -
     assert record.model_params.get("base_url") == "https://api.minimax.chat/v1"
     assert record.model_params.get("api_key_env_name") == "MINIMAX_API_KEY"
     assert "api_key" not in record.model_params
+
+
+def test_agent_config_record_rejects_wildcard_allowed_skills() -> None:
+    with pytest.raises(ValidationError, match="explicit skill names"):
+        AgentConfigRecord.model_validate(
+            {
+                "name": "tester",
+                "model_provider": "openai",
+                "model_name": "gpt-4o-mini",
+                "allowed_skills": ["skill*"],
+            }
+        )
 
 
 def test_agent_config_payload_uses_defaults_when_options_omitted() -> None:

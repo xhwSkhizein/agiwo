@@ -52,6 +52,9 @@ class SkillRegistry:
         self._skills_dirs: list[Path] = []
 
     async def discover_skills(self, skills_dirs: list[Path]) -> list[SkillMetadata]:
+        return self.discover_skills_sync(skills_dirs)
+
+    def discover_skills_sync(self, skills_dirs: list[Path]) -> list[SkillMetadata]:
         """
         Discover all available skills in the given directories.
 

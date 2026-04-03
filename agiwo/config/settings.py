@@ -239,7 +239,6 @@ class AgiwoSettings(BaseSettings):
         default_factory=lambda: ["examples/skills", "skills"],
         description="Skill directories to scan (relative to root_path if not absolute)",
     )
-    is_skills_enabled: bool = True
 
     # === Scheduler ===
     event_debounce_min_count: int = Field(
@@ -372,11 +371,6 @@ class AgiwoSettings(BaseSettings):
             return value
         return None
 
-    def get_env_skills_dirs(self) -> list[str]:
-        """Get skill dirs only when explicitly set by environment."""
-        if "skills_dirs" not in self.model_fields_set:
-            return []
-        return [item.strip() for item in self.skills_dirs if str(item).strip()]
 
 
 def load_settings(*, include_env_file: bool = False) -> AgiwoSettings:

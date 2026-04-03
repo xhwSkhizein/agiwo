@@ -126,6 +126,7 @@ class SchedulerRunner:
                 for tool in self._ctx.scheduling_tools
                 if tool.name != "spawn_agent"
             ],
+            child_allowed_skills=overrides.allowed_skills,
         )
         self._ctx.rt.agents[state.id] = child
         return child

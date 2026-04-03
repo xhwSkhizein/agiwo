@@ -234,6 +234,54 @@ class TestSpawnAgentTool:
         assert state is not None
         assert state.depth == 4
 
+    @pytest.mark.asyncio
+    async def test_spawn_rejects_non_list_allowed_skills(self, store, control, context):
+        await _register_parent(store)
+        tool = SpawnAgentTool(control)
+
+        tool_result = await tool.execute(
+            {"task": "Task", "allowed_skills": "audit", "tool_call_id": "tc-1"},
+            context,
+        )
+
+        assert not tool_result.is_success
+        assert "allowed_skills must be a list of strings" in tool_result.content
+
+    @pytest.mark.asyncio
+    async def test_spawn_rejects_unknown_exact_allowed_skill(
+        self,
+        store,
+        control,
+        context,
+    ):
+        await _register_parent(store)
+        tool = SpawnAgentTool(control)
+
+        tool_result = await tool.execute(
+            {
+                "task": "Task",
+                "allowed_skills": ["definitely-not-a-real-skill"],
+                "tool_call_id": "tc-1",
+            },
+            context,
+        )
+
+        assert not tool_result.is_success
+        assert "Unknown allowed skill(s): definitely-not-a-real-skill" in tool_result.content
+
+    @pytest.mark.asyncio
+    async def test_spawn_rejects_wildcard_allowed_skills(self, store, control, context):
+        await _register_parent(store)
+        tool = SpawnAgentTool(control)
+
+        tool_result = await tool.execute(
+            {"task": "Task", "allowed_skills": ["skill*"], "tool_call_id": "tc-1"},
+            context,
+        )
+
+        assert not tool_result.is_success
+        assert "explicit skill names" in tool_result.content
+
 
 class TestSleepAndWaitTool:
     @pytest.mark.asyncio

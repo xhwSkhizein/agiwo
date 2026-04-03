@@ -34,8 +34,8 @@
 | --- | --- |
 | `console/server/` | FastAPI 控制面与 runtime 集成。 |
 | `console/server/routers/` | API/SSE 边界，只做 HTTP 路由与请求/响应装配。 |
-| `console/server/services/` | 应用服务层。`runtime/`（agent factory、runtime cache、session runtime / session service）、`tool_catalog/`（tool reference / catalog / runtime builder）、`agent_registry/`（配置 CRUD + store 子包）、`storage_wiring.py`（存储 config builders）、`metrics.py`。 |
-| `console/server/models/` | Console 数据模型目录。`view.py` 只放 API/SSE 视图模型；`session.py`、`agent_config.py`、`metrics.py` 放共享运行时/配置/聚合模型。不要再新增 `schemas.py` 或平级 `domain/`。 |
+| `console/server/services/` | 应用服务层。`runtime/`（agent factory、runtime cache、session runtime / session service）、`tool_catalog/`（tool reference / catalog / runtime builder）、`agent_registry/`（配置 CRUD + store 子包）、`runtime_config.py`（运行时全局配置查看/覆盖）、`storage_wiring.py`（存储 config builders）、`metrics.py`。 |
+| `console/server/models/` | Console 数据模型目录。`view.py` 只放 API/SSE 视图模型；`session.py`、`agent_config.py`、`runtime_config.py`、`metrics.py` 放共享运行时/配置/聚合模型。不要再新增 `schemas.py` 或平级 `domain/`。 |
 | `console/server/channels/` | 渠道适配层，负责批处理、消息解析、delivery，以及 Feishu 等渠道集成。 |
 | `console/web/` | Console 前端。 |
 | `console/tests/` | Console 后端测试。 |
@@ -58,6 +58,7 @@
 - `Agent` 是具体类，不是 ABC。
 - 公开构造入口是 `Agent(AgentConfig(...), *, model=..., tools=..., hooks=..., id=...)`；`AgentConfig` 只承载纯配置，不放 live object。
 - **`id` 必须稳定**：在 Console 这类跨请求复用会话的场景里，每次构造 `Agent` 都必须传稳定 `id`（如 registry `config.id`），否则历史 steps 会丢。
+- `AgentConfig.allowed_skills` 进入 SDK runtime 前必须已经展开成“显式 skill 名列表”或 `None`；不再接受 wildcard/pattern。
 - 对外执行原语是 `start(...)` 返回 live execution handle；`run(...)` / `run_stream(...)` 只是便利封装。
 - 嵌套 agent 执行是内部协议，由 `nested/agent_tool.py` 通过 `Agent.run_child(...)` 进入；不要再暴露公开 `context` 参数。
 - `SessionRuntime` 是 session 级 owner；`RunContext` 组合 immutable identity 与 mutable ledger。运行时状态变更优先通过 `runtime/state_ops.py` / `runtime/step_committer.py` 收口。
@@ -86,6 +87,16 @@
 - `bash` 与 `bash_process` 是分离工具；后台任务的巡检/日志/停止/输入属于 `bash_process`。
 - 共享 MEMORY 检索统一通过 `agiwo.memory.WorkspaceMemoryService`，builtin retrieval tool 只是 adapter。
 - citation 等工具侧持久化在 `agiwo/tool/storage/citation/`。
+
+### Skills
+
+- 全局 skill 发现目录只由 SDK `settings.skills_dirs` 决定；`skills_dirs` 不再是 per-agent 选项。
+- `enable_skill`、Agent 级 `skills_dirs` 等历史 skill 开关/目录字段已删除；发现旧字段时直接 fast-fail，不保留静默兼容层。
+- `agiwo/skill/allowlist.py` 是唯一的 allowlist 归一化/展开/校验入口：pattern 展开、显式 skill 名合法性校验、runtime 前的“必须已展开”校验都收口在这里。
+- 只有最外层输入面可以接收 skill pattern：Console env/default-agent 配置和 Agents API。进入内部模型后，只允许显式 skill 名列表。
+- `Agent`、`AgentConfigRecord`、scheduler child override、`spawn_agent.allowed_skills` 都只接受“展开后的显式 skill 名列表”；未知 skill 名和 pattern 都必须在边界被拒绝。
+- 子 Agent 的 `allowed_skills` 必须是父 Agent `allowed_skills` 的子集；如果父 Agent 未限制 skills，child 才能继承 `None` 语义。
+- `SkillManager` 的全局实例 key 由 `root_path + skills_dirs` 决定；`settings.skills_dirs` 变化时，后续 `get_global_skill_manager()` 会切到新的 manager。
 
 ### Scheduler
 
@@ -127,6 +138,9 @@
 - `console/server/models/session.py` 中的 `Session` 只表示完整会话线程元数据；它不再承载 runtime agent id、scheduler state id、task id 或消息计数。`Session.id` 直接作为 root persistent scheduler state id 使用。
 - `ChannelChatContext.current_session_id` 是 channel 专用的“当前会话指针”；web console 不使用 server-side current session 语义。
 - Console 自己持有 API/表单 DTO；不要再把 `Input/Patch` 请求模型塞回 SDK。
+- Console web 现在提供 `/settings` 全局配置页；它查看的是“当前运行进程的 effective config”，不是 `.env` 文件内容。
+- `console/server/services/runtime_config.py` 只负责运行时 override，不负责持久化 env。当前只允许热更新 `skills_dirs` 和 `default_agent`；其余配置只读展示并标记“需重启生效”。
+- 运行时配置更新必须先校验，再整体应用；如果 `skills_dirs` 或默认 Agent skill/model 参数校验失败，必须回滚，避免半更新状态。
 - `console/server/channels/batch_manager.py` 只承载渠道批处理/防抖能力；`ChannelBatchManager` 负责按 channel context 聚合消息，不承担 Session CRUD 语义。渠道代码直接依赖 `server.models.session`，不要再引入 compatibility shim。
 - 渠道运行时由三个独立子服务组成：`SessionContextService`（channel session/chat-context 生命周期）、`AgentRuntimeCache`（按 `session.id` 缓存 runtime agent，并在 config 指纹变化时刷新）、`SessionRuntimeService`（scheduler 交互与状态路由）。Channel service 直接持有这三者，不再经过 facade。
 - Console web 与 Feishu channel 的会话输入统一走 `scheduler.route_root_input(...)`；web console 已不再保留独立 `Chat` 执行语义。
@@ -147,6 +161,8 @@
 - SDK 配置入口在 `agiwo/config/settings.py`；Console 专属部署/渠道配置入口在 `console/server/config.py`。
 - 项目自有环境变量命名空间保持 `AGIWO_*` 与 `AGIWO_CONSOLE_*`；外部 Provider 继续使用其标准变量名。
 - 业务模块不要新增散落的 `os.getenv(...)`；环境变量读取应集中在配置层，当前唯一例外是 `agiwo.llm.factory` 根据 `api_key_env_name` 做运行时密钥解析。
+- `skills_dirs` 是 SDK 全局配置，不是 Console Agent 配置字段。Console 侧的 Agent/default-agent 只配置 `allowed_skills`，不直接配置 skill 目录。
+- Console runtime config API / 页面修改的是进程内 override；重启后仍以环境配置为准，当前不写回 `.env`。
 
 ### Construction & Layering
 
