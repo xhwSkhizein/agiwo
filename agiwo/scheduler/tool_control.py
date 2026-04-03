@@ -65,7 +65,10 @@ class SchedulerToolControl:
         )
         parent_agent = self._rt.agents.get(request.parent_agent_id)
         if allowed_skills is not None:
-            if parent_agent is not None and parent_agent.config.allowed_skills is not None:
+            if (
+                parent_agent is not None
+                and parent_agent.config.allowed_skills is not None
+            ):
                 parent_allowed = set(parent_agent.config.allowed_skills)
                 disallowed = [
                     skill for skill in allowed_skills if skill not in parent_allowed

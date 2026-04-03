@@ -83,7 +83,9 @@ class RuntimeConfigService:
             restart_required=list(_RESTART_REQUIRED),
         )
 
-    async def update(self, payload: RuntimeConfigEditablePayload) -> RuntimeConfigResponse:
+    async def update(
+        self, payload: RuntimeConfigEditablePayload
+    ) -> RuntimeConfigResponse:
         async with self._lock:
             runtime_settings = get_settings()
             original_skills_dirs = list(runtime_settings.skills_dirs)

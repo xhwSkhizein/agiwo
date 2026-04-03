@@ -9,7 +9,11 @@ import server.services.runtime_config as runtime_config_module
 from agiwo.config.settings import get_settings
 from server.app import create_app
 from server.config import ConsoleConfig
-from server.dependencies import ConsoleRuntime, bind_console_runtime, clear_console_runtime
+from server.dependencies import (
+    ConsoleRuntime,
+    bind_console_runtime,
+    clear_console_runtime,
+)
 from server.services.agent_registry import AgentRegistry
 from server.services.runtime_config import RuntimeConfigService
 from server.services.storage_wiring import create_run_step_storage, create_trace_storage
@@ -72,7 +76,9 @@ async def client(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_get_runtime_config_returns_editable_and_readonly_sections(client) -> None:
+async def test_get_runtime_config_returns_editable_and_readonly_sections(
+    client,
+) -> None:
     response = await client.get("/api/config/runtime")
 
     assert response.status_code == 200
@@ -88,7 +94,9 @@ async def test_get_runtime_config_returns_editable_and_readonly_sections(client)
 
 
 @pytest.mark.asyncio
-async def test_update_runtime_config_applies_skills_dirs_and_default_agent(client) -> None:
+async def test_update_runtime_config_applies_skills_dirs_and_default_agent(
+    client,
+) -> None:
     response = await client.put(
         "/api/config/runtime",
         json={

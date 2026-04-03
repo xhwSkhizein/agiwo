@@ -100,8 +100,10 @@ def resolve_child_definition(
     child_options = agent.config.options.model_copy(deep=True)
     child_options.enable_termination_summary = True
     validate_expanded_allowed_skills(child_allowed_skills)
-    validated_child_allowed = get_global_skill_manager().validate_explicit_allowed_skills(
-        child_allowed_skills
+    validated_child_allowed = (
+        get_global_skill_manager().validate_explicit_allowed_skills(
+            child_allowed_skills
+        )
     )
     if child_allowed_skills is None:
         effective_allowed = (

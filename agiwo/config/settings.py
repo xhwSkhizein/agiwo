@@ -372,7 +372,6 @@ class AgiwoSettings(BaseSettings):
         return None
 
 
-
 def load_settings(*, include_env_file: bool = False) -> AgiwoSettings:
     """Load settings from current process environment.
 

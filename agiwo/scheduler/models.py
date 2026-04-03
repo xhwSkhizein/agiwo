@@ -15,7 +15,10 @@ from types import MappingProxyType
 from typing import Any
 
 from agiwo.agent import UserInput
-from agiwo.skill.allowlist import normalize_allowed_skills, validate_expanded_allowed_skills
+from agiwo.skill.allowlist import (
+    normalize_allowed_skills,
+    validate_expanded_allowed_skills,
+)
 
 
 def _deepcopy_mapping_proxy(

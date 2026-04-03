@@ -243,7 +243,9 @@ async def build_system_prompt(
     document_store: WorkspaceDocumentStore,
 ) -> str:
     await bootstrapper.ensure_prompt_ready(workspace)
-    skill_manager = get_global_skill_manager() if _skills_enabled(allowed_skills) else None
+    skill_manager = (
+        get_global_skill_manager() if _skills_enabled(allowed_skills) else None
+    )
     if skill_manager is not None:
         await skill_manager.initialize()
         await skill_manager.refresh_if_changed()

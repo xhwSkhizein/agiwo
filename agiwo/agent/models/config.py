@@ -6,7 +6,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agiwo.config.settings import settings
-from agiwo.skill.allowlist import normalize_allowed_skills, validate_expanded_allowed_skills
+from agiwo.skill.allowlist import (
+    normalize_allowed_skills,
+    validate_expanded_allowed_skills,
+)
 
 
 @dataclass
@@ -73,9 +76,7 @@ class AgentOptions(BaseModel):
     def _reject_legacy_skill_options(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
-        legacy_keys = [
-            key for key in ("enable_skill", "skills_dirs") if key in data
-        ]
+        legacy_keys = [key for key in ("enable_skill", "skills_dirs") if key in data]
         if legacy_keys:
             key_list = ", ".join(legacy_keys)
             raise ValueError(

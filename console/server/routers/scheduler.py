@@ -242,7 +242,9 @@ async def create_persistent_agent(
 
     instance_id = f"{config.id}--{uuid4()}"
     agent = await build_agent(
-        config, runtime.config, runtime.agent_registry,
+        config,
+        runtime.config,
+        runtime.agent_registry,
         id=instance_id,
     )
     state_id = await scheduler.submit(

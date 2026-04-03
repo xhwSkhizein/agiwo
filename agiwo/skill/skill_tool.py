@@ -88,7 +88,9 @@ class SkillTool(BaseTool):
             error = "Missing required parameter: skill_name"
         elif not isinstance(skill_name, str):
             error = f"Invalid skill_name type: expected string, got {type(skill_name)}"
-        elif self._allowed_skills is not None and skill_name not in self._allowed_skills:
+        elif (
+            self._allowed_skills is not None and skill_name not in self._allowed_skills
+        ):
             error = f"Skill '{skill_name}' is not allowed by the configured allowlist."
 
         metadata = self.registry.get_metadata(skill_name) if error is None else None

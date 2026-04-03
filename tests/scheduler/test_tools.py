@@ -267,7 +267,10 @@ class TestSpawnAgentTool:
         )
 
         assert not tool_result.is_success
-        assert "Unknown allowed skill(s): definitely-not-a-real-skill" in tool_result.content
+        assert (
+            "Unknown allowed skill(s): definitely-not-a-real-skill"
+            in tool_result.content
+        )
 
     @pytest.mark.asyncio
     async def test_spawn_rejects_wildcard_allowed_skills(self, store, control, context):

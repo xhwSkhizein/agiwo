@@ -42,9 +42,8 @@ def build_agent_tools(
 
     resolved_base_tools = ensure_bash_tool_pair([*provided_tools, *default_tools])
     if (
-        (allowed_skills is None or bool(allowed_skills))
-        and "skill" not in disabled_names
-    ):
+        allowed_skills is None or bool(allowed_skills)
+    ) and "skill" not in disabled_names:
         if all(tool.name != "skill" for tool in resolved_base_tools):
             resolved_base_tools.append(
                 get_global_skill_manager().create_skill_tool(allowed_skills)

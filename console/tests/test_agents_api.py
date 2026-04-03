@@ -225,7 +225,9 @@ async def test_create_agent_expands_allowed_skill_patterns_at_api_boundary(
             assert allowed_skills == ["skill*", "*review"]
             return ["skill-review", "skill-build", "code-review"]
 
-        def validate_explicit_allowed_skills(self, allowed_skills, *, available_skill_names=None):
+        def validate_explicit_allowed_skills(
+            self, allowed_skills, *, available_skill_names=None
+        ):
             del available_skill_names
             return list(allowed_skills)
 
@@ -274,7 +276,9 @@ async def test_create_agent_rejects_unknown_exact_allowed_skill(
             assert allowed_skills == ["missing-skill"]
             raise ValueError("Unknown allowed skill(s): missing-skill")
 
-        def validate_explicit_allowed_skills(self, allowed_skills, *, available_skill_names=None):
+        def validate_explicit_allowed_skills(
+            self, allowed_skills, *, available_skill_names=None
+        ):
             del available_skill_names
             return list(allowed_skills)
 
