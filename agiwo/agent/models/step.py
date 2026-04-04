@@ -151,7 +151,7 @@ class StepRecord:
         return payload
 
     def to_message(self) -> dict[str, Any]:
-        msg: dict[str, Any] = {"role": self.role.value}
+        msg: dict[str, Any] = {"role": self.role.value, "_sequence": self.sequence}
         effective_content = (
             self.condensed_content
             if self.condensed_content is not None

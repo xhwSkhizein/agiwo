@@ -726,7 +726,7 @@ class TestRetrospectToolResultTool:
             context,
         )
         assert tool_result.is_success
-        assert tool_result.output == {"_retrospect": True}
+        assert tool_result.output == {}
         assert "Plan A failed" in tool_result.content
 
     @pytest.mark.asyncio

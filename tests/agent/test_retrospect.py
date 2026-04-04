@@ -1,33 +1,42 @@
-"""Tests for the retrospect module — trigger, notice injection, offload, and execution."""
+"""Tests for the retrospect package — trigger, notice injection, offload, and execution."""
 
 import pytest
 
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.run import RunLedger
 from agiwo.agent.models.step import MessageRole, StepRecord
-from agiwo.agent.retrospect import (
+from agiwo.agent.retrospect.triggers import (
+    RetrospectTrigger,
     check_retrospect_trigger,
-    execute_retrospect,
     inject_system_notice,
-    offload_to_disk,
     update_retrospect_tracking,
+)
+from agiwo.agent.retrospect.executor import (
+    execute_retrospect,
+    offload_to_disk,
 )
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 
 
 class TestCheckRetrospectTrigger:
-    def test_disabled_returns_false(self):
+    def test_disabled_returns_none(self):
         config = AgentOptions(enable_tool_retrospect=False)
         ledger = RunLedger()
-        assert not check_retrospect_trigger(config, ledger, "x" * 8000, "bash")
+        assert (
+            check_retrospect_trigger(config, ledger, "x" * 8000, "bash")
+            is RetrospectTrigger.NONE
+        )
 
     def test_retrospect_tool_itself_never_triggers(self):
         config = AgentOptions(
             enable_tool_retrospect=True, retrospect_token_threshold=10
         )
         ledger = RunLedger()
-        assert not check_retrospect_trigger(
-            config, ledger, "x" * 8000, "retrospect_tool_result"
+        assert (
+            check_retrospect_trigger(
+                config, ledger, "x" * 8000, "retrospect_tool_result"
+            )
+            is RetrospectTrigger.NONE
         )
 
     def test_single_large_result_triggers(self):
@@ -36,7 +45,10 @@ class TestCheckRetrospectTrigger:
         )
         ledger = RunLedger()
         content = "x" * 500  # ~125 tokens
-        assert check_retrospect_trigger(config, ledger, content, "bash")
+        assert (
+            check_retrospect_trigger(config, ledger, content, "bash")
+            is RetrospectTrigger.LARGE_RESULT
+        )
 
     def test_small_result_does_not_trigger(self):
         config = AgentOptions(
@@ -44,7 +56,10 @@ class TestCheckRetrospectTrigger:
         )
         ledger = RunLedger()
         content = "x" * 200  # ~50 tokens
-        assert not check_retrospect_trigger(config, ledger, content, "bash")
+        assert (
+            check_retrospect_trigger(config, ledger, content, "bash")
+            is RetrospectTrigger.NONE
+        )
 
     def test_round_interval_triggers(self):
         config = AgentOptions(
@@ -54,7 +69,10 @@ class TestCheckRetrospectTrigger:
             retrospect_accumulated_token_threshold=99999,
         )
         ledger = RunLedger(retrospect_pending_rounds=3)
-        assert check_retrospect_trigger(config, ledger, "tiny", "bash")
+        assert (
+            check_retrospect_trigger(config, ledger, "tiny", "bash")
+            is RetrospectTrigger.ROUND_INTERVAL
+        )
 
     def test_accumulated_token_triggers(self):
         config = AgentOptions(
@@ -64,7 +82,10 @@ class TestCheckRetrospectTrigger:
             retrospect_accumulated_token_threshold=500,
         )
         ledger = RunLedger(retrospect_pending_tokens=600)
-        assert check_retrospect_trigger(config, ledger, "tiny", "bash")
+        assert (
+            check_retrospect_trigger(config, ledger, "tiny", "bash")
+            is RetrospectTrigger.TOKEN_ACCUMULATED
+        )
 
 
 class TestUpdateRetrospectTracking:
@@ -80,17 +101,38 @@ class TestUpdateRetrospectTracking:
 
 
 class TestInjectSystemNotice:
-    def test_appends_notice_tag(self):
-        result = inject_system_notice("original output")
+    def test_large_result_notice(self):
+        result = inject_system_notice("original output", RetrospectTrigger.LARGE_RESULT)
         assert result.startswith("original output")
         assert "<system-notice>" in result
-        assert "retrospect_tool_result" in result
+        assert "large" in result.lower()
+
+    def test_round_interval_notice(self):
+        result = inject_system_notice(
+            "original output", RetrospectTrigger.ROUND_INTERVAL
+        )
+        assert "<system-notice>" in result
+        assert "goal" in result.lower()
+
+    def test_token_accumulated_notice(self):
+        result = inject_system_notice(
+            "original output", RetrospectTrigger.TOKEN_ACCUMULATED
+        )
+        assert "<system-notice>" in result
+        assert "context" in result.lower()
+
+
+class TestInjectSystemNoticeNone:
+    def test_none_trigger_returns_content_unchanged(self):
+        result = inject_system_notice("original output", RetrospectTrigger.NONE)
+        assert result == "original output"
 
 
 class TestOffloadToDisk:
-    def test_writes_file_and_returns_placeholder(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_writes_file_and_returns_placeholder(self, tmp_path):
         target = tmp_path / "sub" / "out.txt"
-        placeholder = offload_to_disk("big content here", target)
+        placeholder = await offload_to_disk("big content here", target)
         assert target.read_text() == "big content here"
         assert str(target) in placeholder
 
@@ -142,7 +184,7 @@ class TestExecuteRetrospect:
             "tc-2": {"id": step2.id, "sequence": 2},
         }
 
-        result = await execute_retrospect(
+        outcome = await execute_retrospect(
             feedback="Plan A and B both failed, need to try table Y.",
             messages=messages,
             ledger=ledger,
@@ -152,18 +194,50 @@ class TestExecuteRetrospect:
             step_lookup=step_lookup,
         )
 
-        assert "2 tool result" in result
+        assert outcome.applied is True
+        assert outcome.offloaded_count == 2
 
         assert (tmp_path / "offload" / "tc-1.txt").read_text() == "big result A"
         assert (tmp_path / "offload" / "tc-2.txt").read_text() == "big result B"
 
-        assert messages[0]["content"].startswith("[")
-        assert "Retrospect:" in messages[1]["content"]
-        assert "Plan A and B" in messages[1]["content"]
+        assert outcome.messages[0]["content"].startswith("[")
+        assert "Retrospect:" in outcome.messages[1]["content"]
+        assert "Plan A and B" in outcome.messages[1]["content"]
 
         assert ledger.retrospect_pending_tokens == 0
         assert ledger.retrospect_pending_rounds == 0
         assert ledger.last_retrospect_seq == 2
+
+    @pytest.mark.asyncio
+    async def test_original_messages_not_mutated(self, tmp_path):
+        """execute_retrospect must work on a copy, leaving originals intact."""
+        storage = InMemoryRunStepStorage()
+        session_id = "sess-1"
+
+        messages = [
+            {
+                "role": "tool",
+                "content": "original content",
+                "tool_call_id": "tc-1",
+                "_sequence": 1,
+            },
+        ]
+        ledger = RunLedger(last_retrospect_seq=0)
+        step_lookup = {"tc-1": {"id": "s1", "sequence": 1}}
+
+        outcome = await execute_retrospect(
+            feedback="summary",
+            messages=messages,
+            ledger=ledger,
+            storage=storage,
+            session_id=session_id,
+            offload_dir=tmp_path / "offload",
+            step_lookup=step_lookup,
+        )
+
+        assert messages[0]["content"] == "original content"
+        assert outcome.applied is True
+        assert outcome.messages[0]["content"] != "original content"
 
     @pytest.mark.asyncio
     async def test_feedback_persisted_to_condensed_content(self, tmp_path):
@@ -232,7 +306,7 @@ class TestExecuteRetrospect:
         ledger = RunLedger(last_retrospect_seq=0)
         step_lookup = {"tc-1": {"id": "s1", "sequence": 1}}
 
-        await execute_retrospect(
+        outcome = await execute_retrospect(
             feedback="summary",
             messages=messages,
             ledger=ledger,
@@ -242,16 +316,102 @@ class TestExecuteRetrospect:
             step_lookup=step_lookup,
         )
 
-        roles = [m["role"] for m in messages]
+        roles = [m["role"] for m in outcome.messages]
         assert "assistant" not in roles or all(
             tc["function"]["name"] != "retrospect_tool_result"
-            for m in messages
+            for m in outcome.messages
             if m.get("tool_calls")
             for tc in m["tool_calls"]
         )
         assert not any(
-            m.get("tool_call_id") == "tc-r" for m in messages if m.get("role") == "tool"
+            m.get("tool_call_id") == "tc-r"
+            for m in outcome.messages
+            if m.get("role") == "tool"
         )
+
+
+class TestStepRecordToMessageSequence:
+    def test_to_message_includes_sequence(self):
+        step = StepRecord(
+            session_id="s1",
+            run_id="r1",
+            sequence=42,
+            role=MessageRole.TOOL,
+            content="result",
+            tool_call_id="tc-1",
+            name="bash",
+        )
+        msg = step.to_message()
+        assert msg["_sequence"] == 42
+
+    def test_to_message_sequence_zero_for_default(self):
+        step = StepRecord(
+            session_id="s1",
+            run_id="r1",
+            sequence=0,
+            role=MessageRole.USER,
+            content="hello",
+        )
+        msg = step.to_message()
+        assert "_sequence" in msg
+        assert msg["_sequence"] == 0
+
+
+class TestRemoveRetrospectMultiCall:
+    @pytest.mark.asyncio
+    async def test_multi_call_removes_only_retrospect_entry(self, tmp_path):
+        """When assistant has [search, retrospect], only retrospect tc is removed."""
+        storage = InMemoryRunStepStorage()
+        session_id = "sess-1"
+
+        messages = [
+            {"role": "tool", "content": "data", "tool_call_id": "tc-1", "_sequence": 1},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "tc-search",
+                        "function": {"name": "search_db", "arguments": "{}"},
+                    },
+                    {
+                        "id": "tc-r",
+                        "function": {
+                            "name": "retrospect_tool_result",
+                            "arguments": "{}",
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "content": "search result",
+                "tool_call_id": "tc-search",
+                "_sequence": 3,
+            },
+            {"role": "tool", "content": "ok", "tool_call_id": "tc-r", "_sequence": 4},
+        ]
+        ledger = RunLedger(last_retrospect_seq=0)
+        step_lookup = {"tc-1": {"id": "s1", "sequence": 1}}
+
+        outcome = await execute_retrospect(
+            feedback="summary",
+            messages=messages,
+            ledger=ledger,
+            storage=storage,
+            session_id=session_id,
+            offload_dir=tmp_path / "offload",
+            step_lookup=step_lookup,
+        )
+
+        assistant_msgs = [m for m in outcome.messages if m.get("role") == "assistant"]
+        assert len(assistant_msgs) == 1
+        assert len(assistant_msgs[0]["tool_calls"]) == 1
+        assert assistant_msgs[0]["tool_calls"][0]["function"]["name"] == "search_db"
+
+        tool_ids = [
+            m.get("tool_call_id") for m in outcome.messages if m.get("role") == "tool"
+        ]
+        assert "tc-r" not in tool_ids
 
 
 class TestStorageUpdateCondensedContent:
