@@ -102,6 +102,7 @@ class SQLiteRunStepStorage(RunStepStorage):
                     created_at TEXT NOT NULL,
                     parent_run_id TEXT,
                     depth INTEGER DEFAULT 0,
+                    condensed_content TEXT,
                     UNIQUE(session_id, sequence)
                 )
                 """,
@@ -333,6 +334,20 @@ class SQLiteRunStepStorage(RunStepStorage):
         )
         await conn.commit()
         return cursor.rowcount
+
+    async def update_step_condensed_content(
+        self,
+        session_id: str,
+        step_id: str,
+        condensed_content: str,
+    ) -> bool:
+        conn = await self._ensure_connection()
+        cursor = await conn.execute(
+            "UPDATE steps SET condensed_content = ? WHERE session_id = ? AND id = ?",
+            (condensed_content, session_id, step_id),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
 
     async def get_step_count(self, session_id: str) -> int:
         """Get total number of steps for a session."""

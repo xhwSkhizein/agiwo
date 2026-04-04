@@ -108,6 +108,7 @@ class SchedulerToolControl:
             state.with_waiting(
                 wake_condition=wake_condition,
                 explain=request.explain,
+                no_progress=request.no_progress,
             )
         )
         return SleepResult(

@@ -1,6 +1,7 @@
 "use client";
 
-import { Bot, Clock, Loader2, User, Wrench } from "lucide-react";
+import { useState } from "react";
+import { Bot, ChevronDown, ChevronRight, Clock, Loader2, User, Wrench } from "lucide-react";
 import type { ChatMessage, ChatRole } from "@/lib/chat-types";
 import type { ToolCallPayload } from "@/lib/api";
 import { JsonDisclosure } from "@/components/json-disclosure";
@@ -80,6 +81,31 @@ function RawPayload({ value }: { value: unknown }) {
   return <JsonDisclosure className="mt-2" label="Raw payload" value={value} />;
 }
 
+function OriginalContentToggle({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        onClick={() => setExpanded((prev) => !prev)}
+        className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+      >
+        {expanded ? (
+          <ChevronDown className="w-3 h-3" />
+        ) : (
+          <ChevronRight className="w-3 h-3" />
+        )}
+        {expanded ? "Hide original result" : "View original result"}
+      </button>
+      {expanded && (
+        <div className="mt-1 px-3 py-2 rounded bg-zinc-800/50 text-xs text-zinc-400 whitespace-pre-wrap max-h-64 overflow-auto">
+          {content}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Render a single chat message with a role-specific avatar, header, and conditional content sections.
  *
@@ -136,6 +162,10 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
           >
             {message.text}
           </div>
+        )}
+
+        {message.originalContent && (
+          <OriginalContentToggle content={message.originalContent} />
         )}
 
         {message.toolCalls && <ToolCallList toolCalls={message.toolCalls} />}

@@ -39,6 +39,7 @@ from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
+    RetrospectToolResultTool,
     SleepAndWaitTool,
     SpawnAgentTool,
 )
@@ -79,6 +80,7 @@ class Scheduler:
             QuerySpawnedAgentTool(self._tool_control),
             CancelAgentTool(self._tool_control),
             ListAgentsTool(self._tool_control),
+            RetrospectToolResultTool(self._tool_control),
         )
         self._runner = SchedulerRunner(
             RunnerContext(

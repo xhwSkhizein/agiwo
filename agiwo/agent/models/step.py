@@ -100,6 +100,7 @@ class StepRecord:
     tool_call_id: str | None = None
     name: str | None = None
     is_error: bool = False
+    condensed_content: str | None = None
     metrics: StepMetrics | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     parent_run_id: str | None = None
@@ -151,8 +152,13 @@ class StepRecord:
 
     def to_message(self) -> dict[str, Any]:
         msg: dict[str, Any] = {"role": self.role.value}
-        if self.content is not None:
-            msg["content"] = self.content
+        effective_content = (
+            self.condensed_content
+            if self.condensed_content is not None
+            else self.content
+        )
+        if effective_content is not None:
+            msg["content"] = effective_content
         if self.reasoning_content is not None:
             msg["reasoning_content"] = self.reasoning_content
         if self.tool_calls is not None:

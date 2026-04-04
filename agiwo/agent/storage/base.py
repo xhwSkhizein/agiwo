@@ -130,6 +130,20 @@ class RunStepStorage(ABC):
         """
         ...
 
+    # --- Step Content Update (for retrospect) ---
+
+    async def update_step_condensed_content(
+        self,
+        session_id: str,
+        step_id: str,
+        condensed_content: str,
+    ) -> bool:
+        """Update the condensed_content field of a step.
+
+        Returns True if the step was found and updated.
+        """
+        return False
+
     # --- Tool Result Query (for cross-agent reference) ---
 
     async def get_step_by_tool_call_id(
@@ -334,6 +348,22 @@ class InMemoryRunStepStorage(RunStepStorage):
         ]
         self._rebuild_indexes(session_id)
         return original_count - len(self.steps[session_id])
+
+    # --- Step Content Update (for retrospect) ---
+
+    async def update_step_condensed_content(
+        self,
+        session_id: str,
+        step_id: str,
+        condensed_content: str,
+    ) -> bool:
+        id_idx = self._id_index.get(session_id, {})
+        idx = id_idx.get(step_id)
+        if idx is None:
+            return False
+        step = self.steps[session_id][idx]
+        step.condensed_content = condensed_content
+        return True
 
     async def get_step_count(self, session_id: str) -> int:
         return len(self.steps.get(session_id, []))

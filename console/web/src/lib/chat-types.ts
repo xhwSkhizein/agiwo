@@ -10,6 +10,7 @@ export interface ChatMessage {
   sourceAgentId?: string;
   userInput?: UserInput | null;
   text?: string;
+  originalContent?: string;
   structuredContent?: unknown;
   rawContent?: unknown;
   toolCalls?: ToolCallPayload[];
@@ -82,13 +83,19 @@ export function messageFromStep(step: StepResponse): ChatMessage | null {
   }
 
   if (step.role === "tool") {
+    const hasCondensed = typeof step.condensed_content === "string";
     return {
       id: genMessageId(),
       stepId: step.id,
       role: "tool",
       sequence: step.sequence,
       sourceAgentId: step.agent_id ?? undefined,
-      text: contentToText(step.content) ?? undefined,
+      text: hasCondensed
+        ? step.condensed_content!
+        : (contentToText(step.content) ?? undefined),
+      originalContent: hasCondensed
+        ? (contentToText(step.content) ?? undefined)
+        : undefined,
       structuredContent:
         typeof step.content === "string" ? undefined : step.content ?? undefined,
       rawContent: step.content ?? undefined,
