@@ -122,10 +122,17 @@ class TestInjectSystemNotice:
         assert "context" in result.lower()
 
 
+class TestInjectSystemNoticeNone:
+    def test_none_trigger_returns_content_unchanged(self):
+        result = inject_system_notice("original output", RetrospectTrigger.NONE)
+        assert result == "original output"
+
+
 class TestOffloadToDisk:
-    def test_writes_file_and_returns_placeholder(self, tmp_path):
+    @pytest.mark.asyncio
+    async def test_writes_file_and_returns_placeholder(self, tmp_path):
         target = tmp_path / "sub" / "out.txt"
-        placeholder = offload_to_disk("big content here", target)
+        placeholder = await offload_to_disk("big content here", target)
         assert target.read_text() == "big content here"
         assert str(target) in placeholder
 
@@ -321,6 +328,90 @@ class TestExecuteRetrospect:
             for m in outcome.messages
             if m.get("role") == "tool"
         )
+
+
+class TestStepRecordToMessageSequence:
+    def test_to_message_includes_sequence(self):
+        step = StepRecord(
+            session_id="s1",
+            run_id="r1",
+            sequence=42,
+            role=MessageRole.TOOL,
+            content="result",
+            tool_call_id="tc-1",
+            name="bash",
+        )
+        msg = step.to_message()
+        assert msg["_sequence"] == 42
+
+    def test_to_message_sequence_zero_for_default(self):
+        step = StepRecord(
+            session_id="s1",
+            run_id="r1",
+            sequence=0,
+            role=MessageRole.USER,
+            content="hello",
+        )
+        msg = step.to_message()
+        assert "_sequence" in msg
+        assert msg["_sequence"] == 0
+
+
+class TestRemoveRetrospectMultiCall:
+    @pytest.mark.asyncio
+    async def test_multi_call_removes_only_retrospect_entry(self, tmp_path):
+        """When assistant has [search, retrospect], only retrospect tc is removed."""
+        storage = InMemoryRunStepStorage()
+        session_id = "sess-1"
+
+        messages = [
+            {"role": "tool", "content": "data", "tool_call_id": "tc-1", "_sequence": 1},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "tc-search",
+                        "function": {"name": "search_db", "arguments": "{}"},
+                    },
+                    {
+                        "id": "tc-r",
+                        "function": {
+                            "name": "retrospect_tool_result",
+                            "arguments": "{}",
+                        },
+                    },
+                ],
+            },
+            {
+                "role": "tool",
+                "content": "search result",
+                "tool_call_id": "tc-search",
+                "_sequence": 3,
+            },
+            {"role": "tool", "content": "ok", "tool_call_id": "tc-r", "_sequence": 4},
+        ]
+        ledger = RunLedger(last_retrospect_seq=0)
+        step_lookup = {"tc-1": {"id": "s1", "sequence": 1}}
+
+        outcome = await execute_retrospect(
+            feedback="summary",
+            messages=messages,
+            ledger=ledger,
+            storage=storage,
+            session_id=session_id,
+            offload_dir=tmp_path / "offload",
+            step_lookup=step_lookup,
+        )
+
+        assistant_msgs = [m for m in outcome.messages if m.get("role") == "assistant"]
+        assert len(assistant_msgs) == 1
+        assert len(assistant_msgs[0]["tool_calls"]) == 1
+        assert assistant_msgs[0]["tool_calls"][0]["function"]["name"] == "search_db"
+
+        tool_ids = [
+            m.get("tool_call_id") for m in outcome.messages if m.get("role") == "tool"
+        ]
+        assert "tc-r" not in tool_ids
 
 
 class TestStorageUpdateCondensedContent:

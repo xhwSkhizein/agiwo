@@ -1014,6 +1014,30 @@ def _detect_assign_errors(
     return errors
 
 
+def _resolve_import_from_module(path: Path, node: ast.ImportFrom) -> str | None:
+    """Resolve an ``ImportFrom`` node to its fully-qualified module name.
+
+    For absolute imports (``node.level == 0``), ``node.module`` is already
+    fully-qualified.  For relative imports we derive the package prefix from
+    *path* (which is relative to the repo root) and combine it with
+    ``node.module``.
+    """
+    if node.level == 0:
+        return node.module
+
+    parts = list(path.with_suffix("").parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    # Walk up ``node.level`` directories (level=1 → current package)
+    for _ in range(node.level):
+        if parts:
+            parts.pop()
+    package_prefix = ".".join(parts)
+    if node.module:
+        return f"{package_prefix}.{node.module}" if package_prefix else node.module
+    return package_prefix or None
+
+
 def _detect_import_from_errors(path: Path, node: ast.ImportFrom) -> list[GuardError]:
     errors: list[GuardError] = []
     if node.module == "__future__":
@@ -1030,8 +1054,9 @@ def _detect_import_from_errors(path: Path, node: ast.ImportFrom) -> list[GuardEr
                         ),
                     )
                 )
-    if node.module is not None:
-        errors.extend(_detect_import_name_errors(path, node.module, node.lineno))
+    resolved = _resolve_import_from_module(path, node)
+    if resolved is not None:
+        errors.extend(_detect_import_name_errors(path, resolved, node.lineno))
     return errors
 
 

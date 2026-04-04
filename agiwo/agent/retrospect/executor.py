@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import aiofiles
+
 from agiwo.agent.models.run import RunLedger
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.utils.logging import get_logger
@@ -25,10 +27,11 @@ class RetrospectOutcome:
     messages: list[dict[str, Any]] = field(default_factory=list)
 
 
-def offload_to_disk(content: str, path: Path) -> str:
+async def offload_to_disk(content: str, path: Path) -> str:
     """Write *content* to *path* and return a placeholder string."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        await f.write(content)
     return f"[ToolResult offloaded to {path}]"
 
 
@@ -67,7 +70,7 @@ async def execute_retrospect(
             continue
 
         offload_path = offload_dir / f"{tool_call_id}.txt"
-        placeholder = offload_to_disk(original_content, offload_path)
+        placeholder = await offload_to_disk(original_content, offload_path)
         msg["content"] = placeholder
         offloaded_count += 1
         last_tool_call_id = tool_call_id
@@ -124,7 +127,14 @@ async def _persist_feedback(
     storage: RunStepStorage,
     session_id: str,
 ) -> None:
-    """Append retrospect feedback to the last tool message and persist."""
+    """Append retrospect feedback to the last tool message and persist.
+
+    The in-memory update targets the last qualifying tool message (found by
+    reverse iteration), while the storage update targets the canonical step
+    identified by *target_tool_call_id* via *step_lookup*.  This asymmetry
+    is intentional: the live message list may have been reordered or filtered,
+    but storage always tracks the step that logically anchors the feedback.
+    """
     for msg in reversed(messages):
         if msg.get("role") != "tool":
             continue
@@ -150,12 +160,16 @@ def _remove_retrospect_tool_call(messages: list[dict[str, Any]]) -> None:
     retrospect_call_ids: set[str] = set()
     for i, msg in enumerate(messages):
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            remaining: list[dict[str, Any]] = []
             for tc in msg["tool_calls"]:
                 fn = tc.get("function", {})
                 if fn.get("name") == "retrospect_tool_result":
                     retrospect_call_ids.add(tc.get("id", ""))
-                    if len(msg["tool_calls"]) == 1:
-                        indices_to_remove.append(i)
+                else:
+                    remaining.append(tc)
+            msg["tool_calls"] = remaining
+            if not remaining:
+                indices_to_remove.append(i)
 
     for i, msg in enumerate(messages):
         if (
@@ -171,5 +185,4 @@ def _remove_retrospect_tool_call(messages: list[dict[str, Any]]) -> None:
 __all__ = [
     "RetrospectOutcome",
     "execute_retrospect",
-    "offload_to_disk",
 ]

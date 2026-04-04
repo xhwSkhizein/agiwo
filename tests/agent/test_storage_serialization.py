@@ -48,10 +48,10 @@ def test_public_agent_exports_remain_stable_after_internal_type_split() -> None:
 def test_step_record_to_message_is_public_conversion_surface() -> None:
     step = StepRecord.user(_make_context(), sequence=1, user_input="hello")
 
-    assert step.to_message() == {
-        "role": MessageRole.USER.value,
-        "content": "hello",
-    }
+    msg = step.to_message()
+    assert msg["role"] == MessageRole.USER.value
+    assert msg["content"] == "hello"
+    assert msg["_sequence"] == 1
 
 
 def apply_run_metrics_payload(metrics: RunMetrics, payload: dict | None) -> None:

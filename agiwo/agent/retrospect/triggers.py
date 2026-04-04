@@ -80,8 +80,13 @@ def update_retrospect_tracking(ledger: RunLedger, content: str) -> None:
 
 
 def inject_system_notice(content: str, trigger: RetrospectTrigger) -> str:
-    """Append the trigger-specific system-notice to *content*."""
-    notice = _NOTICE_BY_TRIGGER.get(trigger, _NOTICE_LARGE_RESULT)
+    """Append the trigger-specific system-notice to *content*.
+
+    Returns *content* unchanged when *trigger* is ``NONE``.
+    """
+    notice = _NOTICE_BY_TRIGGER.get(trigger)
+    if notice is None:
+        return content
     return content + notice
 
 
