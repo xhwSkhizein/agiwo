@@ -65,6 +65,7 @@ class SleepRequest:
     delay_seconds: float | int | None = None
     time_unit: TimeUnit = TimeUnit.SECONDS
     explain: str | None = None
+    no_progress: bool = False
 
 
 @dataclass(frozen=True, slots=True)

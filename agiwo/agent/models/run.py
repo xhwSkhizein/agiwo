@@ -95,6 +95,10 @@ class RunLedger:
     response_content: str | None = None
     last_compact_metadata: CompactMetadata | None = None
     compaction_failure_count: int = 0
+    run_start_seq: int = 0
+    last_retrospect_seq: int = 0
+    retrospect_pending_tokens: int = 0
+    retrospect_pending_rounds: int = 0
 
 
 @dataclass
@@ -162,6 +166,7 @@ class RunOutput:
     metrics: RunMetrics | None = None
     termination_reason: TerminationReason | None = None
     error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 __all__ = [

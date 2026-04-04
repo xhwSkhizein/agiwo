@@ -344,7 +344,7 @@ class SchedulerRunner:
             )
             return
 
-        if await self._handle_periodic_output(action, current_state, text):
+        if await self._handle_periodic_output(action, current_state, text, output):
             return
 
         await self._complete_state(current_state, text)
@@ -544,6 +544,7 @@ class SchedulerRunner:
         action: DispatchAction,
         state: AgentState,
         text: str | None,
+        output: RunOutput,
     ) -> bool:
         original_wc = action.state.wake_condition
         if original_wc is None or original_wc.type != WakeType.PERIODIC:
@@ -553,23 +554,59 @@ class SchedulerRunner:
         if secs is None:
             return False
 
-        next_wakeup = datetime.now(timezone.utc) + timedelta(seconds=secs)
-        await self._save_state(
-            state.with_waiting(
-                wake_condition=original_wc.with_next_wakeup(next_wakeup),
-                result_summary=text,
+        should_rollback = False
+        if state.no_progress:
+            agent = self._ctx.rt.agents.get(state.id)
+            should_rollback = (
+                agent is not None and agent.config.options.enable_context_rollback
             )
+            if should_rollback:
+                await self._rollback_run_steps(state, output)
+
+        next_wakeup = datetime.now(timezone.utc) + timedelta(seconds=secs)
+        new_state = state.with_waiting(
+            wake_condition=original_wc.with_next_wakeup(next_wakeup),
+            result_summary=text if not should_rollback else state.result_summary,
         )
-        await self._emit_event_to_parent(
-            state,
-            SchedulerEventType.CHILD_SLEEP_RESULT,
-            {
-                "result": text or "",
-                "explain": state.explain,
-                "periodic": True,
-            },
-        )
+        if should_rollback:
+            new_state = new_state.with_updates(
+                rollback_count=state.rollback_count + 1,
+            )
+        await self._save_state(new_state)
+        if not should_rollback:
+            await self._emit_event_to_parent(
+                state,
+                SchedulerEventType.CHILD_SLEEP_RESULT,
+                {
+                    "result": text or "",
+                    "explain": state.explain,
+                    "periodic": True,
+                },
+            )
         return True
+
+    async def _rollback_run_steps(
+        self,
+        state: AgentState,
+        output: RunOutput,
+    ) -> None:
+        run_start_seq = output.metadata.get("run_start_seq")
+        if run_start_seq is None:
+            return
+        agent = self._ctx.rt.agents.get(state.id)
+        if agent is None:
+            return
+        session_id = state.resolve_runtime_session_id()
+        storage = agent.run_step_storage
+        deleted = await storage.delete_steps(session_id, start_seq=run_start_seq)
+        logger.info(
+            "context_rollback_executed",
+            state_id=state.id,
+            session_id=session_id,
+            run_start_seq=run_start_seq,
+            deleted_steps=deleted,
+            rollback_count=state.rollback_count + 1,
+        )
 
     async def _complete_state(
         self,

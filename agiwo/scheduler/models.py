@@ -229,6 +229,8 @@ class AgentState:
     is_persistent: bool = False
     depth: int = 0
     wake_count: int = 0
+    rollback_count: int = 0
+    no_progress: bool = False
     explain: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -313,6 +315,7 @@ class AgentState:
             ),
             explain=self.explain if explain is _UNSET else explain,
             wake_count=self.wake_count if wake_count is _UNSET else wake_count,
+            no_progress=False,
         )
 
     def with_waiting(
@@ -321,6 +324,7 @@ class AgentState:
         wake_condition: WakeCondition,
         result_summary: str | None | _UnsetType = _UNSET,
         explain: str | None | _UnsetType = _UNSET,
+        no_progress: bool = False,
     ) -> "AgentState":
         return self.with_updates(
             status=AgentStateStatus.WAITING,
@@ -329,6 +333,7 @@ class AgentState:
                 self.result_summary if result_summary is _UNSET else result_summary
             ),
             explain=self.explain if explain is _UNSET else explain,
+            no_progress=no_progress,
         )
 
     def with_idle(

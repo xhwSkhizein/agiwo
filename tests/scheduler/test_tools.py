@@ -22,6 +22,7 @@ from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
+    RetrospectToolResultTool,
     SleepAndWaitTool,
     SpawnAgentTool,
 )
@@ -661,3 +662,88 @@ class TestListAgentsTool:
         assert "partial result" in tool_result.content
         agents = tool_result.output["agents"]
         assert len(agents) == 2
+
+
+class TestSleepAndWaitNoProgress:
+    @pytest.mark.asyncio
+    async def test_periodic_no_progress_propagated(self, store, control, context):
+        await _register_parent(store)
+        sleep_tool = SleepAndWaitTool(control)
+        tool_result = await sleep_tool.execute(
+            {
+                "wake_type": "periodic",
+                "delay_seconds": 60,
+                "no_progress": True,
+                "tool_call_id": "tc-1",
+            },
+            context,
+        )
+        assert tool_result.termination_reason == TerminationReason.SLEEPING
+        state = await store.get_state("orch")
+        assert state.no_progress is True
+
+    @pytest.mark.asyncio
+    async def test_timer_ignores_no_progress(self, store, control, context):
+        await _register_parent(store)
+        sleep_tool = SleepAndWaitTool(control)
+        await sleep_tool.execute(
+            {
+                "wake_type": "timer",
+                "delay_seconds": 30,
+                "no_progress": True,
+                "tool_call_id": "tc-1",
+            },
+            context,
+        )
+        state = await store.get_state("orch")
+        assert state.no_progress is False
+
+    @pytest.mark.asyncio
+    async def test_no_progress_default_false(self, store, control, context):
+        await _register_parent(store)
+        sleep_tool = SleepAndWaitTool(control)
+        await sleep_tool.execute(
+            {
+                "wake_type": "periodic",
+                "delay_seconds": 60,
+                "tool_call_id": "tc-1",
+            },
+            context,
+        )
+        state = await store.get_state("orch")
+        assert state.no_progress is False
+
+
+class TestRetrospectToolResultTool:
+    @pytest.mark.asyncio
+    async def test_success_with_feedback(self, control, context):
+        tool = RetrospectToolResultTool(control)
+        tool_result = await tool.execute(
+            {
+                "feedback": "Plan A failed, switching to plan B.",
+                "tool_call_id": "tc-ret",
+            },
+            context,
+        )
+        assert tool_result.is_success
+        assert tool_result.output == {"_retrospect": True}
+        assert "Plan A failed" in tool_result.content
+
+    @pytest.mark.asyncio
+    async def test_empty_feedback_fails(self, control, context):
+        tool = RetrospectToolResultTool(control)
+        tool_result = await tool.execute(
+            {"feedback": "", "tool_call_id": "tc-ret"},
+            context,
+        )
+        assert not tool_result.is_success
+        assert "required" in tool_result.content
+
+    @pytest.mark.asyncio
+    async def test_missing_feedback_fails(self, control, context):
+        tool = RetrospectToolResultTool(control)
+        tool_result = await tool.execute(
+            {"tool_call_id": "tc-ret"},
+            context,
+        )
+        assert not tool_result.is_success

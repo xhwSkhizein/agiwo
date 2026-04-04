@@ -273,12 +273,18 @@ export function useChatStream(
               }
               if (step.role === "tool") {
                 finishCurrentAssistant(true);
+                const hasCondensed = typeof step.condensed_content === "string";
                 const toolMsg: ChatMessage = {
                   id: genMessageId(),
                   stepId: step.id,
                   role: "tool",
                   sequence: step.sequence,
-                  text: contentToText(step.content),
+                  text: hasCondensed
+                    ? step.condensed_content!
+                    : contentToText(step.content),
+                  originalContent: hasCondensed
+                    ? (contentToText(step.content) ?? undefined)
+                    : undefined,
                   rawContent: step.content,
                   name: step.name || undefined,
                   sourceAgentId: step.agent_id ?? undefined,

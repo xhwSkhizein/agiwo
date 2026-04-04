@@ -225,6 +225,7 @@ class TestStepResponseToolCalls:
         step.tool_calls = tool_calls  # This is already a list of dicts
         step.tool_call_id = None
         step.name = None
+        step.condensed_content = None
         step.metrics = None
         step.created_at = datetime.now(timezone.utc)
         step.parent_run_id = None
@@ -252,6 +253,7 @@ class TestStepResponseToolCalls:
         step.tool_calls = None
         step.tool_call_id = None
         step.name = None
+        step.condensed_content = None
         step.metrics = None
         step.created_at = datetime.now(timezone.utc)
         step.parent_run_id = None
@@ -260,6 +262,63 @@ class TestStepResponseToolCalls:
         response = step_response_from_sdk(step)
 
         assert response.tool_calls is None
+
+
+class TestStepResponseCondensedContent:
+    """Test StepResponse maps condensed_content from StepRecord."""
+
+    def test_condensed_content_mapped_when_present(self):
+        step = MagicMock(spec=StepRecord)
+        step.id = "step-1"
+        step.session_id = "session-1"
+        step.run_id = "run-1"
+        step.sequence = 1
+        step.role = MessageRole.TOOL
+        step.agent_id = "agent-1"
+        step.content = "original verbose output"
+        step.content_for_user = None
+        step.reasoning_content = None
+        step.user_input = None
+        step.tool_calls = None
+        step.tool_call_id = "tc-1"
+        step.name = "bash"
+        step.condensed_content = "[archived]\n---\nRetrospect: concise summary"
+        step.metrics = None
+        step.created_at = datetime.now(timezone.utc)
+        step.parent_run_id = None
+        step.depth = 0
+
+        response = step_response_from_sdk(step)
+
+        assert (
+            response.condensed_content == "[archived]\n---\nRetrospect: concise summary"
+        )
+        assert response.content == "original verbose output"
+
+    def test_condensed_content_none_when_absent(self):
+        step = MagicMock(spec=StepRecord)
+        step.id = "step-1"
+        step.session_id = "session-1"
+        step.run_id = "run-1"
+        step.sequence = 1
+        step.role = MessageRole.TOOL
+        step.agent_id = "agent-1"
+        step.content = "normal output"
+        step.content_for_user = None
+        step.reasoning_content = None
+        step.user_input = None
+        step.tool_calls = None
+        step.tool_call_id = "tc-1"
+        step.name = "bash"
+        step.condensed_content = None
+        step.metrics = None
+        step.created_at = datetime.now(timezone.utc)
+        step.parent_run_id = None
+        step.depth = 0
+
+        response = step_response_from_sdk(step)
+
+        assert response.condensed_content is None
 
 
 class TestRunResponseFromSdk:

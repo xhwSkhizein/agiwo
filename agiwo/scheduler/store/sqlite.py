@@ -73,6 +73,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                     is_persistent INTEGER DEFAULT 0,
                     depth INTEGER DEFAULT 0,
                     wake_count INTEGER DEFAULT 0,
+                    rollback_count INTEGER DEFAULT 0,
                     agent_config_id TEXT,
                     explain TEXT,
                     created_at TEXT NOT NULL,
@@ -138,6 +139,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             is_persistent=bool(row.get("is_persistent", 0)),
             depth=row.get("depth", 0) or 0,
             wake_count=row.get("wake_count", 0) or 0,
+            rollback_count=row.get("rollback_count", 0) or 0,
             explain=row.get("explain"),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
@@ -190,9 +192,9 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 (id, session_id, parent_id, status, task, pending_input, config_overrides,
                  wake_type, wake_time_value, wake_time_unit, wake_wait_for, wake_wait_mode,
                  wake_completed_ids, wakeup_at, wake_timeout_at, result_summary,
-                 signal_propagated, is_persistent, depth, wake_count, agent_config_id,
-                 explain, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 signal_propagated, is_persistent, depth, wake_count, rollback_count,
+                 agent_config_id, explain, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 state.id,
@@ -212,6 +214,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 1 if state.is_persistent else 0,
                 state.depth,
                 state.wake_count,
+                state.rollback_count,
                 state.agent_config_id,
                 state.explain,
                 state.created_at.isoformat(),

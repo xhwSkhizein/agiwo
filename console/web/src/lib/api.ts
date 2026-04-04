@@ -223,6 +223,7 @@ export interface StepResponse {
   tool_calls: ToolCallPayload[] | null;
   tool_call_id: string | null;
   name: string | null;
+  condensed_content?: string | null;
   metrics: StepMetricsPayload | null;
   created_at: string | null;
   parent_run_id: string | null;

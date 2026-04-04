@@ -70,6 +70,7 @@ def step_response_from_sdk(step: step.StepRecord) -> StepResponse:
         tool_calls=step.tool_calls if step.tool_calls else None,
         tool_call_id=step.tool_call_id,
         name=step.name,
+        condensed_content=step.condensed_content,
         metrics=step_metrics_response_from_sdk(step.metrics) if step.metrics else None,
         created_at=step.created_at.isoformat() if step.created_at else None,
         parent_run_id=step.parent_run_id,

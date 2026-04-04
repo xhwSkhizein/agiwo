@@ -340,6 +340,7 @@ class StepResponse(BaseModel):
     tool_calls: list[dict[str, object]] | None = None
     tool_call_id: str | None = None
     name: str | None = None
+    condensed_content: str | None = None
     metrics: StepMetricsResponse | None = None
     created_at: str | None = None
     parent_run_id: str | None = None

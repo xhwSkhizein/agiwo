@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Bot, User, Wrench, Workflow } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, User, Wrench, Workflow } from "lucide-react";
 import { BackHeader } from "@/components/back-header";
 import { MetricCard } from "@/components/metric-card";
 import { PaginationControls } from "@/components/pagination-controls";
@@ -35,6 +35,32 @@ import {
   parseGenericMetrics,
 } from "@/lib/metrics";
 
+function StepCardOriginalToggle({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const toggle = useCallback(() => setExpanded((prev) => !prev), []);
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        onClick={toggle}
+        className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+      >
+        {expanded ? (
+          <ChevronDown className="w-3 h-3" />
+        ) : (
+          <ChevronRight className="w-3 h-3" />
+        )}
+        {expanded ? "Hide original result" : "View original result"}
+      </button>
+      {expanded && (
+        <div className="mt-1 px-3 py-2 rounded bg-zinc-800/50 text-xs text-zinc-400 whitespace-pre-wrap max-h-64 overflow-auto">
+          {content}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StepCard({ step }: { step: StepResponse }) {
   const isUser = step.role === "user";
   const isAssistant = step.role === "assistant";
@@ -48,7 +74,10 @@ function StepCard({ step }: { step: StepResponse }) {
 
   const hasStructuredUserInput =
     isUser && step.user_input !== null && step.user_input !== undefined;
-  const content = step.content;
+  const hasCondensed = isTool && typeof step.condensed_content === "string";
+  const displayContent = hasCondensed ? step.condensed_content : step.content;
+  const originalContent =
+    hasCondensed && typeof step.content === "string" ? step.content : null;
 
   return (
     <div
@@ -85,14 +114,18 @@ function StepCard({ step }: { step: StepResponse }) {
         </div>
       )}
 
-      {!hasStructuredUserInput && Boolean(content) && (
+      {!hasStructuredUserInput && Boolean(displayContent) && (
         <div className="max-h-96 overflow-auto">
           <div className="text-sm whitespace-pre-wrap break-words">
-            {typeof content === "string"
-              ? content
-              : JSON.stringify(content, null, 2)}
+            {typeof displayContent === "string"
+              ? displayContent
+              : JSON.stringify(displayContent, null, 2)}
           </div>
         </div>
+      )}
+
+      {originalContent && (
+        <StepCardOriginalToggle content={originalContent} />
       )}
 
       {step.tool_calls && step.tool_calls.length > 0 && (

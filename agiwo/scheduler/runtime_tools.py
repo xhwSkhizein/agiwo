@@ -169,6 +169,16 @@ class SleepAndWaitTool(BaseTool):
                     "type": "string",
                     "description": "Optional brief reason for sleeping — visible to the parent agent and operators for observability.",
                 },
+                "no_progress": {
+                    "type": "boolean",
+                    "description": (
+                        "Set to true when this periodic check found no meaningful "
+                        "progress. The system will discard this round's context to "
+                        "keep the conversation window clean. Only effective with "
+                        "wake_type='periodic'."
+                    ),
+                    "default": False,
+                },
             },
             "required": ["wake_type"],
         }
@@ -198,6 +208,7 @@ class SleepAndWaitTool(BaseTool):
         wait_for: list[str] | None = parameters.get("wait_for")
         timeout = parameters.get("timeout")
         explain = parameters.get("explain")
+        no_progress = bool(parameters.get("no_progress", False))
 
         try:
             wake_type = WakeType(wake_type_str)
@@ -222,6 +233,7 @@ class SleepAndWaitTool(BaseTool):
                     delay_seconds=delay_seconds,
                     time_unit=self._resolve_time_unit(time_unit_str),
                     explain=explain,
+                    no_progress=no_progress and wake_type == WakeType.PERIODIC,
                 )
             )
         except ValueError as exc:
@@ -557,5 +569,70 @@ class ListAgentsTool(BaseTool):
             input_args=parameters,
             content="\n".join(content_lines),
             output={"agents": agent_infos},
+            start_time=start_time,
+        )
+
+
+class RetrospectToolResultTool(BaseTool):
+    """Retrospect and condense recent tool results to keep context lean."""
+
+    name = "retrospect_tool_result"
+    description = (
+        "Retrospect on recent tool results and replace verbose outputs with a "
+        "concise, structured feedback summary. Call this when a system-notice "
+        "asks you to retrospect.\n\n"
+        "Your feedback MUST be thorough and include:\n"
+        "1. **What was attempted** — which tools were called and what was the intent.\n"
+        "2. **What was learned** — key facts, data points, or confirmations gained.\n"
+        "3. **What went wrong or was unhelpful** — errors, dead-ends, or irrelevant results.\n"
+        "4. **What to do next** — concrete next steps or adjusted strategy based on findings.\n\n"
+        "Write the feedback as if briefing yourself for the next turn — "
+        "it replaces the original verbose content entirely."
+    )
+    concurrency_safe = False
+
+    def __init__(self, port: SchedulerToolControl) -> None:
+        self._port = port
+        super().__init__()
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "feedback": {
+                    "type": "string",
+                    "description": (
+                        "Structured retrospect feedback summarising the recent "
+                        "tool results. Must cover: what was attempted, what was "
+                        "learned, what was unhelpful, and what to do next."
+                    ),
+                },
+            },
+            "required": ["feedback"],
+        }
+
+    async def execute(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> ToolResult:
+        del abort_signal
+        start_time = time.time()
+        feedback = parameters.get("feedback", "")
+        if not feedback:
+            return ToolResult.failed(
+                tool_name=self.name,
+                error="feedback is required",
+                tool_call_id=context.tool_call_id,
+                input_args=parameters,
+                start_time=start_time,
+            )
+        return ToolResult.success(
+            tool_name=self.name,
+            tool_call_id=context.tool_call_id,
+            input_args=parameters,
+            content=feedback,
+            output={"_retrospect": True},
             start_time=start_time,
         )

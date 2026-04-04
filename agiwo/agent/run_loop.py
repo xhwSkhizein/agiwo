@@ -51,6 +51,12 @@ from agiwo.llm.limits import (
     resolve_max_input_tokens_per_call,
 )
 from agiwo.utils.abort_signal import AbortSignal
+from agiwo.agent.retrospect import (
+    check_retrospect_trigger,
+    inject_system_notice,
+    maybe_apply_retrospect,
+    update_retrospect_tracking,
+)
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -146,6 +152,7 @@ def _build_output(state: RunContext) -> RunOutput:
         session_id=state.session_id,
         metrics=RunMetrics.from_ledger(state.ledger, elapsed_ms=state.elapsed * 1000),
         termination_reason=state.ledger.termination_reason,
+        metadata={"run_start_seq": state.ledger.run_start_seq},
     )
 
 
@@ -186,6 +193,7 @@ async def _prepare_run_context(
         sequence=await context.session_runtime.allocate_sequence(),
         user_input=user_input,
     )
+    context.ledger.run_start_seq = user_step.sequence
     last_compact = await run_step_storage.get_latest_compact_metadata(
         context.session_id,
         context.agent_id,
@@ -341,6 +349,12 @@ async def _execute_tool_calls(
         abort_signal=abort_signal,
     )
     terminated = False
+    retrospect_feedback: str | None = None
+    step_lookup: dict[str, dict[str, Any]] = {}
+    retrospect_enabled = (
+        state.config.enable_tool_retrospect and "retrospect_tool_result" in tools_map
+    )
+
     for result in tool_results:
         call_id = result.tool_call_id or ""
         tool_name = result.tool_name
@@ -349,20 +363,45 @@ async def _execute_tool_calls(
         if state.hooks.on_after_tool_call:
             await state.hooks.on_after_tool_call(call_id, tool_name, args, result)
 
+        content = result.content or ""
+
+        is_retrospect = (
+            retrospect_enabled
+            and tool_name == "retrospect_tool_result"
+            and result.is_success
+            and isinstance(result.output, dict)
+            and result.output.get("_retrospect")
+        )
+        if is_retrospect:
+            retrospect_feedback = content
+        elif retrospect_enabled:
+            update_retrospect_tracking(state.ledger, content)
+            if check_retrospect_trigger(state.config, state.ledger, content, tool_name):
+                content = inject_system_notice(content)
+
         tool_step = StepRecord.tool(
             state,
             sequence=await state.session_runtime.allocate_sequence(),
             tool_call_id=call_id,
             name=result.tool_name,
-            content=result.content or "",
+            content=content,
             content_for_user=result.content_for_user,
             is_error=not result.is_success,
         )
+        step_lookup[call_id] = {"id": tool_step.id, "sequence": tool_step.sequence}
         await commit_step(state, tool_step)
 
         if not terminated and result.termination_reason is not None:
             set_termination_reason(state, result.termination_reason)
             terminated = True
+
+    if retrospect_enabled:
+        await maybe_apply_retrospect(
+            feedback=retrospect_feedback,
+            state=state,
+            step_lookup=step_lookup,
+        )
+
     return terminated or state.is_terminal
 
 
