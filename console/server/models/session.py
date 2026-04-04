@@ -95,7 +95,7 @@ class SessionCreateResult:
 @dataclass(slots=True)
 class SessionSummaryRecord:
     session_id: str
-    agent_id: str | None = None
+    base_agent_id: str | None = None
     last_user_input: UserInput | None = None
     last_response: str | None = None
     run_count: int = 0
@@ -105,7 +105,6 @@ class SessionSummaryRecord:
     updated_at: datetime | None = None
     chat_context_scope_id: str | None = None
     created_by: str | None = None
-    base_agent_id: str | None = None
     root_state_status: str | None = None
     source_session_id: str | None = None
     fork_context_summary: str | None = None

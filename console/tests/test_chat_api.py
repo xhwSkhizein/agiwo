@@ -27,6 +27,7 @@ from server.dependencies import (
 )
 from server.models.session import Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
+from server.services.runtime import AgentRuntimeCache
 from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
 
@@ -57,6 +58,13 @@ async def client():
     session_store = InMemoryFeishuChannelStore()
     await session_store.connect()
 
+    agent_runtime_cache = AgentRuntimeCache(
+        scheduler=scheduler,
+        agent_registry=registry,
+        console_config=config,
+        session_store=session_store,
+    )
+
     bind_console_runtime(
         app,
         ConsoleRuntime(
@@ -66,6 +74,7 @@ async def client():
             agent_registry=registry,
             scheduler=scheduler,
             session_store=session_store,
+            agent_runtime_cache=agent_runtime_cache,
         ),
     )
 
@@ -74,6 +83,7 @@ async def client():
         yield c
 
     clear_console_runtime(app)
+    await agent_runtime_cache.close()
     await scheduler.stop()
     await registry.close()
     await run_step_storage.close()
@@ -131,14 +141,15 @@ async def test_session_input_streams_scheduler_events_and_uses_session_identity(
     class FakeAgent:
         def __init__(self, agent_id: str) -> None:
             self.id = agent_id
-            self.closed = False
 
         async def close(self) -> None:
-            self.closed = True
+            pass
 
     fake_agent = FakeAgent(session_id)
+    assert runtime.agent_runtime_cache is not None
     monkeypatch.setattr(
-        "server.routers.sessions.build_agent",
+        runtime.agent_runtime_cache,
+        "get_or_create_runtime_agent",
         AsyncMock(return_value=fake_agent),
     )
 
@@ -207,7 +218,6 @@ async def test_session_input_streams_scheduler_events_and_uses_session_identity(
 
     assert any(line == "event: step_delta" for line in lines)
     assert any(line == "event: run_completed" for line in lines)
-    assert fake_agent.closed is True
 
 
 @pytest.mark.asyncio
@@ -230,14 +240,15 @@ async def test_session_input_continues_stream_after_root_sleeping(
     class FakeAgent:
         def __init__(self, agent_id: str) -> None:
             self.id = agent_id
-            self.closed = False
 
         async def close(self) -> None:
-            self.closed = True
+            pass
 
     fake_agent = FakeAgent(session_id)
+    assert runtime.agent_runtime_cache is not None
     monkeypatch.setattr(
-        "server.routers.sessions.build_agent",
+        runtime.agent_runtime_cache,
+        "get_or_create_runtime_agent",
         AsyncMock(return_value=fake_agent),
     )
 
@@ -339,7 +350,6 @@ async def test_session_input_continues_stream_after_root_sleeping(
     assert sum(1 for line in lines if line == "event: run_started") == 2
     assert sum(1 for line in lines if line == "event: run_completed") == 2
     assert any("run-2" in line for line in lines)
-    assert fake_agent.closed is True
 
 
 @pytest.mark.asyncio

@@ -15,19 +15,19 @@ import { MonoText } from "@/components/mono-text";
 import { cn } from "@/lib/utils";
 import { listSessions } from "@/lib/api";
 import type { SessionSummary } from "@/lib/api";
-import {
-  formatTokenCount,
-  formatUsd,
-  normalizeRunMetricsSummary,
-} from "@/lib/metrics";
 
-/**
- * Render the Sessions page which lists session summaries with cost and token rollups, supports pagination, refresh, and error/loading states.
- *
- * Loads session data on mount and whenever pagination changes; displays a refresh control, per-session metadata (run count, agent id, cost, token counts), and pagination controls.
- *
- * @returns The page's JSX element.
- */
+function formatRelativeTime(dateStr: string | null): string {
+  if (!dateStr) return "";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 export default function SessionsPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +65,7 @@ export default function SessionsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Sessions</h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Session history with cost and token rollups
+            Session history and recent activity
           </p>
         </div>
         <button
@@ -94,59 +94,44 @@ export default function SessionsPage() {
         <EmptyStateMessage>No sessions found</EmptyStateMessage>
       ) : (
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 divide-y divide-zinc-800 overflow-hidden">
-          {sessions.map((s) => {
-            const metrics = normalizeRunMetricsSummary(s.metrics);
-            return (
-              <Link
-                key={s.session_id}
-                href={`/sessions/${s.session_id}`}
-                className={cn(
-                  "group block px-5 py-4 transition-colors duration-150",
-                  "hover:bg-zinc-800/50"
-                )}
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-zinc-200">
-                      <UserInputCompact
-                        input={s.last_user_input}
-                        maxLength={160}
-                        showContextBadge={true}
-                        showMetadata={true}
-                        showAttachmentBadge={true}
-                      />
-                    </div>
-                    {s.last_response && (
-                      <p className="text-xs text-zinc-500 mt-2 truncate">
-                        {s.last_response}
-                      </p>
-                    )}
+          {sessions.map((s) => (
+            <Link
+              key={s.session_id}
+              href={`/sessions/${s.session_id}`}
+              className={cn(
+                "group block px-5 py-4 transition-colors duration-150",
+                "hover:bg-zinc-800/50"
+              )}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-zinc-200">
+                    <UserInputCompact
+                      input={s.last_user_input}
+                      maxLength={160}
+                      showContextBadge={true}
+                      showMetadata={true}
+                      showAttachmentBadge={true}
+                    />
                   </div>
-                  <div className="text-right shrink-0 space-y-1.5">
-                    <div className="flex items-center justify-end gap-2">
-                      <PillBadge variant="default">{s.run_count} runs</PillBadge>
-                      <MonoText truncate className="max-w-[120px]">{s.agent_id || "unknown"}</MonoText>
-                    </div>
-                    <div className="mt-2 space-y-0.5 text-[11px]">
-                      <p className="text-zinc-400">
-                        cost <span className="text-zinc-300">{formatUsd(metrics.token_cost)}</span>
-                      </p>
-                      <p className="text-zinc-500">
-                        in/out <span className="text-zinc-400">{formatTokenCount(metrics.input_tokens)}</span>
-                        <span className="text-zinc-700 mx-1">/</span>
-                        <span className="text-zinc-400">{formatTokenCount(metrics.output_tokens)}</span>
-                      </p>
-                      <p className="text-zinc-600">
-                        cache r/c <span className="text-zinc-500">{formatTokenCount(metrics.cache_read_tokens)}</span>
-                        <span className="text-zinc-700 mx-1">/</span>
-                        <span className="text-zinc-500">{formatTokenCount(metrics.cache_creation_tokens)}</span>
-                      </p>
-                    </div>
-                  </div>
+                  {s.last_response && (
+                    <p className="text-xs text-zinc-500 mt-2 truncate">
+                      {s.last_response}
+                    </p>
+                  )}
                 </div>
-              </Link>
-            );
-          })}
+                <div className="text-right shrink-0 space-y-1.5">
+                  <div className="flex items-center justify-end gap-2">
+                    <PillBadge variant="default">{s.run_count} runs</PillBadge>
+                    <MonoText truncate className="max-w-[120px]">{s.agent_id || "unknown"}</MonoText>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 mt-1">
+                    {formatRelativeTime(s.updated_at)}
+                  </p>
+                </div>
+              </div>
+            </Link>
+          ))}
         </div>
       )}
 

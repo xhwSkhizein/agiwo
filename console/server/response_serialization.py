@@ -140,7 +140,7 @@ def session_summary_response_from_record(
 ) -> SessionSummaryResponse:
     return SessionSummaryResponse(
         session_id=summary.session_id,
-        agent_id=summary.agent_id,
+        agent_id=summary.base_agent_id,
         last_user_input=summary.last_user_input,
         last_response=summary.last_response,
         run_count=summary.run_count,

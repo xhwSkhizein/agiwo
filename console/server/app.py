@@ -21,6 +21,7 @@ from server.channels.feishu import FeishuChannelService
 from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
+from server.services.runtime import AgentRuntimeCache
 from server.services.runtime_config import RuntimeConfigService
 from server.services.storage_wiring import (
     build_agent_state_storage_config,
@@ -93,6 +94,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("feishu_channel_disabled", enabled=False)
 
+    agent_runtime_cache = AgentRuntimeCache(
+        scheduler=sched,
+        agent_registry=agent_registry,
+        console_config=config,
+        session_store=console_session_store,
+    )
+
     bind_console_runtime(
         app,
         ConsoleRuntime(
@@ -103,6 +111,7 @@ async def lifespan(app: FastAPI):
             scheduler=sched,
             feishu_channel_service=feishu_channel_service,
             session_store=console_session_store,
+            agent_runtime_cache=agent_runtime_cache,
             runtime_config_service=runtime_config_service,
         ),
     )
@@ -113,7 +122,7 @@ async def lifespan(app: FastAPI):
     closables: list[object] = []
     if feishu_channel_service is not None:
         closables.append(feishu_channel_service)
-    closables.extend([agent_registry, run_step_storage])
+    closables.extend([agent_runtime_cache, agent_registry, run_step_storage])
     if trace_storage is not None:
         closables.append(trace_storage)
     try:

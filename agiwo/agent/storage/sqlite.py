@@ -235,6 +235,15 @@ class SQLiteRunStepStorage(RunStepStorage):
                 runs.append(self._deserialize_run(row))
         return runs
 
+    async def count_runs(self, session_id: str) -> int:
+        conn = await self._ensure_connection()
+        async with conn.execute(
+            "SELECT COUNT(*) FROM runs WHERE session_id = ? AND agent_id IS NOT NULL",
+            (session_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
     async def delete_run(self, run_id: str) -> None:
         """Delete a run and its associated steps."""
         conn = await self._ensure_connection()
@@ -408,6 +417,63 @@ class SQLiteRunStepStorage(RunStepStorage):
         except Exception:
             await conn.rollback()
             raise
+
+    # --- Batch Query Operations ---
+
+    async def batch_count_runs(self, session_ids: list[str]) -> dict[str, int]:
+        if not session_ids:
+            return {}
+        conn = await self._ensure_connection()
+        placeholders = ",".join("?" for _ in session_ids)
+        query = (
+            f"SELECT session_id, COUNT(*) FROM runs "
+            f"WHERE session_id IN ({placeholders}) AND agent_id IS NOT NULL "
+            f"GROUP BY session_id"
+        )
+        result: dict[str, int] = {sid: 0 for sid in session_ids}
+        async with conn.execute(query, session_ids) as cursor:
+            async for row in cursor:
+                result[row[0]] = row[1]
+        return result
+
+    async def batch_get_step_counts(self, session_ids: list[str]) -> dict[str, int]:
+        if not session_ids:
+            return {}
+        conn = await self._ensure_connection()
+        placeholders = ",".join("?" for _ in session_ids)
+        query = (
+            f"SELECT session_id, COUNT(*) FROM steps "
+            f"WHERE session_id IN ({placeholders}) "
+            f"GROUP BY session_id"
+        )
+        result: dict[str, int] = {sid: 0 for sid in session_ids}
+        async with conn.execute(query, session_ids) as cursor:
+            async for row in cursor:
+                result[row[0]] = row[1]
+        return result
+
+    async def batch_get_latest_runs(
+        self, session_ids: list[str]
+    ) -> dict[str, Run | None]:
+        if not session_ids:
+            return {}
+        conn = await self._ensure_connection()
+        placeholders = ",".join("?" for _ in session_ids)
+        query = (
+            f"SELECT r.* FROM runs r "
+            f"INNER JOIN ("
+            f"  SELECT session_id, MAX(created_at) AS max_created "
+            f"  FROM runs WHERE session_id IN ({placeholders}) AND agent_id IS NOT NULL "
+            f"  GROUP BY session_id"
+            f") latest ON r.session_id = latest.session_id AND r.created_at = latest.max_created "
+            f"WHERE r.agent_id IS NOT NULL"
+        )
+        result: dict[str, Run | None] = {sid: None for sid in session_ids}
+        async with conn.execute(query, session_ids) as cursor:
+            async for row in cursor:
+                run = self._deserialize_run(row)
+                result[run.session_id] = run
+        return result
 
     async def get_step_by_tool_call_id(
         self,

@@ -9,12 +9,14 @@ from agiwo.agent.models.run import Run, RunMetrics, RunStatus
 from agiwo.observability.trace import SpanStatus, Trace
 
 from server.app import create_app
+from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
 from server.config import ConsoleConfig
 from server.dependencies import (
     ConsoleRuntime,
     bind_console_runtime,
     clear_console_runtime,
 )
+from server.models.session import Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import create_run_step_storage, create_trace_storage
 
@@ -33,6 +35,31 @@ async def test_overview_reports_real_totals_instead_of_recent_samples() -> None:
     registry = AgentRegistry(config)
     await registry.initialize()
 
+    session_store = InMemoryFeishuChannelStore()
+    await session_store.connect()
+
+    created_at = datetime(2026, 4, 1, tzinfo=timezone.utc)
+    await session_store.upsert_session(
+        Session(
+            id="session-a",
+            chat_context_scope_id=None,
+            base_agent_id="agent-0",
+            created_by="test",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+    )
+    await session_store.upsert_session(
+        Session(
+            id="session-b",
+            chat_context_scope_id=None,
+            base_agent_id="agent-1",
+            created_by="test",
+            created_at=created_at,
+            updated_at=created_at,
+        )
+    )
+
     bind_console_runtime(
         app,
         ConsoleRuntime(
@@ -40,10 +67,10 @@ async def test_overview_reports_real_totals_instead_of_recent_samples() -> None:
             run_step_storage=run_step_storage,
             trace_storage=trace_storage,
             agent_registry=registry,
+            session_store=session_store,
         ),
     )
 
-    created_at = datetime(2026, 4, 1, tzinfo=timezone.utc)
     for idx in range(3):
         await registry.create_agent(
             AgentConfigRecord(

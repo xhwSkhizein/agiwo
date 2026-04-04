@@ -1,121 +1,141 @@
-from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import pytest
 
 from agiwo.agent import ContentPart, ContentType, UserMessage
-from server.models.metrics import RunMetricsSummary
-from server.services.metrics import (
-    collect_session_aggregates,
-    session_aggregate_to_chat_summary,
-    session_aggregate_to_summary_data,
-)
+from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.models.run import Run, RunMetrics, RunStatus
+from server.models.session import Session
+from server.services.runtime.session_view_service import SessionViewService
 
 
-class FakeRunStorage:
-    def __init__(self, runs):
-        self._runs = runs
+class FakeSessionStore:
+    def __init__(self, sessions: list[Session]):
+        self._sessions = {s.id: s for s in sessions}
 
-    async def list_runs(
-        self,
-        user_id: str | None = None,
-        session_id: str | None = None,
-        limit: int = 20,
-        offset: int = 0,
-    ):
-        runs = self._runs
-        if user_id is not None:
-            runs = [run for run in runs if run.user_id == user_id]
-        if session_id is not None:
-            runs = [run for run in runs if run.session_id == session_id]
-        return runs[offset : offset + limit]
+    async def get_session(self, session_id: str):
+        return self._sessions.get(session_id)
+
+    async def get_chat_context(self, scope_id: str):
+        return None
+
+    async def list_sessions(self):
+        return list(self._sessions.values())
+
+    async def list_sessions_by_base_agent(self, base_agent_id: str):
+        return [s for s in self._sessions.values() if s.base_agent_id == base_agent_id]
+
+
+def _make_session(session_id: str, agent_id: str = "agent-a") -> Session:
+    now = datetime.now(timezone.utc)
+    return Session(
+        id=session_id,
+        chat_context_scope_id=None,
+        base_agent_id=agent_id,
+        created_by="test",
+        created_at=now,
+        updated_at=now,
+    )
 
 
 def _make_run(
-    *,
     run_id: str,
     session_id: str,
     agent_id: str,
     user_input,
     response_content: str | None,
-    created_at: int,
-    updated_at: int,
-):
-    return SimpleNamespace(
+) -> Run:
+    now = datetime.now(timezone.utc)
+    return Run(
         id=run_id,
         session_id=session_id,
         agent_id=agent_id,
         user_id=None,
         user_input=user_input,
+        status=RunStatus.COMPLETED,
         response_content=response_content,
-        created_at=created_at,
-        updated_at=updated_at,
-        status="completed",
-        metrics=SimpleNamespace(
+        metrics=RunMetrics(
             steps_count=1,
             tool_calls_count=0,
             duration_ms=1.0,
-            input_tokens=1,
-            output_tokens=1,
-            total_tokens=2,
+            input_tokens=10,
+            output_tokens=5,
+            total_tokens=15,
             cache_read_tokens=0,
             cache_creation_tokens=0,
-            token_cost=0.1,
+            token_cost=0.01,
         ),
+        created_at=now,
+        updated_at=now,
     )
 
 
 @pytest.mark.asyncio
-async def test_collect_session_aggregates_uses_latest_run_and_paginates() -> None:
-    storage = FakeRunStorage(
-        [
-            _make_run(
-                run_id="run-1",
-                session_id="sess-1",
-                agent_id="agent-a",
-                user_input="first",
-                response_content="old-response",
-                created_at=1,
-                updated_at=1,
-            ),
-            _make_run(
-                run_id="run-2",
-                session_id="sess-1",
-                agent_id="agent-a",
-                user_input=UserMessage.serialize(
-                    [ContentPart(type=ContentType.TEXT, text="latest")]
-                ),
-                response_content="new-response",
-                created_at=2,
-                updated_at=3,
-            ),
-            _make_run(
-                run_id="run-3",
-                session_id="sess-2",
-                agent_id="agent-b",
-                user_input="other",
-                response_content="other-response",
-                created_at=1,
-                updated_at=2,
-            ),
-        ]
+async def test_list_sessions_returns_summary_with_latest_run() -> None:
+    session = _make_session("sess-1")
+    store = FakeSessionStore([session])
+    storage = InMemoryRunStepStorage()
+
+    await storage.save_run(
+        _make_run("run-1", "sess-1", "agent-a", "first input", "old-response")
+    )
+    structured_input = UserMessage.serialize(
+        [ContentPart(type=ContentType.TEXT, text="latest")]
+    )
+    await storage.save_run(
+        _make_run("run-2", "sess-1", "agent-a", structured_input, "new-response")
     )
 
-    sessions = await collect_session_aggregates(storage, agent_id="agent-a")
+    service = SessionViewService(
+        run_storage=storage,
+        session_store=store,
+        scheduler=None,
+    )
+    page = await service.list_sessions(limit=10, offset=0)
 
-    assert len(sessions) == 1
-    summary = session_aggregate_to_summary_data(sessions[0])
-    chat_summary = session_aggregate_to_chat_summary(sessions[0])
-
+    assert len(page.items) == 1
+    summary = page.items[0]
     assert summary.session_id == "sess-1"
+    assert summary.base_agent_id == "agent-a"
     assert summary.last_response == "new-response"
-    assert isinstance(summary.last_user_input, list)
-    assert len(summary.last_user_input) == 1
-    assert summary.last_user_input[0].type == ContentType.TEXT
-    assert summary.last_user_input[0].text == "latest"
     assert summary.run_count == 2
-    assert isinstance(summary.metrics, RunMetricsSummary)
-    assert summary.metrics.run_count == 2
-    assert (
-        chat_summary["last_input"]
-        == '{"__type": "content_parts", "parts": [{"type": "text", "text": "latest"}]}'
+    assert summary.step_count == 0
+
+
+@pytest.mark.asyncio
+async def test_get_session_detail_populates_metrics() -> None:
+    session = _make_session("sess-1")
+    store = FakeSessionStore([session])
+    storage = InMemoryRunStepStorage()
+
+    await storage.save_run(_make_run("run-1", "sess-1", "agent-a", "hello", "world"))
+
+    service = SessionViewService(
+        run_storage=storage,
+        session_store=store,
+        scheduler=None,
     )
+    detail = await service.get_session_detail("sess-1")
+
+    assert detail is not None
+    assert detail.summary.session_id == "sess-1"
+    assert detail.summary.metrics.run_count == 1
+    assert detail.summary.metrics.input_tokens == 10
+    assert detail.summary.metrics.token_cost == pytest.approx(0.01)
+    assert detail.session is not None
+    assert detail.session.id == "sess-1"
+
+
+@pytest.mark.asyncio
+async def test_get_session_detail_returns_none_for_missing() -> None:
+    store = FakeSessionStore([])
+    storage = InMemoryRunStepStorage()
+
+    service = SessionViewService(
+        run_storage=storage,
+        session_store=store,
+        scheduler=None,
+    )
+    detail = await service.get_session_detail("nonexistent")
+
+    assert detail is None

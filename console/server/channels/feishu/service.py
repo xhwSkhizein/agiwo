@@ -8,7 +8,9 @@ batching, agent runtime, and scheduler message pipeline.
 
 import asyncio
 import shutil
+import tempfile
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 from agiwo.agent import (
@@ -31,10 +33,23 @@ from server.channels.exceptions import (
     DefaultAgentNameNotFoundError,
     PreviousTaskRunningError,
 )
+from server.channels.feishu.api_client import FeishuApiClient
 from server.channels.feishu.commands import build_feishu_command_registry
-from server.channels.feishu.factory import FeishuServiceFactory
+from server.channels.feishu.content_extractor import FeishuContentExtractor
+from server.channels.feishu.connection import FeishuConnection
+from server.channels.feishu.delivery_service import FeishuDeliveryService
+from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
 from server.channels.feishu.inbound_handler import FeishuInboundHandler
-from server.channels.feishu.message_parser import FeishuInboundEnvelope
+from server.channels.feishu.message_builder import (
+    FeishuAttachmentResolver,
+    FeishuUserMessageBuilder,
+)
+from server.channels.feishu.message_parser import (
+    FeishuInboundEnvelope,
+    FeishuMessageParser,
+)
+from server.channels.feishu.sender_resolver import FeishuSenderResolver
+from server.channels.feishu.store import create_feishu_channel_store
 from server.channels.batch_manager import ChannelBatchManager
 from server.config import ConsoleConfig
 from server.models.session import (
@@ -61,25 +76,77 @@ class FeishuChannelService:
         scheduler: Scheduler,
         agent_registry: AgentRegistry,
     ) -> None:
-        components = FeishuServiceFactory.create_components(
-            config=config,
-            scheduler=scheduler,
-            agent_registry=agent_registry,
+        feishu = config.channels.feishu
+
+        api = FeishuApiClient(
+            app_id=feishu.app_id,
+            app_secret=feishu.app_secret,
+            api_base_url=feishu.api_base_url,
+        )
+        store = create_feishu_channel_store(
+            db_path=config.sqlite_db_path,
+            use_persistent_store=config.storage.metadata_type == "sqlite",
+        )
+        content_extractor = FeishuContentExtractor()
+        group_history_store = FeishuGroupHistoryStore()
+        sender_resolver = FeishuSenderResolver(api=api)
+
+        parser = FeishuMessageParser(
+            content_extractor=content_extractor,
+            sender_resolver=sender_resolver,
+            channel_instance_id=feishu.channel_instance_id,
+            bot_open_id=feishu.bot_open_id,
+        )
+        connection = FeishuConnection(
+            app_id=feishu.app_id,
+            app_secret=feishu.app_secret,
+            encrypt_key=feishu.encrypt_key,
+            verification_token=feishu.verification_token,
+            sdk_log_level=feishu.sdk_log_level,
         )
 
-        self._bot_open_id = components.bot_open_id
-        self._api = components.api
-        self._store = components.store
-        self._parser = components.parser
-        self._connection = components.connection
-        self._tmp_dir = components.tmp_dir
-        self._message_builder = components.message_builder
-        self._delivery_service = components.delivery_service
+        session_service = SessionContextService(
+            store=store,
+            agent_registry=agent_registry,
+            default_agent_name=feishu.default_agent_name,
+        )
+        agent_pool = AgentRuntimeCache(
+            scheduler=scheduler,
+            agent_registry=agent_registry,
+            console_config=config,
+            session_store=store,
+        )
+        executor = SessionRuntimeService(
+            scheduler=scheduler,
+            session_store=store,
+            timeout=feishu.scheduler_wait_timeout,
+        )
 
-        self._session_service = components.session_service
-        self._agent_pool = components.agent_pool
-        self._executor = components.executor
-        feishu = config.channels.feishu
+        tmp_dir = Path(tempfile.mkdtemp(prefix="feishu_attachments_"))
+        attachment_resolver = FeishuAttachmentResolver(api=api, tmp_dir=tmp_dir)
+        message_builder = FeishuUserMessageBuilder(
+            content_extractor=content_extractor,
+            group_history_store=group_history_store,
+            attachment_resolver=attachment_resolver,
+        )
+        delivery_service = FeishuDeliveryService(
+            api=api,
+            config=config,
+            truncate_for_log=truncate_for_log,
+        )
+
+        self._bot_open_id = feishu.bot_open_id
+        self._api = api
+        self._store = store
+        self._parser = parser
+        self._connection = connection
+        self._tmp_dir = tmp_dir
+        self._message_builder = message_builder
+        self._delivery_service = delivery_service
+
+        self._session_service = session_service
+        self._agent_pool = agent_pool
+        self._executor = executor
         self._session_mgr = ChannelBatchManager(
             on_batch_ready=self._on_batch_ready,
             debounce_ms=feishu.debounce_ms,
@@ -87,8 +154,8 @@ class FeishuChannelService:
         )
 
         command_registry = build_feishu_command_registry(
-            session_service=components.session_service,
-            agent_pool=components.agent_pool,
+            session_service=session_service,
+            agent_pool=agent_pool,
             session_manager=self._session_mgr,
             scheduler=scheduler,
             agent_registry=agent_registry,
@@ -98,14 +165,14 @@ class FeishuChannelService:
             channel_instance_id=feishu.channel_instance_id,
             default_agent_name=feishu.default_agent_name,
             whitelist_open_ids=set(feishu.whitelist_open_ids),
-            parser=components.parser,
-            content_extractor=components.content_extractor,
-            group_history_store=components.group_history_store,
-            store=components.store,
-            session_service=components.session_service,
+            parser=parser,
+            content_extractor=content_extractor,
+            group_history_store=group_history_store,
+            store=store,
+            session_service=session_service,
             session_manager=self._session_mgr,
             command_registry=command_registry,
-            delivery_service=components.delivery_service,
+            delivery_service=delivery_service,
             truncate_for_log=truncate_for_log,
         )
         self._closed = False

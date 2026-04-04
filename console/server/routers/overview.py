@@ -5,7 +5,6 @@ from fastapi import APIRouter
 from server.dependencies import ConsoleRuntimeDep
 from server.models.view import DashboardOverviewResponse, SchedulerStatsResponse
 from server.services.metrics import (
-    collect_session_aggregates,
     count_agents_paginated,
     summarize_traces_paginated,
 )
@@ -29,7 +28,11 @@ async def get_dashboard_overview(
     runtime: ConsoleRuntimeDep,
 ) -> DashboardOverviewResponse:
     """Return real aggregate counts for the dashboard top-line stats."""
-    sessions = await collect_session_aggregates(runtime.run_step_storage)
+    total_sessions = 0
+    if runtime.session_store is not None:
+        all_sessions = await runtime.session_store.list_sessions()
+        total_sessions = len(all_sessions)
+
     traces = await summarize_traces_paginated(runtime.trace_storage)
     total_agents = await count_agents_paginated(runtime.agent_registry)
     scheduler_stats = (
@@ -38,7 +41,7 @@ async def get_dashboard_overview(
         else _EMPTY_SCHEDULER_STATS
     )
     return DashboardOverviewResponse(
-        total_sessions=len(sessions),
+        total_sessions=total_sessions,
         total_traces=traces.trace_count,
         total_agents=total_agents,
         total_tokens=traces.total_tokens,
