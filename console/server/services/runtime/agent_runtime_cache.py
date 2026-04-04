@@ -1,10 +1,9 @@
 """Runtime agent cache and lifecycle management for session-bound execution."""
 
 import asyncio
-import hashlib
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 from agiwo.agent import Agent
 from agiwo.scheduler.engine import Scheduler
@@ -18,11 +17,35 @@ from server.services.runtime.agent_factory import build_agent
 
 logger = get_logger(__name__)
 
+ConfigSnapshot = tuple[
+    str,
+    str,
+    str,
+    str,
+    str,
+    tuple[str, ...],
+    tuple[tuple[str, Any], ...],
+    tuple[tuple[str, Any], ...],
+]
+
+
+def _config_snapshot(config: AgentConfigRecord) -> ConfigSnapshot:
+    return (
+        config.name,
+        config.description,
+        config.model_provider,
+        config.model_name,
+        config.system_prompt,
+        tuple(config.tools),
+        tuple(sorted(config.options.items())),
+        tuple(sorted(config.model_params.items())),
+    )
+
 
 @dataclass(slots=True)
 class CachedAgent:
     agent: Agent
-    config_fingerprint: str
+    config_snapshot: ConfigSnapshot
 
 
 class AgentRuntimeCache:
@@ -49,10 +72,10 @@ class AgentRuntimeCache:
         if base_config is None:
             raise BaseAgentNotFoundError(session.base_agent_id)
 
-        expected_fingerprint = self._build_runtime_config_fingerprint(base_config)
+        snapshot = _config_snapshot(base_config)
         cached = self._cache.get(session.id)
         if cached is not None:
-            if cached.config_fingerprint == expected_fingerprint:
+            if cached.config_snapshot == snapshot:
                 return cached.agent
             logger.info(
                 "runtime_agent_refresh_on_config_change",
@@ -68,7 +91,7 @@ class AgentRuntimeCache:
         )
         if cached is not None:
             rebound = await self._scheduler.rebind_agent(session.id, agent)
-            if not rebound and cached is not None:
+            if not rebound:
                 logger.info(
                     "runtime_agent_refresh_deferred",
                     runtime_agent_id=session.id,
@@ -87,7 +110,7 @@ class AgentRuntimeCache:
 
         self._cache[session.id] = CachedAgent(
             agent=agent,
-            config_fingerprint=expected_fingerprint,
+            config_snapshot=snapshot,
         )
         return agent
 
@@ -101,17 +124,3 @@ class AgentRuntimeCache:
         if close_tasks:
             await asyncio.gather(*close_tasks, return_exceptions=True)
         self._cache.clear()
-
-    def _build_runtime_config_fingerprint(self, base_config: AgentConfigRecord) -> str:
-        payload = {
-            "name": base_config.name,
-            "description": base_config.description,
-            "model_provider": base_config.model_provider,
-            "model_name": base_config.model_name,
-            "system_prompt": base_config.system_prompt,
-            "tools": list(base_config.tools),
-            "options": dict(base_config.options),
-            "model_params": dict(base_config.model_params),
-        }
-        serialized = json.dumps(payload, sort_keys=True, ensure_ascii=True)
-        return hashlib.sha1(serialized.encode("utf-8")).hexdigest()

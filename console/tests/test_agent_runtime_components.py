@@ -311,7 +311,7 @@ async def test_agent_runtime_cache_defers_refresh_while_state_active(
     existing_agent = FakeAgent("sess-1")
     pool._cache["sess-1"] = CachedAgent(
         agent=existing_agent,
-        config_fingerprint="stale-fingerprint",
+        config_snapshot=("stale", "", "", "", "", (), (), ()),
     )
     session = Session(
         id="sess-1",

@@ -130,6 +130,19 @@ async def _seed_session_context(client: AsyncClient) -> None:
 async def _seed_runs_and_steps(client: AsyncClient) -> None:
     runtime = _runtime(client)
     now = datetime(2026, 4, 2, 8, 0, tzinfo=timezone.utc)
+    assert runtime.session_store is not None
+    existing = await runtime.session_store.get_session("session-z")
+    if existing is None:
+        await runtime.session_store.upsert_session(
+            Session(
+                id="session-z",
+                chat_context_scope_id=None,
+                base_agent_id="agent-zeta",
+                created_by="TEST",
+                created_at=now,
+                updated_at=now,
+            )
+        )
     await runtime.run_step_storage.save_run(
         Run(
             id="run-a1",

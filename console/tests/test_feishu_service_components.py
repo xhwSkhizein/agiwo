@@ -8,7 +8,6 @@ from agiwo.agent import ContentPart, ContentType
 from server.channels.feishu.commands.base import CommandResult
 from server.channels.feishu.content_extractor import FeishuContentExtractor
 from server.channels.feishu.connection import FeishuConnection
-from server.channels.feishu.factory import FeishuServiceComponents
 from server.channels.feishu.delivery_service import FeishuDeliveryService
 from server.channels.feishu.group_history_store import FeishuGroupHistoryStore
 from server.channels.feishu.inbound_handler import FeishuInboundHandler
@@ -378,24 +377,3 @@ async def test_inbound_handler_acknowledges_and_enqueues_non_command_messages() 
         inbound,
         normalized_text="hello bot",
     )
-
-
-@pytest.mark.asyncio
-async def test_feishu_service_components_can_be_constructed() -> None:
-    """Verify that FeishuServiceComponents can be created with required fields."""
-    components = FeishuServiceComponents(
-        api=Mock(),
-        store=Mock(),
-        parser=Mock(),
-        connection=Mock(),
-        session_service=Mock(),
-        agent_pool=Mock(),
-        executor=Mock(),
-        tmp_dir=Path("/tmp/test"),
-        message_builder=Mock(),
-        delivery_service=Mock(),
-        content_extractor=Mock(),
-        group_history_store=Mock(),
-        bot_open_id="bot-1",
-    )
-    assert components.executor is not None

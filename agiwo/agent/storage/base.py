@@ -47,6 +47,11 @@ class RunStepStorage(ABC):
         ...
 
     @abstractmethod
+    async def count_runs(self, session_id: str) -> int:
+        """Count total runs for a session."""
+        ...
+
+    @abstractmethod
     async def delete_run(self, run_id: str) -> None:
         """Delete Run"""
         ...
@@ -129,6 +134,44 @@ class RunStepStorage(ABC):
             Next sequence number (starting from 1)
         """
         ...
+
+    # --- Batch Query Operations (for list views) ---
+
+    async def batch_count_runs(self, session_ids: list[str]) -> dict[str, int]:
+        """Count runs for multiple sessions in one call.
+
+        Default falls back to per-session queries; subclasses should override
+        with a single batch query for efficiency.
+        """
+        result: dict[str, int] = {}
+        for sid in session_ids:
+            result[sid] = await self.count_runs(sid)
+        return result
+
+    async def batch_get_step_counts(self, session_ids: list[str]) -> dict[str, int]:
+        """Get step counts for multiple sessions in one call.
+
+        Default falls back to per-session queries; subclasses should override
+        with a single batch query for efficiency.
+        """
+        result: dict[str, int] = {}
+        for sid in session_ids:
+            result[sid] = await self.get_step_count(sid)
+        return result
+
+    async def batch_get_latest_runs(
+        self, session_ids: list[str]
+    ) -> dict[str, "Run | None"]:
+        """Get the latest run for each session in one call.
+
+        Default falls back to per-session queries; subclasses should override
+        with a single batch query for efficiency.
+        """
+        result: dict[str, Run | None] = {}
+        for sid in session_ids:
+            runs = await self.list_runs(session_id=sid, limit=1)
+            result[sid] = runs[0] if runs else None
+        return result
 
     # --- Step Content Update (for retrospect) ---
 
@@ -221,6 +264,9 @@ class InMemoryRunStepStorage(RunStepStorage):
         runs.sort(key=lambda r: r.created_at, reverse=True)
 
         return runs[offset : offset + limit]
+
+    async def count_runs(self, session_id: str) -> int:
+        return sum(1 for r in self.runs.values() if r.session_id == session_id)
 
     async def delete_run(self, run_id: str) -> None:
         run = self.runs.pop(run_id, None)

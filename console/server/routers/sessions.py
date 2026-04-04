@@ -28,10 +28,8 @@ from server.models.view import (
     SessionSummaryResponse,
     StepResponse,
 )
-from server.services.runtime import (
-    SessionRuntimeService,
-    build_agent,
-)
+from server.channels.exceptions import BaseAgentNotFoundError
+from server.services.runtime import SessionRuntimeService
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 _STEPS_MAX_LIMIT = 5000
@@ -80,11 +78,7 @@ async def list_sessions(
     limit: int = Query(default=20, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> PageResponse[SessionSummaryResponse]:
-    """List sessions by aggregating runs.
-
-    .. note:: Pagination is applied in-memory after fetching all aggregates.
-       See ``collect_session_aggregates`` for performance considerations.
-    """
+    """List sessions from the session store with lightweight enrichment."""
     page = await get_session_view_service(runtime).list_sessions(
         limit=limit, offset=offset
     )
@@ -116,21 +110,17 @@ async def send_session_input(
 ) -> EventSourceResponse:
     if runtime.session_store is None:
         raise RuntimeError("Session store not available")
+    if runtime.agent_runtime_cache is None:
+        raise RuntimeError("Agent runtime cache not available")
+
     session = await runtime.session_store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    agent_config = await runtime.agent_registry.get_agent(session.base_agent_id)
-    if agent_config is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
-
     try:
-        agent = await build_agent(
-            agent_config,
-            runtime.config,
-            runtime.agent_registry,
-            id=session.id,
-        )
+        agent = await runtime.agent_runtime_cache.get_or_create_runtime_agent(session)
+    except BaseAgentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Agent not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -150,27 +140,13 @@ async def send_session_input(
     )
 
     async def event_generator() -> AsyncIterator[dict[str, str]]:
-        try:
-            if dispatch.stream is not None:
-                async for item in dispatch.stream:
-                    yield stream_event_to_sse_message(item)
-                return
+        if dispatch.stream is not None:
+            async for item in dispatch.stream:
+                yield stream_event_to_sse_message(item)
+            return
 
-            state = await runtime_service.get_state(session.id)
-            if state is not None and state.result_summary:
-                yield {
-                    "event": "scheduler_ack",
-                    "data": json.dumps(
-                        {
-                            "type": "scheduler_ack",
-                            "session_id": session.id,
-                            "state_id": session.id,
-                            "result_summary": state.result_summary,
-                        },
-                        default=str,
-                    ),
-                }
-                return
+        state = await runtime_service.get_state(session.id)
+        if state is not None and state.result_summary:
             yield {
                 "event": "scheduler_ack",
                 "data": json.dumps(
@@ -178,13 +154,24 @@ async def send_session_input(
                         "type": "scheduler_ack",
                         "session_id": session.id,
                         "state_id": session.id,
-                        "message": "消息已收到，正在继续处理。",
+                        "result_summary": state.result_summary,
                     },
                     default=str,
                 ),
             }
-        finally:
-            await agent.close()
+            return
+        yield {
+            "event": "scheduler_ack",
+            "data": json.dumps(
+                {
+                    "type": "scheduler_ack",
+                    "session_id": session.id,
+                    "state_id": session.id,
+                    "message": "消息已收到，正在继续处理。",
+                },
+                default=str,
+            ),
+        }
 
     return EventSourceResponse(event_generator())
 

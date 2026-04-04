@@ -1,8 +1,7 @@
 """Console session read models assembled from storage and scheduler state."""
 
-from dataclasses import dataclass
-
 from agiwo.agent.models.input import UserMessage
+from agiwo.agent.models.run import Run
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.scheduler.engine import Scheduler
 
@@ -15,68 +14,7 @@ from server.models.session import (
     SessionDetailRecord,
     SessionSummaryRecord,
 )
-from server.services.metrics import SessionAggregate, collect_session_aggregates
-
-
-@dataclass(slots=True)
-class SessionViewItem:
-    aggregate: SessionAggregate | None = None
-    session: Session | None = None
-    chat_context: ChannelChatContext | None = None
-    root_state_status: str | None = None
-
-
-def _session_sort_key(item: SessionViewItem) -> tuple[str, str]:
-    updated_at = None
-    if item.session is not None:
-        updated_at = item.session.updated_at
-    elif item.aggregate is not None:
-        updated_at = item.aggregate.updated_at
-    serialized = updated_at.isoformat() if updated_at is not None else ""
-    session_id = (
-        item.session.id if item.session is not None else item.aggregate.session_id
-    )
-    return (serialized, session_id)
-
-
-def _summary_record(item: SessionViewItem) -> SessionSummaryRecord:
-    aggregate = item.aggregate
-    session = item.session
-    last_run = aggregate.last_run if aggregate is not None else None
-    last_user_input = (
-        UserMessage.to_transport_payload(last_run.user_input)
-        if last_run is not None
-        else None
-    )
-    return SessionSummaryRecord(
-        session_id=session.id if session is not None else aggregate.session_id,
-        agent_id=(
-            aggregate.agent_id
-            if aggregate is not None and aggregate.agent_id is not None
-            else (session.base_agent_id if session is not None else None)
-        ),
-        last_user_input=last_user_input,
-        last_response=(
-            last_run.response_content[:200]
-            if last_run is not None and last_run.response_content
-            else None
-        ),
-        run_count=aggregate.metrics.run_count if aggregate is not None else 0,
-        step_count=aggregate.metrics.step_count if aggregate is not None else 0,
-        metrics=aggregate.metrics if aggregate is not None else RunMetricsSummary(),
-        created_at=session.created_at if session is not None else aggregate.created_at,
-        updated_at=session.updated_at if session is not None else aggregate.updated_at,
-        chat_context_scope_id=session.chat_context_scope_id
-        if session is not None
-        else None,
-        created_by=session.created_by if session is not None else None,
-        base_agent_id=session.base_agent_id if session is not None else None,
-        root_state_status=item.root_state_status,
-        source_session_id=session.source_session_id if session is not None else None,
-        fork_context_summary=session.fork_context_summary
-        if session is not None
-        else None,
-    )
+from server.services.metrics import summarize_runs_paginated
 
 
 class SessionViewService:
@@ -98,11 +36,32 @@ class SessionViewService:
         offset: int,
         agent_id: str | None = None,
     ) -> PageSlice[SessionSummaryRecord]:
-        items = await self._collect_session_views(agent_id=agent_id)
-        total = len(items)
-        page = items[offset : offset + limit]
+        sessions = await self._list_store_sessions(agent_id=agent_id)
+        sessions.sort(key=lambda s: s.updated_at, reverse=True)
+        total = len(sessions)
+        page = sessions[offset : offset + limit]
+
+        if not page:
+            return PageSlice(
+                items=[], limit=limit, offset=offset, has_more=False, total=total
+            )
+
+        page_ids = [s.id for s in page]
+        run_counts, step_counts, latest_runs = await self._batch_fetch_summaries(
+            page_ids
+        )
+        items = [
+            self._assemble_summary(
+                s,
+                last_run=latest_runs.get(s.id),
+                run_count=run_counts.get(s.id, 0),
+                step_count=step_counts.get(s.id, 0),
+                root_state_status=await self._get_root_state_status(s.id),
+            )
+            for s in page
+        ]
         return PageSlice(
-            items=[_summary_record(item) for item in page],
+            items=items,
             limit=limit,
             offset=offset,
             has_more=offset + limit < total,
@@ -110,119 +69,105 @@ class SessionViewService:
         )
 
     async def get_session_detail(self, session_id: str) -> SessionDetailRecord | None:
-        items = await self._collect_session_views(session_id=session_id)
-        if not items:
+        session = await self._get_session(session_id)
+        if session is None:
             return None
-        item = items[0]
-        scheduler_state = await self._get_scheduler_state(
-            item.session, session_id=session_id
+
+        metrics = await summarize_runs_paginated(
+            self._run_storage, session_id=session_id
         )
+        latest_runs = await self._run_storage.list_runs(session_id=session_id, limit=1)
+        last_run = latest_runs[0] if latest_runs else None
+        summary = self._assemble_summary(
+            session,
+            last_run=last_run,
+            run_count=metrics.run_count,
+            step_count=metrics.step_count,
+            root_state_status=await self._get_root_state_status(session_id),
+            metrics=metrics,
+        )
+        scheduler_state = await self._get_scheduler_state(session_id)
+        chat_context = await self._get_chat_context(session)
+
         return SessionDetailRecord(
-            summary=_summary_record(item),
-            session=item.session,
-            chat_context=item.chat_context,
+            summary=summary,
+            session=session,
+            chat_context=chat_context,
             scheduler_state=scheduler_state,
         )
 
-    async def _collect_session_views(
-        self,
+    # -- Internal helpers ------------------------------------------------------
+
+    async def _batch_fetch_summaries(
+        self, session_ids: list[str]
+    ) -> tuple[dict[str, int], dict[str, int], dict[str, Run | None]]:
+        run_counts = await self._run_storage.batch_count_runs(session_ids)
+        step_counts = await self._run_storage.batch_get_step_counts(session_ids)
+        latest_runs = await self._run_storage.batch_get_latest_runs(session_ids)
+        return run_counts, step_counts, latest_runs
+
+    @staticmethod
+    def _assemble_summary(
+        session: Session,
         *,
-        agent_id: str | None = None,
-        session_id: str | None = None,
-    ) -> list[SessionViewItem]:
-        store_sessions = await self._list_store_sessions(
-            agent_id=agent_id, session_id=session_id
+        last_run: Run | None,
+        run_count: int,
+        step_count: int,
+        root_state_status: str | None,
+        metrics: RunMetricsSummary | None = None,
+    ) -> SessionSummaryRecord:
+        last_user_input = (
+            UserMessage.to_transport_payload(last_run.user_input)
+            if last_run is not None
+            else None
         )
-        store_session_ids = {session.id for session in store_sessions}
-        aggregate_map = await self._collect_aggregate_map(
-            agent_id=agent_id,
-            session_id=session_id,
-            session_ids=store_session_ids,
+        last_response = (
+            last_run.response_content[:200]
+            if last_run is not None and last_run.response_content
+            else None
         )
-        view_map: dict[str, SessionViewItem] = {
-            key: SessionViewItem(aggregate=value)
-            for key, value in aggregate_map.items()
-        }
-
-        for session in store_sessions:
-            item = view_map.get(session.id)
-            if item is None:
-                item = SessionViewItem()
-                view_map[session.id] = item
-            item.session = session
-            if (
-                self._session_store is not None
-                and session.chat_context_scope_id is not None
-            ):
-                item.chat_context = await self._session_store.get_chat_context(
-                    session.chat_context_scope_id
-                )
-            item.root_state_status = await self._get_root_state_status(session.id)
-
-        if (
-            session_id is not None
-            and session_id in view_map
-            and view_map[session_id].root_state_status is None
-        ):
-            view_map[session_id].root_state_status = await self._get_root_state_status(
-                session_id
-            )
-
-        items = list(view_map.values())
-        items.sort(key=_session_sort_key, reverse=True)
-        return items
-
-    async def _collect_aggregate_map(
-        self,
-        *,
-        agent_id: str | None,
-        session_id: str | None,
-        session_ids: set[str],
-    ) -> dict[str, SessionAggregate]:
-        if session_id is not None:
-            aggregates = await collect_session_aggregates(
-                self._run_storage,
-                session_id=session_id,
-            )
-        else:
-            aggregates = await collect_session_aggregates(self._run_storage)
-            if agent_id is not None:
-                aggregates = (
-                    [
-                        aggregate
-                        for aggregate in aggregates
-                        if aggregate.session_id in session_ids
-                    ]
-                    if session_ids
-                    else []
-                )
-        return {aggregate.session_id: aggregate for aggregate in aggregates}
+        return SessionSummaryRecord(
+            session_id=session.id,
+            base_agent_id=session.base_agent_id,
+            last_user_input=last_user_input,
+            last_response=last_response,
+            run_count=run_count,
+            step_count=step_count,
+            metrics=metrics if metrics is not None else RunMetricsSummary(),
+            created_at=session.created_at,
+            updated_at=session.updated_at,
+            chat_context_scope_id=session.chat_context_scope_id,
+            created_by=session.created_by,
+            root_state_status=root_state_status,
+            source_session_id=session.source_session_id,
+            fork_context_summary=session.fork_context_summary,
+        )
 
     async def _list_store_sessions(
         self,
         *,
         agent_id: str | None = None,
-        session_id: str | None = None,
     ) -> list[Session]:
         if self._session_store is None:
             return []
-        if session_id is not None:
-            session = await self._session_store.get_session(session_id)
-            return [session] if session is not None else []
         if agent_id is not None:
             return await self._session_store.list_sessions_by_base_agent(agent_id)
         return await self._session_store.list_sessions()
 
-    async def _get_scheduler_state(
-        self,
-        session: Session | None,
-        *,
-        session_id: str,
-    ):
+    async def _get_session(self, session_id: str) -> Session | None:
+        if self._session_store is None:
+            return None
+        return await self._session_store.get_session(session_id)
+
+    async def _get_chat_context(self, session: Session) -> ChannelChatContext | None:
+        if self._session_store is None or session.chat_context_scope_id is None:
+            return None
+        return await self._session_store.get_chat_context(session.chat_context_scope_id)
+
+    async def _get_scheduler_state(self, session_id: str):
         if self._scheduler is None:
             return None
-        target_state_id = session.id if session is not None else session_id
-        return await self._scheduler.get_state(target_state_id)
+        return await self._scheduler.get_state(session_id)
 
     async def _get_root_state_status(self, session_id: str) -> str | None:
         if self._scheduler is None:
