@@ -229,7 +229,7 @@ def _remove_retrospect_tool_call(messages: list[dict[str, Any]]) -> None:
 async def maybe_apply_retrospect(
     *,
     feedback: str | None,
-    state: RunContext,
+    state: "RunContext",
     step_lookup: dict[str, dict[str, Any]],
 ) -> None:
     """Apply retrospect if a retrospect_tool_result was executed this batch."""
