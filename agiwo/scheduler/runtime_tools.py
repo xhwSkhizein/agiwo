@@ -633,6 +633,6 @@ class RetrospectToolResultTool(BaseTool):
             tool_call_id=context.tool_call_id,
             input_args=parameters,
             content=feedback,
-            output={"_retrospect": True},
+            output={},
             start_time=start_time,
         )
