@@ -14,6 +14,28 @@ if TYPE_CHECKING:
     from agiwo.agent.agent import Agent
 
 
+def validate_child_subset(
+    child: list[str] | tuple[str, ...] | None,
+    parent: list[str] | tuple[str, ...] | None,
+    label: str,
+) -> None:
+    """Validate that *child* allowlist is a subset of *parent*'s.
+
+    Both ``None`` (unrestricted) and ``[]`` (empty) are accepted without
+    error.  Only when both lists are non-None and child contains items
+    absent from parent will a ``ValueError`` be raised.
+    """
+    if child is None or parent is None:
+        return
+    parent_set = set(parent)
+    disallowed = [item for item in child if item not in parent_set]
+    if disallowed:
+        items = ", ".join(disallowed)
+        raise ValueError(
+            f"child {label} must be a subset of the parent's {label}: {items}"
+        )
+
+
 @dataclass(frozen=True)
 class ResolvedAgentDefinition:
     hooks: AgentHooks
@@ -70,31 +92,18 @@ def resolve_child_definition(
     Note: Tool instances are no longer resolved here. Callers should use ToolManager.get_tools()
     to obtain tool instances based on the returned config.allowed_tools.
     """
-    # Determine effective allowed_tools for child
-    parent_allowed_tools = agent.config.allowed_tools
-    if child_allowed_tools is None:
-        # Inherit from parent if not explicitly specified
-        effective_allowed_tools = parent_allowed_tools
-    elif child_allowed_tools == []:
-        # Empty list means no builtin tools (only extra_tools will be used)
-        effective_allowed_tools = []
-    else:
-        # Validate child_allowed_tools is subset of parent's
-        effective_allowed_tools = list(child_allowed_tools)
-        if parent_allowed_tools is not None:
-            parent_allowed = set(parent_allowed_tools)
-            disallowed = [
-                name for name in effective_allowed_tools if name not in parent_allowed
-            ]
-            if disallowed:
-                tool_list = ", ".join(disallowed)
-                raise ValueError(
-                    "child_allowed_tools must be a subset of the parent's "
-                    f"allowed_tools: {tool_list}"
-                )
+    parent_config = agent.config
 
-    child_options = agent.config.options.model_copy(deep=True)
-    child_options.enable_termination_summary = True
+    # --- allowed_tools ---
+    if child_allowed_tools is None:
+        effective_allowed_tools = parent_config.allowed_tools
+    else:
+        effective_allowed_tools = list(child_allowed_tools)
+        validate_child_subset(
+            effective_allowed_tools, parent_config.allowed_tools, "allowed_tools"
+        )
+
+    # --- allowed_skills ---
     validate_expanded_allowed_skills(child_allowed_skills)
     validated_child_allowed = (
         get_global_skill_manager().validate_explicit_allowed_skills(
@@ -103,34 +112,24 @@ def resolve_child_definition(
     )
     if child_allowed_skills is None:
         effective_allowed_skills = (
-            list(agent.config.allowed_skills)
-            if agent.config.allowed_skills is not None
+            list(parent_config.allowed_skills)
+            if parent_config.allowed_skills is not None
             else None
         )
     else:
         effective_allowed_skills = validated_child_allowed
-        if (
-            agent.config.allowed_skills is not None
-            and effective_allowed_skills is not None
-        ):
-            parent_allowed = set(agent.config.allowed_skills)
-            disallowed = [
-                skill
-                for skill in effective_allowed_skills
-                if skill not in parent_allowed
-            ]
-            if disallowed:
-                skill_list = ", ".join(disallowed)
-                raise ValueError(
-                    "child_allowed_skills must be a subset of the parent's "
-                    f"allowed_skills: {skill_list}"
-                )
+        validate_child_subset(
+            effective_allowed_skills, parent_config.allowed_skills, "allowed_skills"
+        )
+
+    child_options = parent_config.options.model_copy(deep=True)
+    child_options.enable_termination_summary = True
 
     child_config = AgentConfig(
         name=agent.name,
         description=agent.description,
         system_prompt=compose_child_system_prompt(
-            base_prompt=agent.config.system_prompt,
+            base_prompt=parent_config.system_prompt,
             system_prompt_override=system_prompt_override,
             instruction=instruction,
         ),
@@ -138,9 +137,7 @@ def resolve_child_definition(
         allowed_skills=effective_allowed_skills,
         allowed_tools=effective_allowed_tools,
     )
-    return ResolvedChildDefinition(
-        config=child_config,
-    )
+    return ResolvedChildDefinition(config=child_config)
 
 
 __all__ = [
@@ -149,4 +146,5 @@ __all__ = [
     "build_agent_hooks",
     "resolve_agent_definition",
     "resolve_child_definition",
+    "validate_child_subset",
 ]

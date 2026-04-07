@@ -23,13 +23,14 @@ The project favors explicit runtime wiring over hidden global state. Agent execu
 
 ## Current Capabilities
 
-- Streaming-first agent execution: `run()` and `run_stream()` share the same execution pipeline.
-- Tool calling with session-scoped caching and builtin tools such as `bash`, `bash_process`, `web_search`, `web_reader`, and memory retrieval.
-- Agent-as-tool composition through `AgentTool` / `as_tool()`.
-- Scheduler orchestration with `submit`, `enqueue_input`, `stream`, `wait_for`, sleep/wake, pending events, and steering.
-- Run/step persistence plus trace collection with memory, SQLite, and Mongo-backed implementations where supported.
-- Optional file-based skills discovered from skill directories.
-- Console APIs for agent config CRUD, chat SSE, trace inspection, scheduler state inspection, and channel runtime integration.
+- Streaming-first agent execution: `run()` and `run_stream()` share the same execution pipeline via `start()` + `AgentExecutionHandle`
+- Tool calling with session-scoped caching and builtin tools: `bash`, `bash_process`, `web_search`, `web_reader`, `memory` retrieval, and more
+- Agent-as-tool composition through `Agent.as_tool()` with depth tracking and cycle detection
+- Global skill discovery via `AGIWO_SKILL_DIRS`, per-agent filtering via `allowed_skills`
+- Context optimization: context rollback (empty step removal) and tool result retrospect (compression)
+- Scheduler orchestration: `submit`, `enqueue_input`, `route_root_input`, `stream`, `wait_for`, `steer`, `cancel`, `shutdown`, plus child-agent spawn/sleep/wake lifecycle
+- Run/step persistence plus trace collection with memory, SQLite, and MongoDB backends
+- Console APIs for agent config CRUD, chat SSE, trace inspection, scheduler state and chat, channel integration (Feishu)
 
 ## Quick Start
 
@@ -76,7 +77,7 @@ async def main() -> None:
             description="A helpful assistant",
             system_prompt="You are a concise assistant.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(id="gpt-4o-mini"),
     )
 
     result = await agent.run("What is 2 + 2?")
@@ -95,8 +96,7 @@ asyncio.run(main())
 ### Custom Tool Example
 
 ```python
-from agiwo.tool import BaseTool, ToolResult
-from agiwo.tool import ToolContext
+from agiwo.tool import BaseTool, ToolResult, ToolContext
 
 
 class WeatherTool(BaseTool):
@@ -119,11 +119,8 @@ class WeatherTool(BaseTool):
         abort_signal=None,
     ) -> ToolResult:
         city = parameters["city"]
-        del context, abort_signal
         return ToolResult.success(
             tool_name=self.name,
-            tool_call_id=parameters.get("tool_call_id", ""),
-            input_args=parameters,
             content=f"Weather in {city}: sunny, 25C",
             content_for_user=f"{city}: sunny, 25C",
             output={"city": city, "condition": "sunny", "temp_c": 25},
@@ -142,7 +139,7 @@ researcher = Agent(
         description="Research specialist",
         system_prompt="You are strong at collecting and summarizing evidence.",
     ),
-    model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
+    model=DeepseekModel(id="deepseek-chat"),
 )
 
 orchestrator = Agent(
@@ -151,7 +148,7 @@ orchestrator = Agent(
         description="Delegates focused research tasks",
         system_prompt="Delegate independent research tasks when useful.",
     ),
-    model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
+    model=DeepseekModel(id="deepseek-chat"),
     tools=[researcher.as_tool()],
 )
 ```
@@ -173,7 +170,7 @@ async def main() -> None:
             description="Can delegate and wait",
             system_prompt="Use spawned agents only for truly independent sub-tasks.",
         ),
-        model=DeepseekModel(id="deepseek-chat", name="deepseek-chat"),
+        model=DeepseekModel(id="deepseek-chat"),
     )
 
     async with Scheduler() as scheduler:
@@ -190,11 +187,11 @@ For long-running roots, the scheduler API also supports `submit`, `enqueue_input
 
 ### Start The API Server
 
-The Console environment template lives at [console/.env.example](console/.env.example).
+The Console environment template lives at [console/.env.example.full](console/.env.example.full).
 
 ```bash
 cd console
-cp .env.example .env
+cp .env.example.full .env
 uv run uvicorn server.app:app --reload --env-file .env
 ```
 
@@ -239,31 +236,40 @@ Environment variable namespaces:
 
 Important current rules:
 
-- compatible providers (`openai-compatible`, `anthropic-compatible`) must be configured with explicit `base_url` and `api_key_env_name`
-- builtin tools that create their own models read shared defaults from `AGIWO_TOOL_DEFAULT_MODEL_*`
-- Console agent configs store provider/model selection plus model params; agent config writes are full replace, not patch merge
-- scheduler state storage is owned by the `Scheduler`, while Console `StorageManager` only manages run-step, trace, and citation storage
+- Compatible providers (`openai-compatible`, `anthropic-compatible`) must be configured with explicit `base_url` and `api_key_env_name`
+- Builtin tools that create their own models read shared defaults from `AGIWO_TOOL_DEFAULT_MODEL_*`
+- Agent config includes `allowed_skills: list[str] | None` to filter available skills (global skill discovery is configured via `AGIWO_SKILL_DIRS`)
+- Console agent config writes are full replace, not patch merge
+- Scheduler state storage is owned by the `Scheduler`; Console `StorageManager` manages run-step, trace, and citation storage only
 
 ## Architecture At A Glance
 
 ### SDK
 
-- `agiwo/agent/`: canonical agent runtime: public `Agent` API, runtime types, child-agent adapter, hooks, prompt assembly, run/session state, streaming, and run-step storage integration
-- `agiwo/llm/`: model abstractions, providers, config policy, factory, token usage estimation
+- `agiwo/agent/`: canonical agent runtime
+  - `models/`: data models (config, run, stream, input, step)
+  - `runtime/`: session runtime, run context, state helpers
+  - `nested/`: child-agent adapter (`AgentTool`, `as_tool()`)
+  - `retrospect/`: tool result retrospect optimization
+  - `storage/`: run/step persistence (memory, SQLite, MongoDB)
+- `agiwo/llm/`: model abstractions, providers, config policy, factory (`create_model`), token usage estimation
 - `agiwo/tool/`: tool abstractions, `ToolContext`, builtin tools, authz domain types, process registry, citation storage
-- `agiwo/scheduler/`: orchestration facade, engine, runner, command models, runtime state, tool control, store, runtime tools
+- `agiwo/scheduler/`: orchestration facade, engine, runner, commands, runtime state, tool control, store, runtime tools
 - `agiwo/workspace/`: workspace layout, bootstrap, and workspace document loading
 - `agiwo/memory/`: shared MEMORY indexing/search plus `WorkspaceMemoryService`
 - `agiwo/observability/`: trace/span models and storage backends; `agiwo.agent.trace_writer.AgentTraceCollector` bridges agent runs into traces
-- `agiwo/skill/`: skill discovery, loading, registry, `SkillTool`
+- `agiwo/skill/`: skill discovery, loading, registry, `SkillTool`, allowlist handling
+- `agiwo/embedding/`: embedding abstractions and factory (local/OpenAI-style)
+- `agiwo/config/`: SDK global settings, provider enums, termination config
+- `agiwo/utils/`: cross-module runtime tools, abort signals, logging, storage support
 
 ### Console
 
 - `console/server/routers/`: HTTP and SSE API boundary
-- `console/server/services/`: agent lifecycle, registry, storage wiring, SSE services
-- `console/server/domain/`: shared Console domain models
+- `console/server/services/`: agent lifecycle (`agent_lifecycle.py`), registry (`agent_registry/`), storage wiring (`storage_wiring.py`), tool catalog, metrics, SSE services
+- `console/server/models/`: shared Console data models (views, session, config)
 - `console/server/channels/`: channel runtime, session binding, Feishu integration
-- `console/server/tools.py`: canonical tool catalog and tool reference resolution
+- `console/server/config.py`: ConsoleConfig (pydantic-settings, env prefix: AGIWO_CONSOLE_)
 - `console/web/`: Next.js frontend
 
 ## Development Workflow
@@ -295,11 +301,12 @@ uv run pytest tests/ -v
 
 ## Current Status
 
-The project is usable for experimentation, but still moving quickly. Areas that still change often:
+The project is usable for experimentation and development. Core SDK APIs (Agent, Tool, Scheduler) are stabilizing; Console APIs continue to evolve with new features.
 
-- module boundaries and internal decomposition during ongoing refactors
-- Console domain/channel/session wiring
-- scheduler orchestration details and operator-facing controls
-- provider/config normalization and builtin tool dependency construction
+Areas that still change:
+
+- Console channel/session wiring and Feishu integration details
+- Scheduler orchestration edge cases and operator-facing controls
+- Trace query APIs and visualization
 
 If you are changing the architecture, update both [AGENTS.md](AGENTS.md) and this README so the repo-level guidance stays aligned with the code.

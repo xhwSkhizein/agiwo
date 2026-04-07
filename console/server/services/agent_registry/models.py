@@ -49,24 +49,12 @@ class AgentConfigRecord(BaseModel):
                 else None
             )
         )
-        # Validate allowed_tools if provided (allow agent: prefix for agent tool references)
         if normalized.get("allowed_tools") is not None:
-            tool_manager = get_global_tool_manager()
-            allowed_tools = list(normalized.get("allowed_tools"))
-            # Separate builtin tool names from agent tool references
-            builtin_tools = [t for t in allowed_tools if not t.startswith("agent:")]
-            agent_refs = [t for t in allowed_tools if t.startswith("agent:")]
-            # Validate agent references have non-empty agent ID
-            for ref in agent_refs:
-                agent_id = ref[len("agent:") :].strip()
-                if not agent_id:
-                    raise ValueError(f"Invalid tool reference: {ref!r}")
-            # Only validate builtin tool names
-            if builtin_tools:
-                validated_builtin = tool_manager.normalize_allowed_tools(builtin_tools)
-                normalized["allowed_tools"] = list(validated_builtin) + agent_refs
-            else:
-                normalized["allowed_tools"] = agent_refs
+            normalized["allowed_tools"] = (
+                get_global_tool_manager().normalize_allowed_tools(
+                    list(normalized["allowed_tools"])
+                )
+            )
         return normalized
 
 

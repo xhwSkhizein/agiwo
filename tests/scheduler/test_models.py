@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
+    ChildAgentConfigOverrides,
     PendingEvent,
     SchedulerConfig,
     SchedulerEventType,
@@ -15,8 +16,11 @@ from agiwo.scheduler.models import (
     WakeType,
     to_seconds,
 )
+from agiwo.scheduler.formatting import build_fork_task_notice
 from agiwo.scheduler.store.codec import (
+    deserialize_child_agent_config_overrides,
     deserialize_wake_condition_for_store,
+    serialize_child_agent_config_overrides,
     serialize_wake_condition_for_store,
 )
 
@@ -211,3 +215,32 @@ class TestTaskLimits:
         assert limits.max_children_per_agent == 10
         assert limits.default_wait_timeout == 600.0
         assert limits.max_wake_count == 20
+
+
+class TestChildAgentConfigOverridesCodec:
+    def test_fork_flag_round_trip(self):
+        overrides = ChildAgentConfigOverrides(fork=True)
+        data = serialize_child_agent_config_overrides(overrides)
+        assert data["fork"] is True
+        restored = deserialize_child_agent_config_overrides(data)
+        assert restored.fork is True
+
+    def test_fork_flag_default_false(self):
+        overrides = ChildAgentConfigOverrides()
+        data = serialize_child_agent_config_overrides(overrides)
+        assert "fork" not in data
+        restored = deserialize_child_agent_config_overrides(data)
+        assert restored.fork is False
+
+    def test_fork_flag_missing_in_data(self):
+        restored = deserialize_child_agent_config_overrides({"instruction": "hi"})
+        assert restored.fork is False
+
+
+class TestBuildForkTaskNotice:
+    def test_wraps_task_with_notice(self):
+        result = build_fork_task_notice("Analyze data")
+        assert "<system-notice>" in result
+        assert "forked child agent" in result
+        assert "Do NOT use spawn_agent" in result
+        assert result.endswith("Analyze data")

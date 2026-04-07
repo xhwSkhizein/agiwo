@@ -6,6 +6,7 @@ states should run next; that remains the engine's job.
 """
 
 import asyncio
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from agiwo.scheduler.commands import DispatchAction, DispatchReason
 from agiwo.scheduler.formatting import (
     SHUTDOWN_SUMMARY_TASK,
     build_events_message,
+    build_fork_task_notice,
     build_timeout_message,
     build_wake_message,
 )
@@ -53,7 +55,6 @@ class RunnerContext:
     notify_state_change: Callable[[str], None]
     nudge: Callable[[], None]
     semaphore: asyncio.Semaphore
-    scheduling_tools: tuple[object, ...]
 
 
 class SchedulerRunner:
@@ -111,35 +112,76 @@ class SchedulerRunner:
             await self._cleanup_after_run(state)
 
     async def create_child_agent(self, state: AgentState) -> Agent:
+        """Create a child agent for a pending scheduler state.
+
+        Scheduling tools are inherited from the parent's extra_tools
+        automatically (``spawn_agent`` is excluded by
+        ``Agent._get_inheritable_extra_tools``).
+
+        In fork mode, the child inherits ALL parent extra tools (including
+        ``spawn_agent``) and the parent's session steps are copied into the
+        child's session for LLM KV cache reuse.
+        """
         parent = self._ctx.rt.agents.get(state.parent_id or "")
         if parent is None:
             raise RuntimeError(f"Parent agent '{state.parent_id}' not found in runtime")
 
         overrides = deserialize_child_agent_config_overrides(state.config_overrides)
-
-        # Convert allowed_tools tuple to list for the API
-        child_allowed_tools = (
-            list(overrides.allowed_tools)
-            if overrides.allowed_tools is not None
-            else None
-        )
-
-        # Child agents get scheduling tools (spawn_agent filtered out to prevent grandchildren)
-        scheduling_tools = [
-            t for t in self._ctx.scheduling_tools if t.name != "spawn_agent"
-        ]
         child = await parent.create_child_agent(
             child_id=state.id,
             instruction=overrides.instruction,
             system_prompt_override=overrides.system_prompt,
-            child_allowed_tools=child_allowed_tools,
+            child_allowed_tools=list(overrides.allowed_tools)
+            if overrides.allowed_tools is not None
+            else None,
             child_allowed_skills=list(overrides.allowed_skills)
             if overrides.allowed_skills is not None
             else None,
-            extra_tools=list(scheduling_tools),
+            inherit_all_extra_tools=overrides.fork,
         )
+
+        if overrides.fork:
+            await self._copy_session_steps_for_fork(parent, child, state)
+
         self._ctx.rt.agents[state.id] = child
         return child
+
+    async def _copy_session_steps_for_fork(
+        self,
+        parent: Agent,
+        child: Agent,
+        state: AgentState,
+    ) -> None:
+        """Copy parent's session steps into the child's session for fork mode."""
+        parent_state = await self._ctx.store.get_state(state.parent_id or "")
+        if parent_state is None:
+            return
+        parent_session_id = parent_state.resolve_runtime_session_id()
+        child_session_id = state.resolve_runtime_session_id()
+
+        parent_steps = await parent.run_step_storage.get_steps(
+            session_id=parent_session_id,
+            agent_id=state.parent_id,
+        )
+        if not parent_steps:
+            return
+
+        forked_steps = [
+            dataclasses.replace(
+                step,
+                id=str(uuid4()),
+                session_id=child_session_id,
+                agent_id=state.id,
+            )
+            for step in parent_steps
+        ]
+        await child.run_step_storage.save_steps_batch(forked_steps)
+        logger.info(
+            "fork_steps_copied",
+            parent_id=state.parent_id,
+            child_id=state.id,
+            steps_count=len(forked_steps),
+        )
 
     async def _build_wake_message(self, state: AgentState) -> UserInput:
         succeeded, failed = await self._collect_child_results(state)
@@ -192,6 +234,9 @@ class SchedulerRunner:
                 if action.input_override is not None
                 else state.task
             )
+            overrides = deserialize_child_agent_config_overrides(state.config_overrides)
+            if overrides.fork:
+                user_input = build_fork_task_notice(user_input)
             await self._save_state(
                 state.with_running(
                     task=user_input,

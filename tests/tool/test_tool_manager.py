@@ -197,18 +197,28 @@ class TestGetOrCreateTool:
 class TestBuildSkillTool:
     """Test _build_skill_tool method."""
 
-    def test_build_skill_tool_returns_none_for_none(self, tool_manager):
-        """When allowed_skills is None, should return None."""
-        result = tool_manager._build_skill_tool(None)
-        assert result is None
-
     def test_build_skill_tool_returns_none_for_empty(self, tool_manager):
-        """When allowed_skills is empty list, should return None."""
+        """When allowed_skills is empty list (disabled), should return None."""
         result = tool_manager._build_skill_tool([])
         assert result is None
 
     @patch("agiwo.tool.manager.get_global_skill_manager")
-    def test_build_skill_tool_creates_tool(self, mock_get_sm, tool_manager):
+    def test_build_skill_tool_creates_tool_for_none(self, mock_get_sm, tool_manager):
+        """When allowed_skills is None (all skills), should create skill tool."""
+        mock_skill_manager = Mock()
+        mock_skill_tool = Mock()
+        mock_skill_manager.create_skill_tool.return_value = mock_skill_tool
+        mock_get_sm.return_value = mock_skill_manager
+
+        result = tool_manager._build_skill_tool(None)
+
+        assert result is mock_skill_tool
+        mock_skill_manager.create_skill_tool.assert_called_once_with(None)
+
+    @patch("agiwo.tool.manager.get_global_skill_manager")
+    def test_build_skill_tool_creates_tool_for_explicit_list(
+        self, mock_get_sm, tool_manager
+    ):
         """When allowed_skills has items, should create skill tool."""
         mock_skill_manager = Mock()
         mock_skill_tool = Mock()

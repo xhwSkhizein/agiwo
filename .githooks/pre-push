@@ -1,0 +1,67 @@
+#!/bin/bash
+
+while read local_ref local_sha remote_ref remote_sha; do
+    [[ -z "$remote_ref" ]] && continue
+
+    if [[ "$remote_ref" =~ ^refs/tags/ ]]; then
+        continue
+    fi
+    if ! [[ "$remote_ref" =~ ^refs/heads/ ]]; then
+        continue
+    fi
+
+    branch_name="${remote_ref#refs/heads/}"
+
+    # Protect branches
+    if [[ "$branch_name" =~ ^(main|dev)$ ]]; then
+        echo "❌ Error: You are not allowed to push a local branch to 'origin/$branch_name'!"
+        exit 1
+    fi
+
+    # Check prefix
+    if ! [[ "$branch_name" =~ ^(feature/|refactor/|bugfix/|release/|docs/).+ ]]; then
+        echo "❌ Error: Branch name '$branch_name' doesn't follow naming convention!"
+        echo "💡 Branch name must start with one of: feature/, refactor/, bugfix/, release/, docs/."
+        exit 1
+    fi
+
+    # Hyphen usage
+    if [[ "$branch_name" =~ ^-|-$ ]] || [[ "$branch_name" =~ -- ]]; then
+        echo "❌ Error: Branch name '$branch_name' has incorrect hyphen usage!"
+        echo "💡 Branch name cannot start/end with hyphen or contain consecutive hyphens (--)."
+        exit 1
+    fi
+
+    # Character validation
+    if [[ "$branch_name" =~ ^release/ ]]; then
+        # Release branches: require content after prefix, allow dots for versions
+        if [[ "$branch_name" == "release/" ]] || ! [[ "$branch_name" =~ ^release/[a-zA-Z0-9/.-]+$ ]]; then
+            echo "❌ Error: Release branch name '$branch_name' is invalid!"
+            echo "💡 Must have version suffix, e.g., release/v1.2.0"
+            exit 1
+        fi
+    else
+        # Other branches: no dots allowed
+        if ! [[ "$branch_name" =~ ^[a-zA-Z0-9/-]+$ ]]; then
+            echo "❌ Error: Branch name '$branch_name' contains invalid characters!"
+            echo "💡 Only letters, numbers, hyphens, and slashes allowed (no dots)."
+            exit 1
+        fi
+    fi
+done
+
+# Run tests
+echo "🚦 Running SDK tests..."
+if ! uv run pytest tests/ -x; then
+    echo "❌ SDK tests failed. Please fix the tests before pushing."
+    exit 1
+fi
+
+echo "🚦 Running Console tests..."
+if ! (cd console && uv run pytest tests/ -x); then
+    echo "❌ Console tests failed. Please fix the tests before pushing."
+    exit 1
+fi
+
+echo "✅ All checks passed!"
+exit 0

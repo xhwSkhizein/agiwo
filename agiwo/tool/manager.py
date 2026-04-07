@@ -14,8 +14,11 @@ from agiwo.tool.builtin.registry import (
 )
 from agiwo.tool.builtin.bash_tool import ensure_bash_tool_pair
 from agiwo.tool.storage.citation import CitationStoreConfig
+from agiwo.skill.allowlist import skills_enabled
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.utils.logging import get_logger
+
+AGENT_TOOL_PREFIX = "agent:"
 
 logger = get_logger(__name__)
 
@@ -124,24 +127,30 @@ class ToolManager:
 
         - None means all default tools are allowed
         - Empty list means no builtin tools allowed
-        - Validates that all tool names exist
-
-        Args:
-            allowed_tools: List of tool names or None
-
-        Returns:
-            Normalized list or None
+        - ``agent:<id>`` prefixed items are accepted as valid tool references
+        - Validates that all non-prefixed tool names exist in the builtin registry
 
         Raises:
-            ValueError: If unknown tool names are specified
+            ValueError: If unknown builtin tool names or malformed agent refs.
         """
         if allowed_tools is None:
             return None
 
-        normalized = list(allowed_tools)
+        normalized: list[str] = []
         available = set(self.list_available_tool_names())
+        unknown: list[str] = []
 
-        unknown = [name for name in normalized if name not in available]
+        for name in allowed_tools:
+            if name.startswith(AGENT_TOOL_PREFIX):
+                agent_id = name[len(AGENT_TOOL_PREFIX) :].strip()
+                if not agent_id:
+                    raise ValueError(f"Invalid tool reference: {name!r}")
+                normalized.append(name)
+            elif name in available:
+                normalized.append(name)
+            else:
+                unknown.append(name)
+
         if unknown:
             raise ValueError(f"Unknown tool names: {', '.join(unknown)}")
 
@@ -262,17 +271,15 @@ class ToolManager:
     ) -> BaseTool | None:
         """Create skill tool if skills are enabled.
 
-        Args:
-            allowed_skills: List of allowed skill names
-
-        Returns:
-            Skill tool instance or None if skills not enabled
+        Semantics:
+            - None → all skills allowed → create SkillTool(allowed_skills=None)
+            - [] → skills disabled → return None
+            - ["x"] → specific skills → create SkillTool(allowed_skills=["x"])
         """
-        if not allowed_skills:  # None or empty list
+        if not skills_enabled(allowed_skills):
             return None
-
         skill_manager = get_global_skill_manager()
-        return skill_manager.create_skill_tool(list(allowed_skills))
+        return skill_manager.create_skill_tool(allowed_skills)
 
     def _merge_tools(
         self,

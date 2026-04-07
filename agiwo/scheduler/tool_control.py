@@ -11,6 +11,7 @@ from agiwo.scheduler.commands import (
     SleepResult,
     SpawnChildRequest,
 )
+from agiwo.agent.definition import validate_child_subset
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     AgentState,
@@ -65,24 +66,12 @@ class SchedulerToolControl:
         )
 
         parent_agent = self._rt.agents.get(request.parent_agent_id)
-
-        # Validate allowed_tools is subset of parent's allowed_tools
-        allowed_tools = request.allowed_tools
-        if allowed_tools is not None:
-            if (
-                parent_agent is not None
-                and parent_agent.config.allowed_tools is not None
-            ):
-                parent_allowed = set(parent_agent.config.allowed_tools)
-                disallowed = [
-                    tool for tool in allowed_tools if tool not in parent_allowed
-                ]
-                if disallowed:
-                    tool_list = ", ".join(disallowed)
-                    raise ValueError(
-                        "Child allowed_tools must be a subset of the parent's "
-                        f"allowed_tools: {tool_list}"
-                    )
+        if parent_agent is not None:
+            validate_child_subset(
+                request.allowed_tools,
+                parent_agent.config.allowed_tools,
+                "allowed_tools",
+            )
 
         state = AgentState(
             id=child_id,
@@ -95,9 +84,10 @@ class SchedulerToolControl:
                     instruction=request.instruction,
                     system_prompt=request.system_prompt,
                     allowed_skills=allowed_skills,
-                    allowed_tools=tuple(allowed_tools)
-                    if allowed_tools is not None
+                    allowed_tools=tuple(request.allowed_tools)
+                    if request.allowed_tools is not None
                     else None,
+                    fork=request.fork,
                 )
             ),
             depth=parent_state.depth + 1,

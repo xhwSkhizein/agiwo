@@ -286,6 +286,65 @@ class TestSpawnAgentTool:
         assert not tool_result.is_success
         assert "explicit skill names" in tool_result.content
 
+    @pytest.mark.asyncio
+    async def test_spawn_fork_creates_state_with_fork_flag(
+        self, store, control, context
+    ):
+        await _register_parent(store)
+        tool = SpawnAgentTool(control)
+        tool_result = await tool.execute(
+            {
+                "task": "Continue analysis",
+                "fork": True,
+                "child_id": "fork-child",
+                "tool_call_id": "tc-1",
+            },
+            context,
+        )
+        assert tool_result.is_success
+        state = await store.get_state("fork-child")
+        assert state is not None
+        assert state.config_overrides.get("fork") is True
+        assert state.config_overrides.get("instruction") is None
+
+    @pytest.mark.asyncio
+    async def test_spawn_fork_ignores_instruction_and_skills(
+        self, store, control, context
+    ):
+        await _register_parent(store)
+        tool = SpawnAgentTool(control)
+        tool_result = await tool.execute(
+            {
+                "task": "Do work",
+                "fork": True,
+                "instruction": "Use fast mode",
+                "allowed_skills": ["audit"],
+                "child_id": "fork-child-2",
+                "tool_call_id": "tc-1",
+            },
+            context,
+        )
+        assert tool_result.is_success
+        state = await store.get_state("fork-child-2")
+        assert state is not None
+        assert state.config_overrides.get("instruction") is None
+        assert state.config_overrides.get("allowed_skills") is None
+        assert state.config_overrides.get("fork") is True
+
+    @pytest.mark.asyncio
+    async def test_gate_denies_spawn_from_child_agent(self, store, control):
+        child_context = build_tool_context(
+            session_id="sess-1",
+            run_id="run-1",
+            agent_id="child-1",
+            agent_name="child",
+            depth=1,
+        )
+        tool = SpawnAgentTool(control)
+        decision = await tool.gate({"task": "Sub-task"}, child_context)
+        assert decision.action == "deny"
+        assert "cannot spawn" in decision.reason.lower()
+
 
 class TestSleepAndWaitTool:
     @pytest.mark.asyncio

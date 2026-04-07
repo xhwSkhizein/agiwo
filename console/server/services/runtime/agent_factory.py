@@ -23,7 +23,6 @@ from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
 )
-from server.services.tool_catalog.tool_builder import build_tools
 from server.services.tool_catalog.tool_references import AGENT_TOOL_PREFIX
 
 from agiwo.utils.logging import get_logger
@@ -97,6 +96,12 @@ async def build_agent(
     id: str | None = None,
     _building: set[str] | None = None,
 ) -> Agent:
+    """Construct an Agent from a persisted config record.
+
+    Builtin tools and skill tool are assembled by ``Agent.__init__`` via
+    ``ToolManager``.  This function only builds *agent-as-tool* extras
+    (``agent:<id>`` references) and passes them to the Agent constructor.
+    """
     if _building is None:
         _building = set()
     if config.id in _building:
@@ -111,51 +116,25 @@ async def build_agent(
         trace_storage=build_trace_storage_config(console_config),
     )
 
-    async def _build_agent_tool(ref: str) -> BaseTool | None:
+    # Ensure ToolManager has citation store config before Agent assembly
+    get_global_tool_manager(build_citation_store_config(console_config))
+
+    # Build agent-as-tool extras only (agent:<id> references)
+    agent_tools: list[BaseTool] = []
+    for ref in config.allowed_tools or []:
+        if not ref.startswith(AGENT_TOOL_PREFIX):
+            continue
         agent_id = ref[len(AGENT_TOOL_PREFIX) :]
         child_config = await registry.get_agent(agent_id)
         if child_config is None:
-            return None
+            continue
         child_agent = await build_agent(
             child_config,
             console_config,
             registry,
             _building=_building.copy(),
         )
-        return child_agent.as_tool()
-
-    # Build agent-as-tools (custom tools that reference other agents)
-    agent_tools = await build_tools(
-        config.allowed_tools or [],
-        console_config=console_config,
-        build_agent_tool=_build_agent_tool,
-    )
-
-    # Determine allowed_tools: use config.allowed_tools if set, otherwise use defaults
-    if config.allowed_tools is not None:
-        allowed_tools = list(config.allowed_tools)
-    else:
-        # Fallback to default tools for agents without explicit allowed_tools
-        allowed_tools = get_global_tool_manager().list_default_tool_names()
-
-    logger.info(
-        "build agent, allowed_tools", agent=config.id, allowed_tools=allowed_tools
-    )
-
-    # Get citation store config and initialize tool manager with it
-    citation_store_config = build_citation_store_config(console_config)
-    tool_manager = get_global_tool_manager(citation_store_config)
-
-    # Get builtin tools (stateless tools cached, non-stateless created fresh)
-    builtin_tools = tool_manager.get_tools(
-        allowed_tools, allowed_skills=config.allowed_skills
-    )
-
-    # Merge builtin tools with custom agent-as-tools
-    all_tools = list(builtin_tools) + agent_tools
-    logger.info(
-        "build agent, final tools", agent=config.id, tools=[t.name for t in all_tools]
-    )
+        agent_tools.append(child_agent.as_tool())
 
     agent_config = AgentConfig(
         name=config.name,
@@ -163,12 +142,18 @@ async def build_agent(
         system_prompt=config.system_prompt,
         options=options,
         allowed_skills=config.allowed_skills,
-        allowed_tools=allowed_tools,
+        allowed_tools=config.allowed_tools,
+    )
+    logger.info(
+        "build_agent",
+        agent=config.id,
+        allowed_tools=config.allowed_tools,
+        extra_tools=[t.name for t in agent_tools],
     )
     return Agent(
         agent_config,
         model=model,
-        tools=all_tools or None,
+        tools=agent_tools or None,
         id=id or config.id,
     )
 

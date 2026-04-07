@@ -16,7 +16,7 @@ from agiwo.scheduler.formatting import (
 )
 from agiwo.scheduler.models import TimeUnit, WaitMode, WakeType
 from agiwo.scheduler.tool_control import SchedulerToolControl
-from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.base import BaseTool, ToolGateDecision, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
 
@@ -59,9 +59,30 @@ class SpawnAgentTool(BaseTool):
                     "items": {"type": "string"},
                     "description": "Optional explicit skill name list the child agent is allowed to use. Must already be expanded and must be a subset of the parent's allowed skills. If omitted, inherits the parent's skills.",
                 },
+                "fork": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, the child agent inherits the parent's full "
+                        "conversation history and identical tool definitions for "
+                        "LLM KV cache reuse. When fork=true, instruction and "
+                        "system_prompt are ignored to keep the prompt prefix "
+                        "identical. The child will NOT be able to spawn further "
+                        "agents."
+                    ),
+                    "default": False,
+                },
             },
             "required": ["task"],
         }
+
+    async def gate(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+    ) -> ToolGateDecision:
+        if context.depth > 0:
+            return ToolGateDecision.deny("Child agents cannot spawn further agents.")
+        return ToolGateDecision.allow()
 
     async def execute(
         self,
@@ -82,10 +103,11 @@ class SpawnAgentTool(BaseTool):
             )
 
         task = parameters.get("task", "")
-        instruction = parameters.get("instruction")
+        fork = bool(parameters.get("fork", False))
+        instruction = None if fork else parameters.get("instruction")
         custom_child_id = parameters.get("child_id")
-        system_prompt = parameters.get("system_prompt")
-        allowed_skills = parameters.get("allowed_skills")
+        system_prompt = None if fork else parameters.get("system_prompt")
+        allowed_skills = None if fork else parameters.get("allowed_skills")
         try:
             state = await self._port.spawn_child(
                 SpawnChildRequest(
@@ -96,6 +118,7 @@ class SpawnAgentTool(BaseTool):
                     system_prompt=system_prompt,
                     custom_child_id=custom_child_id,
                     allowed_skills=allowed_skills,
+                    fork=fork,
                 )
             )
         except ValueError as exc:

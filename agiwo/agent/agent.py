@@ -36,6 +36,8 @@ from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 from agiwo.workspace import WorkspaceBootstrapper, WorkspaceDocumentStore
 
+_CHILD_EXCLUDED_TOOLS: frozenset[str] = frozenset({"spawn_agent"})
+
 
 def _generate_default_id(name: str) -> str:
     suffix = secrets.token_hex(3)
@@ -94,6 +96,18 @@ class Agent:
         hooks: AgentHooks | None = None,
         id: str | None = None,
     ) -> None:
+        """Create an Agent.
+
+        Args:
+            config: Agent configuration (allowed_tools / allowed_skills drive
+                    which builtin + skill tools are assembled automatically).
+            model: LLM model to use.
+            tools: Extra / custom tools (e.g. AgentTool, scheduling tools).
+                   Builtin and skill tools are resolved via ``ToolManager``;
+                   this parameter is additive.
+            hooks: Optional agent hooks.
+            id: Stable instance identifier.  Auto-generated if omitted.
+        """
         self._config = copy.deepcopy(config)
         self._id = id or _generate_default_id(self._config.name)
         self._model = model
@@ -109,43 +123,13 @@ class Agent:
         )
         self._hooks = resolved_definition.hooks
 
-        # Build tools tuple, adding/replacing/removing skill tool based on allowed_skills
-        initial_tools = list(tools) if tools else []
-        skill_manager = get_global_skill_manager()
-        new_allowed_skills = (
-            frozenset(self._config.allowed_skills)
-            if self._config.allowed_skills
-            else None
+        self._extra_tools: tuple[BaseTool, ...] = tuple(tools) if tools else ()
+        tool_manager = get_global_tool_manager()
+        self._tools = tool_manager.get_tools(
+            allowed_tools=self._config.allowed_tools,
+            extra_tools=list(self._extra_tools) if self._extra_tools else None,
+            allowed_skills=self._config.allowed_skills,
         )
-
-        # Find existing skill tool
-        existing_skill_idx = None
-        for i, tool in enumerate(initial_tools):
-            if tool.name == "skill":
-                existing_skill_idx = i
-                break
-
-        if new_allowed_skills is not None:
-            # Skills enabled: add or replace skill tool
-            if existing_skill_idx is not None:
-                existing_tool = initial_tools[existing_skill_idx]
-                # Replace if allowed_skills differ
-                if existing_tool._allowed_skills != new_allowed_skills:
-                    skill_tool = skill_manager.create_skill_tool(
-                        self._config.allowed_skills
-                    )
-                    initial_tools[existing_skill_idx] = skill_tool
-            else:
-                # No existing skill tool, add new one
-                skill_tool = skill_manager.create_skill_tool(
-                    self._config.allowed_skills
-                )
-                initial_tools.append(skill_tool)
-        elif existing_skill_idx is not None:
-            # Skills disabled (empty list): remove existing skill tool
-            initial_tools.pop(existing_skill_idx)
-
-        self._tools = tuple(initial_tools)
 
         self._workspace = resolved_definition.workspace
         self._run_step_storage = create_run_step_storage(
@@ -205,6 +189,11 @@ class Agent:
     def tools(self) -> tuple[BaseTool, ...]:
         return self._tools
 
+    @property
+    def extra_tools(self) -> tuple[BaseTool, ...]:
+        """Extra / custom tools originally passed at construction time."""
+        return self._extra_tools
+
     async def get_effective_system_prompt(self) -> str:
         return await self._build_system_prompt(self._config.system_prompt)
 
@@ -231,6 +220,13 @@ class Agent:
             description=description,
             max_depth=max_depth,
         )
+
+    def _get_inheritable_extra_tools(self) -> list[BaseTool]:
+        """Return extra tools that children may inherit.
+
+        Filters out tools in ``_CHILD_EXCLUDED_TOOLS`` (e.g. ``spawn_agent``).
+        """
+        return [t for t in self._extra_tools if t.name not in _CHILD_EXCLUDED_TOOLS]
 
     # --- Child agent ---
     async def run_child(
@@ -274,12 +270,12 @@ class Agent:
             context.metadata.update(combined_metadata)
         child_abort_signal = abort_signal or session_runtime.abort_signal
 
-        # Get tool instances from ToolManager
+        parent_extra = self._get_inheritable_extra_tools()
         tool_manager = get_global_tool_manager()
         child_tools = tool_manager.get_tools(
             resolved_child.config.allowed_tools,
-            # Note: Don't pass allowed_skills here, skill tool is added in Agent.__init__
-            allowed_skills=None,
+            extra_tools=parent_extra or None,
+            allowed_skills=resolved_child.config.allowed_skills,
         )
 
         return await execute_run(
@@ -310,16 +306,21 @@ class Agent:
         child_allowed_tools: list[str] | None = None,
         child_allowed_skills: list[str] | None = None,
         extra_tools: list[BaseTool] | None = None,
+        inherit_all_extra_tools: bool = False,
     ) -> "Agent":
-        """Create a child agent with inherited configuration.
+        """Create a child Agent with inherited configuration.
 
-        Args:
-            child_id: Unique identifier for the child agent
-            instruction: Optional instruction to prepend to system prompt
-            system_prompt_override: Optional system prompt override
-            child_allowed_tools: Subset of parent's allowed_tools, or None/[] to inherit all
-            child_allowed_skills: Subset of parent's allowed_skills, or None to inherit all
-            extra_tools: Additional tools to include beyond resolved builtin tools
+        Parent's extra tools are inherited automatically (minus non-inheritable
+        tools like ``spawn_agent``).  The *extra_tools* parameter adds caller-
+        provided tools on top (e.g. scheduling tools).
+
+        When *inherit_all_extra_tools* is ``True`` (fork mode), the exclusion
+        filter is skipped so that the child receives an identical tool set for
+        LLM KV cache reuse.
+
+        The child ``Agent.__init__`` assembles the full tool set via
+        ``ToolManager`` based on the resolved ``allowed_tools`` /
+        ``allowed_skills`` plus the merged extras.
         """
         resolved_child = resolve_child_definition(
             self,
@@ -329,34 +330,18 @@ class Agent:
             child_allowed_skills=child_allowed_skills,
         )
 
-        # Get tool instances from ToolManager (stateless cached, non-stateless fresh)
-        tool_manager = get_global_tool_manager()
-
-        # When child_allowed_tools is None or empty, inherit parent's custom tools
-        # Filter out tools that are in the builtin registry (those come from allowed_tools)
-        # Also filter out spawn_agent to prevent grandchildren
-        builtin_tool_names = set(tool_manager.list_available_tool_names())
-        parent_custom_tools = [
-            tool
-            for tool in self._tools
-            if tool.name not in builtin_tool_names and tool.name != "spawn_agent"
-        ]
-
-        # Merge parent's custom tools with any extra_tools passed by caller
-        merged_extra_tools = parent_custom_tools + list(extra_tools or [])
-
-        child_tools = tool_manager.get_tools(
-            resolved_child.config.allowed_tools,
-            extra_tools=merged_extra_tools,
-            # Note: Don't pass allowed_skills here, skill tool is added in Agent.__init__
-            allowed_skills=None,
+        parent_extra = (
+            list(self._extra_tools)
+            if inherit_all_extra_tools
+            else self._get_inheritable_extra_tools()
         )
+        merged_extra = parent_extra + list(extra_tools or [])
 
         return self.__class__(
             resolved_child.config,
             id=child_id,
             model=self.model,
-            tools=list(child_tools),
+            tools=merged_extra or None,
             hooks=build_agent_hooks(self._config, self._hooks),
         )
 
