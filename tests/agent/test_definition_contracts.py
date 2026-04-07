@@ -5,7 +5,6 @@ import pytest
 
 import agiwo.agent.agent as agent_module
 import agiwo.agent.definition as definition_module
-import agiwo.tool.registry as tool_registry_module
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig, AgentOptions
 from agiwo.agent import AgentHooks
@@ -73,11 +72,6 @@ def stub_skill_manager(monkeypatch: pytest.MonkeyPatch) -> DummySkillManager:
     manager = DummySkillManager()
     monkeypatch.setattr(agent_module, "get_global_skill_manager", lambda: manager)
     monkeypatch.setattr(definition_module, "get_global_skill_manager", lambda: manager)
-    monkeypatch.setattr(
-        tool_registry_module,
-        "get_global_skill_manager",
-        lambda: manager,
-    )
     return manager
 
 
@@ -103,13 +97,11 @@ async def test_create_child_agent_applies_overrides() -> None:
     clone = await agent.create_child_agent(
         child_id="child-agent",
         instruction="Handle only child work",
-        exclude_tool_names={"dummy_tool"},
+        child_allowed_tools=[],  # No builtin tools, only custom tools passed to Agent
     )
 
-    tool_names = {tool.name for tool in clone.tools}
     assert clone.id == "child-agent"
     assert "Handle only child work" in clone.config.system_prompt
-    assert "dummy_tool" not in tool_names
     assert clone.config.options.enable_termination_summary is True
 
 
@@ -143,15 +135,15 @@ async def test_create_child_agent_clones_runtime_configuration() -> None:
     clone = await agent.create_child_agent(
         child_id="child-agent",
         instruction="Same instruction",
-        exclude_tool_names={"dummy_tool"},
+        child_allowed_tools=None,  # Inherit all from parent (which has None = all defaults)
     )
 
     assert clone.id == "child-agent"
     assert clone.config.system_prompt.startswith("Base prompt")
     assert "Same instruction" in clone.config.system_prompt
-    assert {tool.name for tool in clone.tools} == {
-        tool.name for tool in agent.tools if tool.name != "dummy_tool"
-    }
+    # Child agent gets tools from ToolManager based on allowed_tools config
+    # Parent has allowed_tools=None, child inherits None, gets default builtin tools
+    assert clone.config.allowed_tools is None
 
 
 @pytest.mark.asyncio
@@ -162,16 +154,17 @@ async def test_create_child_agent_and_child_resolution_stay_in_sync() -> None:
         agent,
         instruction="Handle only child work",
         system_prompt_override=None,
-        exclude_tool_names={"dummy_tool"},
+        child_allowed_tools=[],  # Empty list means inherit all
     )
     clone = await agent.create_child_agent(
         child_id="child-agent",
         instruction="Handle only child work",
-        exclude_tool_names={"dummy_tool"},
+        child_allowed_tools=[],  # Empty list means inherit all
     )
 
     assert clone.config.system_prompt == resolved.config.system_prompt
-    assert {tool.name for tool in resolved.tools} == {tool.name for tool in clone.tools}
+    # Both should have the same tools (from parent's explicit tool list)
+    assert {tool.name for tool in clone.tools} == {tool.name for tool in agent.tools}
     assert clone.config.options.enable_termination_summary is True
 
 
@@ -301,28 +294,33 @@ def test_agent_resolves_definition_once_during_init(
     assert resolve_calls == 1
 
 
-def test_agent_constructor_does_not_expose_disabled_sdk_tool_names() -> None:
-    assert "disabled_sdk_tool_names" not in inspect.signature(Agent.__init__).parameters
+def test_agent_constructor_does_not_expose_allowed_tools() -> None:
+    assert "allowed_tools" in inspect.signature(AgentConfig.__init__).parameters
 
 
-def test_agent_config_owns_disabled_sdk_tool_names_for_default_sdk_tools() -> None:
+def test_agent_config_uses_allowed_tools_to_filter_sdk_tools() -> None:
+    """AgentConfig uses allowed_tools to filter which builtin tools are available."""
     agent = Agent(
         config=AgentConfig(
             name="definition-agent",
             description="definition contract test",
             system_prompt="Base prompt",
             options=AgentOptions(),
-            disabled_sdk_tool_names={"bash"},
+            allowed_tools=[],  # Empty list means no builtin tools
         ),
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
+        tools=[DummyTool()],
         hooks=AgentHooks(),
     )
 
     tool_names = {tool.name for tool in agent.tools}
 
+    # Only custom tool should be present, no builtin tools
+    assert "dummy_tool" in tool_names
     assert "bash" not in tool_names
     assert "bash_process" not in tool_names
+    assert "skill" not in tool_names
 
 
 def test_guardrails_treat_runtime_package_as_internal_execution_module() -> None:

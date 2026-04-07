@@ -63,21 +63,25 @@ class SchedulerToolControl:
         allowed_skills = get_global_skill_manager().validate_explicit_allowed_skills(
             request.allowed_skills
         )
+
         parent_agent = self._rt.agents.get(request.parent_agent_id)
-        if allowed_skills is not None:
+
+        # Validate allowed_tools is subset of parent's allowed_tools
+        allowed_tools = request.allowed_tools
+        if allowed_tools is not None:
             if (
                 parent_agent is not None
-                and parent_agent.config.allowed_skills is not None
+                and parent_agent.config.allowed_tools is not None
             ):
-                parent_allowed = set(parent_agent.config.allowed_skills)
+                parent_allowed = set(parent_agent.config.allowed_tools)
                 disallowed = [
-                    skill for skill in allowed_skills if skill not in parent_allowed
+                    tool for tool in allowed_tools if tool not in parent_allowed
                 ]
                 if disallowed:
-                    skill_list = ", ".join(disallowed)
+                    tool_list = ", ".join(disallowed)
                     raise ValueError(
-                        "Child allowed_skills must be a subset of the parent's "
-                        f"allowed_skills: {skill_list}"
+                        "Child allowed_tools must be a subset of the parent's "
+                        f"allowed_tools: {tool_list}"
                     )
 
         state = AgentState(
@@ -91,6 +95,9 @@ class SchedulerToolControl:
                     instruction=request.instruction,
                     system_prompt=request.system_prompt,
                     allowed_skills=allowed_skills,
+                    allowed_tools=tuple(allowed_tools)
+                    if allowed_tools is not None
+                    else None,
                 )
             ),
             depth=parent_state.depth + 1,

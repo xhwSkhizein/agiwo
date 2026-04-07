@@ -464,7 +464,7 @@ class TestSchedulerRunnerCleanup:
         prepared_agent = await agent.create_child_agent(
             child_id=agent.id,
             system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.name for tool in agent.tools},
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent
@@ -730,7 +730,7 @@ class TestSchedulerQueuedMailbox:
         prepared_agent = await agent.create_child_agent(
             child_id=agent.id,
             system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.name for tool in agent.tools},
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent
@@ -906,7 +906,7 @@ class TestSchedulerDebounce:
         ).create_child_agent(
             child_id="parent-dbounce",
             system_prompt_override="",
-            exclude_tool_names=set(),
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent
@@ -990,7 +990,7 @@ class TestSchedulerDebounce:
         ).create_child_agent(
             child_id="parent-wake-ready",
             system_prompt_override="",
-            exclude_tool_names=set(),
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent
@@ -1042,7 +1042,7 @@ class TestSchedulerDebounce:
         ).create_child_agent(
             child_id="parent-timeout",
             system_prompt_override="",
-            exclude_tool_names=set(),
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent

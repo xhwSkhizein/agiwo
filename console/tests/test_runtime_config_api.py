@@ -114,7 +114,7 @@ async def test_update_runtime_config_applies_skills_dirs_and_default_agent(
                 "model_provider": "openai-compatible",
                 "model_name": "qwen3-coder-plus",
                 "system_prompt": "Follow the runtime config",
-                "tools": ["bash", "web_search"],
+                "allowed_tools": ["bash", "web_search"],
                 "allowed_skills": ["skill*"],
                 "model_params": {
                     "base_url": "https://example.com/v1",
@@ -133,7 +133,10 @@ async def test_update_runtime_config_applies_skills_dirs_and_default_agent(
         "skill-alpha",
         "skill-beta",
     ]
-    assert payload["editable"]["default_agent"]["tools"] == ["bash", "web_search"]
+    assert payload["editable"]["default_agent"]["allowed_tools"] == [
+        "bash",
+        "web_search",
+    ]
 
     settings = get_settings()
     assert settings.skills_dirs == ["runtime/skills", "workspace/skills"]

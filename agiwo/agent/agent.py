@@ -28,6 +28,7 @@ from agiwo.agent.storage.factory import create_run_step_storage
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
+from agiwo.tool.manager import get_global_tool_manager
 from agiwo.llm.base import Model
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.factory import create_trace_storage
@@ -104,11 +105,48 @@ class Agent:
         resolved_definition = resolve_agent_definition(
             config=self._config,
             agent_id=self._id,
-            tools=tools,
             hooks=hooks,
         )
         self._hooks = resolved_definition.hooks
-        self._tools = resolved_definition.tools
+
+        # Build tools tuple, adding/replacing/removing skill tool based on allowed_skills
+        initial_tools = list(tools) if tools else []
+        skill_manager = get_global_skill_manager()
+        new_allowed_skills = (
+            frozenset(self._config.allowed_skills)
+            if self._config.allowed_skills
+            else None
+        )
+
+        # Find existing skill tool
+        existing_skill_idx = None
+        for i, tool in enumerate(initial_tools):
+            if tool.name == "skill":
+                existing_skill_idx = i
+                break
+
+        if new_allowed_skills is not None:
+            # Skills enabled: add or replace skill tool
+            if existing_skill_idx is not None:
+                existing_tool = initial_tools[existing_skill_idx]
+                # Replace if allowed_skills differ
+                if existing_tool._allowed_skills != new_allowed_skills:
+                    skill_tool = skill_manager.create_skill_tool(
+                        self._config.allowed_skills
+                    )
+                    initial_tools[existing_skill_idx] = skill_tool
+            else:
+                # No existing skill tool, add new one
+                skill_tool = skill_manager.create_skill_tool(
+                    self._config.allowed_skills
+                )
+                initial_tools.append(skill_tool)
+        elif existing_skill_idx is not None:
+            # Skills disabled (empty list): remove existing skill tool
+            initial_tools.pop(existing_skill_idx)
+
+        self._tools = tuple(initial_tools)
+
         self._workspace = resolved_definition.workspace
         self._run_step_storage = create_run_step_storage(
             self._config.options.storage.run_step_storage
@@ -207,7 +245,7 @@ class Agent:
         parent_metadata: dict[str, Any],
         instruction: str | None = None,
         system_prompt_override: str | None = None,
-        exclude_tool_names: set[str] | None = None,
+        child_allowed_tools: list[str] | None = None,
         metadata_overrides: dict[str, Any] | None = None,
         metadata_updates: dict | None = None,
         abort_signal: AbortSignal | None = None,
@@ -216,7 +254,7 @@ class Agent:
             self,
             instruction=instruction,
             system_prompt_override=system_prompt_override,
-            exclude_tool_names=exclude_tool_names,
+            child_allowed_tools=child_allowed_tools,
         )
         context = RunContext(
             session_runtime=session_runtime,
@@ -235,6 +273,15 @@ class Agent:
         if combined_metadata:
             context.metadata.update(combined_metadata)
         child_abort_signal = abort_signal or session_runtime.abort_signal
+
+        # Get tool instances from ToolManager
+        tool_manager = get_global_tool_manager()
+        child_tools = tool_manager.get_tools(
+            resolved_child.config.allowed_tools,
+            # Note: Don't pass allowed_skills here, skill tool is added in Agent.__init__
+            allowed_skills=None,
+        )
+
         return await execute_run(
             user_input,
             context=context,
@@ -242,12 +289,12 @@ class Agent:
             system_prompt=await build_system_prompt(
                 base_prompt=resolved_child.config.system_prompt,
                 workspace=self._workspace,
-                tools=list(resolved_child.tools),
+                tools=list(child_tools),
                 allowed_skills=resolved_child.config.allowed_skills,
                 bootstrapper=WorkspaceBootstrapper(),
                 document_store=WorkspaceDocumentStore(),
             ),
-            tools=list(resolved_child.tools),
+            tools=list(child_tools),
             hooks=build_agent_hooks(self._config, self._hooks),
             options=resolved_child.config.options.model_copy(deep=True),
             abort_signal=child_abort_signal,
@@ -260,23 +307,56 @@ class Agent:
         child_id: str,
         instruction: str | None = None,
         system_prompt_override: str | None = None,
-        exclude_tool_names: set[str] | None = None,
-        extra_tools: list[BaseTool] | None = None,
+        child_allowed_tools: list[str] | None = None,
         child_allowed_skills: list[str] | None = None,
+        extra_tools: list[BaseTool] | None = None,
     ) -> "Agent":
+        """Create a child agent with inherited configuration.
+
+        Args:
+            child_id: Unique identifier for the child agent
+            instruction: Optional instruction to prepend to system prompt
+            system_prompt_override: Optional system prompt override
+            child_allowed_tools: Subset of parent's allowed_tools, or None/[] to inherit all
+            child_allowed_skills: Subset of parent's allowed_skills, or None to inherit all
+            extra_tools: Additional tools to include beyond resolved builtin tools
+        """
         resolved_child = resolve_child_definition(
             self,
             instruction=instruction,
             system_prompt_override=system_prompt_override,
-            exclude_tool_names=exclude_tool_names,
-            extra_tools=extra_tools,
+            child_allowed_tools=child_allowed_tools,
             child_allowed_skills=child_allowed_skills,
         )
+
+        # Get tool instances from ToolManager (stateless cached, non-stateless fresh)
+        tool_manager = get_global_tool_manager()
+
+        # When child_allowed_tools is None or empty, inherit parent's custom tools
+        # Filter out tools that are in the builtin registry (those come from allowed_tools)
+        # Also filter out spawn_agent to prevent grandchildren
+        builtin_tool_names = set(tool_manager.list_available_tool_names())
+        parent_custom_tools = [
+            tool
+            for tool in self._tools
+            if tool.name not in builtin_tool_names and tool.name != "spawn_agent"
+        ]
+
+        # Merge parent's custom tools with any extra_tools passed by caller
+        merged_extra_tools = parent_custom_tools + list(extra_tools or [])
+
+        child_tools = tool_manager.get_tools(
+            resolved_child.config.allowed_tools,
+            extra_tools=merged_extra_tools,
+            # Note: Don't pass allowed_skills here, skill tool is added in Agent.__init__
+            allowed_skills=None,
+        )
+
         return self.__class__(
             resolved_child.config,
             id=child_id,
             model=self.model,
-            tools=list(resolved_child.tools),
+            tools=list(child_tools),
             hooks=build_agent_hooks(self._config, self._hooks),
         )
 

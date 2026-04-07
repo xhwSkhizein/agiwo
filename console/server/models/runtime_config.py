@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field, field_validator
 from agiwo.config.settings import ModelProvider
 from agiwo.skill.allowlist import normalize_allowed_skills
 from server.models.agent_config import ModelParamsInput
-from server.services.tool_catalog.tool_references import parse_tool_references
 
 
 class DefaultAgentConfigPayload(BaseModel):
@@ -17,29 +16,30 @@ class DefaultAgentConfigPayload(BaseModel):
     model_provider: ModelProvider
     model_name: str
     system_prompt: str = ""
-    tools: list[str] = Field(default_factory=list)
-    allowed_skills: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] | None = None
+    allowed_skills: list[str] | None = None
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
 
-    @field_validator("tools", mode="before")
+    @field_validator("allowed_tools", mode="before")
     @classmethod
-    def _validate_tools(cls, value: object) -> list[str]:
+    def _validate_allowed_tools(cls, value: object) -> list[str] | None:
         if value is None:
-            return []
+            return None
         if not isinstance(value, list):
-            raise ValueError("tools must be a list")
-        return parse_tool_references(value)
+            raise ValueError("allowed_tools must be a list")
+        return list(value)
 
     @field_validator("allowed_skills", mode="before")
     @classmethod
-    def _validate_allowed_skills(cls, value: object) -> list[str]:
+    def _validate_allowed_skills(cls, value: object) -> list[str] | None:
         if value is None:
-            return []
+            return None
         if isinstance(value, str):
             value = [value]
         if not isinstance(value, list):
             raise ValueError("allowed_skills must be a list")
-        return list(normalize_allowed_skills(value) or ())
+        normalized = normalize_allowed_skills(value)
+        return list(normalized) if normalized is not None else None
 
 
 class RuntimeConfigEditablePayload(BaseModel):

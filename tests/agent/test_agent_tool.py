@@ -53,7 +53,7 @@ class FakeAgent:
         parent_metadata: dict[str, object],
         instruction: str | None = None,
         system_prompt_override: str | None = None,
-        exclude_tool_names: set[str] | None = None,
+        child_allowed_tools: list[str] | None = None,
         metadata_overrides: dict | None = None,
         metadata_updates: dict | None = None,
         abort_signal=None,
@@ -69,7 +69,7 @@ class FakeAgent:
             abort_signal,
             instruction,
             system_prompt_override,
-            exclude_tool_names,
+            child_allowed_tools,
             metadata_overrides,
         )
         self.last_metadata_updates = metadata_updates

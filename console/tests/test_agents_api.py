@@ -94,7 +94,7 @@ async def test_update_agent_put_replaces_full_agent_config(client) -> None:
             "model_provider": "openai-compatible",
             "model_name": "MiniMax-M2.5",
             "system_prompt": "Use the new instructions",
-            "tools": ["web_search"],
+            "allowed_tools": ["web_search"],
             "options": {"max_steps": 5, "max_run_cost": None},
             "model_params": {
                 "base_url": "https://api.other.example/v1",
@@ -109,7 +109,7 @@ async def test_update_agent_put_replaces_full_agent_config(client) -> None:
     assert payload["name"] == "tester-v2"
     assert payload["description"] == "replacement"
     assert payload["system_prompt"] == "Use the new instructions"
-    assert payload["tools"] == ["web_search"]
+    assert payload["allowed_tools"] == ["web_search"]
     assert payload["options"]["max_steps"] == 5
     assert payload["options"]["max_run_cost"] is None
     assert payload["model_params"]["base_url"] == "https://api.other.example/v1"
@@ -176,14 +176,14 @@ async def test_create_agent_rejects_unknown_tool_reference(client) -> None:
             "model_provider": "openai",
             "model_name": "gpt-4o-mini",
             "system_prompt": "",
-            "tools": ["missing-tool"],
+            "allowed_tools": ["missing-tool"],
             "options": {},
             "model_params": {},
         },
     )
 
     assert response.status_code == 422
-    assert "Invalid tool reference" in response.text
+    assert "Unknown tool names" in response.text
 
 
 @pytest.mark.asyncio
@@ -205,7 +205,7 @@ async def test_update_agent_rejects_invalid_agent_tool_reference(client) -> None
             "model_provider": "openai",
             "model_name": "gpt-4o-mini",
             "system_prompt": "",
-            "tools": ["agent:   "],
+            "allowed_tools": ["agent:   "],
             "options": {},
             "model_params": {},
         },
@@ -250,7 +250,7 @@ async def test_create_agent_expands_allowed_skill_patterns_at_api_boundary(
             "model_provider": "openai",
             "model_name": "gpt-4o-mini",
             "system_prompt": "",
-            "tools": [],
+            "allowed_tools": [],
             "allowed_skills": ["skill*", "*review"],
             "options": {},
             "model_params": {},
@@ -296,7 +296,7 @@ async def test_create_agent_rejects_unknown_exact_allowed_skill(
             "model_provider": "openai",
             "model_name": "gpt-4o-mini",
             "system_prompt": "",
-            "tools": [],
+            "allowed_tools": [],
             "allowed_skills": ["missing-skill"],
             "options": {},
             "model_params": {},

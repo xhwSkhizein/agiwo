@@ -1,12 +1,13 @@
 """Available tool listing for the Console API."""
 
-from agiwo.tool.builtin.registry import BUILTIN_TOOLS
+from agiwo.tool.builtin.registry import BUILTIN_TOOLS, ensure_builtin_tools_loaded
 
 from server.services.agent_registry import AgentRegistry
 from server.services.tool_catalog.tool_references import AGENT_TOOL_PREFIX
 
 BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "bash": "Execute shell commands in a terminal-style sandbox",
+    "bash_process": "Manage background jobs started by the bash tool",
     "web_search": "Search the web for information",
     "web_reader": "Fetch and extract content from web URLs",
 }
@@ -17,6 +18,7 @@ async def list_available_tools(
     *,
     exclude_agent_id: str | None = None,
 ) -> list[dict[str, str]]:
+    ensure_builtin_tools_loaded()
     tools: list[dict[str, str]] = [
         {
             "name": name,

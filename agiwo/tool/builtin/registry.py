@@ -35,7 +35,7 @@ def _safe_import_module(
 ) -> None:
     try:
         importlib.import_module(module_path)
-        logger.debug("builtin_tool_loaded", module=module_path)
+        logger.info("builtin_tool_loaded", module=module_path)
     except Exception as error:  # noqa: BLE001 - optional builtin dependency boundary
         logger.warning(warning_event, **{warning_key: module_path, "error": str(error)})
 

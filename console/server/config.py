@@ -24,16 +24,8 @@ class DefaultAgentConfig(BaseModel):
     model_name: str = "codex-5.3"
     model_params: dict[str, Any] = Field(default_factory=dict)
     system_prompt: str = ""
-    tools: list[str] = Field(
-        default_factory=lambda: [
-            "bash",
-            "bash_process",
-            "web_search",
-            "web_reader",
-            "memory_retrieval",
-        ]
-    )
-    allowed_skills: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] | None = None
+    allowed_skills: list[str] | None = None
 
     @field_validator("model_params", mode="before")
     @classmethod
@@ -45,14 +37,15 @@ class DefaultAgentConfig(BaseModel):
 
     @field_validator("allowed_skills", mode="before")
     @classmethod
-    def _normalize_allowed_skills(cls, value: object) -> list[str]:
+    def _normalize_allowed_skills(cls, value: object) -> list[str] | None:
         if value is None:
-            return []
+            return None
         if isinstance(value, str):
             value = [value]
         if not isinstance(value, list):
             raise ValueError("allowed_skills must be a list")
-        return list(normalize_allowed_skills(value) or ())
+        normalized = normalize_allowed_skills(value)
+        return list(normalized) if normalized is not None else None
 
 
 class ServerConfig(BaseModel):

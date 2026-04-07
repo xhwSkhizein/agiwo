@@ -94,8 +94,8 @@ class RuntimeConfigService:
                 model_name=payload.default_agent.model_name,
                 model_params=model_params,
                 system_prompt=payload.default_agent.system_prompt,
-                tools=list(payload.default_agent.tools),
-                allowed_skills=list(payload.default_agent.allowed_skills),
+                allowed_tools=payload.default_agent.allowed_tools,
+                allowed_skills=payload.default_agent.allowed_skills,
             )
 
             next_skill_manager = self._build_skill_manager_for_settings(
@@ -103,11 +103,8 @@ class RuntimeConfigService:
             )
             await next_skill_manager.initialize()
             try:
-                expanded_allowed_skills = (
-                    next_skill_manager.expand_allowed_skills(
-                        payload.default_agent.allowed_skills
-                    )
-                    or []
+                expanded_allowed_skills = next_skill_manager.expand_allowed_skills(
+                    payload.default_agent.allowed_skills
                 )
                 next_default_agent = next_default_agent.model_copy(
                     update={"allowed_skills": expanded_allowed_skills}
@@ -131,8 +128,8 @@ class RuntimeConfigService:
     ) -> RuntimeConfigResponse:
         skill_manager = get_global_skill_manager()
         await skill_manager.initialize()
-        expanded_allowed_skills = (
-            skill_manager.expand_allowed_skills(default_agent.allowed_skills) or []
+        expanded_allowed_skills = skill_manager.expand_allowed_skills(
+            default_agent.allowed_skills
         )
         editable = RuntimeConfigEditablePayload(
             skills_dirs=list(runtime_settings.skills_dirs),
@@ -143,7 +140,7 @@ class RuntimeConfigService:
                 model_provider=default_agent.model_provider,
                 model_name=default_agent.model_name,
                 system_prompt=default_agent.system_prompt,
-                tools=list(default_agent.tools),
+                allowed_tools=default_agent.allowed_tools,
                 allowed_skills=expanded_allowed_skills,
                 model_params=default_agent.model_params,
             ),

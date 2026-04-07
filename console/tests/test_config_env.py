@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 import agiwo.agent.agent as agent_module
-import agiwo.tool.registry as tool_registry_module
+import agiwo.skill as skill_module
 import server.services.agent_registry.models as registry_models_module
 from agiwo.agent import AgentOptions
 from agiwo.llm.base import Model
@@ -80,7 +80,7 @@ def stub_skill_manager(monkeypatch: pytest.MonkeyPatch) -> DummySkillManager:
     manager = DummySkillManager()
     monkeypatch.setattr(agent_module, "get_global_skill_manager", lambda: manager)
     monkeypatch.setattr(
-        tool_registry_module,
+        skill_module,
         "get_global_skill_manager",
         lambda: manager,
     )
@@ -197,7 +197,7 @@ def test_default_agent_record_uses_shared_option_defaults() -> None:
     expected = AgentOptionsInput.model_validate({}).model_dump(exclude_none=True)
     assert record.options == expected
     assert record.options["max_steps"] == AgentOptions().max_steps
-    assert record.allowed_skills == []
+    assert record.allowed_skills is None
 
 
 def test_console_default_agent_config_normalizes_allowed_skills() -> None:
@@ -365,7 +365,7 @@ async def test_build_agent_tool_preserves_delegate_skill_access(
         name="parent",
         model_provider="openai",
         model_name="gpt-4o-mini",
-        tools=["agent:child"],
+        allowed_tools=["agent:child"],
     )
 
     agent = await build_agent(
@@ -524,7 +524,7 @@ async def test_agent_registry_replace_overwrites_nested_config_without_merge() -
                 description="replacement",
                 model_provider="openai-compatible",
                 model_name="MiniMax-M2.5",
-                tools=["web_search"],
+                allowed_tools=["web_search"],
                 options={"max_steps": 5},
                 model_params={
                     "base_url": "https://api.other.example/v1",
@@ -536,7 +536,7 @@ async def test_agent_registry_replace_overwrites_nested_config_without_merge() -
 
         assert updated is not None
         assert updated.description == "replacement"
-        assert updated.tools == ["web_search"]
+        assert updated.allowed_tools == ["web_search"]
         assert updated.options["max_steps"] == 5
         assert "max_run_cost" not in updated.options
         assert updated.model_params["base_url"] == "https://api.other.example/v1"

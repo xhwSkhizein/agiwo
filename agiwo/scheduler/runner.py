@@ -116,17 +116,27 @@ class SchedulerRunner:
             raise RuntimeError(f"Parent agent '{state.parent_id}' not found in runtime")
 
         overrides = deserialize_child_agent_config_overrides(state.config_overrides)
+
+        # Convert allowed_tools tuple to list for the API
+        child_allowed_tools = (
+            list(overrides.allowed_tools)
+            if overrides.allowed_tools is not None
+            else None
+        )
+
+        # Child agents get scheduling tools (spawn_agent filtered out to prevent grandchildren)
+        scheduling_tools = [
+            t for t in self._ctx.scheduling_tools if t.name != "spawn_agent"
+        ]
         child = await parent.create_child_agent(
             child_id=state.id,
             instruction=overrides.instruction,
             system_prompt_override=overrides.system_prompt,
-            exclude_tool_names={"spawn_agent"},
-            extra_tools=[
-                tool
-                for tool in self._ctx.scheduling_tools
-                if tool.name != "spawn_agent"
-            ],
-            child_allowed_skills=overrides.allowed_skills,
+            child_allowed_tools=child_allowed_tools,
+            child_allowed_skills=list(overrides.allowed_skills)
+            if overrides.allowed_skills is not None
+            else None,
+            extra_tools=list(scheduling_tools),
         )
         self._ctx.rt.agents[state.id] = child
         return child

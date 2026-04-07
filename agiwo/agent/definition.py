@@ -8,13 +8,6 @@ from agiwo.agent.hooks import AgentHooks, DefaultMemoryHook
 from agiwo.agent.prompt import compose_child_system_prompt
 from agiwo.skill.allowlist import validate_expanded_allowed_skills
 from agiwo.skill.manager import get_global_skill_manager
-from agiwo.skill.skill_tool import SkillTool
-from agiwo.tool.base import BaseTool
-from agiwo.tool.registry import (
-    build_agent_tools,
-    exact_tool_disable_set,
-    normalize_disabled_sdk_tool_names,
-)
 from agiwo.workspace import AgentWorkspace, build_agent_workspace
 
 if TYPE_CHECKING:
@@ -24,14 +17,12 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class ResolvedAgentDefinition:
     hooks: AgentHooks
-    tools: tuple[BaseTool, ...]
     workspace: AgentWorkspace
 
 
 @dataclass(frozen=True)
 class ResolvedChildDefinition:
     config: AgentConfig
-    tools: tuple[BaseTool, ...]
 
 
 def build_agent_hooks(
@@ -51,23 +42,17 @@ def resolve_agent_definition(
     *,
     config: AgentConfig,
     agent_id: str,
-    tools: list[BaseTool] | None,
     hooks: AgentHooks | None,
 ) -> ResolvedAgentDefinition:
     del agent_id
     resolved_hooks = build_agent_hooks(config, hooks)
-    resolved_tools = build_agent_tools(
-        tools=tools,
-        disabled_sdk_tool_names=config.disabled_sdk_tool_names,
-        allowed_skills=config.allowed_skills,
-    )
+
     workspace = build_agent_workspace(
         root_path=config.options.get_effective_root_path(),
         agent_name=config.name,
     )
     return ResolvedAgentDefinition(
         hooks=resolved_hooks,
-        tools=resolved_tools,
         workspace=workspace,
     )
 
@@ -77,31 +62,36 @@ def resolve_child_definition(
     *,
     instruction: str | None,
     system_prompt_override: str | None,
-    exclude_tool_names: set[str] | None,
-    extra_tools: list[BaseTool] | None = None,
     child_allowed_skills: list[str] | None = None,
+    child_allowed_tools: list[str] | None = None,
 ) -> ResolvedChildDefinition:
-    tool_names_to_skip = normalize_disabled_sdk_tool_names(exclude_tool_names)
-    child_tools = [
-        tool
-        for tool in agent.tools
-        if tool.name not in tool_names_to_skip and not isinstance(tool, SkillTool)
-    ]
-    if extra_tools:
-        child_tools.extend(extra_tools)
-    parent_disabled_tool_names = normalize_disabled_sdk_tool_names(
-        agent.config.disabled_sdk_tool_names
-    )
-    child_disabled_tool_names = normalize_disabled_sdk_tool_names(
-        {
-            *parent_disabled_tool_names,
-            *{
-                name
-                for name in set(exclude_tool_names or set())
-                if name in exact_tool_disable_set()
-            },
-        }
-    )
+    """Resolve child agent definition, computing effective allowed_tools and allowed_skills.
+
+    Note: Tool instances are no longer resolved here. Callers should use ToolManager.get_tools()
+    to obtain tool instances based on the returned config.allowed_tools.
+    """
+    # Determine effective allowed_tools for child
+    parent_allowed_tools = agent.config.allowed_tools
+    if child_allowed_tools is None:
+        # Inherit from parent if not explicitly specified
+        effective_allowed_tools = parent_allowed_tools
+    elif child_allowed_tools == []:
+        # Empty list means no builtin tools (only extra_tools will be used)
+        effective_allowed_tools = []
+    else:
+        # Validate child_allowed_tools is subset of parent's
+        effective_allowed_tools = list(child_allowed_tools)
+        if parent_allowed_tools is not None:
+            parent_allowed = set(parent_allowed_tools)
+            disallowed = [
+                name for name in effective_allowed_tools if name not in parent_allowed
+            ]
+            if disallowed:
+                tool_list = ", ".join(disallowed)
+                raise ValueError(
+                    "child_allowed_tools must be a subset of the parent's "
+                    f"allowed_tools: {tool_list}"
+                )
 
     child_options = agent.config.options.model_copy(deep=True)
     child_options.enable_termination_summary = True
@@ -112,17 +102,22 @@ def resolve_child_definition(
         )
     )
     if child_allowed_skills is None:
-        effective_allowed = (
+        effective_allowed_skills = (
             list(agent.config.allowed_skills)
             if agent.config.allowed_skills is not None
             else None
         )
     else:
-        effective_allowed = validated_child_allowed
-        if agent.config.allowed_skills is not None and effective_allowed is not None:
+        effective_allowed_skills = validated_child_allowed
+        if (
+            agent.config.allowed_skills is not None
+            and effective_allowed_skills is not None
+        ):
             parent_allowed = set(agent.config.allowed_skills)
             disallowed = [
-                skill for skill in effective_allowed if skill not in parent_allowed
+                skill
+                for skill in effective_allowed_skills
+                if skill not in parent_allowed
             ]
             if disallowed:
                 skill_list = ", ".join(disallowed)
@@ -130,11 +125,7 @@ def resolve_child_definition(
                     "child_allowed_skills must be a subset of the parent's "
                     f"allowed_skills: {skill_list}"
                 )
-    resolved_tools = build_agent_tools(
-        tools=child_tools,
-        disabled_sdk_tool_names=child_disabled_tool_names,
-        allowed_skills=effective_allowed,
-    )
+
     child_config = AgentConfig(
         name=agent.name,
         description=agent.description,
@@ -144,12 +135,11 @@ def resolve_child_definition(
             instruction=instruction,
         ),
         options=child_options,
-        disabled_sdk_tool_names=child_disabled_tool_names,
-        allowed_skills=effective_allowed,
+        allowed_skills=effective_allowed_skills,
+        allowed_tools=effective_allowed_tools,
     )
     return ResolvedChildDefinition(
         config=child_config,
-        tools=resolved_tools,
     )
 
 

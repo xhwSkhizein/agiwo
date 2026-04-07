@@ -13,24 +13,23 @@ from server.services.agent_registry.store import (
     AgentRegistryStore,
     create_agent_registry_store,
 )
-from server.services.tool_catalog.tool_references import parse_tool_references
 
 
 class _ValidatedAgentConfig(BaseModel):
     model_provider: str
     model_name: str
-    tools: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] | None = None
     options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
 
-    @field_validator("tools", mode="before")
+    @field_validator("allowed_tools", mode="before")
     @classmethod
-    def _validate_tools(cls, value: object) -> list[str]:
+    def _validate_allowed_tools(cls, value: object) -> list[str] | None:
         if value is None:
-            return []
+            return None
         if not isinstance(value, list):
-            raise TypeError("tools must be a list")
-        return parse_tool_references(value)
+            raise TypeError("allowed_tools must be a list")
+        return list(value)
 
     @model_validator(mode="after")
     def _validate_model_connection(self) -> "_ValidatedAgentConfig":
@@ -42,14 +41,14 @@ def _validate_agent_config_record(record: AgentConfigRecord) -> AgentConfigRecor
     validated = _ValidatedAgentConfig(
         model_provider=record.model_provider,
         model_name=record.model_name,
-        tools=record.tools,
+        allowed_tools=record.allowed_tools,
         options=AgentOptionsInput.model_validate(record.options or {}),
         model_params=ModelParamsInput.model_validate(record.model_params or {}),
     )
     return AgentConfigRecord.model_validate(
         {
             **record.model_dump(mode="python"),
-            "tools": validated.tools,
+            "allowed_tools": validated.allowed_tools,
             "options": validated.options.model_dump(exclude_none=True),
             "model_params": validated.model_params.model_dump(exclude_none=True),
         }
@@ -122,8 +121,8 @@ class AgentRegistry:
             model_provider=template.model_provider,
             model_name=template.model_name,
             system_prompt=template.system_prompt,
-            tools=list(template.tools),
-            allowed_skills=allowed_skills or [],
+            allowed_tools=template.allowed_tools,
+            allowed_skills=allowed_skills,
             options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
             model_params=ModelParamsInput.model_validate(
                 template.model_params or {}

@@ -704,7 +704,9 @@ class Scheduler:
         return await agent.create_child_agent(
             child_id=state_id,
             system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.name for tool in agent.tools},
+            child_allowed_tools=list(agent.config.allowed_tools)
+            if agent.config.allowed_tools is not None
+            else None,
             extra_tools=list(self._scheduling_tools),
         )
 

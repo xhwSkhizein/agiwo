@@ -136,11 +136,20 @@ class OpenAIModel(Model):
         try:
             stream = await self.client.chat.completions.create(**params)
         except Exception as e:
+            # Extract status code for better error classification (e.g., OpenRouter 429)
+            status_code = None
+            if hasattr(e, "status_code"):
+                status_code = e.status_code
+            elif hasattr(e, "response") and hasattr(e.response, "status_code"):
+                status_code = e.response.status_code
+
+            error_msg = str(e)
             logger.error(
                 "llm_request_failed",
                 model=actual_model,
-                error=str(e),
+                error=error_msg,
                 error_type=type(e).__name__,
+                status_code=status_code,
                 messages_count=len(messages),
                 tools_count=len(tools) if tools else 0,
                 exc_info=True,

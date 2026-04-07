@@ -13,16 +13,22 @@ from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import AgentState
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
+from agiwo.tool.manager import get_global_tool_manager
 
 from server.config import ConsoleConfig, DefaultAgentConfig
 from server.models.agent_config import AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import (
+    build_citation_store_config,
     build_run_step_storage_config,
     build_trace_storage_config,
 )
 from server.services.tool_catalog.tool_builder import build_tools
 from server.services.tool_catalog.tool_references import AGENT_TOOL_PREFIX
+
+from agiwo.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class PersistentAgentResumeError(RuntimeError):
@@ -57,6 +63,9 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
     allowed_skills = get_global_skill_manager().expand_allowed_skills(
         template.allowed_skills
     )
+    # Expand default tools using ToolManager
+    tool_manager = get_global_tool_manager()
+    default_tools = tool_manager.list_default_tool_names()
     return AgentConfigRecord(
         id=template.id,
         name=template.name,
@@ -64,8 +73,8 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
         model_provider=template.model_provider,
         model_name=template.model_name,
         system_prompt=template.system_prompt,
-        tools=list(template.tools),
-        allowed_skills=allowed_skills or [],
+        allowed_tools=template.allowed_tools or default_tools,
+        allowed_skills=allowed_skills,
         options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
         model_params=dict(template.model_params),
     )
@@ -115,10 +124,37 @@ async def build_agent(
         )
         return child_agent.as_tool()
 
-    tools = await build_tools(
-        config.tools or [],
+    # Build agent-as-tools (custom tools that reference other agents)
+    agent_tools = await build_tools(
+        config.allowed_tools or [],
         console_config=console_config,
         build_agent_tool=_build_agent_tool,
+    )
+
+    # Determine allowed_tools: use config.allowed_tools if set, otherwise use defaults
+    if config.allowed_tools is not None:
+        allowed_tools = list(config.allowed_tools)
+    else:
+        # Fallback to default tools for agents without explicit allowed_tools
+        allowed_tools = get_global_tool_manager().list_default_tool_names()
+
+    logger.info(
+        "build agent, allowed_tools", agent=config.id, allowed_tools=allowed_tools
+    )
+
+    # Get citation store config and initialize tool manager with it
+    citation_store_config = build_citation_store_config(console_config)
+    tool_manager = get_global_tool_manager(citation_store_config)
+
+    # Get builtin tools (stateless tools cached, non-stateless created fresh)
+    builtin_tools = tool_manager.get_tools(
+        allowed_tools, allowed_skills=config.allowed_skills
+    )
+
+    # Merge builtin tools with custom agent-as-tools
+    all_tools = list(builtin_tools) + agent_tools
+    logger.info(
+        "build agent, final tools", agent=config.id, tools=[t.name for t in all_tools]
     )
 
     agent_config = AgentConfig(
@@ -126,12 +162,13 @@ async def build_agent(
         description=config.description,
         system_prompt=config.system_prompt,
         options=options,
-        allowed_skills=list(config.allowed_skills),
+        allowed_skills=config.allowed_skills,
+        allowed_tools=allowed_tools,
     )
     return Agent(
         agent_config,
         model=model,
-        tools=tools or None,
+        tools=all_tools or None,
         id=id or config.id,
     )
 

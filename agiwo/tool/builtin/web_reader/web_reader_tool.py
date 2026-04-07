@@ -40,6 +40,7 @@ class WebReaderTool(BaseTool):
         "- Note: These options are mutually exclusive"
     )
     cacheable = True
+    is_stateless = True
 
     def __init__(
         self,

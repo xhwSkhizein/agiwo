@@ -480,8 +480,8 @@ export interface AgentConfig {
   model_provider: string;
   model_name: string;
   system_prompt: string;
-  tools: string[];
-  allowed_skills: string[];
+  allowed_tools: string[] | null;
+  allowed_skills: string[] | null;
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
   created_at: string;
@@ -494,8 +494,8 @@ export interface AgentConfigCreate {
   model_provider: string;
   model_name: string;
   system_prompt: string;
-  tools: string[];
-  allowed_skills: string[];
+  allowed_tools: string[] | null;
+  allowed_skills: string[] | null;
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
 }
@@ -531,8 +531,8 @@ export interface RuntimeDefaultAgentConfig {
   model_provider: string;
   model_name: string;
   system_prompt: string;
-  tools: string[];
-  allowed_skills: string[];
+  allowed_tools: string[] | null;
+  allowed_skills: string[] | null;
   model_params: ModelParamsPayload;
 }
 
