@@ -1,6 +1,6 @@
 """SQLite-backed session store implementation."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 import os
 
 import aiosqlite

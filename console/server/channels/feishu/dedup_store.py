@@ -4,6 +4,7 @@ This is a Feishu-specific store for preventing duplicate message processing.
 It is separate from the generic SessionStore.
 """
 
+import os
 from collections import OrderedDict
 from datetime import datetime, timezone
 
@@ -53,8 +54,6 @@ class SqliteFeishuDedupStore:
     """
 
     def __init__(self, db_path: str) -> None:
-        import os
-
         self._db_path = os.path.expanduser(db_path)
         self._conn: aiosqlite.Connection | None = None
 
