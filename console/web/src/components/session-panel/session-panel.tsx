@@ -6,6 +6,7 @@ import {
   listAgentSessions,
   createAgentSession,
   forkSession,
+  deleteSession,
 } from "@/lib/api";
 import type { ChatSessionItem } from "@/lib/api";
 import { ErrorStateMessage } from "@/components/state-message";
@@ -18,6 +19,8 @@ interface SessionPanelProps {
   onSwitch: (sessionId: string) => void;
   onCreated: (sessionId: string) => void;
   onForked: (sessionId: string) => void;
+  onDelete?: (sessionId: string) => void;
+  refreshTrigger?: number;
 }
 
 /**
@@ -40,6 +43,8 @@ export function SessionPanel({
   onSwitch,
   onCreated,
   onForked,
+  onDelete,
+  refreshTrigger,
 }: SessionPanelProps) {
   const [sessions, setSessions] = useState<ChatSessionItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,7 +67,7 @@ export function SessionPanel({
 
   useEffect(() => {
     void refresh();
-  }, [refresh, currentSessionId]);
+  }, [refresh, currentSessionId, refreshTrigger]);
 
   const handleCreate = async () => {
     if (actionLoading) return;
@@ -95,6 +100,21 @@ export function SessionPanel({
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fork session");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDelete = async (sessionId: string) => {
+    if (actionLoading) return;
+    setActionLoading(true);
+    setError(null);
+    try {
+      await deleteSession(sessionId);
+      onDelete?.(sessionId);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete session");
     } finally {
       setActionLoading(false);
     }
@@ -151,6 +171,7 @@ export function SessionPanel({
             isCurrent={session.session_id === currentSessionId}
             onSwitch={() => handleSwitch(session.session_id)}
             onFork={() => setShowForkDialog(true)}
+            onDelete={onDelete ? () => handleDelete(session.session_id) : undefined}
           />
         ))}
       </div>

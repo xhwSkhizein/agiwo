@@ -13,7 +13,11 @@ from server.channels.feishu.message_parser import (
     FeishuInboundEnvelope,
     FeishuMessageParser,
 )
-from server.channels.feishu.store import FeishuChannelStoreBackend
+from server.services.session_store.base import SessionStore
+from server.channels.feishu.dedup_store import (
+    InMemoryFeishuDedupStore,
+    SqliteFeishuDedupStore,
+)
 from server.channels.batch_manager import ChannelBatchManager
 from server.models.session import BatchContext, InboundMessage
 from server.services.agent_registry import AgentConfigRecord
@@ -32,7 +36,8 @@ class FeishuInboundHandler:
         parser: FeishuMessageParser,
         content_extractor: FeishuContentExtractor,
         group_history_store: FeishuGroupHistoryStore,
-        store: FeishuChannelStoreBackend,
+        session_store: SessionStore,
+        dedup_store: InMemoryFeishuDedupStore | SqliteFeishuDedupStore,
         session_service: SessionContextService,
         session_manager: ChannelBatchManager,
         command_registry: CommandRegistry,
@@ -45,7 +50,8 @@ class FeishuInboundHandler:
         self._parser = parser
         self._content_extractor = content_extractor
         self._group_history_store = group_history_store
-        self._store = store
+        self._session_store = session_store
+        self._dedup_store = dedup_store
         self._session_service = session_service
         self._session_mgr = session_manager
         self._command_registry = command_registry
@@ -64,7 +70,7 @@ class FeishuInboundHandler:
 
         self._log_message_received(inbound)
 
-        claimed = await self._store.claim_event(
+        claimed = await self._dedup_store.claim_event(
             inbound.channel_instance_id,
             inbound.event_id,
         )

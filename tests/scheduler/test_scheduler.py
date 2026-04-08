@@ -422,7 +422,7 @@ class TestSchedulerCreateChildAgent:
         await scheduler.stop()
 
     @pytest.mark.asyncio
-    async def test_fork_child_inherits_all(self):  # noqa: PLR0915
+    async def test_fork_child_inherits_all(self):  # noqa: C901, PLR0915
         """Fork mode: child inherits parent's full tool set and session steps."""
         scheduler = Scheduler()
         model = MockModel()

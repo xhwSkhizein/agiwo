@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import {
   cancelSession,
+  createAgentSession,
   getAgent,
   getAgentStateChildren,
   getPendingEvents,
@@ -154,6 +155,7 @@ function SchedulerChatPageContent() {
   const [showSessionPanel, setShowSessionPanel] = useState(
     () => searchParams.get("session") === null,
   );
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -161,6 +163,8 @@ function SchedulerChatPageContent() {
   const messagesRef = useRef<ChatMessage[]>([]);
   const isStreamingRef = useRef(false);
   const loadHistoryMessagesRef = useRef<(history: ChatMessage[]) => void>(() => {});
+  const handleSessionCreatedRef = useRef<(sessionId: string) => void>(() => {});
+  const creatingSessionRef = useRef(false);
 
   const updateSessionUrl = useCallback(
     (sid: string) => {
@@ -490,6 +494,65 @@ function SchedulerChatPageContent() {
     });
   };
 
+  const handleSessionCreated = useCallback(
+    (newSessionId: string) => {
+      setSessionId(newSessionId);
+      updateSessionUrl(newSessionId);
+      setRefreshTrigger((t) => t + 1);
+      clearMessages();
+      setError(null);
+      setHistoryHasMore(false);
+      setChildren([]);
+      setPendingEvents([]);
+      setChildMessages({});
+      setRootState(null);
+      setStateId(null);
+      setOrchestrationStatus("idle");
+    },
+    [updateSessionUrl, clearMessages],
+  );
+
+  // Keep ref in sync for auto-create effect (avoids circular deps)
+  useEffect(() => {
+    handleSessionCreatedRef.current = handleSessionCreated;
+  }, [handleSessionCreated]);
+
+  const handleSessionForked = useCallback(
+    (forkedSessionId: string) => {
+      handleSessionCreated(forkedSessionId);
+    },
+    [handleSessionCreated],
+  );
+
+  // Auto-create session if none exists
+  useEffect(() => {
+    if (!agent || sessionId || creatingSessionRef.current) return;
+
+    creatingSessionRef.current = true;
+    let cancelled = false;
+    const autoCreate = async () => {
+      try {
+        const result = await createAgentSession(agentId);
+        if (!cancelled) {
+          handleSessionCreatedRef.current(result.session_id);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Failed to create session");
+        }
+      } finally {
+        creatingSessionRef.current = false;
+      }
+    };
+
+    void autoCreate();
+    return () => {
+      cancelled = true;
+    };
+    // Note: handleSessionCreatedRef is stable; handleSessionCreated intentionally excluded
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent, agentId, sessionId]);
+
   const handleSessionSwitch = async (targetSessionId: string) => {
     setSessionId(targetSessionId);
     updateSessionUrl(targetSessionId);
@@ -507,25 +570,6 @@ function SchedulerChatPageContent() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to switch session");
     }
-  };
-
-  const handleSessionCreated = (newSessionId: string) => {
-    setSessionId(newSessionId);
-    updateSessionUrl(newSessionId);
-    setShowSessionPanel(false);
-    clearMessages();
-    setError(null);
-    setHistoryHasMore(false);
-    setChildren([]);
-    setPendingEvents([]);
-    setChildMessages({});
-    setRootState(null);
-    setStateId(null);
-    setOrchestrationStatus("idle");
-  };
-
-  const handleSessionForked = (forkedSessionId: string) => {
-    handleSessionCreated(forkedSessionId);
   };
 
   const loadEarlierMessages = async () => {
@@ -677,6 +721,20 @@ function SchedulerChatPageContent() {
             onSwitch={handleSessionSwitch}
             onCreated={handleSessionCreated}
             onForked={handleSessionForked}
+            refreshTrigger={refreshTrigger}
+            onDelete={(deletedSessionId) => {
+              if (deletedSessionId === sessionId) {
+                // 如果删除的是当前 session，清空状态
+                setSessionId(null);
+                const url = new URL(window.location.href);
+                url.searchParams.delete("session");
+                router.replace(url.pathname + url.search);
+                clearMessages();
+                setRootState(null);
+                setStateId(null);
+                setOrchestrationStatus("idle");
+              }
+            }}
           />
         </div>
       )}

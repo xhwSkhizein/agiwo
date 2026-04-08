@@ -138,7 +138,7 @@ class OpenAIModel(Model):
         except Exception as e:
             # Extract status code for better error classification (e.g., OpenRouter 429)
             status_code = None
-            if hasattr(e, "status_code"):
+            if hasattr(e, "status_code") and e.status_code is not None:
                 status_code = e.status_code
             elif hasattr(e, "response") and hasattr(e.response, "status_code"):
                 status_code = e.response.status_code

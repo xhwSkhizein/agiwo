@@ -1,6 +1,6 @@
 """Shared formatting helpers for scheduler-facing child-agent text."""
 
-from agiwo.agent import UserInput
+from agiwo.agent import UserInput, UserMessage
 from agiwo.scheduler.models import (
     PendingEvent,
     SchedulerEventType,
@@ -172,5 +172,5 @@ _FORK_NOTICE = (
 
 def build_fork_task_notice(task: UserInput) -> str:
     """Wrap a task with a system notice for forked child agents."""
-    task_text = task if isinstance(task, str) else str(task)
+    task_text = UserMessage.serialize(task)
     return f"{_FORK_NOTICE}\n\n{task_text}"

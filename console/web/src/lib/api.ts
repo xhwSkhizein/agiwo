@@ -750,6 +750,11 @@ export function forkSession(sessionId: string, contextSummary: string) {
   });
 }
 
+export async function deleteSession(sessionId: string) {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+}
+
 // ── Session Input Stream ───────────────────────────────────────────────
 
 export function sessionInputStreamUrl(sessionId: string) {

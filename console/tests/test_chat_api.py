@@ -17,7 +17,7 @@ from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import AgentStateStorageConfig, SchedulerConfig
 
 from server.app import create_app
-from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
+from server.services.session_store import InMemorySessionStore
 from server.config import ConsoleConfig
 from server.dependencies import (
     ConsoleRuntime,
@@ -55,7 +55,7 @@ async def client():
         )
     )
     await scheduler.start()
-    session_store = InMemoryFeishuChannelStore()
+    session_store = InMemorySessionStore()
     await session_store.connect()
 
     agent_runtime_cache = AgentRuntimeCache(

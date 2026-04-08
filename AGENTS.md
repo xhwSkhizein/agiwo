@@ -56,7 +56,7 @@
 ### Agent
 
 - `Agent` 是具体类，不是 ABC。
-- 公开构造入口是 `Agent(config: AgentConfig, *, model: Model, tools: list[BaseTool] | None = None, hooks: AgentHooks | None = None, id: str | None = None)`；`AgentConfig` 只承载纯配置，不放 live object。
+- 公开构造入口是 `Agent(config: AgentConfig, *, model: Model, tools: list[BaseTool] | None = None, hooks: AgentHooks | None = None, id: str | None = None)`；`tools` 是功能/用户自定义工具（受 `allowed_tools` 过滤），`system_tools` 是系统工具（不受 `allowed_tools` 过滤）；`AgentConfig` 只承载纯配置，不放 live object。
 - **`id` 必须稳定**：在 Console 这类跨请求复用会话的场景里，每次构造 `Agent` 都必须传稳定 `id`（如 registry `config.id`），否则历史 steps 会丢。不传 id 时自动生成 `{name}-{hex[:6]}` 格式。
 - `AgentConfig.allowed_skills` 进入 SDK runtime 前必须已经展开成“显式 skill 名列表”或 `None`；不再接受 wildcard/pattern。
 - 对外执行原语是 `start(...)` 返回 live execution handle；`run(...)` / `run_stream(...)` 只是便利封装。
@@ -78,10 +78,16 @@
 
 ### Tool
 
+- 工具分为两类：**功能工具**（受 `allowed_tools` 控制）和**系统工具**（不受 `allowed_tools` 控制）。
+  - **功能工具**：builtin tools（bash、web_search 等）和用户自定义工具（AgentTool、自定义 BaseTool）。
+  - **系统工具**：SkillTool（受 `allowed_skills` 控制）和 Scheduler runtime tools（通过 `system_tools` 注入）。
+- `allowed_tools: list[str] | None` 控制功能工具：`None` = 默认 builtin + 所有 extra；`[]` = 无功能工具；显式列表同时过滤 builtin 和 extra_tools。
+- `ToolManager.get_tools()` 接受 `system_tools` 参数，无条件注入，不受 `allowed_tools` 约束。
+- `ToolManager.normalize_allowed_tools()` 接受自定义工具名（不再拒绝非 builtin 名称），只校验 `agent:` 前缀合法性。
 - `BaseTool` 定义稳定契约：名称、描述、参数 schema、并发安全性、可选 `gate(..., context: ToolContext) -> ToolGateDecision` 预检，以及 `execute(..., context: ToolContext) -> ToolResult`。
 - plain tool 只看 `agiwo.tool.context.ToolContext`；nested-agent runtime bridge 由 `agiwo.agent.nested.context.AgentToolContext` 内部承载，不要把 `SessionRuntime` 再泄漏回通用工具边界。
 - agent 运行时内部统一通过 `AgentRuntimeTool` 执行工具；scheduler 控制型 tools 走 runtime tool 契约，不再把终止控制塞进 `ToolResult`。
-- `AgentTool` / `as_tool()` 属于 `agiwo.agent.nested.agent_tool`，并由 `Agent.as_tool()` 暴露；它是 agent runtime adapter，不属于 `agiwo.tool/` core。
+- `AgentTool` / `as_tool()` 属于 `agiwo.agent.nested.agent_tool`，并由 `Agent.as_tool()` 暴露；它是 agent runtime adapter，属于功能工具，受 `allowed_tools` 约束。
 - 生产代码统一通过 `ToolResult.success()/failed()/aborted()/denied()` 构造结果。
 - builtin tools 放在 `agiwo/tool/builtin/`，通过 `@builtin_tool(...)` 注册；`@default_enable` 控制默认自动启用。
 - `bash` 与 `bash_process` 是分离工具；后台任务的巡检/日志/停止/输入属于 `bash_process`。
@@ -101,6 +107,8 @@
 ### Scheduler
 
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
+- Scheduler runtime tools（`SpawnAgentTool`、`SleepAndWaitTool` 等）通过 `Agent(system_tools=...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
+- 子 Agent 的 system_tools 由 `SchedulerRunner` 从父 Agent 的 `system_tools` 派生；非 fork 模式排除 `spawn_agent`，fork 模式继承全部（gate 检查仍阻止实际 spawn）。
 - 当前公开编排接口包括：`run`、`submit`、`enqueue_input`、`route_root_input`、`stream`、`wait_for`、`steer`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`。
 - `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 `SchedulerEngine`。
 - `SchedulerEngine` 是唯一编排 owner；`SchedulerRunner` 只负责单次执行；`TaskGuard` 是 spawn/wake 的唯一护栏入口。
@@ -155,8 +163,7 @@
 
 ### Construction & Layering
 
-- 不要在 agent runtime 外越权依赖 `agiwo.agent.run_loop`、`agiwo.agent.tool_executor` 等内部模块。
-- `agiwo.agent.types` 已标记为 deprecated，优先从 `agiwo.agent` 直接导入。
+- `agiwo.agent.types` 是公共 facade，外部代码（Console、第三方集成）必须从此导入类型。只有 agent 内部模块（如 `models/`、`hooks/`、`runtime/`）可绕过 facade 直接依赖 `agiwo.agent.run_loop`、`agiwo.agent.tool_executor` 等内部模块。
 - 不要在 Console 侧直读 `scheduler.store`；统一走 `Scheduler` facade 的查询 API。
 
 ## Lint & Guardrails

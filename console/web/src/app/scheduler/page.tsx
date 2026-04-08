@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { RefreshCw } from "lucide-react";
 import { PaginationControls } from "@/components/pagination-controls";
@@ -102,6 +102,7 @@ function SchedulerPageContent() {
   const [offset, setOffset] = useState(Number(searchParams.get("offset") || "0"));
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [hasMore, setHasMore] = useState(false);
+  const hasLoadedRef = useRef(false);
 
   const updateQuery = useCallback(
     (next: Record<string, string | number | null>) => {
@@ -153,14 +154,21 @@ function SchedulerPageContent() {
   }, [filter, offset, pageSize]);
 
   useEffect(() => {
-    void loadData();
-  }, [loadData]);
+    if (hasLoadedRef.current) {
+      void loadData();
+    }
+  }, [filter, offset, pageSize]);
 
   useEffect(() => {
-    if (!autoRefresh) {
+    if (hasLoadedRef.current) {
       return;
     }
-    if (!isPageVisible) {
+    hasLoadedRef.current = true;
+    void loadData();
+  }, []);
+
+  useEffect(() => {
+    if (!autoRefresh || !isPageVisible) {
       return;
     }
     const timerId = window.setInterval(() => {
@@ -169,12 +177,6 @@ function SchedulerPageContent() {
     return () => {
       window.clearInterval(timerId);
     };
-  }, [autoRefresh, isPageVisible, loadData]);
-
-  useEffect(() => {
-    if (autoRefresh && isPageVisible) {
-      void loadData(true);
-    }
   }, [autoRefresh, isPageVisible, loadData]);
 
   const applyFilter = (nextFilter: string) => {

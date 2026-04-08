@@ -36,6 +36,8 @@ from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+_CHILD_EXCLUDED_SYSTEM_TOOLS: frozenset[str] = frozenset({"spawn_agent"})
+
 _FAILED_TERMINATIONS = frozenset(
     {
         TerminationReason.CANCELLED,
@@ -114,19 +116,26 @@ class SchedulerRunner:
     async def create_child_agent(self, state: AgentState) -> Agent:
         """Create a child agent for a pending scheduler state.
 
-        Scheduling tools are inherited from the parent's extra_tools
-        automatically (``spawn_agent`` is excluded by
-        ``Agent._get_inheritable_extra_tools``).
-
-        In fork mode, the child inherits ALL parent extra tools (including
-        ``spawn_agent``) and the parent's session steps are copied into the
-        child's session for LLM KV cache reuse.
+        System tools (scheduler runtime tools) are passed separately from
+        functional/user tools.  ``spawn_agent`` is excluded for non-fork
+        children; fork children inherit ALL system tools for KV cache reuse
+        (the gate check on ``SpawnAgentTool`` still blocks actual spawning).
         """
         parent = self._ctx.rt.agents.get(state.parent_id or "")
         if parent is None:
             raise RuntimeError(f"Parent agent '{state.parent_id}' not found in runtime")
 
         overrides = deserialize_child_agent_config_overrides(state.config_overrides)
+
+        if overrides.fork:
+            child_system_tools = list(parent.system_tools)
+        else:
+            child_system_tools = [
+                t
+                for t in parent.system_tools
+                if t.name not in _CHILD_EXCLUDED_SYSTEM_TOOLS
+            ]
+
         child = await parent.create_child_agent(
             child_id=state.id,
             instruction=overrides.instruction,
@@ -138,6 +147,7 @@ class SchedulerRunner:
             if overrides.allowed_skills is not None
             else None,
             inherit_all_extra_tools=overrides.fork,
+            system_tools=child_system_tools or None,
         )
 
         if overrides.fork:

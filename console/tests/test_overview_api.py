@@ -9,7 +9,7 @@ from agiwo.agent.models.run import Run, RunMetrics, RunStatus
 from agiwo.observability.trace import SpanStatus, Trace
 
 from server.app import create_app
-from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
+from server.services.session_store import InMemorySessionStore
 from server.config import ConsoleConfig
 from server.dependencies import (
     ConsoleRuntime,
@@ -35,7 +35,7 @@ async def test_overview_reports_real_totals_instead_of_recent_samples() -> None:
     registry = AgentRegistry(config)
     await registry.initialize()
 
-    session_store = InMemoryFeishuChannelStore()
+    session_store = InMemorySessionStore()
     await session_store.connect()
 
     created_at = datetime(2026, 4, 1, tzinfo=timezone.utc)

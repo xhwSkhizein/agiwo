@@ -118,7 +118,11 @@ class SpawnAgentDummy(BaseTool):
 
 
 @pytest.mark.asyncio
-async def test_create_child_agent_excludes_spawn_agent_by_default() -> None:
+async def test_create_child_agent_inherits_extra_tools() -> None:
+    """Extra tools (including spawn_agent) are inherited by children.
+
+    spawn_agent exclusion is the scheduler's responsibility, not Agent's.
+    """
     agent = Agent(
         config=AgentConfig(
             name="definition-agent",
@@ -133,11 +137,12 @@ async def test_create_child_agent_excludes_spawn_agent_by_default() -> None:
     child = await agent.create_child_agent(child_id="child")
     child_tool_names = {t.name for t in child.tools}
     assert "dummy_tool" in child_tool_names
-    assert "spawn_agent" not in child_tool_names
+    assert "spawn_agent" in child_tool_names
 
 
 @pytest.mark.asyncio
-async def test_create_child_agent_includes_all_extra_tools_in_fork_mode() -> None:
+async def test_create_child_agent_receives_system_tools() -> None:
+    """system_tools passed to create_child_agent appear in child.tools."""
     agent = Agent(
         config=AgentConfig(
             name="definition-agent",
@@ -147,11 +152,11 @@ async def test_create_child_agent_includes_all_extra_tools_in_fork_mode() -> Non
         ),
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
-        tools=[DummyTool(), SpawnAgentDummy()],
+        tools=[DummyTool()],
     )
     child = await agent.create_child_agent(
-        child_id="fork-child",
-        inherit_all_extra_tools=True,
+        child_id="sys-child",
+        system_tools=[SpawnAgentDummy()],
     )
     child_tool_names = {t.name for t in child.tools}
     assert "dummy_tool" in child_tool_names
@@ -217,8 +222,8 @@ async def test_create_child_agent_and_child_resolution_stay_in_sync() -> None:
 
     assert clone.config.system_prompt == resolved.config.system_prompt
     assert clone.config.allowed_tools == resolved.config.allowed_tools == []
-    # child_allowed_tools=[] → no builtin tools; child inherits parent extra (DummyTool)
-    assert "dummy_tool" in {t.name for t in clone.tools}
+    # child_allowed_tools=[] → no functional tools (builtin or custom)
+    assert "dummy_tool" not in {t.name for t in clone.tools}
     assert "bash" not in {t.name for t in clone.tools}
     assert clone.config.options.enable_termination_summary is True
 
@@ -372,8 +377,8 @@ def test_agent_config_uses_allowed_tools_to_filter_sdk_tools() -> None:
 
     tool_names = {tool.name for tool in agent.tools}
 
-    # Only custom tool should be present, no builtin tools or skill tool
-    assert "dummy_tool" in tool_names
+    # allowed_tools=[] blocks all functional tools (builtin AND custom)
+    assert "dummy_tool" not in tool_names
     assert "bash" not in tool_names
     assert "bash_process" not in tool_names
     assert "skill" not in tool_names

@@ -11,6 +11,7 @@ from uuid import uuid4
 from agiwo.agent.nested.agent_tool import AgentTool
 from agiwo.agent.models.config import AgentConfig, AgentOptions
 from agiwo.agent.definition import (
+    ResolvedChildDefinition,
     build_agent_hooks,
     resolve_agent_definition,
     resolve_child_definition,
@@ -35,8 +36,6 @@ from agiwo.observability.factory import create_trace_storage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 from agiwo.workspace import WorkspaceBootstrapper, WorkspaceDocumentStore
-
-_CHILD_EXCLUDED_TOOLS: frozenset[str] = frozenset({"spawn_agent"})
 
 
 def _generate_default_id(name: str) -> str:
@@ -99,12 +98,11 @@ class Agent:
         """Create an Agent.
 
         Args:
-            config: Agent configuration (allowed_tools / allowed_skills drive
-                    which builtin + skill tools are assembled automatically).
+            config: Agent configuration (``allowed_tools`` / ``allowed_skills``
+                    drive which builtin + skill tools are assembled).
             model: LLM model to use.
-            tools: Extra / custom tools (e.g. AgentTool, scheduling tools).
-                   Builtin and skill tools are resolved via ``ToolManager``;
-                   this parameter is additive.
+            tools: Extra / custom functional tools (e.g. AgentTool, user-
+                   supplied BaseTool).  Subject to ``allowed_tools`` filtering.
             hooks: Optional agent hooks.
             id: Stable instance identifier.  Auto-generated if omitted.
         """
@@ -124,6 +122,7 @@ class Agent:
         self._hooks = resolved_definition.hooks
 
         self._extra_tools: tuple[BaseTool, ...] = tuple(tools) if tools else ()
+        self._system_tools: tuple[BaseTool, ...] = ()
         tool_manager = get_global_tool_manager()
         self._tools = tool_manager.get_tools(
             allowed_tools=self._config.allowed_tools,
@@ -191,8 +190,29 @@ class Agent:
 
     @property
     def extra_tools(self) -> tuple[BaseTool, ...]:
-        """Extra / custom tools originally passed at construction time."""
+        """Extra / custom functional tools originally passed at construction time."""
         return self._extra_tools
+
+    @property
+    def system_tools(self) -> tuple[BaseTool, ...]:
+        """System-level tools (e.g. scheduler runtime tools)."""
+        return self._system_tools
+
+    def _inject_system_tools(self, system_tools: list[BaseTool]) -> None:
+        """Inject system-level tools and rebuild the resolved tool list.
+
+        This is an internal API used by the scheduler to inject runtime tools
+        (e.g. ``SpawnAgentTool``, ``SleepAndWaitTool``) after construction.
+        System tools bypass ``allowed_tools`` filtering.
+        """
+        self._system_tools = tuple(system_tools)
+        tool_manager = get_global_tool_manager()
+        self._tools = tool_manager.get_tools(
+            allowed_tools=self._config.allowed_tools,
+            extra_tools=list(self._extra_tools) if self._extra_tools else None,
+            allowed_skills=self._config.allowed_skills,
+            system_tools=system_tools,
+        )
 
     async def get_effective_system_prompt(self) -> str:
         return await self._build_system_prompt(self._config.system_prompt)
@@ -224,9 +244,15 @@ class Agent:
     def _get_inheritable_extra_tools(self) -> list[BaseTool]:
         """Return extra tools that children may inherit.
 
-        Filters out tools in ``_CHILD_EXCLUDED_TOOLS`` (e.g. ``spawn_agent``).
+        Filters out ``AgentTool`` instances bound to the parent agent itself
+        (circular reference risk).  Other ``AgentTool`` references (e.g.
+        ResearchAgent) are preserved.
         """
-        return [t for t in self._extra_tools if t.name not in _CHILD_EXCLUDED_TOOLS]
+        return [
+            t
+            for t in self._extra_tools
+            if not (isinstance(t, AgentTool) and t._agent is self)
+        ]
 
     # --- Child agent ---
     async def run_child(
@@ -242,15 +268,17 @@ class Agent:
         instruction: str | None = None,
         system_prompt_override: str | None = None,
         child_allowed_tools: list[str] | None = None,
+        child_allowed_skills: list[str] | None = None,
         metadata_overrides: dict[str, Any] | None = None,
         metadata_updates: dict | None = None,
         abort_signal: AbortSignal | None = None,
     ) -> RunOutput:
-        resolved_child = resolve_child_definition(
+        resolved_child: ResolvedChildDefinition = resolve_child_definition(
             self,
             instruction=instruction,
             system_prompt_override=system_prompt_override,
             child_allowed_tools=child_allowed_tools,
+            child_allowed_skills=child_allowed_skills,
         )
         context = RunContext(
             session_runtime=session_runtime,
@@ -270,14 +298,6 @@ class Agent:
             context.metadata.update(combined_metadata)
         child_abort_signal = abort_signal or session_runtime.abort_signal
 
-        parent_extra = self._get_inheritable_extra_tools()
-        tool_manager = get_global_tool_manager()
-        child_tools = tool_manager.get_tools(
-            resolved_child.config.allowed_tools,
-            extra_tools=parent_extra or None,
-            allowed_skills=resolved_child.config.allowed_skills,
-        )
-
         return await execute_run(
             user_input,
             context=context,
@@ -285,12 +305,12 @@ class Agent:
             system_prompt=await build_system_prompt(
                 base_prompt=resolved_child.config.system_prompt,
                 workspace=self._workspace,
-                tools=list(child_tools),
+                tools=resolved_child.extra_tools,
                 allowed_skills=resolved_child.config.allowed_skills,
                 bootstrapper=WorkspaceBootstrapper(),
                 document_store=WorkspaceDocumentStore(),
             ),
-            tools=list(child_tools),
+            tools=resolved_child.extra_tools,
             hooks=build_agent_hooks(self._config, self._hooks),
             options=resolved_child.config.options.model_copy(deep=True),
             abort_signal=child_abort_signal,
@@ -307,43 +327,41 @@ class Agent:
         child_allowed_skills: list[str] | None = None,
         extra_tools: list[BaseTool] | None = None,
         inherit_all_extra_tools: bool = False,
+        system_tools: list[BaseTool] | None = None,
     ) -> "Agent":
         """Create a child Agent with inherited configuration.
 
-        Parent's extra tools are inherited automatically (minus non-inheritable
-        tools like ``spawn_agent``).  The *extra_tools* parameter adds caller-
-        provided tools on top (e.g. scheduling tools).
+        Parent's extra tools are inherited automatically (minus self-referencing
+        AgentTool).  The *extra_tools* parameter adds caller-provided tools on
+        top.
 
         When *inherit_all_extra_tools* is ``True`` (fork mode), the exclusion
         filter is skipped so that the child receives an identical tool set for
         LLM KV cache reuse.
 
-        The child ``Agent.__init__`` assembles the full tool set via
-        ``ToolManager`` based on the resolved ``allowed_tools`` /
-        ``allowed_skills`` plus the merged extras.
+        *system_tools* are injected unconditionally and not subject to
+        ``allowed_tools`` filtering.
         """
-        resolved_child = resolve_child_definition(
+        resolved_child: ResolvedChildDefinition = resolve_child_definition(
             self,
             instruction=instruction,
             system_prompt_override=system_prompt_override,
             child_allowed_tools=child_allowed_tools,
             child_allowed_skills=child_allowed_skills,
+            extra_tools=extra_tools,
+            inherit_all_extra_tools=inherit_all_extra_tools,
         )
 
-        parent_extra = (
-            list(self._extra_tools)
-            if inherit_all_extra_tools
-            else self._get_inheritable_extra_tools()
-        )
-        merged_extra = parent_extra + list(extra_tools or [])
-
-        return self.__class__(
+        child = self.__class__(
             resolved_child.config,
             id=child_id,
             model=self.model,
-            tools=merged_extra or None,
+            tools=resolved_child.extra_tools or None,
             hooks=build_agent_hooks(self._config, self._hooks),
         )
+        if system_tools:
+            child._inject_system_tools(system_tools)
+        return child
 
     # --- Execution ---
 

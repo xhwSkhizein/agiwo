@@ -700,14 +700,15 @@ class Scheduler:
                     self._rt.waiters.pop(state_id, None)
 
     async def _prepare_root_agent(self, agent: Agent, state_id: str) -> Agent:
-        extra = list(agent.extra_tools) + list(self._scheduling_tools)
-        return Agent(
+        clone = Agent(
             agent.config,
             id=state_id,
             model=agent.model,
-            tools=extra or None,
+            tools=list(agent.extra_tools) or None,
             hooks=agent.hooks,
         )
+        clone._inject_system_tools(list(self._scheduling_tools))
+        return clone
 
     async def _rebind_registered_agent(self, state_id: str, agent: Agent) -> None:
         previous = self._rt.agents.get(state_id)

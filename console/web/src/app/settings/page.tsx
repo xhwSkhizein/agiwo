@@ -41,8 +41,8 @@ function buildFormState(editable: RuntimeConfigEditable): SettingsFormState {
     modelName: editable.default_agent.model_name,
     systemPrompt: editable.default_agent.system_prompt,
     modelParamsJson: JSON.stringify(editable.default_agent.model_params, null, 2),
-    selectedTools: editable.default_agent.tools,
-    selectedSkills: editable.default_agent.allowed_skills,
+    selectedTools: editable.default_agent.allowed_tools ?? [],
+    selectedSkills: editable.default_agent.allowed_skills ?? [],
   };
 }
 
@@ -131,7 +131,7 @@ export default function SettingsPage() {
           model_provider: form.modelProvider,
           model_name: form.modelName.trim(),
           system_prompt: form.systemPrompt,
-          tools: form.selectedTools,
+          allowed_tools: form.selectedTools,
           allowed_skills: form.selectedSkills,
           model_params: parsedModelParams,
         },

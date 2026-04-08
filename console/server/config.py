@@ -1,5 +1,6 @@
 """Console server configuration."""
 
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator, field_validator
@@ -34,6 +35,23 @@ class DefaultAgentConfig(BaseModel):
         if not isinstance(sanitized, dict):
             return {}
         return sanitized
+
+    @field_validator("allowed_tools", mode="before")
+    @classmethod
+    def _normalize_allowed_tools(cls, value: object) -> list[str] | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return parsed
+                return [value]
+            except json.JSONDecodeError:
+                return [value]
+        if not isinstance(value, list):
+            raise ValueError("allowed_tools must be a list")
+        return value
 
     @field_validator("allowed_skills", mode="before")
     @classmethod

@@ -15,6 +15,7 @@ from agiwo.tool.base import BaseTool
 from agiwo.tool.manager import ToolManager
 import agiwo.tool.manager as manager_module
 from agiwo.tool.builtin.registry import BUILTIN_TOOLS
+from agiwo.tool.storage.citation import CitationStoreConfig
 
 
 class MockTool(BaseTool):
@@ -239,7 +240,7 @@ class TestMergeTools:
     def test_merge_builtin_only(self, tool_manager):
         """Merge with only builtin tools."""
         builtin = [Mock(name="tool1"), Mock(name="tool2")]
-        result = tool_manager._merge_tools(builtin, None, None)
+        result = tool_manager._merge_tools(builtin, [], None, None)
         assert len(result) == 2
         assert result == builtin
 
@@ -247,7 +248,7 @@ class TestMergeTools:
         """Merge builtin with extra tools."""
         builtin = [Mock(name="builtin1")]
         extra = [Mock(name="extra1"), Mock(name="extra2")]
-        result = tool_manager._merge_tools(builtin, extra, None)
+        result = tool_manager._merge_tools(builtin, extra, None, None)
         assert len(result) == 3
         assert result[0] == builtin[0]
         assert result[1:] == extra
@@ -256,21 +257,32 @@ class TestMergeTools:
         """Merge with skill tool."""
         builtin = [Mock(name="builtin1")]
         skill = Mock(name="skill")
-        result = tool_manager._merge_tools(builtin, None, skill)
+        result = tool_manager._merge_tools(builtin, [], skill, None)
         assert len(result) == 2
         assert result[0] == builtin[0]
         assert result[1] == skill
 
+    def test_merge_with_system_tools(self, tool_manager):
+        """Merge with system tools."""
+        builtin = [Mock(name="builtin1")]
+        sys_tools = [Mock(name="sys1"), Mock(name="sys2")]
+        result = tool_manager._merge_tools(builtin, [], None, sys_tools)
+        assert len(result) == 3
+        assert result[0] == builtin[0]
+        assert result[1:] == sys_tools
+
     def test_merge_all_types(self, tool_manager):
-        """Merge builtin, extra, and skill tools."""
+        """Merge builtin, extra, skill, and system tools."""
         builtin = [Mock(name="builtin1")]
         extra = [Mock(name="extra1")]
         skill = Mock(name="skill")
-        result = tool_manager._merge_tools(builtin, extra, skill)
-        assert len(result) == 3
+        sys_tools = [Mock(name="sys1")]
+        result = tool_manager._merge_tools(builtin, extra, skill, sys_tools)
+        assert len(result) == 4
         assert result[0] == builtin[0]
         assert result[1] == extra[0]
         assert result[2] == skill
+        assert result[3] == sys_tools[0]
 
 
 class TestFinalizeTools:
@@ -303,12 +315,10 @@ class TestNormalizeAllowedTools:
         result = tool_manager.normalize_allowed_tools(builtin_names)
         assert result == builtin_names
 
-    def test_normalize_rejects_unknown_tools(self, tool_manager):
-        """Unknown tool names should raise ValueError."""
-        with pytest.raises(ValueError) as exc_info:
-            tool_manager.normalize_allowed_tools(["nonexistent_tool_xyz"])
-        assert "Unknown tool names" in str(exc_info.value)
-        assert "nonexistent_tool_xyz" in str(exc_info.value)
+    def test_normalize_keeps_unknown_tools(self, tool_manager):
+        """Unknown tool names are kept (may refer to user-supplied custom tools)."""
+        result = tool_manager.normalize_allowed_tools(["nonexistent_tool_xyz"])
+        assert result == ["nonexistent_tool_xyz"]
 
 
 class TestGetToolsIntegration:
@@ -339,12 +349,37 @@ class TestGetToolsIntegration:
         assert actual_builtin == set()
 
     def test_get_tools_with_extra_tools(self, tool_manager):
-        """Get tools with extra custom tools."""
+        """Extra tools included when their name is in allowed_tools."""
         extra = [MockTool()]
-        tools = tool_manager.get_tools(allowed_tools=["bash"], extra_tools=extra)
+        tools = tool_manager.get_tools(
+            allowed_tools=["bash", "mock_tool"], extra_tools=extra
+        )
         tool_names = {t.name for t in tools}
         assert "mock_tool" in tool_names
         assert "bash" in tool_names
+
+    def test_get_tools_filters_extra_tools_by_allowlist(self, tool_manager):
+        """Extra tools not in allowed_tools are filtered out."""
+        extra = [MockTool()]
+        tools = tool_manager.get_tools(allowed_tools=["bash"], extra_tools=extra)
+        tool_names = {t.name for t in tools}
+        assert "mock_tool" not in tool_names
+        assert "bash" in tool_names
+
+    def test_get_tools_extra_tools_pass_when_allowed_none(self, tool_manager):
+        """allowed_tools=None means no filtering on extras."""
+        extra = [MockTool()]
+        tools = tool_manager.get_tools(allowed_tools=None, extra_tools=extra)
+        tool_names = {t.name for t in tools}
+        assert "mock_tool" in tool_names
+
+    def test_get_tools_system_tools_bypass_allowlist(self, tool_manager):
+        """System tools are never filtered by allowed_tools."""
+        tools = tool_manager.get_tools(
+            allowed_tools=[], system_tools=[MockStatefulTool()]
+        )
+        tool_names = {t.name for t in tools}
+        assert "mock_stateful_tool" in tool_names
 
 
 # Fixtures
@@ -365,3 +400,59 @@ def clear_global_manager():
     manager_module._GLOBAL_TOOL_MANAGER = None
     yield
     manager_module._GLOBAL_TOOL_MANAGER = original
+
+
+class TestGetGlobalToolManager:
+    """Tests for get_global_tool_manager singleton behavior."""
+
+    def test_first_call_creates_manager(self):
+        """First call should create the global manager."""
+        assert manager_module._GLOBAL_TOOL_MANAGER is None
+        manager = manager_module.get_global_tool_manager()
+        assert manager is not None
+        assert manager_module._GLOBAL_TOOL_MANAGER is manager
+        assert manager._citation_store_config is None
+
+    def test_subsequent_calls_return_same_manager(self):
+        """Subsequent calls should return the same manager instance."""
+        manager1 = manager_module.get_global_tool_manager()
+        manager2 = manager_module.get_global_tool_manager()
+        assert manager1 is manager2
+
+    def test_upgrade_citation_config(self):
+        """If initial manager has no citation config, subsequent call with config should upgrade it."""
+        # First call without config
+        manager = manager_module.get_global_tool_manager(citation_store_config=None)
+        assert manager._citation_store_config is None
+
+        # Pre-populate cache for web_search to simulate real usage
+        manager._tool_cache["web_search"] = object()
+
+        # Second call with config should upgrade the existing manager
+        # CitationStoreConfig 默认就是 memory 类型
+        config = CitationStoreConfig()
+        manager2 = manager_module.get_global_tool_manager(citation_store_config=config)
+
+        # Should be the same instance but with updated config
+        assert manager2 is manager
+        assert manager._citation_store_config is config
+
+        # Web search cache should be cleared so it gets recreated with citation
+        assert "web_search" not in manager._tool_cache
+
+    def test_no_upgrade_if_already_has_config(self):
+        """If manager already has citation config, new config should be ignored."""
+        # First call with config (默认 memory)
+        config1 = CitationStoreConfig()
+        manager = manager_module.get_global_tool_manager(citation_store_config=config1)
+        assert manager._citation_store_config is config1
+
+        # Second call with different config should not change existing config
+        # 创建一个不同 db_path 的 config
+        config2 = CitationStoreConfig()
+        config2.sqlite_db_path = "/tmp/test.db"
+        manager2 = manager_module.get_global_tool_manager(citation_store_config=config2)
+
+        assert manager2 is manager
+        # Config should remain unchanged
+        assert manager._citation_store_config is config1

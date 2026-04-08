@@ -1,6 +1,6 @@
 "use client";
 
-import { GitBranch, Workflow } from "lucide-react";
+import { GitBranch, Trash2, Workflow } from "lucide-react";
 import type { ChatSessionItem } from "@/lib/api";
 import { UserInputCompact } from "@/components/user-input-detail";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,7 @@ interface SessionItemProps {
   isCurrent: boolean;
   onSwitch: () => void;
   onFork: () => void;
+  onDelete?: () => void;
 }
 
 /**
@@ -44,6 +45,7 @@ export function SessionItem({
   isCurrent,
   onSwitch,
   onFork,
+  onDelete,
 }: SessionItemProps) {
   const schedulerActive = Boolean(session.root_state_status);
   const containerClassName = cn(
@@ -73,15 +75,27 @@ export function SessionItem({
           )}
         </div>
         {isCurrent && (
-          <button
-            type="button"
-            onClick={onFork}
-            className="ui-button ui-button-ghost min-h-7 rounded-full px-2 py-1 text-[10px]"
-            aria-label={`Fork session ${session.session_id.slice(0, 8)}`}
-          >
-            <GitBranch className="w-3 h-3" />
-            Fork
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onFork}
+              className="ui-button ui-button-ghost min-h-7 rounded-full px-2 py-1 text-[10px]"
+              aria-label={`Fork session ${session.session_id.slice(0, 8)}`}
+            >
+              <GitBranch className="w-3 h-3" />
+              Fork
+            </button>
+            {onDelete && (
+              <button
+                type="button"
+                onClick={onDelete}
+                className="ui-button ui-button-ghost min-h-7 rounded-full px-2 py-1 text-[10px] text-danger hover:text-danger"
+                aria-label={`Delete session ${session.session_id.slice(0, 8)}`}
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
         )}
       </div>
 

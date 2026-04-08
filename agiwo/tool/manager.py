@@ -32,11 +32,17 @@ def get_global_tool_manager(
 
     Args:
         citation_store_config: Optional config for citation-enabled tools.
-            Only used when creating the manager for the first time.
+            Used when creating the manager for the first time, or to upgrade
+            an existing manager that was initialized without citation config.
     """
     global _GLOBAL_TOOL_MANAGER
     if _GLOBAL_TOOL_MANAGER is None:
         _GLOBAL_TOOL_MANAGER = ToolManager(citation_store_config=citation_store_config)
+    elif (
+        citation_store_config is not None
+        and _GLOBAL_TOOL_MANAGER._citation_store_config is None
+    ):
+        _GLOBAL_TOOL_MANAGER.set_citation_store_config(citation_store_config)
     return _GLOBAL_TOOL_MANAGER
 
 
@@ -63,6 +69,22 @@ class ToolManager:
         self._tool_cache: dict[str, BaseTool] = {}  # Cache for stateless tools
         self._initialized = True
         logger.debug("tool_manager_initialized", builtin_count=len(BUILTIN_TOOLS))
+
+    def set_citation_store_config(self, config: CitationStoreConfig) -> None:
+        """Set citation store config and reinitialize dependent tools.
+
+        This method updates the citation configuration and clears the tool cache
+        for citation-enabled tools (web_search, web_reader) so they will be
+        recreated with the new config on next access.
+
+        Args:
+            config: The citation store configuration to apply
+        """
+        self._citation_store_config = config
+        _CITATION_TOOLS = {"web_search", "web_reader"}
+        for name in _CITATION_TOOLS:
+            self._tool_cache.pop(name, None)
+        logger.debug("citation_config_updated", cleared_tools=list(_CITATION_TOOLS))
 
     def list_available_tools(self) -> list[dict[str, str]]:
         """List all available builtin tools with their metadata.
@@ -126,33 +148,25 @@ class ToolManager:
         """Normalize allowed_tools list.
 
         - None means all default tools are allowed
-        - Empty list means no builtin tools allowed
+        - Empty list means no tools allowed (builtin or custom)
         - ``agent:<id>`` prefixed items are accepted as valid tool references
-        - Validates that all non-prefixed tool names exist in the builtin registry
+        - Builtin tool names are validated; unrecognised names are kept
+          (they may refer to user-supplied custom tools)
 
         Raises:
-            ValueError: If unknown builtin tool names or malformed agent refs.
+            ValueError: If malformed agent refs.
         """
         if allowed_tools is None:
             return None
 
         normalized: list[str] = []
-        available = set(self.list_available_tool_names())
-        unknown: list[str] = []
 
         for name in allowed_tools:
             if name.startswith(AGENT_TOOL_PREFIX):
                 agent_id = name[len(AGENT_TOOL_PREFIX) :].strip()
                 if not agent_id:
                     raise ValueError(f"Invalid tool reference: {name!r}")
-                normalized.append(name)
-            elif name in available:
-                normalized.append(name)
-            else:
-                unknown.append(name)
-
-        if unknown:
-            raise ValueError(f"Unknown tool names: {', '.join(unknown)}")
+            normalized.append(name)
 
         return normalized
 
@@ -161,31 +175,44 @@ class ToolManager:
         allowed_tools: list[str] | None = None,
         extra_tools: list[BaseTool] | None = None,
         allowed_skills: list[str] | None = None,
+        system_tools: list[BaseTool] | None = None,
     ) -> tuple[BaseTool, ...]:
         """Get tool instances based on allowlist.
 
-        Stateless tools are cached and reused. Non-stateless tools are created fresh.
-        If allowed_skills is provided and non-empty, a SkillTool will be added.
+        Tools are split into two categories:
+
+        **Functional tools** (controlled by ``allowed_tools``):
+            - Builtin tools (bash, web_search, …)
+            - Extra / custom tools (AgentTool, user-supplied BaseTool)
+
+        **System tools** (NOT controlled by ``allowed_tools``):
+            - SkillTool (controlled by ``allowed_skills``)
+            - Scheduler runtime tools (passed via ``system_tools``)
 
         Args:
-            allowed_tools: List of allowed tool names, or None for defaults
-            extra_tools: Additional custom tools to include
-            allowed_skills: List of allowed skill names. If non-empty, adds skill tool.
+            allowed_tools: Allowlist for functional tools.  ``None`` = all
+                defaults; ``[]`` = none.
+            extra_tools: Additional custom tool instances (subject to
+                ``allowed_tools`` filtering).
+            allowed_skills: Skill allowlist.  Drives SkillTool creation.
+            system_tools: System-level tool instances injected unconditionally.
 
         Returns:
             Tuple of resolved tool instances
         """
-        # 1. Determine which builtin tools to include
-        selected_tool_names = self._resolve_tool_names(allowed_tools)
+        # 1. Functional tools (controlled by allowed_tools)
+        builtin_tools = self._build_builtin_tools(
+            self._resolve_tool_names(allowed_tools)
+        )
+        filtered_extras = self._filter_extra_tools(extra_tools, allowed_tools)
 
-        # 2. Build builtin tools
-        tools = self._build_builtin_tools(selected_tool_names)
-
-        # 3. Build skill tool if needed
+        # 2. System tools (not controlled by allowed_tools)
         skill_tool = self._build_skill_tool(allowed_skills)
 
-        # 4. Merge all tools and finalize
-        merged = self._merge_tools(tools, extra_tools, skill_tool)
+        # 3. Merge and finalize
+        merged = self._merge_tools(
+            builtin_tools, filtered_extras, skill_tool, system_tools
+        )
         return self._finalize_tools(merged)
 
     def _resolve_tool_names(self, allowed_tools: list[str] | None) -> set[str]:
@@ -281,29 +308,57 @@ class ToolManager:
         skill_manager = get_global_skill_manager()
         return skill_manager.create_skill_tool(allowed_skills)
 
+    def _filter_extra_tools(
+        self,
+        extra_tools: list[BaseTool] | None,
+        allowed_tools: list[str] | None,
+    ) -> list[BaseTool]:
+        """Filter extra tools by the allowed_tools allowlist.
+
+        - ``allowed_tools is None`` → all extras pass through
+        - ``allowed_tools == []`` → nothing passes
+        - Otherwise keep only extras whose ``name`` appears in the resolved
+          allowed set (``agent:x`` entries are matched by the bare name ``x``).
+        """
+        if not extra_tools:
+            return []
+        if allowed_tools is None:
+            return list(extra_tools)
+
+        allowed_names: set[str] = set()
+        for name in allowed_tools:
+            if name.startswith(AGENT_TOOL_PREFIX):
+                allowed_names.add(name[len(AGENT_TOOL_PREFIX) :])
+            else:
+                allowed_names.add(name)
+
+        return [t for t in extra_tools if t.name in allowed_names]
+
     def _merge_tools(
         self,
         builtin_tools: list[BaseTool],
-        extra_tools: list[BaseTool] | None,
+        extra_tools: list[BaseTool],
         skill_tool: BaseTool | None,
+        system_tools: list[BaseTool] | None,
     ) -> list[BaseTool]:
-        """Merge builtin, extra, and skill tools.
+        """Merge functional and system tools.
 
         Args:
-            builtin_tools: List of builtin tool instances
-            extra_tools: List of custom/extra tool instances
-            skill_tool: Skill tool instance or None
+            builtin_tools: Builtin tool instances (functional)
+            extra_tools: Filtered custom tool instances (functional)
+            skill_tool: SkillTool instance or None (system)
+            system_tools: Scheduler / runtime tool instances (system)
 
         Returns:
             Merged list of all tools
         """
         result = list(builtin_tools)
-
-        if extra_tools:
-            result.extend(extra_tools)
+        result.extend(extra_tools)
 
         if skill_tool:
             result.append(skill_tool)
+        if system_tools:
+            result.extend(system_tools)
 
         return result
 

@@ -167,7 +167,8 @@ async def test_update_agent_put_rejects_partial_payloads(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_agent_rejects_unknown_tool_reference(client) -> None:
+async def test_create_agent_accepts_custom_tool_names(client) -> None:
+    """Unknown tool names are accepted — they may refer to user-supplied custom tools."""
     response = await client.post(
         "/api/agents",
         json={
@@ -176,14 +177,15 @@ async def test_create_agent_rejects_unknown_tool_reference(client) -> None:
             "model_provider": "openai",
             "model_name": "gpt-4o-mini",
             "system_prompt": "",
-            "allowed_tools": ["missing-tool"],
+            "allowed_tools": ["custom-tool"],
             "options": {},
             "model_params": {},
         },
     )
 
-    assert response.status_code == 422
-    assert "Unknown tool names" in response.text
+    assert response.status_code == 201
+    data = response.json()
+    assert "custom-tool" in data["allowed_tools"]
 
 
 @pytest.mark.asyncio

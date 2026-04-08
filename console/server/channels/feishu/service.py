@@ -49,7 +49,8 @@ from server.channels.feishu.message_parser import (
     FeishuMessageParser,
 )
 from server.channels.feishu.sender_resolver import FeishuSenderResolver
-from server.channels.feishu.store import create_feishu_channel_store
+from server.channels.feishu.dedup_store import create_feishu_dedup_store
+from server.services.session_store import create_session_store
 from server.channels.batch_manager import ChannelBatchManager
 from server.config import ConsoleConfig
 from server.models.session import (
@@ -83,7 +84,11 @@ class FeishuChannelService:
             app_secret=feishu.app_secret,
             api_base_url=feishu.api_base_url,
         )
-        store = create_feishu_channel_store(
+        session_store = create_session_store(
+            db_path=config.sqlite_db_path,
+            use_persistent_store=config.storage.metadata_type == "sqlite",
+        )
+        dedup_store = create_feishu_dedup_store(
             db_path=config.sqlite_db_path,
             use_persistent_store=config.storage.metadata_type == "sqlite",
         )
@@ -106,7 +111,7 @@ class FeishuChannelService:
         )
 
         session_service = SessionContextService(
-            store=store,
+            store=session_store,
             agent_registry=agent_registry,
             default_agent_name=feishu.default_agent_name,
         )
@@ -114,11 +119,11 @@ class FeishuChannelService:
             scheduler=scheduler,
             agent_registry=agent_registry,
             console_config=config,
-            session_store=store,
+            session_store=session_store,
         )
         executor = SessionRuntimeService(
             scheduler=scheduler,
-            session_store=store,
+            session_store=session_store,
             timeout=feishu.scheduler_wait_timeout,
         )
 
@@ -137,7 +142,8 @@ class FeishuChannelService:
 
         self._bot_open_id = feishu.bot_open_id
         self._api = api
-        self._store = store
+        self._session_store = session_store
+        self._dedup_store = dedup_store
         self._parser = parser
         self._connection = connection
         self._tmp_dir = tmp_dir
@@ -168,7 +174,8 @@ class FeishuChannelService:
             parser=parser,
             content_extractor=content_extractor,
             group_history_store=group_history_store,
-            store=store,
+            session_store=session_store,
+            dedup_store=dedup_store,
             session_service=session_service,
             session_manager=self._session_mgr,
             command_registry=command_registry,
@@ -194,7 +201,8 @@ class FeishuChannelService:
         return self._executor
 
     async def initialize(self) -> None:
-        await self._store.connect()
+        await self._session_store.connect()
+        await self._dedup_store.connect()
 
         if not self._bot_open_id:
             logger.warning(
@@ -220,7 +228,7 @@ class FeishuChannelService:
             logger.warning(
                 "resource_close_failed", resource="FeishuConnection", exc_info=True
             )
-        await safe_close_all(self._api, self._store)
+        await safe_close_all(self._api, self._session_store, self._dedup_store)
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def get_status(self) -> dict[str, Any]:
