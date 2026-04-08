@@ -45,6 +45,7 @@ class WebSearchTool(BaseTool):
         "result index: web_reader(index=0) => Fetch content from the first search result"
     )
     cacheable = True
+    is_stateless = True
 
     def __init__(
         self,

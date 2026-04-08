@@ -52,6 +52,8 @@ class SpawnChildRequest:
     system_prompt: str | None = None
     custom_child_id: str | None = None
     allowed_skills: list[str] | None = None
+    allowed_tools: list[str] | None = None
+    fork: bool = False
 
 
 @dataclass(frozen=True, slots=True)

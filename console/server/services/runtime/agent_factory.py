@@ -13,16 +13,21 @@ from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import AgentState
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
+from agiwo.tool.manager import get_global_tool_manager
 
 from server.config import ConsoleConfig, DefaultAgentConfig
 from server.models.agent_config import AgentOptionsInput, ModelParamsInput
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import (
+    build_citation_store_config,
     build_run_step_storage_config,
     build_trace_storage_config,
 )
-from server.services.tool_catalog.tool_builder import build_tools
 from server.services.tool_catalog.tool_references import AGENT_TOOL_PREFIX
+
+from agiwo.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class PersistentAgentResumeError(RuntimeError):
@@ -57,6 +62,9 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
     allowed_skills = get_global_skill_manager().expand_allowed_skills(
         template.allowed_skills
     )
+    # Expand default tools using ToolManager
+    tool_manager = get_global_tool_manager()
+    default_tools = tool_manager.list_default_tool_names()
     return AgentConfigRecord(
         id=template.id,
         name=template.name,
@@ -64,8 +72,8 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
         model_provider=template.model_provider,
         model_name=template.model_name,
         system_prompt=template.system_prompt,
-        tools=list(template.tools),
-        allowed_skills=allowed_skills or [],
+        allowed_tools=template.allowed_tools or default_tools,
+        allowed_skills=allowed_skills,
         options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
         model_params=dict(template.model_params),
     )
@@ -88,6 +96,12 @@ async def build_agent(
     id: str | None = None,
     _building: set[str] | None = None,
 ) -> Agent:
+    """Construct an Agent from a persisted config record.
+
+    Builtin tools and skill tool are assembled by ``Agent.__init__`` via
+    ``ToolManager``.  This function only builds *agent-as-tool* extras
+    (``agent:<id>`` references) and passes them to the Agent constructor.
+    """
     if _building is None:
         _building = set()
     if config.id in _building:
@@ -102,36 +116,44 @@ async def build_agent(
         trace_storage=build_trace_storage_config(console_config),
     )
 
-    async def _build_agent_tool(ref: str) -> BaseTool | None:
+    # Ensure ToolManager has citation store config before Agent assembly
+    get_global_tool_manager(build_citation_store_config(console_config))
+
+    # Build agent-as-tool extras only (agent:<id> references)
+    agent_tools: list[BaseTool] = []
+    for ref in config.allowed_tools or []:
+        if not ref.startswith(AGENT_TOOL_PREFIX):
+            continue
         agent_id = ref[len(AGENT_TOOL_PREFIX) :]
         child_config = await registry.get_agent(agent_id)
         if child_config is None:
-            return None
+            continue
         child_agent = await build_agent(
             child_config,
             console_config,
             registry,
             _building=_building.copy(),
         )
-        return child_agent.as_tool()
-
-    tools = await build_tools(
-        config.tools or [],
-        console_config=console_config,
-        build_agent_tool=_build_agent_tool,
-    )
+        agent_tools.append(child_agent.as_tool())
 
     agent_config = AgentConfig(
         name=config.name,
         description=config.description,
         system_prompt=config.system_prompt,
         options=options,
-        allowed_skills=list(config.allowed_skills),
+        allowed_skills=config.allowed_skills,
+        allowed_tools=config.allowed_tools,
+    )
+    logger.info(
+        "build_agent",
+        agent=config.id,
+        allowed_tools=config.allowed_tools,
+        extra_tools=[t.name for t in agent_tools],
     )
     return Agent(
         agent_config,
         model=model,
-        tools=tools or None,
+        tools=agent_tools or None,
         id=id or config.id,
     )
 

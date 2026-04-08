@@ -23,6 +23,7 @@ class MemoryRetrievalTool(BaseTool):
 
     name = "memory_retrieval"
     description = "Search your MEMORY directory for relevant past notes, decisions, and knowledge. Use this before answering questions about prior work, preferences, or historical context."
+    is_stateless = True
 
     def __init__(
         self,

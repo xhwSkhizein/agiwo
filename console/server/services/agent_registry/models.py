@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 from agiwo.llm.config_policy import sanitize_model_params_data
 from agiwo.skill.allowlist import normalize_allowed_skills
 from agiwo.skill.manager import get_global_skill_manager
+from agiwo.tool.manager import get_global_tool_manager
 from server.models.agent_config import sanitize_agent_options_data
 
 
@@ -21,8 +22,10 @@ class AgentConfigRecord(BaseModel):
     model_provider: str
     model_name: str
     system_prompt: str = ""
-    tools: list[str] = Field(default_factory=list)
-    allowed_skills: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] | None = (
+        None  # Allowed builtin tool names (None = all defaults)
+    )
+    allowed_skills: list[str] | None = None
     options: dict[str, Any] = Field(default_factory=dict)
     model_params: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
@@ -42,9 +45,16 @@ class AgentConfigRecord(BaseModel):
         normalized["allowed_skills"] = (
             get_global_skill_manager().validate_explicit_allowed_skills(
                 list(normalize_allowed_skills(normalized.get("allowed_skills")) or ())
+                if normalized.get("allowed_skills") is not None
+                else None
             )
-            or []
         )
+        if normalized.get("allowed_tools") is not None:
+            normalized["allowed_tools"] = (
+                get_global_tool_manager().normalize_allowed_tools(
+                    list(normalized["allowed_tools"])
+                )
+            )
         return normalized
 
 

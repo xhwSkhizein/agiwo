@@ -1,3 +1,5 @@
+import asyncio
+
 from agiwo.llm import ModelSpec, create_model
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
@@ -10,6 +12,7 @@ class WebContentProcessor:
         self._model_config = model_config
         self._max_length = max_length
         self._llm_model = None
+        self._model_init_lock = asyncio.Lock()
 
     @property
     def llm_model(self):
@@ -51,7 +54,7 @@ class WebContentProcessor:
             return fallback_text
 
         try:
-            model = self._get_llm_model()
+            model = await self._get_llm_model()
         except Exception as exc:  # noqa: BLE001
             logger.error("web_reader_model_init_failed", error=str(exc))
             return fallback_text
@@ -76,9 +79,16 @@ class WebContentProcessor:
         result = "".join(content_parts).strip()
         return result or fallback_text
 
-    def _get_llm_model(self):
-        if self._llm_model is None:
-            self._llm_model = create_model(self._model_config)
+    async def _get_llm_model(self):
+        """Get or lazily initialize the LLM model with async lock protection."""
+        if self._llm_model is not None:
+            return self._llm_model
+
+        async with self._model_init_lock:
+            # Double-check pattern: another coroutine may have initialized while waiting
+            if self._llm_model is None:
+                self._llm_model = create_model(self._model_config)
+
         return self._llm_model
 
     async def _summarize_content(

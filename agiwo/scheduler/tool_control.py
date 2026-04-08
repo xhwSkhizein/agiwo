@@ -11,6 +11,7 @@ from agiwo.scheduler.commands import (
     SleepResult,
     SpawnChildRequest,
 )
+from agiwo.agent.definition import validate_child_subset
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     AgentState,
@@ -63,22 +64,14 @@ class SchedulerToolControl:
         allowed_skills = get_global_skill_manager().validate_explicit_allowed_skills(
             request.allowed_skills
         )
+
         parent_agent = self._rt.agents.get(request.parent_agent_id)
-        if allowed_skills is not None:
-            if (
-                parent_agent is not None
-                and parent_agent.config.allowed_skills is not None
-            ):
-                parent_allowed = set(parent_agent.config.allowed_skills)
-                disallowed = [
-                    skill for skill in allowed_skills if skill not in parent_allowed
-                ]
-                if disallowed:
-                    skill_list = ", ".join(disallowed)
-                    raise ValueError(
-                        "Child allowed_skills must be a subset of the parent's "
-                        f"allowed_skills: {skill_list}"
-                    )
+        if parent_agent is not None:
+            validate_child_subset(
+                request.allowed_tools,
+                parent_agent.config.allowed_tools,
+                "allowed_tools",
+            )
 
         state = AgentState(
             id=child_id,
@@ -91,6 +84,10 @@ class SchedulerToolControl:
                     instruction=request.instruction,
                     system_prompt=request.system_prompt,
                     allowed_skills=allowed_skills,
+                    allowed_tools=tuple(request.allowed_tools)
+                    if request.allowed_tools is not None
+                    else None,
+                    fork=request.fork,
                 )
             ),
             depth=parent_state.depth + 1,

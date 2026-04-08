@@ -87,12 +87,13 @@ class SqliteAgentRegistryStore:
                 model_provider,
                 model_name,
                 system_prompt,
-                tools,
+                allowed_tools,
+                allowed_skills,
                 options,
                 model_params,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["id"],
@@ -101,7 +102,8 @@ class SqliteAgentRegistryStore:
                 data["model_provider"],
                 data["model_name"],
                 data["system_prompt"],
-                data["tools"],
+                data["allowed_tools"],
+                data["allowed_skills"],
                 data["options"],
                 data["model_params"],
                 data["created_at"],
@@ -130,7 +132,8 @@ class SqliteAgentRegistryStore:
                 model_provider TEXT NOT NULL,
                 model_name TEXT NOT NULL,
                 system_prompt TEXT DEFAULT '',
-                tools TEXT DEFAULT '[]',
+                allowed_tools TEXT DEFAULT NULL,
+                allowed_skills TEXT DEFAULT NULL,
                 options TEXT DEFAULT '{}',
                 model_params TEXT DEFAULT '{}',
                 created_at TEXT NOT NULL,
@@ -154,7 +157,8 @@ class SqliteAgentRegistryStore:
             "model_provider": record.model_provider,
             "model_name": record.model_name,
             "system_prompt": record.system_prompt,
-            "tools": json.dumps(record.tools),
+            "allowed_tools": json.dumps(record.allowed_tools),
+            "allowed_skills": json.dumps(record.allowed_skills),
             "options": json.dumps(record.options),
             "model_params": json.dumps(record.model_params),
             "created_at": record.created_at.isoformat(),
@@ -162,6 +166,14 @@ class SqliteAgentRegistryStore:
         }
 
     def _deserialize_row(self, row: aiosqlite.Row) -> AgentConfigRecord:
+        raw_allowed_tools = row["allowed_tools"]
+        raw_allowed_skills = row["allowed_skills"]
+        allowed_tools = (
+            json.loads(raw_allowed_tools) if raw_allowed_tools is not None else None
+        )
+        allowed_skills = (
+            json.loads(raw_allowed_skills) if raw_allowed_skills is not None else None
+        )
         return AgentConfigRecord.model_validate(
             {
                 "id": row["id"],
@@ -170,7 +182,8 @@ class SqliteAgentRegistryStore:
                 "model_provider": row["model_provider"],
                 "model_name": row["model_name"],
                 "system_prompt": row["system_prompt"],
-                "tools": json.loads(row["tools"] or "[]"),
+                "allowed_tools": allowed_tools,
+                "allowed_skills": allowed_skills,
                 "options": json.loads(row["options"] or "{}"),
                 "model_params": json.loads(row["model_params"] or "{}"),
                 "created_at": row["created_at"],

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import {
   EmptyStateMessage,
   ErrorStateMessage,
@@ -13,7 +13,7 @@ import { UserInputCompact } from "@/components/user-input-detail";
 import { PillBadge } from "@/components/pill-badge";
 import { MonoText } from "@/components/mono-text";
 import { cn } from "@/lib/utils";
-import { listSessions } from "@/lib/api";
+import { deleteSession, listSessions } from "@/lib/api";
 import type { SessionSummary } from "@/lib/api";
 
 function formatRelativeTime(dateStr: string | null): string {
@@ -54,6 +54,21 @@ export default function SessionsPage() {
       setLoading(false);
     }
   }, [offset, pageSize]);
+
+  const handleDelete = async (sessionId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm("Delete this session?")) return;
+    try {
+      await deleteSession(sessionId);
+      setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
+      if (total !== null) {
+        setTotal((t) => (t !== null ? t - 1 : null));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete session");
+    }
+  };
 
   useEffect(() => {
     void loadSessions();
@@ -125,9 +140,22 @@ export default function SessionsPage() {
                     <PillBadge variant="default">{s.run_count} runs</PillBadge>
                     <MonoText truncate className="max-w-[120px]">{s.agent_id || "unknown"}</MonoText>
                   </div>
-                  <p className="text-[11px] text-zinc-500 mt-1">
-                    {formatRelativeTime(s.updated_at)}
-                  </p>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => handleDelete(s.session_id, e)}
+                      className={cn(
+                        "p-1.5 rounded-md text-zinc-500 hover:text-red-400 hover:bg-red-900/20",
+                        "transition-colors duration-150"
+                      )}
+                      aria-label={`Delete session ${s.session_id.slice(0, 8)}`}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                    <p className="text-[11px] text-zinc-500">
+                      {formatRelativeTime(s.updated_at)}
+                    </p>
+                  </div>
                 </div>
               </div>
             </Link>

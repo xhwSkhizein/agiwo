@@ -17,6 +17,15 @@ def normalize_allowed_skills(
 
 
 def skills_enabled(allowed_skills: list[str] | tuple[str, ...] | None) -> bool:
+    """Check if skills are enabled based on allowed_skills configuration.
+
+    Semantic meanings:
+        - None: All skills are allowed (skills system is enabled)
+        - [] (empty list): No skills are allowed (skills system is effectively disabled)
+        - ["skill1", "skill2", ...]: Only specific skills are allowed
+
+    Returns True if skills should be enabled (None or non-empty list).
+    """
     normalized = normalize_allowed_skills(allowed_skills)
     return normalized is None or bool(normalized)
 

@@ -90,8 +90,8 @@ class AgentConfig:
     description: str = ""
     system_prompt: str = ""
     options: AgentOptions = field(default_factory=AgentOptions)
-    disabled_sdk_tool_names: set[str] = field(default_factory=set)
     allowed_skills: list[str] | None = None
+    allowed_tools: list[str] | None = None
 
     def __post_init__(self) -> None:
         normalized = normalize_allowed_skills(self.allowed_skills)

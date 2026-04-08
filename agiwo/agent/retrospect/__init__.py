@@ -84,7 +84,7 @@ class RetrospectBatch:
 
         offload_dir = (
             Path(self._state.config.get_effective_root_path())
-            / ".agiwo"
+            / "harness"
             / "retrospect"
             / self._state.session_id
         )

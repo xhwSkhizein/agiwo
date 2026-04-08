@@ -14,7 +14,6 @@ from server.models.agent_config import (
     ModelParamsInput,
 )
 from server.models.metrics import RunMetricsSummary
-from server.services.tool_catalog.tool_references import parse_tool_references
 
 T = TypeVar("T")
 
@@ -37,30 +36,31 @@ class AgentConfigPayload(BaseModel):
     model_provider: ModelProvider
     model_name: str
     system_prompt: str = ""
-    tools: list[str] = Field(default_factory=list)
-    allowed_skills: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] | None = None
+    allowed_skills: list[str] | None = None
     options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
 
-    @field_validator("tools", mode="before")
+    @field_validator("allowed_tools", mode="before")
     @classmethod
-    def _validate_tools(cls, value: object) -> list[str]:
+    def _validate_allowed_tools(cls, value: object) -> list[str] | None:
         if value is None:
-            return []
+            return None
         if not isinstance(value, list):
-            raise ValueError("tools must be a list")
-        return parse_tool_references(value)
+            raise ValueError("allowed_tools must be a list")
+        return list(value)
 
     @field_validator("allowed_skills", mode="before")
     @classmethod
-    def _validate_allowed_skills(cls, value: object) -> list[str]:
+    def _validate_allowed_skills(cls, value: object) -> list[str] | None:
         if value is None:
-            return []
+            return None
         if isinstance(value, str):
             value = [value]
         if not isinstance(value, list):
             raise ValueError("allowed_skills must be a list")
-        return list(normalize_allowed_skills(value) or ())
+        normalized = normalize_allowed_skills(value)
+        return list(normalized) if normalized is not None else None
 
     @model_validator(mode="after")
     def _validate_model_connection(self) -> "AgentConfigPayload":
@@ -76,8 +76,8 @@ class AgentConfigResponse(BaseModel):
     model_provider: str
     model_name: str
     system_prompt: str = ""
-    tools: list[str] = Field(default_factory=list)
-    allowed_skills: list[str] = Field(default_factory=list)
+    allowed_tools: list[str] | None = None
+    allowed_skills: list[str] | None = None
     options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
     created_at: str

@@ -1,4 +1,4 @@
-"""In-memory Feishu channel metadata store."""
+"""In-memory session store implementation."""
 
 from collections import OrderedDict
 
@@ -11,7 +11,12 @@ from server.models.session import (
 _EVENT_DEDUP_MAX_SIZE = 10_000
 
 
-class InMemoryFeishuChannelStore:
+class InMemorySessionStore:
+    """In-memory implementation of SessionStore.
+
+    Suitable for development and testing. Data is lost on restart.
+    """
+
     def __init__(self) -> None:
         self._event_dedup: OrderedDict[str, None] = OrderedDict()
         self._chat_context_map: dict[str, ChannelChatContext] = {}
@@ -19,19 +24,12 @@ class InMemoryFeishuChannelStore:
         self._session_ids_by_context: dict[str, set[str]] = {}
 
     async def connect(self) -> None:
+        """No-op for in-memory store."""
         return None
 
     async def close(self) -> None:
+        """No-op for in-memory store."""
         return None
-
-    async def claim_event(self, channel_instance_id: str, event_id: str) -> bool:
-        dedup_key = f"{channel_instance_id}:{event_id}"
-        if dedup_key in self._event_dedup:
-            return False
-        self._event_dedup[dedup_key] = None
-        while len(self._event_dedup) > _EVENT_DEDUP_MAX_SIZE:
-            self._event_dedup.popitem(last=False)
-        return True
 
     async def get_chat_context(self, scope_id: str) -> ChannelChatContext | None:
         return self._chat_context_map.get(scope_id)
@@ -75,6 +73,19 @@ class InMemoryFeishuChannelStore:
             )
             ids.add(session.id)
 
+    async def delete_session(self, session_id: str) -> bool:
+        session = self._session_map.get(session_id)
+        if session is None:
+            return False
+        del self._session_map[session_id]
+        if session.chat_context_scope_id is not None:
+            previous_ids = self._session_ids_by_context.get(
+                session.chat_context_scope_id
+            )
+            if previous_ids is not None:
+                previous_ids.discard(session_id)
+        return True
+
     async def list_sessions_by_user(
         self, user_open_id: str
     ) -> list[SessionWithContext]:
@@ -114,6 +125,3 @@ class InMemoryFeishuChannelStore:
         sessions = list(self._session_map.values())
         sessions.sort(key=lambda session: session.updated_at, reverse=True)
         return sessions
-
-
-__all__ = ["InMemoryFeishuChannelStore"]

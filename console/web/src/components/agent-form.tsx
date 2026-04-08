@@ -139,7 +139,7 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     cacheHitPrice: agent.model_params?.cache_hit_price ?? 0,
     inputPrice: agent.model_params?.input_price ?? 0,
     outputPrice: agent.model_params?.output_price ?? 0,
-    selectedTools: agent.tools ?? [],
+    selectedTools: agent.allowed_tools ?? [],
     selectedSkills: agent.allowed_skills ?? [],
   };
 }
@@ -405,7 +405,7 @@ export function AgentForm({
       model_provider: form.modelProvider,
       model_name: form.modelName,
       system_prompt: form.systemPrompt,
-      tools: form.selectedTools,
+      allowed_tools: form.selectedTools,
       allowed_skills: form.selectedSkills,
       options: {
         config_root: form.configRoot,

@@ -223,6 +223,20 @@ async def fork_session(
     }
 
 
+@router.delete("/sessions/{session_id}")
+async def delete_session_endpoint(
+    session_id: str,
+    runtime: ConsoleRuntimeDep,
+) -> dict[str, bool]:
+    """Delete a session from the session store."""
+    if runtime.session_store is None:
+        raise RuntimeError("Session store not available")
+    deleted = await runtime.session_store.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"ok": True}
+
+
 @router.get("/sessions/{session_id}/steps", response_model=PageResponse[StepResponse])
 async def get_session_steps(
     session_id: str,

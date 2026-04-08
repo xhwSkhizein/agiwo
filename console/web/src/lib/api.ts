@@ -480,8 +480,8 @@ export interface AgentConfig {
   model_provider: string;
   model_name: string;
   system_prompt: string;
-  tools: string[];
-  allowed_skills: string[];
+  allowed_tools: string[] | null;
+  allowed_skills: string[] | null;
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
   created_at: string;
@@ -494,8 +494,8 @@ export interface AgentConfigCreate {
   model_provider: string;
   model_name: string;
   system_prompt: string;
-  tools: string[];
-  allowed_skills: string[];
+  allowed_tools: string[] | null;
+  allowed_skills: string[] | null;
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
 }
@@ -531,8 +531,8 @@ export interface RuntimeDefaultAgentConfig {
   model_provider: string;
   model_name: string;
   system_prompt: string;
-  tools: string[];
-  allowed_skills: string[];
+  allowed_tools: string[] | null;
+  allowed_skills: string[] | null;
   model_params: ModelParamsPayload;
 }
 
@@ -748,6 +748,11 @@ export function forkSession(sessionId: string, contextSummary: string) {
     method: "POST",
     body: JSON.stringify({ context_summary: contextSummary }),
   });
+}
+
+export async function deleteSession(sessionId: string) {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 }
 
 // ── Session Input Stream ───────────────────────────────────────────────

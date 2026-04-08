@@ -12,6 +12,7 @@ from agiwo.agent import Agent
 from agiwo.agent import AgentConfig, AgentOptions
 from agiwo.agent import AgentHooks
 from agiwo.agent import AgentStreamItem, RunCompletedEvent, TerminationReason
+from agiwo.agent.models.step import MessageRole, StepRecord, UserMessage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.scheduler._tick import propagate_signals
@@ -420,6 +421,162 @@ class TestSchedulerCreateChildAgent:
         assert "Default prompt" not in child_prompt
         await scheduler.stop()
 
+    @pytest.mark.asyncio
+    async def test_fork_child_inherits_all(self):  # noqa: C901, PLR0915
+        """Fork mode: child inherits parent's full tool set and session steps."""
+        scheduler = Scheduler()
+        model = MockModel()
+        parent_system_prompt = "You are a helpful assistant for testing fork."
+        parent = _make_agent(
+            name="parent-fork",
+            model=model,
+            id="parent-fork",
+            tools=[],
+            system_prompt=parent_system_prompt,
+        )
+        state_id = await scheduler.submit(parent, "root task")
+        assert state_id == "parent-fork"
+
+        # Get the runtime clone from scheduler (this is the actual agent that will spawn child)
+        parent_runtime = scheduler.get_registered_agent("parent-fork")
+        assert parent_runtime is not None
+
+        # Update parent state in store to ensure session_id matches runtime
+        parent_state = await scheduler._store.get_state("parent-fork")
+        assert parent_state is not None
+        # Root agent session_id is auto-generated UUID
+        parent_session_id = parent_state.resolve_runtime_session_id()
+
+        # Add some history steps to parent agent's session
+        step1 = StepRecord(
+            session_id=parent_session_id,
+            run_id="run-1",
+            sequence=1,
+            role=MessageRole.USER,
+            agent_id="parent-fork",
+            content="Initial user message",
+            user_input=UserMessage.from_value("Initial user message"),
+        )
+        step2 = StepRecord(
+            session_id=parent_session_id,
+            run_id="run-1",
+            sequence=2,
+            role=MessageRole.ASSISTANT,
+            agent_id="parent-fork",
+            content="Assistant response",
+        )
+        await parent_runtime.run_step_storage.save_step(step1)
+        await parent_runtime.run_step_storage.save_step(step2)
+
+        # Create child state with fork=True
+        child_state = AgentState(
+            id="fork-child-1",
+            session_id="sess-fork",
+            status=AgentStateStatus.PENDING,
+            task="fork task",
+            parent_id="parent-fork",
+            config_overrides={"fork": True},  # Enable fork mode
+        )
+        await scheduler._store.save_state(child_state)
+
+        # Create child agent via runner (this triggers _copy_session_steps_for_fork)
+        child_agent = await scheduler._runner.create_child_agent(child_state)
+
+        # ═══════════════════════════════════════════════════════════════════
+        # Verify system prompt matches parent (critical for KV cache reuse)
+        # ═══════════════════════════════════════════════════════════════════
+        child_prompt = await child_agent.get_effective_system_prompt()
+        parent_prompt = await parent_runtime.get_effective_system_prompt()
+
+        mismatches = []
+        if parent_system_prompt not in child_prompt:
+            mismatches.append(
+                f"SYSTEM PROMPT MISMATCH:\n"
+                f"  Parent: {parent_prompt[:100]}...\n"
+                f"  Child:  {child_prompt[:100]}..."
+            )
+
+        # ═══════════════════════════════════════════════════════════════════
+        # Verify child has spawn_agent tool (excluded in normal mode, included in fork)
+        # ═══════════════════════════════════════════════════════════════════
+        parent_tool_names = {t.name for t in parent_runtime.tools}
+        child_tool_names = {t.name for t in child_agent.tools}
+
+        parent_has_spawn = "spawn_agent" in parent_tool_names
+        child_has_spawn = "spawn_agent" in child_tool_names
+
+        if parent_has_spawn and not child_has_spawn:
+            mismatches.append(
+                f"TOOLS MISMATCH: Parent has spawn_agent but child does not.\n"
+                f"  Parent tools: {parent_tool_names}\n"
+                f"  Child tools:  {child_tool_names}"
+            )
+
+        # ═══════════════════════════════════════════════════════════════════
+        # Verify session steps were copied from parent to child
+        # ═══════════════════════════════════════════════════════════════════
+        child_session_id = child_state.resolve_runtime_session_id()
+        child_steps = await child_agent.run_step_storage.get_steps(
+            session_id=child_session_id,
+            agent_id="fork-child-1",
+        )
+
+        parent_steps = await parent_runtime.run_step_storage.get_steps(
+            session_id=parent_session_id,
+            agent_id="parent-fork",
+        )
+
+        if len(child_steps) != len(parent_steps):
+            mismatches.append(
+                f"STEPS COUNT MISMATCH:\n"
+                f"  Parent steps: {len(parent_steps)}\n"
+                f"  Child steps:  {len(child_steps)}"
+            )
+        elif len(parent_steps) > 0:
+            # Verify content matches
+            for i, (p_step, c_step) in enumerate(zip(parent_steps, child_steps)):
+                if p_step.content != c_step.content:
+                    mismatches.append(
+                        f"STEP {i} CONTENT MISMATCH:\n"
+                        f"  Parent: {p_step.content}\n"
+                        f"  Child:  {c_step.content}"
+                    )
+                # Verify child step has its own session_id and agent_id
+                if c_step.session_id != child_session_id:
+                    mismatches.append(
+                        f"STEP {i} SESSION_ID MISMATCH:\n"
+                        f"  Expected: {child_session_id}\n"
+                        f"  Got:      {c_step.session_id}"
+                    )
+                if c_step.agent_id != "fork-child-1":
+                    mismatches.append(
+                        f"STEP {i} AGENT_ID MISMATCH:\n"
+                        f"  Expected: fork-child-1\n"
+                        f"  Got:      {c_step.agent_id}"
+                    )
+
+        # ═══════════════════════════════════════════════════════════════════
+        # Print all mismatches and fail if any
+        # ═══════════════════════════════════════════════════════════════════
+        if mismatches:
+            print("\n" + "=" * 70)
+            print("FORK CONSISTENCY CHECK FAILED")
+            print("=" * 70)
+            for m in mismatches:
+                print(f"\n{m}")
+            print("\n" + "=" * 70)
+            raise AssertionError(
+                "Fork consistency check failed. See printed mismatches above."
+            )
+
+        # Basic assertions for clarity
+        assert child_has_spawn, "Fork child should inherit spawn_agent tool"
+        assert len(child_steps) == 2, f"Expected 2 steps, got {len(child_steps)}"
+        assert "sleep_and_wait" in child_tool_names
+        assert "query_spawned_agent" in child_tool_names
+
+        await scheduler.stop()
+
 
 class TestSchedulerWakeMessage:
     @pytest.mark.asyncio
@@ -464,7 +621,7 @@ class TestSchedulerRunnerCleanup:
         prepared_agent = await agent.create_child_agent(
             child_id=agent.id,
             system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.name for tool in agent.tools},
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent
@@ -730,7 +887,7 @@ class TestSchedulerQueuedMailbox:
         prepared_agent = await agent.create_child_agent(
             child_id=agent.id,
             system_prompt_override=agent.config.system_prompt,
-            exclude_tool_names={tool.name for tool in agent.tools},
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent
@@ -906,7 +1063,7 @@ class TestSchedulerDebounce:
         ).create_child_agent(
             child_id="parent-dbounce",
             system_prompt_override="",
-            exclude_tool_names=set(),
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent
@@ -990,7 +1147,7 @@ class TestSchedulerDebounce:
         ).create_child_agent(
             child_id="parent-wake-ready",
             system_prompt_override="",
-            exclude_tool_names=set(),
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent
@@ -1042,7 +1199,7 @@ class TestSchedulerDebounce:
         ).create_child_agent(
             child_id="parent-timeout",
             system_prompt_override="",
-            exclude_tool_names=set(),
+            child_allowed_tools=[],
             extra_tools=list(scheduler._scheduling_tools),
         )
         scheduler._rt.agents[prepared_agent.id] = prepared_agent

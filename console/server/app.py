@@ -18,7 +18,7 @@ from server.dependencies import (
 )
 from server.channels.utils import safe_close_all
 from server.channels.feishu import FeishuChannelService
-from server.channels.feishu.store.memory import InMemoryFeishuChannelStore
+from server.services.session_store import create_session_store
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentRegistry
 from server.services.runtime import AgentRuntimeCache
@@ -59,7 +59,10 @@ async def lifespan(app: FastAPI):
 
     await get_global_skill_manager().initialize()
 
-    console_session_store = InMemoryFeishuChannelStore()
+    console_session_store = create_session_store(
+        db_path=config.sqlite_db_path,
+        use_persistent_store=config.storage.metadata_type == "sqlite",
+    )
     await console_session_store.connect()
 
     feishu_channel_service: FeishuChannelService | None = None

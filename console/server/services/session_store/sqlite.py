@@ -1,6 +1,6 @@
-"""SQLite-backed Feishu/channel metadata store."""
+"""SQLite-backed session store implementation."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 import os
 
 import aiosqlite
@@ -31,8 +31,8 @@ SELECT
     c.current_session_id AS c_current_session_id,
     c.created_at AS c_created_at,
     c.updated_at AS c_updated_at
-FROM feishu_session s
-JOIN feishu_channel_chat_context c
+FROM console_session s
+JOIN console_chat_context c
   ON s.chat_context_scope_id = c.scope_id
 """
 
@@ -90,7 +90,12 @@ def _joined_row_to_session_with_context(row: aiosqlite.Row) -> SessionWithContex
     )
 
 
-class SqliteFeishuChannelStore:
+class SqliteSessionStore:
+    """SQLite implementation of SessionStore.
+
+    Provides persistent storage for sessions and chat contexts.
+    """
+
     def __init__(self, db_path: str) -> None:
         self._db_path = os.path.expanduser(db_path)
         self._conn: aiosqlite.Connection | None = None
@@ -107,31 +112,12 @@ class SqliteFeishuChannelStore:
         await release_shared_connection(self._db_path)
         self._conn = None
 
-    async def claim_event(self, channel_instance_id: str, event_id: str) -> bool:
-        conn = await self._require_conn()
-        cursor = await conn.execute(
-            """
-            INSERT OR IGNORE INTO feishu_event_dedup (
-                channel_instance_id,
-                event_id,
-                created_at
-            ) VALUES (?, ?, ?)
-            """,
-            (
-                channel_instance_id,
-                event_id,
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        await conn.commit()
-        return cursor.rowcount == 1
-
     async def get_chat_context(self, scope_id: str) -> ChannelChatContext | None:
         conn = await self._require_conn()
         async with conn.execute(
             """
             SELECT *
-            FROM feishu_channel_chat_context
+            FROM console_chat_context
             WHERE scope_id = ?
             """,
             (scope_id,),
@@ -145,7 +131,7 @@ class SqliteFeishuChannelStore:
         conn = await self._require_conn()
         await conn.execute(
             """
-            INSERT INTO feishu_channel_chat_context (
+            INSERT INTO console_chat_context (
                 scope_id,
                 channel_instance_id,
                 chat_id,
@@ -184,7 +170,7 @@ class SqliteFeishuChannelStore:
         async with conn.execute(
             """
             SELECT *
-            FROM feishu_session
+            FROM console_session
             WHERE id = ?
             """,
             (session_id,),
@@ -215,7 +201,7 @@ class SqliteFeishuChannelStore:
         conn = await self._require_conn()
         await conn.execute(
             """
-            INSERT INTO feishu_session (
+            INSERT INTO console_session (
                 id,
                 chat_context_scope_id,
                 base_agent_id,
@@ -246,6 +232,15 @@ class SqliteFeishuChannelStore:
         )
         await conn.commit()
 
+    async def delete_session(self, session_id: str) -> bool:
+        conn = await self._require_conn()
+        cursor = await conn.execute(
+            "DELETE FROM console_session WHERE id = ?",
+            (session_id,),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
+
     async def list_sessions_by_user(
         self, user_open_id: str
     ) -> list[SessionWithContext]:
@@ -268,7 +263,7 @@ class SqliteFeishuChannelStore:
         async with conn.execute(
             """
             SELECT *
-            FROM feishu_session
+            FROM console_session
             WHERE chat_context_scope_id = ?
             ORDER BY updated_at DESC
             """,
@@ -282,7 +277,7 @@ class SqliteFeishuChannelStore:
         async with conn.execute(
             """
             SELECT *
-            FROM feishu_session
+            FROM console_session
             WHERE base_agent_id = ?
             ORDER BY updated_at DESC
             """,
@@ -296,7 +291,7 @@ class SqliteFeishuChannelStore:
         async with conn.execute(
             """
             SELECT *
-            FROM feishu_session
+            FROM console_session
             ORDER BY updated_at DESC
             """
         ) as cursor:
@@ -307,17 +302,7 @@ class SqliteFeishuChannelStore:
         conn = await self._require_conn()
         await conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS feishu_event_dedup (
-                channel_instance_id TEXT NOT NULL,
-                event_id TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                PRIMARY KEY (channel_instance_id, event_id)
-            )
-            """
-        )
-        await conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS feishu_channel_chat_context (
+            CREATE TABLE IF NOT EXISTS console_chat_context (
                 scope_id TEXT PRIMARY KEY,
                 channel_instance_id TEXT NOT NULL,
                 chat_id TEXT NOT NULL,
@@ -332,7 +317,7 @@ class SqliteFeishuChannelStore:
         )
         await conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS feishu_session (
+            CREATE TABLE IF NOT EXISTS console_session (
                 id TEXT PRIMARY KEY,
                 chat_context_scope_id TEXT,
                 base_agent_id TEXT NOT NULL,
@@ -346,7 +331,7 @@ class SqliteFeishuChannelStore:
         )
         await self._validate_schema(
             conn,
-            "feishu_channel_chat_context",
+            "console_chat_context",
             {
                 "scope_id",
                 "channel_instance_id",
@@ -361,7 +346,7 @@ class SqliteFeishuChannelStore:
         )
         await self._validate_schema(
             conn,
-            "feishu_session",
+            "console_session",
             {
                 "id",
                 "chat_context_scope_id",
@@ -374,20 +359,20 @@ class SqliteFeishuChannelStore:
             },
         )
         await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_feishu_chat_context_user_open_id "
-            "ON feishu_channel_chat_context(user_open_id)"
+            "CREATE INDEX IF NOT EXISTS idx_console_chat_context_user_open_id "
+            "ON console_chat_context(user_open_id)"
         )
         await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_feishu_session_chat_context_scope_id "
-            "ON feishu_session(chat_context_scope_id)"
+            "CREATE INDEX IF NOT EXISTS idx_console_session_chat_context_scope_id "
+            "ON console_session(chat_context_scope_id)"
         )
         await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_feishu_session_base_agent_id "
-            "ON feishu_session(base_agent_id)"
+            "CREATE INDEX IF NOT EXISTS idx_console_session_base_agent_id "
+            "ON console_session(base_agent_id)"
         )
         await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_feishu_session_updated_at "
-            "ON feishu_session(updated_at)"
+            "CREATE INDEX IF NOT EXISTS idx_console_session_updated_at "
+            "ON console_session(updated_at)"
         )
         await conn.commit()
 
@@ -410,6 +395,3 @@ class SqliteFeishuChannelStore:
             await self.connect()
         assert self._conn is not None
         return self._conn
-
-
-__all__ = ["SqliteFeishuChannelStore"]

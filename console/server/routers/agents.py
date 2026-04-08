@@ -56,11 +56,10 @@ def _body_to_record(body: AgentConfigPayload) -> AgentConfigRecord:
         model_provider=body.model_provider,
         model_name=body.model_name,
         system_prompt=body.system_prompt,
-        tools=body.tools,
+        allowed_tools=body.allowed_tools,
         allowed_skills=get_global_skill_manager().expand_allowed_skills(
             body.allowed_skills
-        )
-        or [],
+        ),
         options=body.options.model_dump(exclude_none=True),
         model_params=body.model_params.model_dump(exclude_none=True),
     )
@@ -79,7 +78,7 @@ def _record_to_response(
         model_provider=record.model_provider,
         model_name=record.model_name,
         system_prompt=record.system_prompt,
-        tools=record.tools,
+        allowed_tools=record.allowed_tools,
         allowed_skills=record.allowed_skills,
         options=AgentOptionsInput.model_validate(record.options or {}),
         model_params=ModelParamsInput.model_validate(record.model_params or {}),

@@ -40,6 +40,10 @@ def serialize_child_agent_config_overrides(
         data["system_prompt"] = overrides.system_prompt
     if overrides.allowed_skills is not None:
         data["allowed_skills"] = list(overrides.allowed_skills)
+    if overrides.allowed_tools is not None:
+        data["allowed_tools"] = list(overrides.allowed_tools)
+    if overrides.fork:
+        data["fork"] = True
     return data
 
 
@@ -52,6 +56,8 @@ def deserialize_child_agent_config_overrides(
         instruction=data.get("instruction"),
         system_prompt=data.get("system_prompt"),
         allowed_skills=data.get("allowed_skills"),
+        allowed_tools=data.get("allowed_tools"),
+        fork=data.get("fork", False),
     )
 
 

@@ -178,6 +178,7 @@ class BaseTool(ABC):
     cacheable: bool = False
     timeout_seconds: int = 30
     concurrency_safe: bool = True
+    is_stateless: bool = False  # Whether tool instance can be cached and reused
 
     @property
     @abstractmethod
