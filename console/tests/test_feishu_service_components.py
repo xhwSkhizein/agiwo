@@ -327,7 +327,8 @@ async def test_inbound_handler_acknowledges_and_enqueues_non_command_messages() 
         normalize_message_text=Mock(return_value="hello bot")
     )
     group_history_store = SimpleNamespace(record_message=Mock())
-    store = SimpleNamespace(claim_event=AsyncMock(return_value=True))
+    dedup_store = SimpleNamespace(claim_event=AsyncMock(return_value=True))
+    session_store = SimpleNamespace()
     session_service = SimpleNamespace(
         resolve_default_agent_config=AsyncMock(
             return_value=SimpleNamespace(id="agent-1")
@@ -345,7 +346,8 @@ async def test_inbound_handler_acknowledges_and_enqueues_non_command_messages() 
         parser=parser,
         content_extractor=content_extractor,
         group_history_store=group_history_store,
-        store=store,
+        session_store=session_store,
+        dedup_store=dedup_store,
         session_service=session_service,
         session_manager=session_manager,
         command_registry=SimpleNamespace(try_parse=Mock(return_value=None)),
