@@ -14,6 +14,7 @@ from agiwo.scheduler.models import AgentState
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
 from agiwo.tool.manager import get_global_tool_manager
+from agiwo.tool.reference import AgentToolReference
 
 from server.config import ConsoleConfig, DefaultAgentConfig
 from server.models.agent_config import AgentOptionsInput, ModelParamsInput
@@ -23,7 +24,6 @@ from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
 )
-from server.services.tool_catalog.tool_references import AGENT_TOOL_PREFIX
 
 from agiwo.utils.logging import get_logger
 
@@ -120,21 +120,22 @@ async def build_agent(
     get_global_tool_manager(build_citation_store_config(console_config))
 
     # Build agent-as-tool extras only (agent:<id> references)
+    # This is the ONLY place in Console where AgentTool instances are created.
     agent_tools: list[BaseTool] = []
-    for ref in config.allowed_tools or []:
-        if not ref.startswith(AGENT_TOOL_PREFIX):
-            continue
-        agent_id = ref[len(AGENT_TOOL_PREFIX) :]
-        child_config = await registry.get_agent(agent_id)
-        if child_config is None:
-            continue
-        child_agent = await build_agent(
-            child_config,
-            console_config,
-            registry,
-            _building=_building.copy(),
-        )
-        agent_tools.append(child_agent.as_tool())
+    tool_refs = get_global_tool_manager().parse_allowed_tools(config.allowed_tools)
+    if tool_refs:
+        for ref in tool_refs:
+            if isinstance(ref, AgentToolReference):
+                child_config = await registry.get_agent(ref.agent_id)
+                if child_config is None:
+                    continue
+                child_agent = await build_agent(
+                    child_config,
+                    console_config,
+                    registry,
+                    _building=_building.copy(),
+                )
+                agent_tools.append(child_agent.as_tool())
 
     agent_config = AgentConfig(
         name=config.name,

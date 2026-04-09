@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,10 +23,11 @@ from server.response_serialization import (
     step_metrics_response_from_sdk,
     step_response_from_sdk,
 )
-from server.services.tool_catalog.tool_references import (
+from agiwo.tool.reference import (
+    BuiltinToolReference,
+    AgentToolReference,
     InvalidToolReferenceError,
     parse_tool_reference,
-    parse_tool_references,
 )
 
 
@@ -418,50 +419,30 @@ class TestRunResponseFromSdk:
 class TestToolReferenceLazyLoading:
     """Test tool_reference lazy loads builtin tools."""
 
-    def test_ensure_builtin_tools_loaded_called_on_parse(self):
-        """Verify ensure_builtin_tools_loaded is called when parsing tool references."""
-        with patch(
-            "server.services.tool_catalog.tool_references.ensure_builtin_tools_loaded"
-        ) as mock_load:
-            with patch(
-                "server.services.tool_catalog.tool_references.BUILTIN_TOOLS",
-                {"bash": MagicMock()},
-            ):
-                # First call should trigger lazy loading
-                parse_tool_reference("bash")
-                mock_load.assert_called_once()
+    def test_builtin_tool_reference_parsed_correctly(self):
+        """Verify builtin tool references are parsed correctly."""
 
-    def test_invalid_tool_raises_error(self):
-        """Verify invalid tool reference raises InvalidToolReferenceError."""
-        with patch(
-            "server.services.tool_catalog.tool_references.BUILTIN_TOOLS",
-            {"bash": MagicMock()},
-        ):
-            with pytest.raises(InvalidToolReferenceError):
-                parse_tool_reference("nonexistent_tool")
+        result = parse_tool_reference("bash")
+        assert isinstance(result, BuiltinToolReference)
+        assert result.name == "bash"
 
     def test_agent_tool_reference_parsed_correctly(self):
         """Verify agent: prefix tool references are parsed correctly."""
-        with patch("server.services.tool_catalog.tool_references.BUILTIN_TOOLS", {}):
-            result = parse_tool_reference("agent:test-agent")
-            assert result == "agent:test-agent"
+
+        result = parse_tool_reference("agent:test-agent")
+        assert isinstance(result, AgentToolReference)
+        assert result.agent_id == "test-agent"
+        assert str(result) == "agent:test-agent"
+
+    def test_invalid_tool_raises_error(self):
+        """Verify invalid tool reference raises InvalidToolReferenceError."""
+        with pytest.raises(InvalidToolReferenceError):
+            parse_tool_reference("nonexistent_tool_xyz")
 
     def test_empty_agent_id_raises_error(self):
         """Verify empty agent ID after prefix raises error."""
         with pytest.raises(InvalidToolReferenceError):
             parse_tool_reference("agent:  ")
-
-    def test_parse_tool_references_bulk(self):
-        """Verify parse_tool_references works for list of tools."""
-        with patch(
-            "server.services.tool_catalog.tool_references.BUILTIN_TOOLS",
-            {"bash": MagicMock(), "web_search": MagicMock()},
-        ):
-            with patch(
-                "server.services.tool_catalog.tool_references.ensure_builtin_tools_loaded"
-            ):
-                results = parse_tool_references(["bash", "web_search"])
-                assert results == ["bash", "web_search"]
 
 
 class TestRunMetricsResponseFields:

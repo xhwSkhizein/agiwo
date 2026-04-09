@@ -150,6 +150,15 @@ def _render_hook_result(result: str) -> str:
     return f"<before_run_hook_result>\n{result}\n</before_run_hook_result>"
 
 
+def system_notice(content: str) -> str:
+    """Create a standardized inline system-notice tag.
+
+    The format is inline: <system-notice>{content}</system-notice>
+    Use this for all system notices to ensure consistent formatting.
+    """
+    return f"<system-notice>{content}</system-notice>"
+
+
 def _prepend_to_user_message(msg: dict[str, Any], preamble: str) -> None:
     content = msg.get("content")
     if isinstance(content, str):
@@ -295,4 +304,5 @@ __all__ = [
     "assemble_run_messages",
     "build_system_prompt",
     "compose_child_system_prompt",
+    "system_notice",
 ]

@@ -1,9 +1,9 @@
 """Available tool listing for the Console API."""
 
 from agiwo.tool.builtin.registry import BUILTIN_TOOLS, ensure_builtin_tools_loaded
+from agiwo.tool.reference import AgentToolReference
 
 from server.services.agent_registry import AgentRegistry
-from server.services.tool_catalog.tool_references import AGENT_TOOL_PREFIX
 
 BUILTIN_TOOL_DESCRIPTIONS: dict[str, str] = {
     "bash": "Execute shell commands in a terminal-style sandbox",
@@ -18,6 +18,7 @@ async def list_available_tools(
     *,
     exclude_agent_id: str | None = None,
 ) -> list[dict[str, str]]:
+    """List all available tools including builtin and agent-as-tools."""
     ensure_builtin_tools_loaded()
     tools: list[dict[str, str]] = [
         {
@@ -30,9 +31,11 @@ async def list_available_tools(
     for agent in await registry.list_agents():
         if exclude_agent_id is not None and agent.id == exclude_agent_id:
             continue
+        # Use AgentToolReference for consistent reference formatting
+        ref = AgentToolReference(agent_id=agent.id)
         tools.append(
             {
-                "name": f"{AGENT_TOOL_PREFIX}{agent.id}",
+                "name": str(ref),
                 "description": agent.description or f"Delegate tasks to {agent.name}",
                 "type": "agent",
                 "agent_name": agent.name,
