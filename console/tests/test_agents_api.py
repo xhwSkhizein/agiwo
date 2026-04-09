@@ -214,7 +214,7 @@ async def test_update_agent_rejects_invalid_agent_tool_reference(client) -> None
     )
 
     assert response.status_code == 422
-    assert "Invalid tool reference" in response.text
+    assert "Empty agent id" in response.text
 
 
 @pytest.mark.asyncio

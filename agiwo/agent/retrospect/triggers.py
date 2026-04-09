@@ -4,6 +4,7 @@ from enum import Enum
 
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.run import RunLedger
+from agiwo.agent.prompt import system_notice
 
 
 class RetrospectTrigger(Enum):
@@ -15,28 +16,22 @@ class RetrospectTrigger(Enum):
     TOKEN_ACCUMULATED = "token_accumulated"
 
 
-_NOTICE_LARGE_RESULT = (
-    "\n\n<system-notice>"
+_NOTICE_LARGE_RESULT = "\n\n" + system_notice(
     "This tool result is large. If it has limited value for your current "
     "goal, call retrospect_tool_result to replace it with a concise summary."
-    "</system-notice>"
 )
 
-_NOTICE_ROUND_INTERVAL = (
-    "\n\n<system-notice>"
+_NOTICE_ROUND_INTERVAL = "\n\n" + system_notice(
     "You have made several tool calls since your last retrospect. Review "
     "whether the recent results meaningfully advance your current goal. "
     "If not, call retrospect_tool_result to consolidate your findings and "
     "refocus on the objective."
-    "</system-notice>"
 )
 
-_NOTICE_TOKEN_ACCUMULATED = (
-    "\n\n<system-notice>"
+_NOTICE_TOKEN_ACCUMULATED = "\n\n" + system_notice(
     "Tool results have accumulated significant context. To keep the "
     "conversation window effective, call retrospect_tool_result to replace "
     "low-value results with a concise summary of key findings."
-    "</system-notice>"
 )
 
 _NOTICE_BY_TRIGGER = {

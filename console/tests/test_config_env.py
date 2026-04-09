@@ -26,9 +26,11 @@ from server.services.storage_wiring import (
     build_trace_storage_config,
 )
 from server.services.tool_catalog.tool_builder import build_tools
-from server.services.tool_catalog.tool_references import (
+from agiwo.tool.reference import (
     InvalidToolReferenceError,
-    parse_tool_references,
+    BuiltinToolReference,
+    AgentToolReference,
+    parse_tool_reference,
 )
 
 
@@ -251,15 +253,19 @@ def test_agent_options_input_maps_all_fields() -> None:
 
 
 def test_console_tool_catalog_parses_builtin_and_agent_refs() -> None:
-    refs = parse_tool_references(["web_search", "agent:child-1"])
+    ref1 = parse_tool_reference("web_search")
+    assert isinstance(ref1, BuiltinToolReference)
+    assert ref1.name == "web_search"
 
-    assert refs == ["web_search", "agent:child-1"]
+    ref2 = parse_tool_reference("agent:child-1")
+    assert isinstance(ref2, AgentToolReference)
+    assert ref2.agent_id == "child-1"
 
     with pytest.raises(InvalidToolReferenceError):
-        parse_tool_references(["missing"])
+        parse_tool_reference("missing")
 
     with pytest.raises(InvalidToolReferenceError):
-        parse_tool_references(["agent:"])
+        parse_tool_reference("agent:")
 
 
 @pytest.mark.asyncio

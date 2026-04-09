@@ -6,6 +6,7 @@ discovery, loading, and tool creation. It also generates system prompts
 with available skills for agents.
 """
 
+import threading
 from pathlib import Path
 
 from agiwo.config.settings import get_settings
@@ -27,6 +28,7 @@ logger = get_logger(__name__)
 
 _GLOBAL_SKILL_MANAGER: "SkillManager | None" = None
 _GLOBAL_SKILL_MANAGER_KEY: tuple[str, tuple[str, ...]] | None = None
+_GLOBAL_SKILL_MANAGER_LOCK = threading.Lock()
 
 
 def _global_skill_manager_key() -> tuple[str, tuple[str, ...]]:
@@ -52,9 +54,10 @@ def get_global_skill_manager() -> "SkillManager":
     global _GLOBAL_SKILL_MANAGER_KEY
 
     key = _global_skill_manager_key()
-    if _GLOBAL_SKILL_MANAGER is None or _GLOBAL_SKILL_MANAGER_KEY != key:
-        _GLOBAL_SKILL_MANAGER = build_global_skill_manager()
-        _GLOBAL_SKILL_MANAGER_KEY = key
+    with _GLOBAL_SKILL_MANAGER_LOCK:
+        if _GLOBAL_SKILL_MANAGER is None or _GLOBAL_SKILL_MANAGER_KEY != key:
+            _GLOBAL_SKILL_MANAGER = build_global_skill_manager()
+            _GLOBAL_SKILL_MANAGER_KEY = key
     return _GLOBAL_SKILL_MANAGER
 
 

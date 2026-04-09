@@ -33,6 +33,7 @@ class MockSandbox:
         self,
         command: str,
         cwd: str | None = None,
+        env: dict | None = None,
         timeout: float | None = None,
         use_pty: bool = False,
         pty_cols: int = 120,
@@ -45,6 +46,7 @@ class MockSandbox:
             {
                 "command": command,
                 "cwd": cwd,
+                "env": env,
                 "timeout": timeout,
                 "use_pty": use_pty,
                 "pty_cols": pty_cols,

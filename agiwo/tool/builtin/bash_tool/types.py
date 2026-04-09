@@ -61,6 +61,7 @@ class Sandbox(Protocol):
         self,
         command: str,
         cwd: str | None = None,
+        env: dict[str, str] | None = None,
         timeout: float | None = None,
         use_pty: bool = False,
         pty_cols: int = 120,
@@ -74,6 +75,7 @@ class Sandbox(Protocol):
         Args:
             command: The command to execute.
             cwd: The current working directory.
+            env: Additional environment variables for the command.
             timeout: The timeout in seconds.
 
         Returns:

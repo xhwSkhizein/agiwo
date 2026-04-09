@@ -65,7 +65,7 @@ class SpawnAgentTool(BaseTool):
                         "If true, the child agent inherits the parent's full "
                         "conversation history and identical tool definitions for "
                         "LLM KV cache reuse. When fork=true, instruction and "
-                        "system_prompt are ignored to keep the prompt prefix "
+                        "system_prompt are not allowed to keep the prompt prefix "
                         "identical. The child will NOT be able to spawn further "
                         "agents."
                     ),
@@ -82,6 +82,24 @@ class SpawnAgentTool(BaseTool):
     ) -> ToolGateDecision:
         if context.depth > 0:
             return ToolGateDecision.deny("Child agents cannot spawn further agents.")
+
+        fork = bool(parameters.get("fork", False))
+        if fork:
+            conflicting = []
+            if parameters.get("instruction"):
+                conflicting.append("instruction")
+            if parameters.get("system_prompt"):
+                conflicting.append("system_prompt")
+            if parameters.get("allowed_skills"):
+                conflicting.append("allowed_skills")
+
+            if conflicting:
+                return ToolGateDecision.deny(
+                    f"Cannot set {', '.join(conflicting)} when fork=true. "
+                    "These parameters are ignored in fork mode. "
+                    "Set fork=false to use custom configuration."
+                )
+
         return ToolGateDecision.allow()
 
     async def execute(

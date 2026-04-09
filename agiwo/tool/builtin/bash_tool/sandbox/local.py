@@ -115,6 +115,7 @@ class LocalSandbox(Sandbox):
         self,
         command: str,
         cwd: str | None = None,
+        env: dict[str, str] | None = None,
         timeout: float | None = None,
         use_pty: bool = False,
         pty_cols: int = 120,
@@ -133,6 +134,7 @@ class LocalSandbox(Sandbox):
             return await self._execute_command_with_pty(
                 command=command,
                 working_dir=working_dir,
+                env=env,
                 timeout=timeout,
                 pty_cols=pty_cols,
                 pty_rows=pty_rows,
@@ -146,6 +148,7 @@ class LocalSandbox(Sandbox):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(working_dir),
+                env=self._build_env(env),
             )
             try:
                 outcome = await self._pipe_communicate_with_abort(
@@ -182,6 +185,7 @@ class LocalSandbox(Sandbox):
         self,
         command: str,
         working_dir: Path,
+        env: dict[str, str] | None,
         timeout: float | None,
         pty_cols: int,
         pty_rows: int,
@@ -208,6 +212,7 @@ class LocalSandbox(Sandbox):
                 stderr=slave_fd,
                 cwd=str(working_dir),
                 start_new_session=True,
+                env=self._build_env(env),
             )
         except Exception as exc:  # noqa: BLE001 - sandbox PTY start boundary
             os.close(master_fd)
@@ -436,6 +441,14 @@ class LocalSandbox(Sandbox):
 
     async def get_process_logs_info(self, process_id: str) -> ProcessLogInfo:
         return self._registry.get_process_logs_info(process_id)
+
+    def _build_env(self, extra_env: dict[str, str] | None) -> dict[str, str] | None:
+        """Merge extra environment variables with current process environment."""
+        if extra_env is None:
+            return None
+        merged = dict(os.environ)
+        merged.update(extra_env)
+        return merged
 
     def _resolve_path(self, path: str) -> Path:
         if path.startswith("/"):

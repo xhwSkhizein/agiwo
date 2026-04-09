@@ -205,6 +205,7 @@ class BashTool(BaseTool):
             job_id = await self.config.sandbox.start_process(
                 foreground_command,
                 cwd=cwd,
+                env=self._build_agent_env(context),
                 agent_id=agent_id,
                 use_pty=use_pty,
             )
@@ -221,6 +222,7 @@ class BashTool(BaseTool):
         result: CommandResult = await self.config.sandbox.execute_command(
             foreground_command,
             cwd=cwd,
+            env=self._build_agent_env(context),
             timeout=timeout,
             use_pty=use_pty,
             stdin=stdin,
@@ -234,6 +236,12 @@ class BashTool(BaseTool):
             tool_call_id=tool_call_id,
             mode="pty" if use_pty else "pipe",
         )
+
+    def _build_agent_env(self, context: ToolContext) -> dict[str, str] | None:
+        """Build environment variables with X_AGENT_ID for the command."""
+        if context.agent_id is None:
+            return None
+        return {"X_AGENT_ID": context.agent_id}
 
     def _apply_before_hook(self, command: str) -> str:
         callback = self.config.on_before_bash_call

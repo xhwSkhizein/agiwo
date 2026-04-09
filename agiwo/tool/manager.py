@@ -13,16 +13,27 @@ from agiwo.tool.builtin.registry import (
     ensure_builtin_tools_loaded,
 )
 from agiwo.tool.builtin.bash_tool import ensure_bash_tool_pair
+from agiwo.tool.reference import (
+    AgentToolReference,
+    BuiltinToolReference,
+    ToolReference,
+    parse_tool_reference,
+    InvalidToolReferenceError,
+)
 from agiwo.tool.storage.citation import CitationStoreConfig
+import threading
+
 from agiwo.skill.allowlist import skills_enabled
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.utils.logging import get_logger
 
-AGENT_TOOL_PREFIX = "agent:"
-
 logger = get_logger(__name__)
 
+# Re-export for convenience
+AGENT_TOOL_PREFIX = AgentToolReference.PREFIX
+
 _GLOBAL_TOOL_MANAGER: "ToolManager | None" = None
+_GLOBAL_TOOL_MANAGER_LOCK = threading.Lock()
 
 
 def get_global_tool_manager(
@@ -36,13 +47,16 @@ def get_global_tool_manager(
             an existing manager that was initialized without citation config.
     """
     global _GLOBAL_TOOL_MANAGER
-    if _GLOBAL_TOOL_MANAGER is None:
-        _GLOBAL_TOOL_MANAGER = ToolManager(citation_store_config=citation_store_config)
-    elif (
-        citation_store_config is not None
-        and _GLOBAL_TOOL_MANAGER._citation_store_config is None
-    ):
-        _GLOBAL_TOOL_MANAGER.set_citation_store_config(citation_store_config)
+    with _GLOBAL_TOOL_MANAGER_LOCK:
+        if _GLOBAL_TOOL_MANAGER is None:
+            _GLOBAL_TOOL_MANAGER = ToolManager(
+                citation_store_config=citation_store_config
+            )
+        elif (
+            citation_store_config is not None
+            and _GLOBAL_TOOL_MANAGER._citation_store_config is None
+        ):
+            _GLOBAL_TOOL_MANAGER.set_citation_store_config(citation_store_config)
     return _GLOBAL_TOOL_MANAGER
 
 
@@ -154,21 +168,59 @@ class ToolManager:
           (they may refer to user-supplied custom tools)
 
         Raises:
-            ValueError: If malformed agent refs.
+            InvalidToolReferenceError: If malformed agent refs (e.g., "agent:" with empty id).
         """
         if allowed_tools is None:
             return None
 
         normalized: list[str] = []
-
         for name in allowed_tools:
-            if name.startswith(AGENT_TOOL_PREFIX):
-                agent_id = name[len(AGENT_TOOL_PREFIX) :].strip()
-                if not agent_id:
-                    raise ValueError(f"Invalid tool reference: {name!r}")
-            normalized.append(name)
+            # Special handling for agent: prefix - validate format strictly
+            if name.startswith(AgentToolReference.PREFIX):
+                # This will raise InvalidToolReferenceError for malformed refs
+                ref = AgentToolReference.parse(name)
+                normalized.append(str(ref))
+            else:
+                # For non-agent tools, keep as-is (may be builtin or custom)
+                normalized.append(name)
 
         return normalized
+
+    def parse_allowed_tools(
+        self,
+        allowed_tools: list[str] | None,
+    ) -> list[ToolReference] | None:
+        """Parse allowed_tools into structured references.
+
+        This is the newer, type-safe alternative to normalize_allowed_tools().
+
+        - None -> None (all default tools allowed)
+        - [] -> [] (no tools allowed)
+        - ["bash", "agent:x"] -> [BuiltinToolReference, AgentToolReference]
+
+        Args:
+            allowed_tools: List of tool reference strings.
+
+        Returns:
+            List of ToolReference objects, or None.
+
+        Raises:
+            InvalidToolReferenceError: If a reference is malformed.
+        """
+        if allowed_tools is None:
+            return None
+
+        result: list[ToolReference] = []
+        for name in allowed_tools:
+            try:
+                ref = parse_tool_reference(name)
+                result.append(ref)
+            except InvalidToolReferenceError:
+                # Unknown tools are kept as custom references
+                # They will be matched against extra_tools by name
+                result.append(BuiltinToolReference(name=name))
+
+        return result
 
     def get_tools(
         self,
@@ -215,18 +267,32 @@ class ToolManager:
         )
         return self._finalize_tools(merged)
 
-    def _resolve_tool_names(self, allowed_tools: list[str] | None) -> set[str]:
+    def _resolve_tool_names(
+        self, allowed_tools: list[str] | list[ToolReference] | None
+    ) -> set[str]:
         """Resolve which builtin tool names to include.
 
         Args:
-            allowed_tools: List of allowed tool names, or None for defaults
+            allowed_tools: List of allowed tool names or references,
+                or None for defaults.
 
         Returns:
-            Set of tool names to include
+            Set of tool names to include.
         """
         if allowed_tools is None:
             return set(DEFAULT_TOOLS.keys())
-        return set(allowed_tools)
+
+        result: set[str] = set()
+        for item in allowed_tools:
+            if isinstance(item, ToolReference):
+                if isinstance(item, BuiltinToolReference):
+                    result.add(item.name)
+                # AgentToolReference is not a builtin, skip
+            else:
+                # String reference
+                if not item.startswith(AgentToolReference.PREFIX):
+                    result.add(item)
+        return result
 
     def _build_builtin_tools(self, names: set[str]) -> list[BaseTool]:
         """Build builtin tool instances (with caching for stateless tools).
@@ -311,7 +377,7 @@ class ToolManager:
     def _filter_extra_tools(
         self,
         extra_tools: list[BaseTool] | None,
-        allowed_tools: list[str] | None,
+        allowed_tools: list[str] | list[ToolReference] | None,
     ) -> list[BaseTool]:
         """Filter extra tools by the allowed_tools allowlist.
 
@@ -326,11 +392,19 @@ class ToolManager:
             return list(extra_tools)
 
         allowed_names: set[str] = set()
-        for name in allowed_tools:
-            if name.startswith(AGENT_TOOL_PREFIX):
-                allowed_names.add(name[len(AGENT_TOOL_PREFIX) :])
+        for item in allowed_tools:
+            if isinstance(item, AgentToolReference):
+                allowed_names.add(item.agent_id)
+            elif isinstance(item, BuiltinToolReference):
+                allowed_names.add(item.name)
+            elif isinstance(item, str):
+                if item.startswith(AgentToolReference.PREFIX):
+                    allowed_names.add(item[len(AgentToolReference.PREFIX) :])
+                else:
+                    allowed_names.add(item)
             else:
-                allowed_names.add(name)
+                # Fallback: treat as string
+                allowed_names.add(str(item))
 
         return [t for t in extra_tools if t.name in allowed_names]
 
