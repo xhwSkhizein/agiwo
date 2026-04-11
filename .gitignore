@@ -37,6 +37,8 @@ ENV/
 .windsurf/
 .claude/
 .conductor/
+.codex/
+.codex
 *.swp
 *.swo
 *~
