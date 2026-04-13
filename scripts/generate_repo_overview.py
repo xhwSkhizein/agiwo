@@ -160,7 +160,13 @@ def build_layout_group(
         abs_path = ROOT / path
         if not abs_path.exists():
             continue
-        responsibility = responsibilities.get(path) or FALLBACK_RESPONSIBILITIES[path]
+        agents_responsibility = responsibilities.get(path)
+        fallback_responsibility = FALLBACK_RESPONSIBILITIES[path]
+        responsibility = (
+            agents_responsibility
+            if agents_responsibility and agents_responsibility.isascii()
+            else fallback_responsibility
+        )
         group.append(
             {
                 "path": path,
