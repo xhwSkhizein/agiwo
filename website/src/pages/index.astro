@@ -1,0 +1,50 @@
+---
+import ArchitectureSnapshot from "../components/ArchitectureSnapshot.astro";
+import CodePreview from "../components/CodePreview.astro";
+import FAQList from "../components/FAQList.astro";
+import FeatureGrid from "../components/FeatureGrid.astro";
+import Hero from "../components/Hero.astro";
+import MarketingLayout from "../layouts/MarketingLayout.astro";
+
+const title = "Agiwo: Open-source Python AI Agent Framework and Control Plane";
+const description =
+  "Build streaming, tool-using, orchestrated LLM agents in Python with Agiwo. Explore docs for scheduling, tracing, persistence, and multi-agent execution.";
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "Agiwo",
+  applicationCategory: "DeveloperApplication",
+  operatingSystem: "Cross-platform",
+  url: "https://docs.agiwo.o-ai.tech/",
+  description,
+  softwareHelp: "https://docs.agiwo.o-ai.tech/docs/",
+  codeRepository: "https://github.com/xhwSkhizein/agiwo",
+};
+---
+
+<MarketingLayout title={title} description={description}>
+  <main class="home-page">
+    <Hero />
+    <FeatureGrid />
+    <CodePreview />
+    <ArchitectureSnapshot />
+    <section class="comparison-entry">
+      <div class="section-heading">
+        <p class="eyebrow">Comparison</p>
+        <h2>Compare Agiwo with other agent frameworks.</h2>
+        <p>
+          Use a problem-oriented comparison instead of evaluating each project in isolation.
+          The first comparison page focuses on orchestration, runtime boundaries, and observability.
+        </p>
+        <a
+          class="button button--secondary"
+          href="/docs/compare/agiwo-vs-langgraph-openai-agents-autogen/"
+        >
+          Read the comparison
+        </a>
+      </div>
+    </section>
+    <FAQList />
+  </main>
+  <script is:inline type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+</MarketingLayout>

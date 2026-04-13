@@ -39,6 +39,8 @@ ENV/
 .conductor/
 .codex/
 .codex
+node_modules/
+.astro/
 *.swp
 *.swo
 *~

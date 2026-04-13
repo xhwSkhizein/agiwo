@@ -1,0 +1,19 @@
+{
+  "name": "agiwo-public-site",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check"
+  },
+  "dependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@astrojs/sitemap": "^3.7.2",
+    "@astrojs/starlight": "^0.38.3",
+    "astro": "^6.1.5",
+    "typescript": "^5.9.3"
+  }
+}

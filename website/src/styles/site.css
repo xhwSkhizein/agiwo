@@ -1,0 +1,228 @@
+:root {
+  --page-bg: #04111e;
+  --panel: rgba(10, 22, 38, 0.84);
+  --panel-border: rgba(125, 211, 252, 0.18);
+  --text: #e6edf7;
+  --muted: #9db0c7;
+  --accent: #67e8f9;
+  --accent-warm: #fbbf24;
+
+  --sl-hue-accent: 191;
+  --sl-color-accent-low: #10293a;
+  --sl-color-accent: #37c8f3;
+  --sl-color-accent-high: #b2f1ff;
+  --sl-color-white: #f8fbff;
+  --sl-color-gray-1: #d8e1ee;
+  --sl-color-gray-2: #a1b3c8;
+  --sl-color-gray-3: #7a8da8;
+  --sl-color-gray-4: #4b5d75;
+  --sl-color-gray-5: #28374c;
+  --sl-color-gray-6: #132135;
+  --sl-color-gray-7: #0c1728;
+  --sl-color-black: #06101d;
+  --sl-color-bg: #06101d;
+  --sl-color-bg-nav: #081523;
+  --sl-color-bg-sidebar: #091424;
+  --sl-color-bg-inline-code: #0b1a2c;
+  --sl-color-hairline-light: rgba(103, 232, 249, 0.22);
+  --sl-color-hairline-shade: rgba(103, 232, 249, 0.14);
+  --sl-color-text: #d7e2f0;
+  --sl-color-text-accent: #67e8f9;
+}
+
+html,
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(103, 232, 249, 0.14), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(251, 191, 36, 0.1), transparent 24%),
+    linear-gradient(180deg, #020617 0%, var(--page-bg) 100%);
+  color: var(--text);
+}
+
+body {
+  font-family:
+    "Trebuchet MS",
+    "Gill Sans",
+    "Avenir Next",
+    sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-family:
+    Georgia,
+    "Iowan Old Style",
+    "Palatino Linotype",
+    serif;
+}
+
+.site-shell {
+  min-height: 100vh;
+}
+
+.home-page {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0 96px;
+}
+
+.hero,
+.feature-grid,
+.code-preview,
+.architecture-snapshot,
+.comparison-entry,
+.faq-list {
+  margin-top: 36px;
+}
+
+.hero__content,
+.feature-card,
+.code-preview,
+.architecture-grid article,
+.comparison-entry,
+.faq-item {
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  border-radius: 28px;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 20px 80px rgba(2, 6, 23, 0.25);
+}
+
+.hero__content {
+  padding: 44px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.hero h1,
+.section-heading h2 {
+  margin: 0.25rem 0 0.75rem;
+  line-height: 1.05;
+}
+
+.hero h1 {
+  font-size: clamp(2.7rem, 6vw, 5rem);
+  max-width: 12ch;
+}
+
+.hero__copy,
+.section-heading p,
+.feature-card p,
+.architecture-grid p,
+.faq-item p {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 18px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.button--primary {
+  background: linear-gradient(135deg, var(--accent) 0%, #22d3ee 100%);
+  color: #082f49;
+}
+
+.button--secondary {
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  color: var(--text);
+  background: rgba(12, 23, 40, 0.62);
+}
+
+.feature-grid,
+.architecture-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.feature-card,
+.architecture-grid article,
+.code-preview,
+.comparison-entry {
+  padding: 26px;
+}
+
+.feature-card h2,
+.architecture-grid h3 {
+  margin-top: 0;
+}
+
+.code-preview pre {
+  overflow: auto;
+  margin: 18px 0 0;
+  padding: 18px;
+  border-radius: 18px;
+  background: rgba(2, 6, 23, 0.88);
+  border: 1px solid rgba(103, 232, 249, 0.12);
+}
+
+.code-preview code {
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 0.95rem;
+}
+
+.faq-item {
+  margin-top: 12px;
+  padding: 20px 24px;
+}
+
+.faq-item summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.comparison-entry .button {
+  margin-top: 8px;
+}
+
+.sl-markdown-content :is(h1, h2, h3, h4) {
+  letter-spacing: 0.01em;
+}
+
+@media (max-width: 640px) {
+  .home-page {
+    width: min(1120px, calc(100% - 20px));
+    padding-top: 20px;
+  }
+
+  .hero__content,
+  .feature-card,
+  .code-preview,
+  .architecture-grid article,
+  .comparison-entry,
+  .faq-item {
+    border-radius: 22px;
+  }
+
+  .hero__content {
+    padding: 28px;
+  }
+
+  .hero__actions {
+    flex-direction: column;
+  }
+}

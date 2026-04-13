@@ -1,0 +1,25 @@
+---
+import MarketingLayout from "../layouts/MarketingLayout.astro";
+
+const title = "Page Not Found | Agiwo Docs";
+const description = "The requested Agiwo documentation page could not be found.";
+---
+
+<MarketingLayout title={title} description={description} canonicalPath="/404">
+  <main class="home-page">
+    <section class="hero">
+      <div class="hero__content">
+        <p class="eyebrow">404</p>
+        <h1>Page not found.</h1>
+        <p class="hero__copy">
+          The requested page does not exist or has moved. Use one of the main entry points
+          below to continue.
+        </p>
+        <div class="hero__actions">
+          <a class="button button--primary" href="/docs/">Go to docs</a>
+          <a class="button button--secondary" href="/">Go to homepage</a>
+        </div>
+      </div>
+    </section>
+  </main>
+</MarketingLayout>

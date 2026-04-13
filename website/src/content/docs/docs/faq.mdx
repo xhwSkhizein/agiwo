@@ -1,0 +1,22 @@
+---
+title: FAQ
+description: Common questions about Agiwo's runtime model, orchestration, and observability.
+---
+
+# FAQ
+
+## What is Agiwo?
+
+Agiwo is an open-source Python AI agent framework and control plane for streaming execution, tool use, orchestration, tracing, and persistence.
+
+## How is Agiwo different from LangGraph?
+
+Agiwo emphasizes explicit runtime boundaries between agent execution, tools, scheduler orchestration, and console projections. It is designed around a canonical agent runtime instead of a graph-centric programming model.
+
+## Does Agiwo support multi-agent systems?
+
+Yes. Agiwo supports both `Agent.as_tool()` composition and scheduler-managed child-agent workflows.
+
+## Is the Console required?
+
+No. The SDK can be used on its own. The Console is a separate control plane.

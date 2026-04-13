@@ -1,0 +1,32 @@
+---
+const items = [
+  {
+    question: "What is Agiwo?",
+    answer:
+      "Agiwo is an open-source Python AI agent framework and control plane focused on streaming execution, tool use, orchestration, tracing, and persistence.",
+  },
+  {
+    question: "Who is Agiwo for?",
+    answer:
+      "It is for developers building production-grade LLM agents and multi-agent systems in Python.",
+  },
+  {
+    question: "Does Agiwo support multi-agent orchestration?",
+    answer:
+      "Yes. Agiwo supports both agent-as-tool composition and scheduler-driven orchestration for longer-lived workflows.",
+  },
+];
+---
+
+<section class="faq-list">
+  <div class="section-heading">
+    <p class="eyebrow">FAQ</p>
+    <h2>Common questions from first-time evaluators.</h2>
+  </div>
+  {items.map((item) => (
+    <details class="faq-item">
+      <summary>{item.question}</summary>
+      <p>{item.answer}</p>
+    </details>
+  ))}
+</section>
