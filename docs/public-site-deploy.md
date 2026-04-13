@@ -2,10 +2,12 @@
 
 ## GitHub Pages
 
-1. Open the repository settings.
-2. Open **Pages**.
-3. Set **Source** to **GitHub Actions**.
-4. After the `Public Docs` workflow succeeds on `main`, confirm the site artifact deploys successfully.
+1. Open the repository on GitHub.
+2. Click **Settings**.
+3. In the left sidebar, open **Pages** under **Code and automation**.
+4. In **Build and deployment**, set **Source** to **GitHub Actions**.
+5. This repository deploys Pages only from `main`. The `Public Docs` workflow will build on the feature branch, but the deploy job runs only after the PR is merged into `main`.
+6. After merge, open the **Actions** tab and confirm the `Public Docs` workflow finishes successfully.
 
 ## Custom Domain
 
@@ -19,10 +21,19 @@ The static artifact already includes a `CNAME` file with the same domain.
 
 Create a `CNAME` record:
 
-- Name: `docs.agiwo.o-ai.tech`
+- If the Cloudflare zone is `o-ai.tech`, set **Name** to `docs.agiwo`
+- Or enter the full hostname `docs.agiwo.o-ai.tech` if you prefer full names in the UI
 - Target: `xhwSkhizein.github.io`
 
 Keep the record DNS-only for the initial verification pass.
+
+## HTTPS
+
+After GitHub Pages accepts the custom domain and issues the certificate:
+
+1. Return to **Settings** -> **Pages**
+2. Confirm the domain is still `docs.agiwo.o-ai.tech`
+3. Enable **Enforce HTTPS**
 
 ## Post-deploy checks
 
