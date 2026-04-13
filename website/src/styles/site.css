@@ -240,6 +240,57 @@ h3 {
   color: var(--muted);
 }
 
+.repo-overview-inline-meta {
+  margin-top: 0.6rem;
+}
+
+.repo-citation-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.repo-citation-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.24rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--sl-color-hairline-light);
+  background: rgba(103, 232, 249, 0.08);
+  color: var(--sl-color-text);
+  font-size: 0.85rem;
+}
+
+.repo-citation-chip--document {
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.repo-citation-chip__label {
+  font-weight: 700;
+}
+
+.repo-section-sources {
+  margin-top: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--sl-color-hairline-light);
+  border-radius: 18px;
+  background: rgba(10, 22, 38, 0.42);
+}
+
+.repo-section-sources__title {
+  margin: 0 0 0.7rem;
+  color: var(--sl-color-white);
+  font-weight: 700;
+}
+
+.repo-section-sources__list {
+  display: grid;
+  gap: 0.7rem;
+  padding-left: 1.2rem;
+  margin: 0;
+}
+
 @media (max-width: 640px) {
   .home-page {
     width: min(1120px, calc(100% - 20px));

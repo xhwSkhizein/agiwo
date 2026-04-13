@@ -1,8 +1,19 @@
 ---
+import CitationChips from "./citation-chips.astro";
+import SectionSources from "./section-sources.astro";
+
+interface Citation {
+  label: string;
+  path: string;
+  title?: string;
+  kind: string;
+}
+
 interface Surface {
   import_path: string;
   role: string;
   source_paths: string[];
+  citations: Citation[];
 }
 
 interface Props {
@@ -10,6 +21,7 @@ interface Props {
 }
 
 const { items } = Astro.props;
+const sectionSources = items.flatMap((item) => item.citations);
 ---
 
 <section class="repo-overview-section">
@@ -20,10 +32,11 @@ const { items } = Astro.props;
         <div>
           <strong><code>{item.import_path}</code></strong> — {item.role}
         </div>
-        <div class="repo-overview-subtle">
-          Source: {item.source_paths.map((path) => <code>{path}</code>)}
+        <div class="repo-overview-inline-meta">
+          <CitationChips items={item.citations} />
         </div>
       </li>
     ))}
   </ul>
+  <SectionSources items={sectionSources} />
 </section>

@@ -1,0 +1,37 @@
+---
+interface Citation {
+  label: string;
+  path: string;
+  title?: string;
+  kind: string;
+}
+
+interface Props {
+  items: Citation[];
+}
+
+const { items } = Astro.props;
+
+const deduped = Array.from(
+  new Map(items.map((item) => [`${item.kind}:${item.path}`, item])).values(),
+);
+---
+
+{
+  deduped.length ? (
+    <div class="repo-section-sources">
+      <p class="repo-section-sources__title">Sources</p>
+      <ul class="repo-section-sources__list">
+        {deduped.map((item) => (
+          <li>
+            <strong>{item.label}</strong>
+            {item.title ? <> — {item.title}</> : null}
+            <div class="repo-overview-subtle">
+              <code>{item.path}</code>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  ) : null
+}

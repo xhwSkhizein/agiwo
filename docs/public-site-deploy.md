@@ -46,9 +46,14 @@ After GitHub Pages accepts the custom domain and issues the certificate:
 
 ## Repository Overview Refresh
 
-When repository structure or architecture boundaries change:
+When repository structure, architecture boundaries, or the generator rules change:
 
-1. Update `README.md` and `AGENTS.md` if needed
+1. Update `README.md`, `AGENTS.md`, or the relevant public docs if needed
 2. Run `python scripts/generate_repo_overview.py`
 3. Review `website/src/generated/repo-overview.json`
-4. Rebuild the public site before publishing
+4. Run `python scripts/generate_repo_overview.py --check`
+5. Rebuild the public site before publishing
+
+The `Public Docs` workflow now enforces this. If CI fails on the repo-overview
+freshness check, regenerate the JSON locally and commit the updated artifact in
+the same branch.
