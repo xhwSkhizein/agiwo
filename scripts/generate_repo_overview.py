@@ -82,7 +82,15 @@ LAYOUT_GROUPS: list[tuple[str, str, list[tuple[str, str]]]] = [
     ),
 ]
 
-RUNTIME_SURFACES: list[dict[str, object]] = [
+SOURCE_POINTER_FILES: list[tuple[str, str]] = [
+    ("Repository guide", "AGENTS.md"),
+    ("Public entry README", "README.md"),
+    ("Architecture overview", "docs/architecture/overview.md"),
+    ("Getting started guide", "docs/getting-started.md"),
+    ("Multi-agent guide", "docs/guides/multi-agent.md"),
+]
+
+RUNTIME_SURFACE_SPECS: list[dict[str, object]] = [
     {
         "import_path": "agiwo.agent",
         "role": "Public entry for the canonical agent runtime, agent configuration, execution handles, and related types.",
@@ -109,20 +117,59 @@ RUNTIME_SURFACES: list[dict[str, object]] = [
     },
 ]
 
-BOUNDARIES: list[str] = [
-    "Scheduler sits on top of the agent runtime instead of the reverse direction.",
-    "Console code should go through scheduler and agent facades rather than reading scheduler store internals directly.",
-    "Public agent-facing types should enter through the correct facade instead of internal runtime modules when called from outside the agent package.",
-    "The public docs site is static and separate from the internal Console web app.",
+BOUNDARY_SPECS: list[dict[str, object]] = [
+    {
+        "text": "Scheduler sits on top of the agent runtime instead of the reverse direction.",
+        "citations": [
+            ("Scheduler", "agiwo/scheduler", "directory", None),
+            ("Repository guide", "AGENTS.md", "document", "AGENTS.md"),
+        ],
+    },
+    {
+        "text": "Console code should go through scheduler and agent facades rather than reading scheduler store internals directly.",
+        "citations": [
+            ("Console services", "console/server/services", "directory", None),
+            ("Repository guide", "AGENTS.md", "document", "AGENTS.md"),
+        ],
+    },
+    {
+        "text": "Public agent-facing types should enter through the correct facade instead of internal runtime modules when called from outside the agent package.",
+        "citations": [
+            ("Agent types", "agiwo/agent/types.py", "entrypoint", None),
+            ("Repository guide", "AGENTS.md", "document", "AGENTS.md"),
+        ],
+    },
+    {
+        "text": "The public docs site is static and separate from the internal Console web app.",
+        "citations": [
+            ("Public docs site", "website", "directory", None),
+            ("Console web", "console/web", "directory", None),
+            (
+                "Deployment guide",
+                "docs/public-site-deploy.md",
+                "document",
+                "Public Site Deployment",
+            ),
+        ],
+    },
 ]
 
-SOURCE_POINTER_FILES: list[tuple[str, str]] = [
-    ("Repository guide", "AGENTS.md"),
-    ("Public entry README", "README.md"),
-    ("Architecture overview", "docs/architecture/overview.md"),
-    ("Getting started guide", "docs/getting-started.md"),
-    ("Multi-agent guide", "docs/guides/multi-agent.md"),
-]
+
+def citation(
+    label: str,
+    path: str,
+    *,
+    kind: str,
+    title: str | None = None,
+) -> dict[str, str]:
+    payload = {
+        "label": label,
+        "path": path,
+        "kind": kind,
+    }
+    if title is not None:
+        payload["title"] = title
+    return payload
 
 
 def parse_agents_responsibilities() -> dict[str, str]:
@@ -155,11 +202,67 @@ def first_heading(path: Path) -> str:
     return path.stem.replace("-", " ").title()
 
 
+def build_layout_citations(path: str) -> list[dict[str, str]]:
+    return [
+        citation("Directory", path, kind="directory"),
+        citation("Repository guide", "AGENTS.md", kind="document", title="AGENTS.md"),
+    ]
+
+
+def build_runtime_surface_citations(
+    import_path: str,
+    source_paths: list[str],
+) -> list[dict[str, str]]:
+    citations: list[dict[str, str]] = []
+    if source_paths:
+        citations.append(citation(import_path, source_paths[0], kind="directory"))
+        for path in source_paths[1:]:
+            citations.append(
+                citation(path.rsplit("/", maxsplit=1)[-1], path, kind="entrypoint")
+            )
+    citations.append(
+        citation("Repository guide", "AGENTS.md", kind="document", title="AGENTS.md")
+    )
+    return citations
+
+
+def build_runtime_surfaces() -> list[dict[str, object]]:
+    surfaces: list[dict[str, object]] = []
+    for spec in RUNTIME_SURFACE_SPECS:
+        import_path = str(spec["import_path"])
+        source_paths = [str(path) for path in spec["source_paths"]]
+        surfaces.append(
+            {
+                "import_path": import_path,
+                "role": str(spec["role"]),
+                "source_paths": source_paths,
+                "citations": build_runtime_surface_citations(import_path, source_paths),
+            }
+        )
+    return surfaces
+
+
+def build_boundaries() -> list[dict[str, object]]:
+    boundaries: list[dict[str, object]] = []
+    for spec in BOUNDARY_SPECS:
+        citation_specs = spec["citations"]
+        boundaries.append(
+            {
+                "text": str(spec["text"]),
+                "citations": [
+                    citation(label, path, kind=kind, title=title)
+                    for label, path, kind, title in citation_specs
+                ],
+            }
+        )
+    return boundaries
+
+
 def build_layout_group(
     entries: list[tuple[str, str]],
     responsibilities: dict[str, str],
-) -> list[dict[str, str]]:
-    group: list[dict[str, str]] = []
+) -> list[dict[str, object]]:
+    group: list[dict[str, object]] = []
     for path, label in entries:
         abs_path = ROOT / path
         if not abs_path.exists():
@@ -176,12 +279,13 @@ def build_layout_group(
                 "path": path,
                 "label": label,
                 "responsibility": responsibility,
+                "citations": build_layout_citations(path),
             }
         )
     return group
 
 
-def build_source_pointers() -> list[dict[str, str]]:
+def build_reference_documents() -> list[dict[str, str]]:
     pointers: list[dict[str, str]] = []
     for label, relative_path in SOURCE_POINTER_FILES:
         path = ROOT / relative_path
@@ -199,7 +303,7 @@ def build_source_pointers() -> list[dict[str, str]]:
 
 def build_payload() -> dict[str, object]:
     responsibilities = parse_agents_responsibilities()
-    layout_payload: dict[str, list[dict[str, str]]] = {}
+    layout_payload: dict[str, list[dict[str, object]]] = {}
     for key, _title, entries in LAYOUT_GROUPS:
         layout_payload[key] = build_layout_group(entries, responsibilities)
 
@@ -212,9 +316,9 @@ def build_payload() -> dict[str, object]:
             {"key": key, "title": title} for key, title, _entries in LAYOUT_GROUPS
         ],
         **layout_payload,
-        "runtime_surfaces": RUNTIME_SURFACES,
-        "boundaries": BOUNDARIES,
-        "source_pointers": build_source_pointers(),
+        "runtime_surfaces": build_runtime_surfaces(),
+        "boundaries": build_boundaries(),
+        "reference_documents": build_reference_documents(),
     }
 
 

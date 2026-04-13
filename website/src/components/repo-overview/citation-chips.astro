@@ -1,0 +1,27 @@
+---
+interface Citation {
+  label: string;
+  path: string;
+  title?: string;
+  kind: string;
+}
+
+interface Props {
+  items: Citation[];
+}
+
+const { items } = Astro.props;
+---
+
+{
+  items.length ? (
+    <span class="repo-citation-chips" aria-label="Sources">
+      {items.map((item) => (
+        <span class={`repo-citation-chip repo-citation-chip--${item.kind}`}>
+          <span class="repo-citation-chip__label">{item.label}</span>
+          <code>{item.path}</code>
+        </span>
+      ))}
+    </span>
+  ) : null
+}

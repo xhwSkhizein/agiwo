@@ -1,14 +1,38 @@
 ---
+import CitationChips from "./citation-chips.astro";
+import SectionSources from "./section-sources.astro";
+
+interface Citation {
+  label: string;
+  path: string;
+  title?: string;
+  kind: string;
+}
+
+interface Boundary {
+  text: string;
+  citations: Citation[];
+}
+
 interface Props {
-  items: string[];
+  items: Boundary[];
 }
 
 const { items } = Astro.props;
+const sectionSources = items.flatMap((item) => item.citations);
 ---
 
 <section class="repo-overview-section">
   <h2>Architectural Boundaries</h2>
   <ul class="repo-overview-list">
-    {items.map((item) => <li>{item}</li>)}
+    {items.map((item) => (
+      <li>
+        <div>{item.text}</div>
+        <div class="repo-overview-inline-meta">
+          <CitationChips items={item.citations} />
+        </div>
+      </li>
+    ))}
   </ul>
+  <SectionSources items={sectionSources} />
 </section>

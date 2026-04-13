@@ -38,9 +38,9 @@ const layoutItems = {
 <BoundaryList items={overview.boundaries} />
 
 <section class="repo-overview-section">
-  <h2>Source Pointers</h2>
+  <h2>Reference Documents</h2>
   <ul class="repo-overview-list">
-    {overview.source_pointers.map((item) => (
+    {overview.reference_documents.map((item) => (
       <li>
         <strong>{item.label}</strong>
         {item.title ? <> — {item.title}</> : null}
