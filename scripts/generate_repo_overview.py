@@ -86,7 +86,11 @@ RUNTIME_SURFACES: list[dict[str, object]] = [
     {
         "import_path": "agiwo.agent",
         "role": "Public entry for the canonical agent runtime, agent configuration, execution handles, and related types.",
-        "source_paths": ["agiwo/agent", "agiwo/agent/__init__.py", "agiwo/agent/types.py"],
+        "source_paths": [
+            "agiwo/agent",
+            "agiwo/agent/__init__.py",
+            "agiwo/agent/types.py",
+        ],
     },
     {
         "import_path": "agiwo.scheduler",
