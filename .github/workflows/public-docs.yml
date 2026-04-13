@@ -8,8 +8,13 @@ on:
     paths:
       - "website/**"
       - ".github/workflows/public-docs.yml"
+      - "scripts/generate_repo_overview.py"
       - "README.md"
-      - "docs/README.md"
+      - "AGENTS.md"
+      - "docs/architecture/**"
+      - "docs/guides/**"
+      - "docs/getting-started.md"
+      - "docs/public-site-deploy.md"
   workflow_dispatch:
 
 permissions:
@@ -26,6 +31,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -33,6 +41,8 @@ jobs:
           cache-dependency-path: website/package-lock.json
       - name: Install dependencies
         run: npm --prefix website ci
+      - name: Check repo overview freshness
+        run: python scripts/generate_repo_overview.py --check
       - name: Build site
         run: npm --prefix website run build
       - name: Configure Pages
