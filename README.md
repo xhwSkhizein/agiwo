@@ -21,6 +21,15 @@
 - Website: `https://docs.agiwo.o-ai.tech`
 - Getting started: `https://docs.agiwo.o-ai.tech/docs/getting-started/`
 - Comparison: `https://docs.agiwo.o-ai.tech/docs/compare/agiwo-vs-langgraph-openai-agents-autogen/`
+- Repository overview: `https://docs.agiwo.o-ai.tech/docs/repo-overview/`
+
+## Repository Structure
+
+Agiwo has three main areas:
+
+- `agiwo/` — the SDK runtime, including agent execution, tools, scheduler orchestration, model abstraction, memory, workspace, and observability
+- `console/` — the FastAPI control plane and internal web UI
+- `docs/` — design notes, concepts, and repository-native documentation
 
 ## What Is Agiwo?
 
@@ -33,14 +42,12 @@ The project favors explicit runtime wiring over hidden global state. Agent execu
 
 ## Current Capabilities
 
-- Streaming-first agent execution: `run()` and `run_stream()` share the same execution pipeline via `start()` + `AgentExecutionHandle`
-- Tool calling with session-scoped caching and builtin tools: `bash`, `bash_process`, `web_search`, `web_reader`, `memory` retrieval, and more
-- Agent-as-tool composition through `Agent.as_tool()` with depth tracking and cycle detection
-- Global skill discovery via `AGIWO_SKILL_DIRS`, per-agent filtering via `allowed_skills`
-- Context optimization: context rollback (empty step removal) and tool result retrospect (compression)
-- Scheduler orchestration: `submit`, `enqueue_input`, `route_root_input`, `stream`, `wait_for`, `steer`, `cancel`, `shutdown`, plus child-agent spawn/sleep/wake lifecycle
-- Run/step persistence plus trace collection with memory, SQLite, and MongoDB backends
-- Console APIs for agent config CRUD, chat SSE, trace inspection, scheduler state and chat, channel integration (Feishu)
+- Streaming-first agent execution through one runtime pipeline surfaced as `start()`, `run()`, and `run_stream()`
+- Tool calling with builtin tools, custom `BaseTool` implementations, and agent-as-tool composition via `Agent.as_tool()`
+- Scheduler orchestration for roots and child agents, including `submit`, `route_root_input`, `stream`, `wait_for`, `steer`, and cancellation flows
+- Run and step persistence plus trace collection with memory, SQLite, and MongoDB-backed storage options
+- Global skill discovery with per-agent allowlisting through explicit `allowed_skills`
+- Console APIs and web control plane for agent config management, session chat, scheduler views, trace inspection, and channel integration
 
 ## Quick Start
 
