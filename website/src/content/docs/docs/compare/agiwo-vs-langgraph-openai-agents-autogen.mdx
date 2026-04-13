@@ -1,0 +1,56 @@
+---
+title: Agiwo vs LangGraph vs OpenAI Agents SDK vs AutoGen
+description: Compare Agiwo with popular agent frameworks across runtime boundaries, orchestration, and observability.
+---
+
+# Agiwo vs LangGraph vs OpenAI Agents SDK vs AutoGen
+
+## Who this comparison is for
+
+This page is for developers choosing a Python AI agent framework for production-style systems that need tool use, orchestration, and runtime visibility.
+
+## Comparison focus
+
+This comparison is not trying to declare a universal winner. It focuses on four practical questions:
+
+1. Where does execution truth live?
+2. How explicit is orchestration?
+3. How easy is it to inspect runs, steps, and traces?
+4. How coupled is the framework to a specific provider or mental model?
+
+## Agiwo
+
+- Streaming-first runtime with one execution pipeline for `run()` and `run_stream()`
+- Explicit tool and scheduler boundaries
+- Built-in persistence and trace collection
+- Separate control plane instead of mixing UI concerns into the agent core
+
+## LangGraph
+
+- Strong fit for graph-oriented workflow modeling
+- Useful when teams want a graph-native abstraction as the main authoring surface
+- Different tradeoff from Agiwo's runtime-first, scheduler-first split
+
+## OpenAI Agents SDK
+
+- Tight alignment with OpenAI-native workflows and APIs
+- Good fit when OpenAI is the primary platform constraint
+- Different tradeoff from Agiwo's provider abstraction and control-plane split
+
+## AutoGen
+
+- Known for multi-agent conversation patterns
+- Helpful when the main unit of decomposition is agent-to-agent interaction
+- Different tradeoff around orchestration control and runtime boundaries
+
+## When to choose Agiwo
+
+Choose Agiwo when you want a Python-first runtime with explicit separation between:
+
+- agent execution
+- tool execution
+- scheduler orchestration
+- persistence
+- control-plane projections
+
+That separation is the main design center of the project and the reason it maps well to long-running systems that need debugging and operational visibility.

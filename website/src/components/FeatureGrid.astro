@@ -1,0 +1,29 @@
+---
+const features = [
+  {
+    title: "Streaming-first runtime",
+    body: "Run and stream through one execution pipeline instead of maintaining separate runtime paths.",
+  },
+  {
+    title: "Tool calling",
+    body: "Combine builtin tools, custom tools, and agent-as-tool composition behind a stable contract.",
+  },
+  {
+    title: "Scheduler orchestration",
+    body: "Coordinate roots, child agents, waiting, wakeups, steering, and lifecycle through one owner.",
+  },
+  {
+    title: "Tracing and persistence",
+    body: "Persist runs and steps, query traces, and inspect execution after the fact.",
+  },
+];
+---
+
+<section class="feature-grid">
+  {features.map((feature) => (
+    <article class="feature-card">
+      <h2>{feature.title}</h2>
+      <p>{feature.body}</p>
+    </article>
+  ))}
+</section>

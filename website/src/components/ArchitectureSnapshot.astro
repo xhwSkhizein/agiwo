@@ -1,0 +1,28 @@
+<section class="architecture-snapshot">
+  <div class="section-heading">
+    <p class="eyebrow">Architecture</p>
+    <h2>Separate agent runtime, tools, scheduler, and control plane.</h2>
+    <p>
+      Agiwo keeps the runtime boundaries explicit so execution, orchestration, and
+      observability stay understandable as systems grow.
+    </p>
+  </div>
+  <div class="architecture-grid">
+    <article>
+      <h3>Agent</h3>
+      <p>Owns prompts, execution, hooks, runtime context, and step lifecycle.</p>
+    </article>
+    <article>
+      <h3>Tool</h3>
+      <p>Defines stable interfaces for builtin, custom, and nested-agent tools.</p>
+    </article>
+    <article>
+      <h3>Scheduler</h3>
+      <p>Coordinates root and child execution, waiting, routing, and wake conditions.</p>
+    </article>
+    <article>
+      <h3>Console</h3>
+      <p>Projects runtime state and traces without becoming execution truth.</p>
+    </article>
+  </div>
+</section>

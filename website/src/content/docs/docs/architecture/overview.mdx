@@ -1,0 +1,35 @@
+---
+title: Architecture Overview
+description: Understand the runtime boundaries between Agent, Tool, Scheduler, and Console in Agiwo.
+---
+
+# Architecture Overview
+
+## Console Interaction Path
+
+```text
+Console / Feishu -> Session application layer -> Scheduler -> Agent
+```
+
+The Console and Feishu adapters share the same session-first conversation semantics:
+
+- **Entry adapters** handle transport-specific concerns such as SSE, long connections, and message parsing.
+- **Session application layer** owns session lifecycle, implicit task management, and fork semantics.
+- **Scheduler** mediates all execution. Both Console and Feishu route through `scheduler.route_root_input()`.
+- **Agent** executes the actual work, with results projected back as SDK execution facts.
+
+## Key Domain Objects
+
+| Object | Description |
+| --- | --- |
+| Session | Primary conversation container. Users create, switch, and resume sessions across entrypoints. |
+| Task | Unit of work inside a session. Created implicitly when the first message arrives. |
+| Run | Execution-level realization of task work, derived from SDK run and step records. |
+
+## Design Principles
+
+1. **Console is a projection layer**. It views SDK execution facts instead of creating a second execution truth.
+2. **One session = one task by default**. The mental model stays simple.
+3. **Fork for branching**. When work diverges, fork to a new session instead of overloading one thread.
+4. **Scheduler-mediated execution**. Console no longer calls `agent.start()` directly.
+5. **RunStep-first projections**. Task and run views are built from SDK-provided execution records.

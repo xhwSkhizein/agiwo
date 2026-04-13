@@ -1,0 +1,87 @@
+---
+title: Multi-Agent
+description: Compose agents with agent-as-tool patterns and scheduler-based orchestration.
+---
+
+# Multi-Agent and Composition
+
+Agiwo supports composing agents in two ways: **agent-as-tool** for lightweight delegation, and the **scheduler** for persistent orchestration.
+
+## Agent-as-Tool
+
+Wrap an agent as a tool that another agent can call:
+
+```python
+from agiwo.agent import Agent, AgentConfig
+from agiwo.llm import OpenAIModel
+
+researcher = Agent(
+    AgentConfig(
+        name="researcher",
+        description="Researches topics thoroughly and returns summaries",
+        system_prompt="You are a research specialist. Be thorough and cite sources.",
+    ),
+    model=OpenAIModel(id="gpt-4o", name="gpt-4o"),
+)
+
+orchestrator = Agent(
+    AgentConfig(
+        name="orchestrator",
+        description="Coordinates research tasks",
+        system_prompt="Delegate independent research tasks to the researcher tool.",
+    ),
+    model=OpenAIModel(id="gpt-4o", name="gpt-4o"),
+    tools=[researcher.as_tool()],
+)
+
+result = await orchestrator.run("Compare Python and Rust for systems programming")
+```
+
+### How it works
+
+1. The orchestrator sees `researcher` as a regular tool.
+2. When called, the researcher agent runs its own execution loop.
+3. The researcher's final response returns as the tool result.
+4. The orchestrator continues reasoning with that output.
+
+## Scheduler Orchestration
+
+For long-running, persistent multi-agent setups, use the scheduler:
+
+```python
+from agiwo.scheduler import Scheduler
+
+async with Scheduler() as scheduler:
+    orchestrator_id = await scheduler.submit(
+        orchestrator,
+        "Coordinate the research pipeline",
+        persistent=True,
+    )
+
+    await scheduler.wait_for(orchestrator_id)
+    await scheduler.enqueue_input(orchestrator_id, "Now analyze the cost implications")
+```
+
+### Scheduler Tools
+
+Agents running under the scheduler automatically get orchestration tools such as:
+
+- `spawn_agent`
+- `query_spawned_agent`
+- `cancel_agent`
+- `list_agents`
+- `sleep_and_wait`
+
+## Patterns
+
+### Pipeline
+
+Chain agents sequentially when each step depends on the last output.
+
+### Fan-out / Fan-in
+
+Spawn multiple agents in parallel, then synthesize their results.
+
+### Supervisor Pattern
+
+Keep a persistent supervisor alive and let it create transient workers internally.

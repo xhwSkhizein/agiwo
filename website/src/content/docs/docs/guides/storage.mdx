@@ -1,0 +1,102 @@
+---
+title: Storage and Observability
+description: Persist runs, steps, and traces while keeping execution and projections separate.
+---
+
+# Storage and Observability
+
+Agiwo separates storage into two independent concerns: run and step persistence, and trace collection.
+
+## Storage Layers
+
+| Layer | Purpose | Interface |
+| --- | --- | --- |
+| Run and step storage | Persist agent run and step records | `RunStepStorage` |
+| Trace storage | Distributed traces for observability | `BaseTraceStorage` |
+
+## Run and Step Storage
+
+```python
+from agiwo.agent import RunStepStorageConfig
+from agiwo.agent.storage.factory import create_run_step_storage
+
+storage = create_run_step_storage(
+    RunStepStorageConfig(storage_type="sqlite", config={"db_path": "runs.db"})
+)
+```
+
+### What gets stored
+
+- Run records: input, output, timestamps, token usage, status
+- Step records: LLM messages, tool calls, tool results, intermediate reasoning
+- Cost tracking: per-step and per-run token counts and estimated costs
+
+## Session Storage
+
+The SDK does not expose a standalone `SessionStorage` abstraction. Session state is handled by the console server or by in-memory runtime state during agent execution.
+
+## Trace Storage
+
+```python
+from agiwo.agent import TraceStorageConfig
+from agiwo.observability import create_trace_storage
+
+trace_storage = create_trace_storage(
+    TraceStorageConfig(storage_type="sqlite", config={"db_path": "traces.db"})
+)
+```
+
+Pass trace configuration through `AgentOptions`:
+
+```python
+from agiwo.agent import Agent, AgentConfig, AgentOptions
+
+agent = Agent(
+    AgentConfig(
+        name="assistant",
+        description="...",
+        system_prompt="...",
+        options=AgentOptions(
+            trace_storage=TraceStorageConfig(
+                storage_type="sqlite",
+                config={"db_path": "traces.db"},
+            )
+        ),
+    ),
+    model=model,
+)
+```
+
+### Trace Structure
+
+```text
+Trace
+|- Span: Agent execution
+|  |- Span: LLM call
+|  |- Span: Tool execution
+|  `- Span: Tool execution
+|- Span: LLM call
+`- Span: Child agent
+```
+
+## Choosing Backends
+
+| Backend | Use Case | Persistence |
+| --- | --- | --- |
+| `memory` | Testing, ephemeral workloads | No |
+| `sqlite` | Single-node deployments, development | Yes |
+| `mongodb` | Multi-process deployments | Yes |
+
+## Cost Tracking
+
+When price fields are set on the model, the SDK records cost alongside token counts:
+
+```python
+model = OpenAIModel(
+    id="gpt-4o",
+    name="gpt-4o",
+    input_price=0.005,
+    output_price=0.015,
+    cache_hit_price=0.001,
+)
+```

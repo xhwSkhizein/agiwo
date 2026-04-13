@@ -1,7 +1,11 @@
 <h1 align="center">Agiwo</h1>
 
 <p align="center">
-  <em>Streaming-first AI Agent SDK and Console for Python</em>
+  <em>Open-source streaming-first Python AI agent framework and control plane</em>
+</p>
+
+<p align="center">
+  Build, orchestrate, trace, and operate tool-using LLM agents with streaming execution, scheduler-based orchestration, persistence, and observability.
 </p>
 
 <p align="center">
@@ -11,6 +15,12 @@
     <img src="https://github.com/xhwSkhizein/agiwo/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
 </p>
+
+## Public Docs
+
+- Website: `https://docs.agiwo.o-ai.tech`
+- Getting started: `https://docs.agiwo.o-ai.tech/docs/getting-started/`
+- Comparison: `https://docs.agiwo.o-ai.tech/docs/compare/agiwo-vs-langgraph-openai-agents-autogen/`
 
 ## What Is Agiwo?
 
@@ -238,6 +248,16 @@ Important current rules:
 
 - Compatible providers (`openai-compatible`, `anthropic-compatible`) must be configured with explicit `base_url` and `api_key_env_name`
 - Builtin tools that create their own models read shared defaults from `AGIWO_TOOL_DEFAULT_MODEL_*`
+
+## Repository Discoverability Notes
+
+Recommended GitHub repository description:
+
+`Open-source Python AI agent framework and control plane for streaming, tool use, orchestration, tracing, and persistence.`
+
+Recommended GitHub topics:
+
+`ai-agents`, `python`, `llm`, `agent-framework`, `multi-agent`, `tool-calling`, `observability`, `agent-orchestration`, `fastapi`
 - Agent config includes `allowed_skills: list[str] | None` to filter available skills (global skill discovery is configured via `AGIWO_SKILL_DIRS`)
 - Console agent config writes are full replace, not patch merge
 - Scheduler state storage is owned by the `Scheduler`; Console `StorageManager` manages run-step, trace, and citation storage only
