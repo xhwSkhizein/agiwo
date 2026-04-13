@@ -203,3 +203,4 @@ cd console && uv run pytest tests/ -v
 - 当“目录职责”、“公开 API”、“机器护栏规则”、“标准开发流程”发生变化时更新本文件。
 - 继续保持目录/包级别描述，不要退回到逐文件目录树。
 - 如果某条说明开始频繁失真，优先上移抽象层级，而不是继续堆更多细节。
+- Public repository overview generation consumes repository structure first and may also use `AGENTS.md` as a supporting source；请保持目录职责与稳定边界说明为最新状态。

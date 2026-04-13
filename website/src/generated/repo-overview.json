@@ -1,0 +1,206 @@
+{
+  "boundaries": [
+    "Scheduler sits on top of the agent runtime instead of the reverse direction.",
+    "Console code should go through scheduler and agent facades rather than reading scheduler store internals directly.",
+    "Public agent-facing types should enter through the correct facade instead of internal runtime modules when called from outside the agent package.",
+    "The public docs site is static and separate from the internal Console web app."
+  ],
+  "console_layout": [
+    {
+      "label": "Control plane",
+      "path": "console/server",
+      "responsibility": "FastAPI \u63a7\u5236\u9762\u4e0e runtime \u96c6\u6210\u3002"
+    },
+    {
+      "label": "API boundary",
+      "path": "console/server/routers",
+      "responsibility": "API/SSE \u8fb9\u754c\uff0c\u53ea\u505a HTTP \u8def\u7531\u4e0e\u8bf7\u6c42/\u54cd\u5e94\u88c5\u914d\u3002"
+    },
+    {
+      "label": "Application services",
+      "path": "console/server/services",
+      "responsibility": "\u5e94\u7528\u670d\u52a1\u5c42\u3002`runtime/`\uff08agent factory\u3001runtime cache\u3001session runtime / session service\u3001scheduler tree view\uff09\u3001`tool_catalog/`\uff08tool reference / catalog / runtime builder\uff09\u3001`agent_registry/`\uff08\u914d\u7f6e CRUD + store \u5b50\u5305\uff09\u3001`session_store/`\uff08Console \u4f1a\u8bdd\u5b58\u50a8\u5de5\u5382\u4e0e\u5b9e\u73b0\uff09\u3001`runtime_config.py`\uff08\u8fd0\u884c\u65f6\u5168\u5c40\u914d\u7f6e\u67e5\u770b/\u8986\u76d6\uff09\u3001`storage_wiring.py`\uff08\u5b58\u50a8 config builders\uff09\u3001`metrics.py`\u3002"
+    },
+    {
+      "label": "Shared models",
+      "path": "console/server/models",
+      "responsibility": "Console \u6570\u636e\u6a21\u578b\u76ee\u5f55\u3002`view.py` \u53ea\u653e API/SSE \u89c6\u56fe\u6a21\u578b\uff1b`session.py`\u3001`agent_config.py`\u3001`runtime_config.py`\u3001`metrics.py` \u653e\u5171\u4eab\u8fd0\u884c\u65f6/\u914d\u7f6e/\u805a\u5408\u6a21\u578b\u3002\u4e0d\u8981\u518d\u65b0\u589e `schemas.py` \u6216\u5e73\u7ea7 `domain/`\u3002"
+    },
+    {
+      "label": "Channel adapters",
+      "path": "console/server/channels",
+      "responsibility": "\u6e20\u9053\u9002\u914d\u5c42\uff0c\u8d1f\u8d23\u6279\u5904\u7406\u3001\u6d88\u606f\u89e3\u6790\u3001delivery\uff0c\u4ee5\u53ca Feishu \u7b49\u6e20\u9053\u96c6\u6210\u3002"
+    },
+    {
+      "label": "Internal web UI",
+      "path": "console/web",
+      "responsibility": "Console \u524d\u7aef\u3002"
+    },
+    {
+      "label": "Console tests",
+      "path": "console/tests",
+      "responsibility": "Console \u540e\u7aef\u6d4b\u8bd5\u3002"
+    }
+  ],
+  "layout_sections": [
+    {
+      "key": "sdk_layout",
+      "title": "SDK"
+    },
+    {
+      "key": "console_layout",
+      "title": "Console"
+    },
+    {
+      "key": "supporting_layout",
+      "title": "Supporting directories"
+    }
+  ],
+  "runtime_surfaces": [
+    {
+      "import_path": "agiwo.agent",
+      "role": "Public entry for the canonical agent runtime, agent configuration, execution handles, and related types.",
+      "source_paths": [
+        "agiwo/agent",
+        "agiwo/agent/__init__.py",
+        "agiwo/agent/types.py"
+      ]
+    },
+    {
+      "import_path": "agiwo.scheduler",
+      "role": "Public entry for orchestration, persistent roots, routing, waiting, and scheduler-backed agent coordination.",
+      "source_paths": [
+        "agiwo/scheduler",
+        "agiwo/scheduler/engine.py"
+      ]
+    },
+    {
+      "import_path": "agiwo.tool",
+      "role": "Public entry for tool contracts, tool results, execution context, and builtin tool integration.",
+      "source_paths": [
+        "agiwo/tool",
+        "agiwo/tool/manager.py"
+      ]
+    },
+    {
+      "import_path": "agiwo.llm",
+      "role": "Public entry for model abstractions, provider implementations, and model construction helpers.",
+      "source_paths": [
+        "agiwo/llm",
+        "agiwo/llm/factory.py"
+      ]
+    }
+  ],
+  "sdk_layout": [
+    {
+      "label": "Agent runtime",
+      "path": "agiwo/agent",
+      "responsibility": "Canonical agent runtime\u3002public API \u53ea\u4ece `agiwo.agent` \u66b4\u9732\uff1b\u9876\u5c42\u53ea\u4fdd\u7559\u7a33\u5b9a\u5165\u53e3\u4e0e\u6838\u5fc3 orchestrator\uff08\u5982 `agent.py`\u3001`definition.py`\u3001`run_loop.py`\u3001`llm_caller.py`\u3001`tool_executor.py`\u3001`prompt.py`\u3001`trace_writer.py`\uff09\u3002\u7eaf\u6570\u636e\u6a21\u578b\u6536\u53e3\u5728 `models/`\uff0chook contract \u6536\u53e3\u5728 `agiwo.agent.hooks`\uff0cnested-agent adapter \u6536\u53e3\u5728 `nested/`\uff0crun/session runtime context \u4e0e state helper \u6536\u53e3\u5728 `agiwo.agent.runtime`\uff0ctermination logic \u6536\u53e3\u5728 `termination/`\uff0c\u4e0a\u4e0b\u6587\u56de\u987e\u4f18\u5316\u6536\u53e3\u5728 `retrospect/`\uff0c`storage/` \u8d1f\u8d23\u6301\u4e45\u5316\u3002"
+    },
+    {
+      "label": "Model layer",
+      "path": "agiwo/llm",
+      "responsibility": "Model \u62bd\u8c61\u3001Provider \u9002\u914d\u5668\u3001\u914d\u7f6e\u7b56\u7565\u3001\u6d88\u606f/\u4e8b\u4ef6\u5f52\u4e00\u5316\uff0c\u4ee5\u53ca\u7edf\u4e00\u7684 model factory\u3002"
+    },
+    {
+      "label": "Tool layer",
+      "path": "agiwo/tool",
+      "responsibility": "Tool \u62bd\u8c61\u3001\u6700\u5c0f\u6267\u884c\u4e0a\u4e0b\u6587\u3001builtin tools\u3001\u540e\u53f0\u8fdb\u7a0b registry\uff08`process/`\uff09\uff0c\u4ee5\u53ca\u5de5\u5177\u4fa7\u5b58\u50a8\uff08\u5982 citation\uff09\u3002"
+    },
+    {
+      "label": "Scheduler",
+      "path": "agiwo/scheduler",
+      "responsibility": "Agent \u4e4b\u4e0a\u7684\u7f16\u6392\u5c42\u3002`scheduler.py` \u662f facade \u4e0e loop lifecycle\uff0c`engine.py` \u662f\u552f\u4e00\u7f16\u6392 owner\uff0c`runner.py` \u8d1f\u8d23\u5355\u6b21 dispatch action \u6267\u884c\uff0c`commands.py` \u627f\u8f7d\u8c03\u5ea6\u52a8\u4f5c\u4e0e tool DTO\uff0c`runtime_state.py` \u627f\u8f7d\u8fdb\u7a0b\u5185 live state \u4e0e tick helpers\uff0c`tool_control.py` \u6536\u53e3 child/sleep/cancel \u7684 tool-facing control\uff0c`runtime_tools.py` \u662f\u6ce8\u5165\u7ed9 agent \u7684 scheduler runtime tools\uff0c`store/` \u53ea\u8d1f\u8d23\u6301\u4e45\u5316\u3002"
+    },
+    {
+      "label": "Observability",
+      "path": "agiwo/observability",
+      "responsibility": "Trace/Span \u6a21\u578b\u3001\u67e5\u8be2\u63a5\u53e3\u4e0e trace storage \u5b9e\u73b0\uff1bagent \u4e8b\u4ef6\u5230 Trace \u7684\u9002\u914d\u5c42\u6536\u53e3\u5728 `agiwo/agent/trace_writer.py`\u3002"
+    },
+    {
+      "label": "Embedding",
+      "path": "agiwo/embedding",
+      "responsibility": "Embedding \u62bd\u8c61\u4e0e factory\uff0c\u5305\u542b\u672c\u5730/OpenAI \u98ce\u683c\u5b9e\u73b0\u3002"
+    },
+    {
+      "label": "Skills",
+      "path": "agiwo/skill",
+      "responsibility": "Skill \u7684\u53d1\u73b0\u3001\u8def\u5f84\u89c4\u5219\uff08`config.py`\uff09\u3001\u52a0\u8f7d\u3001\u6ce8\u518c\u3001\u5f02\u5e38\u5b9a\u4e49\uff0c\u4ee5\u53ca `SkillTool` \u6865\u63a5\u3002"
+    },
+    {
+      "label": "Workspace",
+      "path": "agiwo/workspace",
+      "responsibility": "Agent workspace \u8def\u5f84\u8bed\u4e49\u3001\u6a21\u677f/bootstrap\u3001\u5de5\u4f5c\u533a\u6587\u6863\u8bfb\u53d6\u4e0e\u53d8\u66f4 token\u3002"
+    },
+    {
+      "label": "Memory",
+      "path": "agiwo/memory",
+      "responsibility": "\u5171\u4eab MEMORY \u7d22\u5f15/\u5207\u5757/\u641c\u7d22\u80fd\u529b\uff0c\u4ee5\u53ca `WorkspaceMemoryService`\u3002"
+    },
+    {
+      "label": "Configuration",
+      "path": "agiwo/config",
+      "responsibility": "SDK \u5168\u5c40\u914d\u7f6e\u5165\u53e3\u3001Provider \u679a\u4e3e\u4e0e\u5171\u4eab\u8bbe\u7f6e\u3002"
+    },
+    {
+      "label": "Shared utilities",
+      "path": "agiwo/utils",
+      "responsibility": "\u8de8\u6a21\u5757\u8fd0\u884c\u65f6\u5de5\u5177\u3002`storage_support/` \u8d1f\u8d23\u5171\u4eab SQLite/Mongo runtime\u3001schema/index \u521d\u59cb\u5316\u7b49\u57fa\u7840\u8bbe\u65bd\u3002"
+    }
+  ],
+  "source_pointers": [
+    {
+      "label": "Repository guide",
+      "path": "AGENTS.md",
+      "title": "AGENTS.md"
+    },
+    {
+      "label": "Public entry README",
+      "path": "README.md",
+      "title": "Agiwo"
+    },
+    {
+      "label": "Architecture overview",
+      "path": "docs/architecture/overview.md",
+      "title": "Architecture Overview"
+    },
+    {
+      "label": "Getting started guide",
+      "path": "docs/getting-started.md",
+      "title": "Getting Started"
+    },
+    {
+      "label": "Multi-agent guide",
+      "path": "docs/guides/multi-agent.md",
+      "title": "Multi-Agent & Composition"
+    }
+  ],
+  "summary": "Agiwo is organized around a canonical agent runtime, a separate scheduler orchestration layer, a tool abstraction, a model layer, and an internal control plane.",
+  "supporting_layout": [
+    {
+      "label": "SDK tests",
+      "path": "tests",
+      "responsibility": "SDK \u6d4b\u8bd5\uff0c\u6309\u5b50\u7cfb\u7edf\u5206\u76ee\u5f55\u3002"
+    },
+    {
+      "label": "Repo scripts",
+      "path": "scripts",
+      "responsibility": "\u4f4e\u566a\u97f3 lint \u5165\u53e3\u4e0e repo guard\u3002"
+    },
+    {
+      "label": "Guardrails",
+      "path": "lint",
+      "responsibility": "import-linter contract \u7b49\u673a\u5668\u62a4\u680f\u914d\u7f6e\u3002"
+    },
+    {
+      "label": "Repository docs",
+      "path": "docs",
+      "responsibility": "\u8bbe\u8ba1\u6587\u6863\u4e0e\u6e20\u9053\u8bf4\u660e\uff0c\u4e0d\u662f\u8fd0\u884c\u65f6\u6e90\u7801\u771f\u76f8\u3002"
+    },
+    {
+      "label": "Templates",
+      "path": "templates",
+      "responsibility": "\u8fd0\u884c\u65f6\u4f1a\u6d88\u8d39\u7684\u6a21\u677f\u5185\u5bb9\u3002"
+    }
+  ]
+}
