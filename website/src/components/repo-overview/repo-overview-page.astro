@@ -1,0 +1,51 @@
+---
+import overview from "../../generated/repo-overview.json";
+import BoundaryList from "./boundary-list.astro";
+import LayoutSection from "./layout-section.astro";
+import RuntimeSurfaceList from "./runtime-surface-list.astro";
+
+const layoutItems = {
+  sdk_layout: overview.sdk_layout,
+  console_layout: overview.console_layout,
+  supporting_layout: overview.supporting_layout,
+};
+---
+
+<section class="repo-overview-hero">
+  <p class="eyebrow">Repository Overview</p>
+  <h1>Understand Agiwo from the repository structure.</h1>
+  <p>{overview.summary}</p>
+</section>
+
+<section class="repo-overview-section">
+  <h2>What Agiwo Contains</h2>
+  <p>
+    The repository is split across the SDK runtime, the internal Console control plane,
+    and a small set of supporting directories for tests, scripts, and design docs.
+    This page is generated from the code tree and selected supporting documents so it
+    stays closer to the current repository state than a fully hand-written overview.
+  </p>
+</section>
+
+{overview.layout_sections.map((section) => (
+  <LayoutSection
+    title={section.title}
+    items={layoutItems[section.key as keyof typeof layoutItems]}
+  />
+))}
+
+<RuntimeSurfaceList items={overview.runtime_surfaces} />
+<BoundaryList items={overview.boundaries} />
+
+<section class="repo-overview-section">
+  <h2>Source Pointers</h2>
+  <ul class="repo-overview-list">
+    {overview.source_pointers.map((item) => (
+      <li>
+        <strong>{item.label}</strong>
+        {item.title ? <> — {item.title}</> : null}
+        <div class="repo-overview-subtle"><code>{item.path}</code></div>
+      </li>
+    ))}
+  </ul>
+</section>

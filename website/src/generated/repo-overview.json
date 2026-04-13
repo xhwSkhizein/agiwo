@@ -1,0 +1,206 @@
+{
+  "boundaries": [
+    "Scheduler sits on top of the agent runtime instead of the reverse direction.",
+    "Console code should go through scheduler and agent facades rather than reading scheduler store internals directly.",
+    "Public agent-facing types should enter through the correct facade instead of internal runtime modules when called from outside the agent package.",
+    "The public docs site is static and separate from the internal Console web app."
+  ],
+  "console_layout": [
+    {
+      "label": "Control plane",
+      "path": "console/server",
+      "responsibility": "FastAPI control plane and runtime integration layer."
+    },
+    {
+      "label": "API boundary",
+      "path": "console/server/routers",
+      "responsibility": "HTTP and SSE API boundary for requests and responses."
+    },
+    {
+      "label": "Application services",
+      "path": "console/server/services",
+      "responsibility": "Application services for runtime management, registry, tool catalog, session storage, and metrics."
+    },
+    {
+      "label": "Shared models",
+      "path": "console/server/models",
+      "responsibility": "Console-facing shared runtime, configuration, and view models."
+    },
+    {
+      "label": "Channel adapters",
+      "path": "console/server/channels",
+      "responsibility": "Channel adapters for delivery, parsing, and integration workflows."
+    },
+    {
+      "label": "Internal web UI",
+      "path": "console/web",
+      "responsibility": "Internal control-plane frontend for sessions, traces, scheduler, and settings."
+    },
+    {
+      "label": "Console tests",
+      "path": "console/tests",
+      "responsibility": "Console backend test suite."
+    }
+  ],
+  "layout_sections": [
+    {
+      "key": "sdk_layout",
+      "title": "SDK"
+    },
+    {
+      "key": "console_layout",
+      "title": "Console"
+    },
+    {
+      "key": "supporting_layout",
+      "title": "Supporting directories"
+    }
+  ],
+  "runtime_surfaces": [
+    {
+      "import_path": "agiwo.agent",
+      "role": "Public entry for the canonical agent runtime, agent configuration, execution handles, and related types.",
+      "source_paths": [
+        "agiwo/agent",
+        "agiwo/agent/__init__.py",
+        "agiwo/agent/types.py"
+      ]
+    },
+    {
+      "import_path": "agiwo.scheduler",
+      "role": "Public entry for orchestration, persistent roots, routing, waiting, and scheduler-backed agent coordination.",
+      "source_paths": [
+        "agiwo/scheduler",
+        "agiwo/scheduler/engine.py"
+      ]
+    },
+    {
+      "import_path": "agiwo.tool",
+      "role": "Public entry for tool contracts, tool results, execution context, and builtin tool integration.",
+      "source_paths": [
+        "agiwo/tool",
+        "agiwo/tool/manager.py"
+      ]
+    },
+    {
+      "import_path": "agiwo.llm",
+      "role": "Public entry for model abstractions, provider implementations, and model construction helpers.",
+      "source_paths": [
+        "agiwo/llm",
+        "agiwo/llm/factory.py"
+      ]
+    }
+  ],
+  "sdk_layout": [
+    {
+      "label": "Agent runtime",
+      "path": "agiwo/agent",
+      "responsibility": "Canonical agent runtime, execution loop, runtime state, models, nested-agent adapters, and persistence hooks."
+    },
+    {
+      "label": "Model layer",
+      "path": "agiwo/llm",
+      "responsibility": "Model abstraction, provider adapters, configuration policy, and factory construction."
+    },
+    {
+      "label": "Tool layer",
+      "path": "agiwo/tool",
+      "responsibility": "Tool contracts, builtin tools, execution context, process registry, and tool-side persistence."
+    },
+    {
+      "label": "Scheduler",
+      "path": "agiwo/scheduler",
+      "responsibility": "Agent-level orchestration, runtime tools, lifecycle management, and scheduler state persistence."
+    },
+    {
+      "label": "Observability",
+      "path": "agiwo/observability",
+      "responsibility": "Trace and span storage, querying, and runtime trace adaptation."
+    },
+    {
+      "label": "Embedding",
+      "path": "agiwo/embedding",
+      "responsibility": "Embedding abstraction and provider-backed implementations."
+    },
+    {
+      "label": "Skills",
+      "path": "agiwo/skill",
+      "responsibility": "Skill discovery, allowlisting, loading, and skill-to-tool bridging."
+    },
+    {
+      "label": "Workspace",
+      "path": "agiwo/workspace",
+      "responsibility": "Workspace path semantics, bootstrap, and runtime workspace helpers."
+    },
+    {
+      "label": "Memory",
+      "path": "agiwo/memory",
+      "responsibility": "Shared workspace memory indexing, chunking, and search services."
+    },
+    {
+      "label": "Configuration",
+      "path": "agiwo/config",
+      "responsibility": "Global SDK configuration and shared provider settings."
+    },
+    {
+      "label": "Shared utilities",
+      "path": "agiwo/utils",
+      "responsibility": "Cross-module runtime utilities and shared storage support."
+    }
+  ],
+  "source_pointers": [
+    {
+      "label": "Repository guide",
+      "path": "AGENTS.md",
+      "title": "AGENTS.md"
+    },
+    {
+      "label": "Public entry README",
+      "path": "README.md",
+      "title": "Agiwo"
+    },
+    {
+      "label": "Architecture overview",
+      "path": "docs/architecture/overview.md",
+      "title": "Architecture Overview"
+    },
+    {
+      "label": "Getting started guide",
+      "path": "docs/getting-started.md",
+      "title": "Getting Started"
+    },
+    {
+      "label": "Multi-agent guide",
+      "path": "docs/guides/multi-agent.md",
+      "title": "Multi-Agent & Composition"
+    }
+  ],
+  "summary": "Agiwo is organized around a canonical agent runtime, a separate scheduler orchestration layer, a tool abstraction, a model layer, and an internal control plane.",
+  "supporting_layout": [
+    {
+      "label": "SDK tests",
+      "path": "tests",
+      "responsibility": "SDK test suite organized by subsystem."
+    },
+    {
+      "label": "Repo scripts",
+      "path": "scripts",
+      "responsibility": "Lint entrypoints, repo guardrails, and maintenance helpers."
+    },
+    {
+      "label": "Guardrails",
+      "path": "lint",
+      "responsibility": "Import-linter and repository guard configuration."
+    },
+    {
+      "label": "Repository docs",
+      "path": "docs",
+      "responsibility": "Repository-native design notes, concepts, and architecture documentation."
+    },
+    {
+      "label": "Templates",
+      "path": "templates",
+      "responsibility": "Template content consumed by runtime features."
+    }
+  ]
+}

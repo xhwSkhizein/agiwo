@@ -43,3 +43,12 @@ After GitHub Pages accepts the custom domain and issues the certificate:
 - Verify the domain in Google Search Console
 - Submit the sitemap in Search Console
 - Update the GitHub repository Website field to `https://docs.agiwo.o-ai.tech`
+
+## Repository Overview Refresh
+
+When repository structure or architecture boundaries change:
+
+1. Update `README.md` and `AGENTS.md` if needed
+2. Run `python scripts/generate_repo_overview.py`
+3. Review `website/src/generated/repo-overview.json`
+4. Rebuild the public site before publishing

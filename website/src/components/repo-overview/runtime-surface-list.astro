@@ -1,0 +1,29 @@
+---
+interface Surface {
+  import_path: string;
+  role: string;
+  source_paths: string[];
+}
+
+interface Props {
+  items: Surface[];
+}
+
+const { items } = Astro.props;
+---
+
+<section class="repo-overview-section">
+  <h2>Core Runtime Surfaces</h2>
+  <ul class="repo-overview-list">
+    {items.map((item) => (
+      <li>
+        <div>
+          <strong><code>{item.import_path}</code></strong> — {item.role}
+        </div>
+        <div class="repo-overview-subtle">
+          Source: {item.source_paths.map((path) => <code>{path}</code>)}
+        </div>
+      </li>
+    ))}
+  </ul>
+</section>

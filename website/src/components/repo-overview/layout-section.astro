@@ -1,0 +1,37 @@
+---
+interface Item {
+  path: string;
+  label: string;
+  responsibility: string;
+}
+
+interface Props {
+  title: string;
+  items: Item[];
+}
+
+const { title, items } = Astro.props;
+---
+
+<section class="repo-overview-section">
+  <h2>{title}</h2>
+  <table class="repo-overview-table">
+    <thead>
+      <tr>
+        <th>Path</th>
+        <th>Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      {items.map((item) => (
+        <tr>
+          <td>
+            <strong>{item.label}</strong>
+            <div><code>{item.path}</code></div>
+          </td>
+          <td>{item.responsibility}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</section>
