@@ -35,6 +35,7 @@ import {
   formatUsd,
   normalizeRunMetricsSummary,
 } from "@/lib/metrics";
+import { getSchedulerRunResultView, type SchedulerRunResultTone } from "@/lib/scheduler-run-result";
 import { formatLocalDateTime } from "@/lib/time";
 import {
   formatWakeConditionTimer,
@@ -123,6 +124,19 @@ function DetailChip({
       <div className="mt-1 break-all text-sm text-ink-soft">{value}</div>
     </div>
   );
+}
+
+function runResultToneClass(tone: SchedulerRunResultTone): string {
+  switch (tone) {
+    case "success":
+      return "bg-success/15 text-success";
+    case "warning":
+      return "bg-warning/15 text-warning";
+    case "danger":
+      return "bg-danger/15 text-danger";
+    default:
+      return "bg-panel-strong text-ink-soft";
+  }
 }
 
 /**
@@ -242,6 +256,10 @@ function ChildrenTable({ items }: { items: AgentStateListItem[] }) {
         <tbody className="divide-y divide-line">
           {items.map((c) => {
             const metrics = normalizeRunMetricsSummary(c.metrics);
+            const resultView = getSchedulerRunResultView(
+              c.last_run_result,
+              c.result_summary,
+            );
             return (
               <tr key={c.id} className="transition-colors hover:bg-panel-muted">
                 <td className="px-4 py-2.5">
@@ -262,7 +280,22 @@ function ChildrenTable({ items }: { items: AgentStateListItem[] }) {
                   {formatTokenCount(metrics.input_tokens)} / {formatTokenCount(metrics.output_tokens)} / {formatTokenCount(metrics.total_tokens)}
                 </td>
                 <td className="max-w-xs truncate px-4 py-2.5 text-xs text-ink-muted">
-                  {c.result_summary || "-"}
+                  {resultView ? (
+                    <div className="space-y-1">
+                      {resultView.reasonLabel && (
+                        <span
+                          className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-medium ${runResultToneClass(resultView.tone)}`}
+                        >
+                          {resultView.reasonLabel}
+                        </span>
+                      )}
+                      <div className="truncate text-ink-muted">
+                        {resultView.message || "-"}
+                      </div>
+                    </div>
+                  ) : (
+                    "-"
+                  )}
                 </td>
               </tr>
             );
@@ -536,6 +569,14 @@ export default function SchedulerDetailPage() {
     Boolean(taskContext.source) ||
     attachmentCount > 0 ||
     taskContextEntries.length > 0;
+  const resultView = getSchedulerRunResultView(
+    state.last_run_result,
+    state.result_summary,
+  );
+  const configuredTools =
+    agentConfig?.allowed_tools === null
+      ? "default"
+      : String(agentConfig?.allowed_tools?.length ?? 0);
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -672,7 +713,15 @@ export default function SchedulerDetailPage() {
               <DetailChip label="Temperature" value={agentConfig.model_params?.temperature ?? "-"} />
               <DetailChip label="Max Output" value={agentConfig.model_params?.max_output_tokens ?? "-"} />
               <DetailChip label="Context Window" value={agentConfig.model_params?.max_context_window ?? "-"} />
-              <DetailChip label="Tools" value={agentConfig.tools.length} />
+              <DetailChip label="Tools" value={configuredTools} />
+              <DetailChip
+                label="Skills"
+                value={
+                  agentConfig.allowed_skills === null
+                    ? "all"
+                    : String(agentConfig.allowed_skills.length)
+                }
+              />
               {agentConfig.model_params?.base_url && (
                 <DetailChip label="Base URL" value={agentConfig.model_params.base_url} />
               )}
@@ -705,16 +754,52 @@ export default function SchedulerDetailPage() {
         </div>
       </SectionCard>
 
-      {state.result_summary && (
+      {resultView && (
         <SectionCard
-          title="Result Summary"
+          title="Last Run Result"
           className="p-4"
           headerClassName="mb-2"
           titleClassName="text-sm font-medium"
         >
-          <p className="text-sm whitespace-pre-wrap text-ink-soft">
-            {state.result_summary}
-          </p>
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-3">
+              {resultView.reasonLabel && (
+                <DetailChip
+                  label="Termination"
+                  value={
+                    <span
+                      className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${runResultToneClass(resultView.tone)}`}
+                    >
+                      {resultView.reasonLabel}
+                    </span>
+                  }
+                  tone="accent"
+                />
+              )}
+              {resultView.completedAt && (
+                <DetailChip
+                  label="Completed"
+                  value={formatLocalDateTime(resultView.completedAt)}
+                />
+              )}
+              {resultView.runId && (
+                <DetailChip
+                  label="Run ID"
+                  value={<MonoText>{resultView.runId}</MonoText>}
+                />
+              )}
+            </div>
+            {resultView.error && (
+              <div className="rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm whitespace-pre-wrap text-danger">
+                {resultView.error}
+              </div>
+            )}
+            {resultView.summary && resultView.summary !== resultView.error && (
+              <p className="text-sm whitespace-pre-wrap text-ink-soft">
+                {resultView.summary}
+              </p>
+            )}
+          </div>
         </SectionCard>
       )}
 

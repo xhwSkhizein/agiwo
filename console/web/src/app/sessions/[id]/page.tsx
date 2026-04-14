@@ -34,6 +34,8 @@ import {
   normalizeRunMetricsSummary,
   parseGenericMetrics,
 } from "@/lib/metrics";
+import { getSchedulerRunResultView } from "@/lib/scheduler-run-result";
+import { formatLocalDateTime } from "@/lib/time";
 
 function StepCardOriginalToggle({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
@@ -224,6 +226,10 @@ export default function SessionDetailPage() {
   }
 
   const runTotals = normalizeRunMetricsSummary(detail?.summary.metrics);
+  const schedulerResult = getSchedulerRunResultView(
+    detail?.scheduler_state?.last_run_result,
+    detail?.scheduler_state?.result_summary,
+  );
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -294,7 +300,7 @@ export default function SessionDetailPage() {
             }
           />
 
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-4">
             <MetricCard
               label="Base Agent"
               value={<MonoText>{detail.summary.base_agent_id || "-"}</MonoText>}
@@ -307,7 +313,45 @@ export default function SessionDetailPage() {
               label="Scheduler Status"
               value={detail.summary.root_state_status || "Not started"}
             />
+            <MetricCard
+              label="Last Run"
+              value={schedulerResult?.reasonLabel || (schedulerResult ? "Summary" : "-")}
+            />
           </div>
+
+          {schedulerResult && (
+            <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4 space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-wide text-zinc-500">
+                <Workflow className="h-3.5 w-3.5" />
+                Scheduler Run Result
+              </div>
+              <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
+                {schedulerResult.reasonLabel && (
+                  <span className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-200">
+                    {schedulerResult.reasonLabel}
+                  </span>
+                )}
+                {schedulerResult.completedAt && (
+                  <span>Completed {formatLocalDateTime(schedulerResult.completedAt)}</span>
+                )}
+                {schedulerResult.runId && (
+                  <span>
+                    Run <MonoText>{schedulerResult.runId}</MonoText>
+                  </span>
+                )}
+              </div>
+              {schedulerResult.error && (
+                <div className="rounded border border-red-900/50 bg-red-950/30 px-3 py-2 text-sm whitespace-pre-wrap text-red-300">
+                  {schedulerResult.error}
+                </div>
+              )}
+              {schedulerResult.summary && schedulerResult.summary !== schedulerResult.error && (
+                <p className="text-sm whitespace-pre-wrap text-zinc-300">
+                  {schedulerResult.summary}
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="rounded-lg border border-zinc-800 overflow-x-auto">
             <table className="w-full text-sm">

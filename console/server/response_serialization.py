@@ -321,6 +321,9 @@ def scheduler_tree_response_from_record(
                 pending_event_count=node.pending_event_count,
                 last_error=node.last_error,
                 result_summary=node.result_summary,
+                last_run_result=scheduler_run_result_response_from_sdk(
+                    node.last_run_result
+                ),
             )
             for node in tree.nodes
         ],

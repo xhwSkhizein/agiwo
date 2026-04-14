@@ -190,6 +190,12 @@ async def _seed_tree_states(client: AsyncClient) -> None:
             parent_id="root-tree",
             depth=1,
             result_summary="Cancelled by operator",
+            last_run_result=SchedulerRunResult(
+                run_id="run-cancelled",
+                termination_reason=TerminationReason.CANCELLED,
+                summary="Cancelled by operator",
+                completed_at=base_time.replace(minute=2),
+            ),
             created_at=base_time.replace(minute=2),
             updated_at=base_time.replace(minute=2),
         ),
@@ -201,6 +207,13 @@ async def _seed_tree_states(client: AsyncClient) -> None:
             parent_id="root-tree",
             depth=1,
             result_summary="Tool crashed",
+            last_run_result=SchedulerRunResult(
+                run_id="run-failed",
+                termination_reason=TerminationReason.ERROR,
+                summary="Tool crashed",
+                error="Tool crashed",
+                completed_at=base_time.replace(minute=3),
+            ),
             created_at=base_time.replace(minute=3),
             updated_at=base_time.replace(minute=3),
         ),
@@ -212,6 +225,12 @@ async def _seed_tree_states(client: AsyncClient) -> None:
             parent_id="child-running",
             depth=2,
             result_summary="Grandchild finished",
+            last_run_result=SchedulerRunResult(
+                run_id="run-grandchild",
+                termination_reason=TerminationReason.COMPLETED,
+                summary="Grandchild finished",
+                completed_at=base_time.replace(minute=4),
+            ),
             created_at=base_time.replace(minute=4),
             updated_at=base_time.replace(minute=4),
         ),
@@ -416,6 +435,11 @@ class TestSchedulerTree:
         assert node_map["grandchild-completed"]["pending_event_count"] == 1
         assert node_map["child-cancelled"]["root_state_id"] == "root-tree"
         assert node_map["child-cancelled"]["last_error"] == "Cancelled by operator"
+        assert (
+            node_map["child-cancelled"]["last_run_result"]["termination_reason"]
+            == "cancelled"
+        )
+        assert node_map["child-failed"]["last_run_result"]["error"] == "Tool crashed"
         assert "pending_events" not in node_map["child-running"]
 
     @pytest.mark.asyncio

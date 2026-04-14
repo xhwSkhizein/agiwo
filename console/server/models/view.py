@@ -253,6 +253,7 @@ class SchedulerTreeNodeResponse(BaseModel):
     pending_event_count: int = 0
     last_error: str | None = None
     result_summary: str | None = None
+    last_run_result: SchedulerRunResultResponse | None = None
 
 
 class SchedulerTreeResponse(BaseModel):

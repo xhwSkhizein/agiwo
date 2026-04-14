@@ -6,6 +6,7 @@ import { SectionCard } from "@/components/section-card";
 import { EmptyStateMessage, ErrorStateMessage } from "@/components/state-message";
 import { UserInputDetail } from "@/components/user-input-detail";
 import type { AgentStateDetail, PendingEventItem, SchedulerTreeNode } from "@/lib/api";
+import { getSchedulerRunResultView } from "@/lib/scheduler-run-result";
 import { formatLocalDateTime } from "@/lib/time";
 import { formatWakeConditionSummary } from "@/lib/wake-condition";
 
@@ -42,6 +43,11 @@ export function NodeInspector({
       </SectionCard>
     );
   }
+
+  const resultView = getSchedulerRunResultView(
+    detail?.last_run_result ?? node.last_run_result,
+    detail?.result_summary ?? node.last_error ?? node.result_summary,
+  );
 
   return (
     <SectionCard title="Inspector" bodyClassName="p-4 space-y-4">
@@ -92,13 +98,37 @@ export function NodeInspector({
         </div>
       )}
 
-      {(node.result_summary || node.last_error) && (
+      {resultView && (
         <div className="space-y-2">
           <div className="text-xs uppercase tracking-wide text-zinc-500">
-            Result / Error
+            Last Run Result
           </div>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-200 whitespace-pre-wrap">
-            {node.last_error ?? node.result_summary}
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3 space-y-3">
+            <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
+              {resultView.reasonLabel && (
+                <span className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-200">
+                  {resultView.reasonLabel}
+                </span>
+              )}
+              {resultView.completedAt && (
+                <span>Completed {formatLocalDateTime(resultView.completedAt)}</span>
+              )}
+              {resultView.runId && (
+                <span>
+                  Run <MonoText>{resultView.runId}</MonoText>
+                </span>
+              )}
+            </div>
+            {resultView.error && (
+              <div className="text-sm text-red-300 whitespace-pre-wrap">
+                {resultView.error}
+              </div>
+            )}
+            {resultView.summary && resultView.summary !== resultView.error && (
+              <div className="text-sm text-zinc-200 whitespace-pre-wrap">
+                {resultView.summary}
+              </div>
+            )}
           </div>
         </div>
       )}
