@@ -61,6 +61,7 @@ const tree = {
       pending_event_count: 1,
       last_error: null,
       result_summary: null,
+      last_run_result: null,
     },
     {
       state_id: "child-1",
@@ -79,6 +80,13 @@ const tree = {
       pending_event_count: 0,
       last_error: null,
       result_summary: "done",
+      last_run_result: {
+        run_id: "run-child-1",
+        termination_reason: "completed",
+        summary: "done",
+        error: null,
+        completed_at: "2026-04-02T00:00:03Z",
+      },
     },
   ],
 } as const;
@@ -94,6 +102,7 @@ const rootDetail = {
   config_overrides: {},
   wake_condition: null,
   result_summary: null,
+  last_run_result: null,
   signal_propagated: false,
   agent_config_id: null,
   is_persistent: true,
@@ -145,6 +154,13 @@ describe("SchedulerTreeWorkspace", () => {
       parent_id: "root-1",
       is_persistent: false,
       result_summary: "done",
+      last_run_result: {
+        run_id: "run-child-1",
+        termination_reason: "completed",
+        summary: "done",
+        error: null,
+        completed_at: "2026-04-02T00:00:03Z",
+      },
     });
     apiMocks.getPendingEvents.mockResolvedValue([]);
     const onSelectedStateIdChange = vi.fn();

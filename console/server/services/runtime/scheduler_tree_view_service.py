@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from agiwo.scheduler.engine import Scheduler
-from agiwo.scheduler.models import AgentState, AgentStateStatus
+from agiwo.scheduler.models import AgentState, AgentStateStatus, SchedulerRunResult
 
 from server.models.session import ChannelChatSessionStore
 
@@ -56,6 +56,7 @@ class SchedulerTreeNodeRecord:
     pending_event_count: int
     last_error: str | None
     result_summary: str | None
+    last_run_result: SchedulerRunResult | None
 
 
 @dataclass(slots=True)
@@ -79,19 +80,38 @@ def _state_sort_key(state: AgentState) -> tuple[datetime, str]:
 def _is_cancelled_state(state: AgentState) -> bool:
     if state.status != AgentStateStatus.FAILED:
         return False
-    summary = (state.result_summary or "").lower()
+    if (
+        state.last_run_result is not None
+        and state.last_run_result.termination_reason.value == "cancelled"
+    ):
+        return True
+    summary = (
+        state.last_run_result.summary
+        if state.last_run_result is not None and state.last_run_result.summary
+        else state.result_summary or ""
+    ).lower()
     return "cancelled" in summary or "canceled" in summary
 
 
 def _last_error(state: AgentState) -> str | None:
     if state.explain:
         return state.explain
+    if state.last_run_result is not None and state.last_run_result.error:
+        return state.last_run_result.error
     if state.status == AgentStateStatus.FAILED:
-        return state.result_summary
+        if state.result_summary:
+            return state.result_summary
+        if state.last_run_result is not None:
+            return state.last_run_result.summary
     return None
 
 
 def _completed_at(state: AgentState) -> datetime | None:
+    if (
+        state.last_run_result is not None
+        and state.last_run_result.completed_at is not None
+    ):
+        return state.last_run_result.completed_at
     if state.status in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED):
         return state.updated_at
     return None
@@ -183,6 +203,7 @@ class SchedulerTreeViewService:
                 pending_event_count=pending_counts.get(state.id, 0),
                 last_error=_last_error(state),
                 result_summary=state.result_summary,
+                last_run_result=state.last_run_result,
             )
             for state in collected
         ]

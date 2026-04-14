@@ -25,6 +25,7 @@ from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     PendingEvent,
+    SchedulerRunResult,
     SchedulerEventType,
     WakeType,
 )
@@ -357,6 +358,21 @@ class SchedulerRunner:
             )
         return fallback
 
+    @staticmethod
+    def _build_last_run_result(
+        *,
+        termination_reason: TerminationReason,
+        run_id: str | None,
+        summary: str | None = None,
+        error: str | None = None,
+    ) -> SchedulerRunResult:
+        return SchedulerRunResult(
+            run_id=run_id,
+            termination_reason=termination_reason,
+            summary=summary,
+            error=error,
+        )
+
     async def _fanout_stream_item(
         self, state: AgentState, item: AgentStreamItem
     ) -> None:
@@ -374,7 +390,11 @@ class SchedulerRunner:
         if parent_signal is None or not parent_signal.is_aborted():
             return False
 
-        await self._fail_state(state.id, "Parent cancelled")
+        await self._fail_state(
+            state.id,
+            "Parent cancelled",
+            termination_reason=TerminationReason.CANCELLED,
+        )
         await self._emit_event_to_parent(
             state,
             SchedulerEventType.CHILD_FAILED,
@@ -412,7 +432,7 @@ class SchedulerRunner:
         if await self._handle_periodic_output(action, current_state, text, output):
             return
 
-        await self._complete_state(current_state, text)
+        await self._complete_state(current_state, output, text)
 
     async def _emit_event_to_parent(
         self,
@@ -474,11 +494,25 @@ class SchedulerRunner:
         self._ctx.notify_state_change(state.id)
         self._ctx.nudge()
 
-    async def _fail_state(self, state_id: str, reason: str) -> None:
+    async def _fail_state(
+        self,
+        state_id: str,
+        reason: str,
+        *,
+        termination_reason: TerminationReason = TerminationReason.ERROR,
+    ) -> None:
         current_state = await self._ctx.store.get_state(state_id)
         if current_state is None:
             return
-        await self._save_state(current_state.with_failed(reason))
+        await self._save_state(
+            current_state.with_failed(reason).with_updates(
+                last_run_result=self._build_last_run_result(
+                    termination_reason=termination_reason,
+                    run_id=None,
+                    error=reason,
+                )
+            )
+        )
 
     async def _cleanup_after_run(self, state: AgentState) -> None:
         self._ctx.rt.dispatched.discard(state.id)
@@ -576,12 +610,22 @@ class SchedulerRunner:
             )
             return True
 
-        await self._save_state(state.with_failed("Shutdown before completion"))
+        error = "Shutdown before completion"
+        await self._save_state(
+            state.with_failed(error).with_updates(
+                last_run_result=self._build_last_run_result(
+                    termination_reason=TerminationReason.ERROR,
+                    run_id=None,
+                    summary=text,
+                    error=error,
+                )
+            )
+        )
         if state.is_child:
             await self._emit_event_to_parent(
                 state,
                 SchedulerEventType.CHILD_FAILED,
-                {"reason": "Shutdown before completion"},
+                {"reason": error},
             )
         return True
 
@@ -595,7 +639,16 @@ class SchedulerRunner:
             return False
 
         reason = output.error or text or output.termination_reason.value
-        await self._save_state(state.with_failed(reason))
+        await self._save_state(
+            state.with_failed(reason).with_updates(
+                last_run_result=self._build_last_run_result(
+                    termination_reason=output.termination_reason,
+                    run_id=output.run_id,
+                    summary=text,
+                    error=reason,
+                )
+            )
+        )
         if state.is_child:
             await self._emit_event_to_parent(
                 state,
@@ -676,13 +729,27 @@ class SchedulerRunner:
     async def _complete_state(
         self,
         state: AgentState,
+        output: RunOutput,
         text: str | None,
     ) -> None:
+        last_run_result = self._build_last_run_result(
+            termination_reason=TerminationReason.COMPLETED,
+            run_id=output.run_id,
+            summary=text,
+        )
         if state.is_root and state.is_persistent:
-            await self._save_state(state.with_idle(result_summary=text))
+            await self._save_state(
+                state.with_idle(result_summary=text).with_updates(
+                    last_run_result=last_run_result
+                )
+            )
             return
 
-        await self._save_state(state.with_completed(result_summary=text))
+        await self._save_state(
+            state.with_completed(result_summary=text).with_updates(
+                last_run_result=last_run_result
+            )
+        )
         if state.is_child:
             await self._emit_event_to_parent(
                 state,

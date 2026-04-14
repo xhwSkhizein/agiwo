@@ -65,6 +65,11 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
     # Expand default tools using ToolManager
     tool_manager = get_global_tool_manager()
     default_tools = tool_manager.list_default_tool_names()
+    allowed_tools = (
+        default_tools
+        if template.allowed_tools is None
+        else list(template.allowed_tools)
+    )
     return AgentConfigRecord(
         id=template.id,
         name=template.name,
@@ -72,7 +77,7 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
         model_provider=template.model_provider,
         model_name=template.model_name,
         system_prompt=template.system_prompt,
-        allowed_tools=template.allowed_tools or default_tools,
+        allowed_tools=allowed_tools,
         allowed_skills=allowed_skills,
         options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
         model_params=dict(template.model_params),

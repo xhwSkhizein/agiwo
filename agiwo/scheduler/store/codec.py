@@ -6,9 +6,10 @@ This module owns persistence-facing serialization for scheduler domain types.
 from datetime import datetime
 from typing import Any
 
-from agiwo.agent import UserInput, UserMessage
+from agiwo.agent import TerminationReason, UserInput, UserMessage
 from agiwo.scheduler.models import (
     ChildAgentConfigOverrides,
+    SchedulerRunResult,
     TimeUnit,
     WaitMode,
     WakeCondition,
@@ -58,6 +59,34 @@ def deserialize_child_agent_config_overrides(
         allowed_skills=data.get("allowed_skills"),
         allowed_tools=data.get("allowed_tools"),
         fork=data.get("fork", False),
+    )
+
+
+def serialize_scheduler_run_result_for_store(
+    result: SchedulerRunResult | None,
+) -> dict[str, Any] | None:
+    if result is None:
+        return None
+    return {
+        "run_id": result.run_id,
+        "termination_reason": result.termination_reason.value,
+        "summary": result.summary,
+        "error": result.error,
+        "completed_at": result.completed_at.isoformat(),
+    }
+
+
+def deserialize_scheduler_run_result_for_store(
+    data: dict[str, Any] | None,
+) -> SchedulerRunResult | None:
+    if not data:
+        return None
+    return SchedulerRunResult(
+        run_id=data.get("run_id"),
+        termination_reason=TerminationReason(str(data["termination_reason"])),
+        summary=data.get("summary"),
+        error=data.get("error"),
+        completed_at=datetime.fromisoformat(str(data["completed_at"])),
     )
 
 
@@ -111,9 +140,11 @@ def deserialize_wake_condition_for_store(data: dict[str, Any]) -> WakeCondition:
 
 __all__ = [
     "deserialize_child_agent_config_overrides",
+    "deserialize_scheduler_run_result_for_store",
     "deserialize_user_input_for_store",
     "deserialize_wake_condition_for_store",
     "serialize_child_agent_config_overrides",
+    "serialize_scheduler_run_result_for_store",
     "serialize_user_input_for_store",
     "serialize_wake_condition_for_store",
 ]

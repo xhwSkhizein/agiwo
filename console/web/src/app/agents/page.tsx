@@ -141,18 +141,18 @@ export default function AgentsPage() {
                 </p>
               )}
 
-              {agent.tools && agent.tools.length > 0 && (
+              {agent.allowed_tools && agent.allowed_tools.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mt-3">
-                  {agent.tools.slice(0, 6).map((t) => (
+                  {agent.allowed_tools.slice(0, 6).map((toolName) => (
                     <PillBadge
-                      key={t}
-                      variant={t.startsWith("agent:") ? "info" : "default"}
+                      key={toolName}
+                      variant={toolName.startsWith("agent:") ? "info" : "default"}
                     >
-                      {t.startsWith("agent:") ? t.slice(6) : t}
+                      {toolName.startsWith("agent:") ? toolName.slice(6) : toolName}
                     </PillBadge>
                   ))}
-                  {agent.tools.length > 6 && (
-                    <PillBadge variant="default">+{agent.tools.length - 6}</PillBadge>
+                  {agent.allowed_tools.length > 6 && (
+                    <PillBadge variant="default">+{agent.allowed_tools.length - 6}</PillBadge>
                   )}
                 </div>
               )}

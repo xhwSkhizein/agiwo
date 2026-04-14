@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from agiwo.agent import TerminationReason
 from agiwo.agent.models.run import Run, RunMetrics, RunStatus
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepRecord
 from agiwo.scheduler.engine import Scheduler
@@ -12,6 +13,7 @@ from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     AgentStateStorageConfig,
+    SchedulerRunResult,
     SchedulerConfig,
 )
 
@@ -277,6 +279,11 @@ async def test_get_session_detail_returns_summary_session_and_root_scheduler_sta
             status=AgentStateStatus.WAITING,
             task="wait for child",
             result_summary="waiting",
+            last_run_result=SchedulerRunResult(
+                run_id="run-last",
+                termination_reason=TerminationReason.TIMEOUT,
+                error="took too long",
+            ),
         )
     )
 
@@ -290,6 +297,10 @@ async def test_get_session_detail_returns_summary_session_and_root_scheduler_sta
     assert "scheduler_state_id" not in payload["session"]
     assert payload["scheduler_state"]["id"] == "session-a"
     assert payload["scheduler_state"]["status"] == "waiting"
+    assert payload["scheduler_state"]["last_run_result"]["run_id"] == "run-last"
+    assert (
+        payload["scheduler_state"]["last_run_result"]["termination_reason"] == "timeout"
+    )
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,7 @@ const tree: SchedulerTree = {
       pending_event_count: 1,
       last_error: null,
       result_summary: null,
+      last_run_result: null,
     },
     {
       state_id: "child-1",
@@ -57,6 +58,7 @@ const tree: SchedulerTree = {
       pending_event_count: 2,
       last_error: null,
       result_summary: null,
+      last_run_result: null,
     },
     {
       state_id: "child-2",
@@ -75,6 +77,13 @@ const tree: SchedulerTree = {
       pending_event_count: 0,
       last_error: "Cancelled by operator",
       result_summary: "Cancelled by operator",
+      last_run_result: {
+        run_id: "run-cancelled",
+        termination_reason: "cancelled",
+        summary: "Cancelled by operator",
+        error: null,
+        completed_at: "2026-04-02T00:02:05Z",
+      },
     },
     {
       state_id: "grandchild-1",
@@ -93,6 +102,13 @@ const tree: SchedulerTree = {
       pending_event_count: 0,
       last_error: null,
       result_summary: "done",
+      last_run_result: {
+        run_id: "run-completed",
+        termination_reason: "completed",
+        summary: "done",
+        error: null,
+        completed_at: "2026-04-02T00:03:05Z",
+      },
     },
   ],
 };

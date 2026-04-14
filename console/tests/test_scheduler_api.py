@@ -17,12 +17,14 @@ from agiwo.scheduler.models import (
     AgentStateStatus,
     AgentStateStorageConfig,
     PendingEvent,
+    SchedulerRunResult,
     SchedulerConfig,
     SchedulerEventType,
     WakeCondition,
     WakeType,
     TimeUnit,
 )
+from agiwo.agent import TerminationReason
 from agiwo.scheduler.engine import Scheduler
 
 from server.app import create_app
@@ -113,6 +115,11 @@ async def _seed_states(client: AsyncClient) -> None:
             task="Research topic A",
             parent_id="parent-1",
             result_summary="Topic A is about X.",
+            last_run_result=SchedulerRunResult(
+                run_id="run-child-1",
+                termination_reason=TerminationReason.COMPLETED,
+                summary="Topic A is about X.",
+            ),
             signal_propagated=True,
         ),
         AgentState(
@@ -183,6 +190,12 @@ async def _seed_tree_states(client: AsyncClient) -> None:
             parent_id="root-tree",
             depth=1,
             result_summary="Cancelled by operator",
+            last_run_result=SchedulerRunResult(
+                run_id="run-cancelled",
+                termination_reason=TerminationReason.CANCELLED,
+                summary="Cancelled by operator",
+                completed_at=base_time.replace(minute=2),
+            ),
             created_at=base_time.replace(minute=2),
             updated_at=base_time.replace(minute=2),
         ),
@@ -194,6 +207,13 @@ async def _seed_tree_states(client: AsyncClient) -> None:
             parent_id="root-tree",
             depth=1,
             result_summary="Tool crashed",
+            last_run_result=SchedulerRunResult(
+                run_id="run-failed",
+                termination_reason=TerminationReason.ERROR,
+                summary="Tool crashed",
+                error="Tool crashed",
+                completed_at=base_time.replace(minute=3),
+            ),
             created_at=base_time.replace(minute=3),
             updated_at=base_time.replace(minute=3),
         ),
@@ -205,6 +225,12 @@ async def _seed_tree_states(client: AsyncClient) -> None:
             parent_id="child-running",
             depth=2,
             result_summary="Grandchild finished",
+            last_run_result=SchedulerRunResult(
+                run_id="run-grandchild",
+                termination_reason=TerminationReason.COMPLETED,
+                summary="Grandchild finished",
+                completed_at=base_time.replace(minute=4),
+            ),
             created_at=base_time.replace(minute=4),
             updated_at=base_time.replace(minute=4),
         ),
@@ -314,6 +340,7 @@ class TestGetAgentState:
         assert data["wake_condition"]["type"] == "waitset"
         assert data["wake_condition"]["wait_for"] == ["child-1", "child-2"]
         assert data["wake_condition"]["completed_ids"] == ["child-1"]
+        assert data["last_run_result"] is None
 
     @pytest.mark.asyncio
     async def test_get_with_delay_wake(self, client):
@@ -333,6 +360,15 @@ class TestGetAgentState:
         resp = await client.get("/api/scheduler/states/child-2")
         assert resp.status_code == 200
         assert resp.json()["root_state_id"] == "parent-1"
+
+    @pytest.mark.asyncio
+    async def test_get_completed_child_exposes_last_run_result(self, client):
+        await _seed_states(client)
+        resp = await client.get("/api/scheduler/states/child-1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["last_run_result"]["run_id"] == "run-child-1"
+        assert data["last_run_result"]["termination_reason"] == "completed"
 
     @pytest.mark.asyncio
     async def test_get_nonexistent(self, client):
@@ -399,6 +435,11 @@ class TestSchedulerTree:
         assert node_map["grandchild-completed"]["pending_event_count"] == 1
         assert node_map["child-cancelled"]["root_state_id"] == "root-tree"
         assert node_map["child-cancelled"]["last_error"] == "Cancelled by operator"
+        assert (
+            node_map["child-cancelled"]["last_run_result"]["termination_reason"]
+            == "cancelled"
+        )
+        assert node_map["child-failed"]["last_run_result"]["error"] == "Tool crashed"
         assert "pending_events" not in node_map["child-running"]
 
     @pytest.mark.asyncio

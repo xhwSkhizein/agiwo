@@ -157,7 +157,7 @@ function SchedulerPageContent() {
     if (hasLoadedRef.current) {
       void loadData();
     }
-  }, [filter, offset, pageSize]);
+  }, [loadData]);
 
   useEffect(() => {
     if (hasLoadedRef.current) {
@@ -165,7 +165,7 @@ function SchedulerPageContent() {
     }
     hasLoadedRef.current = true;
     void loadData();
-  }, []);
+  }, [loadData]);
 
   useEffect(() => {
     if (!autoRefresh || !isPageVisible) {

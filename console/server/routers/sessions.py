@@ -13,6 +13,7 @@ from server.dependencies import (
 )
 from server.response_serialization import (
     run_response_from_sdk,
+    scheduler_run_result_response_from_sdk,
     session_detail_response_from_record,
     session_summary_response_from_record,
     step_response_from_sdk,
@@ -146,7 +147,7 @@ async def send_session_input(
             return
 
         state = await runtime_service.get_state(session.id)
-        if state is not None and state.result_summary:
+        if state is not None and state.last_run_result is not None:
             yield {
                 "event": "scheduler_ack",
                 "data": json.dumps(
@@ -154,7 +155,9 @@ async def send_session_input(
                         "type": "scheduler_ack",
                         "session_id": session.id,
                         "state_id": session.id,
-                        "result_summary": state.result_summary,
+                        "last_run_result": scheduler_run_result_response_from_sdk(
+                            state.last_run_result
+                        ).model_dump(),
                     },
                     default=str,
                 ),

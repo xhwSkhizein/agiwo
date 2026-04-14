@@ -613,6 +613,14 @@ export interface WakeConditionResponse {
   timeout_at: string | null;
 }
 
+export interface SchedulerRunResult {
+  run_id: string | null;
+  termination_reason: string;
+  summary: string | null;
+  error: string | null;
+  completed_at: string | null;
+}
+
 export interface AgentStateListItem {
   id: string;
   root_state_id: string | null;
@@ -621,6 +629,7 @@ export interface AgentStateListItem {
   parent_id: string | null;
   wake_condition: WakeConditionResponse | null;
   result_summary: string | null;
+  last_run_result: SchedulerRunResult | null;
   agent_config_id: string | null;
   is_persistent: boolean;
   depth: number;
@@ -641,6 +650,7 @@ export interface AgentStateDetail {
   config_overrides: Record<string, unknown>;
   wake_condition: WakeConditionResponse | null;
   result_summary: string | null;
+  last_run_result: SchedulerRunResult | null;
   signal_propagated: boolean;
   agent_config_id: string | null;
   is_persistent: boolean;
@@ -690,6 +700,7 @@ export interface SchedulerTreeNode {
   pending_event_count: number;
   last_error: string | null;
   result_summary: string | null;
+  last_run_result: SchedulerRunResult | null;
 }
 
 export interface SchedulerTree {

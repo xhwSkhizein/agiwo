@@ -14,7 +14,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import Any
 
-from agiwo.agent import UserInput
+from agiwo.agent import TerminationReason, UserInput
 from agiwo.skill.allowlist import (
     normalize_allowed_skills,
     validate_expanded_allowed_skills,
@@ -206,6 +206,17 @@ _UNSET = _UnsetType()
 
 
 @dataclass(frozen=True, slots=True)
+class SchedulerRunResult:
+    """Most recent completed agent-cycle result owned by the scheduler."""
+
+    run_id: str | None
+    termination_reason: TerminationReason
+    summary: str | None = None
+    error: str | None = None
+    completed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True, slots=True)
 class AgentState:
     """
     Persistent state snapshot of a scheduled agent.
@@ -234,6 +245,7 @@ class AgentState:
     rollback_count: int = 0
     no_progress: bool = False
     explain: str | None = None
+    last_run_result: SchedulerRunResult | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -317,6 +329,7 @@ class AgentState:
             ),
             explain=self.explain if explain is _UNSET else explain,
             wake_count=self.wake_count if wake_count is _UNSET else wake_count,
+            last_run_result=None,
             no_progress=False,
         )
 

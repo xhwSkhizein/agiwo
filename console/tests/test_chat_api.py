@@ -14,7 +14,13 @@ from agiwo.agent import (
     TerminationReason,
 )
 from agiwo.scheduler.engine import Scheduler
-from agiwo.scheduler.models import AgentStateStorageConfig, SchedulerConfig
+from agiwo.scheduler.models import (
+    AgentState,
+    AgentStateStatus,
+    AgentStateStorageConfig,
+    SchedulerConfig,
+    SchedulerRunResult,
+)
 
 from server.app import create_app
 from server.services.session_store import InMemorySessionStore
@@ -350,6 +356,83 @@ async def test_session_input_continues_stream_after_root_sleeping(
     assert sum(1 for line in lines if line == "event: run_started") == 2
     assert sum(1 for line in lines if line == "event: run_completed") == 2
     assert any("run-2" in line for line in lines)
+
+
+@pytest.mark.asyncio
+async def test_session_input_fallback_uses_last_run_result(
+    client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(client)
+    await runtime.agent_registry.create_agent(
+        AgentConfigRecord(
+            id="agent-1",
+            name="agent-one",
+            model_provider="openai",
+            model_name="gpt-test",
+        )
+    )
+    create_resp = await client.post("/api/agents/agent-1/sessions")
+    session_id = create_resp.json()["session_id"]
+
+    class FakeAgent:
+        def __init__(self, agent_id: str) -> None:
+            self.id = agent_id
+
+        async def close(self) -> None:
+            pass
+
+    fake_agent = FakeAgent(session_id)
+    assert runtime.agent_runtime_cache is not None
+    monkeypatch.setattr(
+        runtime.agent_runtime_cache,
+        "get_or_create_runtime_agent",
+        AsyncMock(return_value=fake_agent),
+    )
+
+    scheduler = runtime.scheduler
+    assert scheduler is not None
+    await scheduler._store.save_state(
+        AgentState(
+            id=session_id,
+            session_id=session_id,
+            status=AgentStateStatus.IDLE,
+            task="hello",
+            is_persistent=True,
+            last_run_result=SchedulerRunResult(
+                run_id="run-1",
+                termination_reason=TerminationReason.TIMEOUT,
+                error="took too long",
+            ),
+        )
+    )
+
+    async def fake_route_root_input(*args, **kwargs):
+        del args, kwargs
+        return type(
+            "RouteResultStub",
+            (),
+            {
+                "action": "steered",
+                "state_id": session_id,
+                "stream": None,
+            },
+        )()
+
+    monkeypatch.setattr(scheduler, "route_root_input", fake_route_root_input)
+
+    async with client.stream(
+        "POST",
+        f"/api/sessions/{session_id}/input",
+        json={"message": "hello"},
+    ) as response:
+        assert response.status_code == 200
+        lines = [line async for line in response.aiter_lines()]
+
+    payload_lines = [line for line in lines if line.startswith("data: ")]
+    assert payload_lines
+    assert '"last_run_result"' in payload_lines[0]
+    assert '"termination_reason": "timeout"' in payload_lines[0]
 
 
 @pytest.mark.asyncio

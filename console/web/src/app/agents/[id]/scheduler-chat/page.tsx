@@ -50,6 +50,8 @@ import {
   getHighestMessageSequence,
   messagesFromSteps,
 } from "@/lib/chat-types";
+import { getSchedulerRunResultView } from "@/lib/scheduler-run-result";
+import { formatLocalDateTime } from "@/lib/time";
 import { formatWakeConditionSummary } from "@/lib/wake-condition";
 
 type OrchestrationStatus =
@@ -94,6 +96,9 @@ function statusFromSchedulerState(
 ): OrchestrationStatus {
   if (!state) {
     return fallback;
+  }
+  if (state.last_run_result?.termination_reason === "cancelled") {
+    return "cancelled";
   }
   switch (state.status) {
     case "running":
@@ -549,8 +554,6 @@ function SchedulerChatPageContent() {
     return () => {
       cancelled = true;
     };
-    // Note: handleSessionCreatedRef is stable; handleSessionCreated intentionally excluded
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, agentId, sessionId]);
 
   const handleSessionSwitch = async (targetSessionId: string) => {
@@ -791,19 +794,41 @@ function SchedulerChatPageContent() {
               Root State
             </div>
             {rootState ? (
-              <>
-                <UserInputCompact input={rootState.task} maxLength={140} />
-                {rootState.wake_condition && (
-                  <p className="text-xs text-zinc-500">
-                    {formatWakeConditionSummary(rootState.wake_condition)}
-                  </p>
-                )}
-                {rootState.result_summary && (
-                  <p className="text-xs text-zinc-400 whitespace-pre-wrap">
-                    {rootState.result_summary}
-                  </p>
-                )}
-              </>
+              (() => {
+                const rootResult = getSchedulerRunResultView(
+                  rootState.last_run_result,
+                  rootState.result_summary,
+                );
+                return (
+                  <>
+                    <UserInputCompact input={rootState.task} maxLength={140} />
+                    {rootState.wake_condition && (
+                      <p className="text-xs text-zinc-500">
+                        {formatWakeConditionSummary(rootState.wake_condition)}
+                      </p>
+                    )}
+                    {rootResult && (
+                      <div className="space-y-1 text-xs">
+                        <div className="flex flex-wrap items-center gap-2 text-zinc-500">
+                          {rootResult.reasonLabel && (
+                            <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-zinc-300">
+                              {rootResult.reasonLabel}
+                            </span>
+                          )}
+                          {rootResult.completedAt && (
+                            <span>{formatLocalDateTime(rootResult.completedAt)}</span>
+                          )}
+                        </div>
+                        {rootResult.message && (
+                          <p className="text-zinc-400 whitespace-pre-wrap">
+                            {rootResult.message}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </>
+                );
+              })()
             ) : (
               <p className="text-xs text-zinc-600">No active root state</p>
             )}
@@ -878,41 +903,62 @@ function SchedulerChatPageContent() {
                   </button>
 
                   {expandedChildren.has(child.id) && (
-                    <div className="px-3 pb-3 border-t border-zinc-800">
-                      {child.result_summary && (
-                        <div className="mt-2 text-xs text-zinc-400 whitespace-pre-wrap max-h-32 overflow-auto">
-                          <span className="text-zinc-500 font-medium">Result: </span>
-                          {child.result_summary.slice(0, 500)}
-                        </div>
-                      )}
-                      {(childMessages[child.id] || []).length > 0 && (
-                        <div className="mt-2 space-y-2 max-h-48 overflow-auto">
-                          {(childMessages[child.id] || []).map((message) => (
-                            <div key={message.id} className="text-[11px]">
-                              <span
-                                className={`font-medium ${
-                                  message.role === "assistant"
-                                    ? "text-green-400"
-                                    : message.role === "tool"
-                                      ? "text-amber-400"
-                                      : "text-zinc-400"
-                                }`}
-                              >
-                                {message.role}
-                                {message.name ? ` — ${message.name}` : ""}:
-                              </span>{" "}
-                              <span className="text-zinc-400 whitespace-pre-wrap">
-                                {(message.text || "").slice(0, 300)}
-                                {(message.text || "").length > 300 ? "..." : ""}
-                              </span>
-                              {message.isStreaming && (
-                                <Loader2 className="inline w-2.5 h-2.5 ml-1 animate-spin text-zinc-500" />
+                    (() => {
+                      const childResult = getSchedulerRunResultView(
+                        child.last_run_result,
+                        child.result_summary,
+                      );
+                      return (
+                        <div className="px-3 pb-3 border-t border-zinc-800">
+                          {childResult && (
+                            <div className="mt-2 space-y-1 text-xs">
+                              <div className="flex flex-wrap items-center gap-2 text-zinc-500">
+                                {childResult.reasonLabel && (
+                                  <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-zinc-300">
+                                    {childResult.reasonLabel}
+                                  </span>
+                                )}
+                                {childResult.completedAt && (
+                                  <span>{formatLocalDateTime(childResult.completedAt)}</span>
+                                )}
+                              </div>
+                              {childResult.message && (
+                                <div className="text-zinc-400 whitespace-pre-wrap max-h-32 overflow-auto">
+                                  {childResult.message.slice(0, 500)}
+                                </div>
                               )}
                             </div>
-                          ))}
+                          )}
+                          {(childMessages[child.id] || []).length > 0 && (
+                            <div className="mt-2 space-y-2 max-h-48 overflow-auto">
+                              {(childMessages[child.id] || []).map((message) => (
+                                <div key={message.id} className="text-[11px]">
+                                  <span
+                                    className={`font-medium ${
+                                      message.role === "assistant"
+                                        ? "text-green-400"
+                                        : message.role === "tool"
+                                          ? "text-amber-400"
+                                          : "text-zinc-400"
+                                    }`}
+                                  >
+                                    {message.role}
+                                    {message.name ? ` — ${message.name}` : ""}:
+                                  </span>{" "}
+                                  <span className="text-zinc-400 whitespace-pre-wrap">
+                                    {(message.text || "").slice(0, 300)}
+                                    {(message.text || "").length > 300 ? "..." : ""}
+                                  </span>
+                                  {message.isStreaming && (
+                                    <Loader2 className="inline w-2.5 h-2.5 ml-1 animate-spin text-zinc-500" />
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
+                      );
+                    })()
                   )}
                 </div>
               ))

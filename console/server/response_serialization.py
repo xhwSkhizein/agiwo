@@ -8,7 +8,12 @@ from agiwo.agent import AgentStreamItem, StepCompletedEvent
 from agiwo.agent.models import step
 from agiwo.agent.models.run import Run
 from agiwo.observability.trace import Trace
-from agiwo.scheduler.models import AgentState, PendingEvent, WakeCondition
+from agiwo.scheduler.models import (
+    AgentState,
+    PendingEvent,
+    SchedulerRunResult,
+    WakeCondition,
+)
 from server.models.metrics import RunMetricsSummary
 from server.models.session import (
     ChannelChatContext,
@@ -24,6 +29,7 @@ from server.models.view import (
     RunMetricsResponse,
     RunResponse,
     SchedulerTreeNodeResponse,
+    SchedulerRunResultResponse,
     SchedulerTreeResponse,
     SchedulerTreeStatsResponse,
     SessionDetailResponse,
@@ -207,6 +213,24 @@ def _wake_condition_response_from_sdk(
     )
 
 
+def scheduler_run_result_response_from_sdk(
+    result: SchedulerRunResult | None,
+) -> SchedulerRunResultResponse | None:
+    if result is None:
+        return None
+    return SchedulerRunResultResponse(
+        run_id=result.run_id,
+        termination_reason=result.termination_reason.value,
+        summary=result.summary,
+        error=result.error,
+        completed_at=(
+            result.completed_at.isoformat()
+            if getattr(result, "completed_at", None) is not None
+            else None
+        ),
+    )
+
+
 def agent_state_response_from_sdk(
     state: AgentState,
     *,
@@ -226,6 +250,7 @@ def agent_state_response_from_sdk(
             else None
         ),
         result_summary=state.result_summary,
+        last_run_result=scheduler_run_result_response_from_sdk(state.last_run_result),
         agent_config_id=state.agent_config_id,
         is_persistent=state.is_persistent,
         depth=state.depth,
@@ -255,6 +280,7 @@ def agent_state_list_item_from_sdk(
         parent_id=state.parent_id,
         wake_condition=None,
         result_summary=state.result_summary,
+        last_run_result=scheduler_run_result_response_from_sdk(state.last_run_result),
         agent_config_id=state.agent_config_id,
         is_persistent=state.is_persistent,
         depth=state.depth,
@@ -295,6 +321,9 @@ def scheduler_tree_response_from_record(
                 pending_event_count=node.pending_event_count,
                 last_error=node.last_error,
                 result_summary=node.result_summary,
+                last_run_result=scheduler_run_result_response_from_sdk(
+                    node.last_run_result
+                ),
             )
             for node in tree.nodes
         ],
