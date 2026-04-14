@@ -167,6 +167,14 @@ class WakeConditionResponse(BaseModel):
     timeout_at: str | None = None
 
 
+class SchedulerRunResultResponse(BaseModel):
+    run_id: str | None = None
+    termination_reason: str
+    summary: str | None = None
+    error: str | None = None
+    completed_at: str | None = None
+
+
 class AgentStateBase(BaseModel):
     id: str
     root_state_id: str | None = None
@@ -175,6 +183,7 @@ class AgentStateBase(BaseModel):
     parent_id: str | None = None
     wake_condition: WakeConditionResponse | None = None
     result_summary: str | None = None
+    last_run_result: SchedulerRunResultResponse | None = None
     agent_config_id: str | None = None
     is_persistent: bool = False
     depth: int = 0

@@ -442,18 +442,24 @@ class Scheduler:
             while True:
                 state = await self._store.get_state(state_id)
                 if state is not None:
-                    if state.status in (
-                        AgentStateStatus.IDLE,
-                        AgentStateStatus.COMPLETED,
-                    ):
-                        return RunOutput(
-                            response=state.result_summary,
-                            termination_reason=TerminationReason.COMPLETED,
+                    if state.last_run_result is not None and (
+                        state.status
+                        in (
+                            AgentStateStatus.IDLE,
+                            AgentStateStatus.COMPLETED,
+                            AgentStateStatus.FAILED,
                         )
-                    if state.status == AgentStateStatus.FAILED:
+                    ):
+                        last_run_result = state.last_run_result
                         return RunOutput(
-                            error=state.result_summary,
-                            termination_reason=TerminationReason.ERROR,
+                            run_id=last_run_result.run_id,
+                            response=(
+                                last_run_result.summary
+                                if last_run_result.error is None
+                                else None
+                            ),
+                            error=last_run_result.error,
+                            termination_reason=last_run_result.termination_reason,
                         )
 
                 remaining = None

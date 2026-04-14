@@ -2,11 +2,13 @@
 
 from datetime import datetime, timedelta, timezone
 
+from agiwo.agent import TerminationReason
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     ChildAgentConfigOverrides,
     PendingEvent,
+    SchedulerRunResult,
     SchedulerConfig,
     SchedulerEventType,
     TaskLimits,
@@ -173,6 +175,45 @@ class TestAgentState:
         )
         assert state.is_queued_root()
         assert not state.can_accept_enqueue_input()
+
+    def test_with_running_clears_last_run_result(self):
+        state = AgentState(
+            id="root",
+            session_id="sess-1",
+            status=AgentStateStatus.IDLE,
+            task="task",
+            is_persistent=True,
+            last_run_result=SchedulerRunResult(
+                run_id="run-1",
+                termination_reason=TerminationReason.COMPLETED,
+                summary="done",
+            ),
+        )
+
+        updated = state.with_running(task="next task")
+
+        assert updated.status == AgentStateStatus.RUNNING
+        assert updated.last_run_result is None
+
+    def test_with_queued_preserves_last_run_result(self):
+        result = SchedulerRunResult(
+            run_id="run-2",
+            termination_reason=TerminationReason.CANCELLED,
+            error="cancelled by user",
+        )
+        state = AgentState(
+            id="root",
+            session_id="sess-1",
+            status=AgentStateStatus.IDLE,
+            task="task",
+            is_persistent=True,
+            last_run_result=result,
+        )
+
+        updated = state.with_queued(pending_input="next")
+
+        assert updated.status == AgentStateStatus.QUEUED
+        assert updated.last_run_result == result
 
 
 class TestPendingEvent:

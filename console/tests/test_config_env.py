@@ -202,6 +202,18 @@ def test_default_agent_record_uses_shared_option_defaults() -> None:
     assert record.allowed_skills is None
 
 
+def test_default_agent_record_preserves_empty_allowed_tools() -> None:
+    template = DefaultAgentConfig(
+        model_provider="openai",
+        model_name="gpt-4o-mini",
+        allowed_tools=[],
+    )
+
+    record = build_default_agent_record(template)
+
+    assert record.allowed_tools == []
+
+
 def test_console_default_agent_config_normalizes_allowed_skills() -> None:
     config = ConsoleConfig(
         default_agent={

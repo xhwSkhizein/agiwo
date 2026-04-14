@@ -25,12 +25,6 @@ def build_stream(
     close_on_root_run_end: bool,
 ) -> AsyncIterator[AgentStreamItem]:
     async def iterator() -> AsyncIterator[AgentStreamItem]:
-        open_stream_channel(
-            sched._rt.stream_channels,
-            state_id,
-            include_child_events=include_child_events,
-            close_on_root_run_end=close_on_root_run_end,
-        )
         try:
             async for item in consume_stream_channel(
                 sched._rt.stream_channels,
@@ -59,7 +53,17 @@ async def route_with_stream(
         raise RuntimeError(
             f"stream subscriber already active for root '{root_state_id}'"
         )
-    state_id = await operation()
+    open_stream_channel(
+        sched._rt.stream_channels,
+        root_state_id,
+        include_child_events=include_child_events,
+        close_on_root_run_end=close_on_root_run_end,
+    )
+    try:
+        state_id = await operation()
+    except Exception:
+        close_stream_channel(sched._rt.stream_channels, root_state_id)
+        raise
     return RouteResult(
         action=action,
         state_id=state_id,

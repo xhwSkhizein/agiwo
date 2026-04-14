@@ -23,7 +23,8 @@ ConfigSnapshot = tuple[
     str,
     str,
     str,
-    tuple[str, ...],  # allowed_tools
+    tuple[str, ...] | None,  # allowed_tools
+    tuple[str, ...] | None,  # allowed_skills
     tuple[tuple[str, Any], ...],
     tuple[tuple[str, Any], ...],
 ]
@@ -36,7 +37,8 @@ def _config_snapshot(config: AgentConfigRecord) -> ConfigSnapshot:
         config.model_provider,
         config.model_name,
         config.system_prompt,
-        tuple(config.allowed_tools or ()),
+        tuple(config.allowed_tools) if config.allowed_tools is not None else None,
+        tuple(config.allowed_skills) if config.allowed_skills is not None else None,
         tuple(sorted(config.options.items())),
         tuple(sorted(config.model_params.items())),
     )

@@ -21,6 +21,7 @@ from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     PendingEvent,
+    SchedulerRunResult,
     SchedulerConfig,
     SchedulerEventType,
     WakeCondition,
@@ -880,6 +881,29 @@ class TestSchedulerEnqueueInput:
 
 class TestSchedulerQueuedMailbox:
     @pytest.mark.asyncio
+    async def test_wait_for_uses_last_run_result_termination_reason(self):
+        scheduler = Scheduler(_fast_config())
+        await scheduler._store.save_state(
+            AgentState(
+                id="root",
+                session_id="sess",
+                status=AgentStateStatus.FAILED,
+                task="initial",
+                last_run_result=SchedulerRunResult(
+                    run_id="run-1",
+                    termination_reason=TerminationReason.CANCELLED,
+                    error="cancelled by user",
+                ),
+            )
+        )
+
+        result = await scheduler.wait_for("root", timeout=_TEST_RUN_TIMEOUT)
+
+        assert result.termination_reason == TerminationReason.CANCELLED
+        assert result.error == "cancelled by user"
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
     async def test_queued_root_preserves_mailbox_input_for_next_run(self):
         scheduler = Scheduler(_fast_config(event_debounce_min_count=1))
         model = EchoMessagesModel()
@@ -915,6 +939,31 @@ class TestSchedulerQueuedMailbox:
 
 
 class TestSchedulerStream:
+    @pytest.mark.asyncio
+    async def test_route_root_input_stream_survives_fast_completion_before_iteration(
+        self,
+    ):
+        async with Scheduler(_fast_config()) as scheduler:
+            model = MockModel([_simple_completion("Fast answer")])
+            agent = _make_agent(name="stream-race", model=model, id="stream-race")
+
+            result = await scheduler.route_root_input(
+                "What happened?",
+                agent=agent,
+                session_id="sess-stream-race",
+                timeout=0.1,
+                persistent=True,
+                stream_mode="run_end",
+            )
+
+            await asyncio.sleep(0.05)
+            items = [item async for item in result.stream]
+
+        assert items
+        assert items[0].type == "run_started"
+        assert isinstance(items[-1], RunCompletedEvent)
+        assert items[-1].response == "Fast answer"
+
     @pytest.mark.asyncio
     async def test_stream_new_root_run(self):
         async with Scheduler(_fast_config()) as scheduler:

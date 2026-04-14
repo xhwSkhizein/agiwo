@@ -4,10 +4,12 @@ from datetime import datetime, timezone
 
 import pytest
 
+from agiwo.agent import TerminationReason
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     PendingEvent,
+    SchedulerRunResult,
     SchedulerEventType,
     WakeCondition,
     WakeType,
@@ -100,6 +102,24 @@ class TestInMemorySaveStateUpdate:
         assert retrieved.explain == "idle"
         assert retrieved.wake_count == 2
 
+    @pytest.mark.asyncio
+    async def test_save_updates_last_run_result(self, store):
+        state = _make_state()
+        await store.save_state(state)
+        result = SchedulerRunResult(
+            run_id="run-1",
+            termination_reason=TerminationReason.ERROR,
+            error="boom",
+        )
+
+        await store.save_state(state.with_updates(last_run_result=result))
+        retrieved = await store.get_state("agent-1")
+
+        assert retrieved is not None
+        assert retrieved.last_run_result is not None
+        assert retrieved.last_run_result.run_id == "run-1"
+        assert retrieved.last_run_result.error == "boom"
+
 
 class TestInMemoryListStates:
     @pytest.mark.asyncio
@@ -183,6 +203,11 @@ class TestSQLiteAgentStateStorage:
                 wait_for=["child-1"],
                 completed_ids=["child-1"],
             ),
+            last_run_result=SchedulerRunResult(
+                run_id="run-1",
+                termination_reason=TerminationReason.COMPLETED,
+                summary="done",
+            ),
         )
 
         await store.save_state(state)
@@ -195,6 +220,8 @@ class TestSQLiteAgentStateStorage:
         assert retrieved.explain == "waiting for child"
         assert retrieved.wake_condition is not None
         assert retrieved.wake_condition.completed_ids == ("child-1",)
+        assert retrieved.last_run_result is not None
+        assert retrieved.last_run_result.summary == "done"
 
         await store.close()
 

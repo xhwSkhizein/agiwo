@@ -311,7 +311,7 @@ async def test_agent_runtime_cache_defers_refresh_while_state_active(
     existing_agent = FakeAgent("sess-1")
     pool._cache["sess-1"] = CachedAgent(
         agent=existing_agent,
-        config_snapshot=("stale", "", "", "", "", (), (), ()),
+        config_snapshot=("stale", "", "", "", "", None, None, (), ()),
     )
     session = Session(
         id="sess-1",
@@ -327,6 +327,55 @@ async def test_agent_runtime_cache_defers_refresh_while_state_active(
     assert agent is existing_agent
     assert replacement_agent.closed is True
     scheduler.rebind_agent.assert_awaited_once_with("sess-1", replacement_agent)
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_cache_refreshes_when_allowed_skills_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeChannelChatSessionStore()
+    first_config = AgentConfigRecord.model_construct(
+        id="base-agent",
+        name="base",
+        model_provider="openai",
+        model_name="gpt-test",
+        allowed_skills=["alpha"],
+    )
+    second_config = first_config.model_copy(update={"allowed_skills": ["beta"]})
+    registry = SimpleNamespace(
+        get_agent=AsyncMock(side_effect=[first_config, second_config])
+    )
+    scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=True))
+    first_agent = FakeAgent("sess-1-a")
+    second_agent = FakeAgent("sess-1-b")
+
+    monkeypatch.setattr(
+        "server.services.runtime.agent_runtime_cache.build_agent",
+        AsyncMock(side_effect=[first_agent, second_agent]),
+    )
+
+    pool = AgentRuntimeCache(
+        scheduler=scheduler,
+        agent_registry=registry,
+        console_config=ConsoleConfig(),
+        session_store=store,
+    )
+    session = Session(
+        id="sess-1",
+        chat_context_scope_id=None,
+        base_agent_id="base-agent",
+        created_by="AUTO",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    initial = await pool.get_or_create_runtime_agent(session)
+    refreshed = await pool.get_or_create_runtime_agent(session)
+
+    assert initial is first_agent
+    assert refreshed is second_agent
+    assert first_agent.closed is True
+    scheduler.rebind_agent.assert_awaited_once_with("sess-1", second_agent)
 
 
 @pytest.mark.asyncio

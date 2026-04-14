@@ -7,9 +7,10 @@ from agiwo.agent import (
     StepCompletedEvent,
     StepMetrics,
     StepRecord,
+    TerminationReason,
     UserMessage,
 )
-from agiwo.scheduler.models import AgentState, AgentStateStatus
+from agiwo.scheduler.models import AgentState, AgentStateStatus, SchedulerRunResult
 from agiwo.llm.config_policy import sanitize_model_params_data
 
 from server.models.agent_config import (
@@ -97,6 +98,26 @@ def test_scheduler_state_response_normalizes_serialized_user_input() -> None:
     assert payload["task"][0]["text"] == "queued"
     assert payload["pending_input"][0]["type"] == "text"
     assert payload["pending_input"][0]["text"] == "wake me"
+
+
+def test_scheduler_state_response_includes_last_run_result() -> None:
+    state = AgentState(
+        id="agent-1",
+        session_id="sess-1",
+        status=AgentStateStatus.IDLE,
+        task="done",
+        last_run_result=SchedulerRunResult(
+            run_id="run-1",
+            termination_reason=TerminationReason.COMPLETED,
+            summary="finished",
+        ),
+    )
+
+    payload = agent_state_response_from_sdk(state).model_dump()
+
+    assert payload["last_run_result"]["run_id"] == "run-1"
+    assert payload["last_run_result"]["termination_reason"] == "completed"
+    assert payload["last_run_result"]["summary"] == "finished"
 
 
 def test_agent_config_view_model_and_registry_share_normalization_policy() -> None:

@@ -16,8 +16,10 @@ from agiwo.scheduler.models import (
 )
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.codec import (
+    deserialize_scheduler_run_result_for_store,
     deserialize_user_input_for_store,
     deserialize_wake_condition_for_store,
+    serialize_scheduler_run_result_for_store,
     serialize_user_input_for_store,
     serialize_wake_condition_for_store,
 )
@@ -69,6 +71,11 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                     wakeup_at TEXT,
                     wake_timeout_at TEXT,
                     result_summary TEXT,
+                    last_run_id TEXT,
+                    last_run_termination_reason TEXT,
+                    last_run_summary TEXT,
+                    last_run_error TEXT,
+                    last_run_completed_at TEXT,
                     signal_propagated INTEGER DEFAULT 0,
                     is_persistent INTEGER DEFAULT 0,
                     depth INTEGER DEFAULT 0,
@@ -120,6 +127,18 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         if row["config_overrides"]:
             config_overrides = json.loads(row["config_overrides"])
 
+        last_run_result = deserialize_scheduler_run_result_for_store(
+            {
+                "run_id": row["last_run_id"],
+                "termination_reason": row["last_run_termination_reason"],
+                "summary": row["last_run_summary"],
+                "error": row["last_run_error"],
+                "completed_at": row["last_run_completed_at"],
+            }
+            if row["last_run_termination_reason"]
+            else None
+        )
+
         return AgentState(
             id=row["id"],
             session_id=row["session_id"],
@@ -141,6 +160,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             wake_count=row.get("wake_count", 0) or 0,
             rollback_count=row.get("rollback_count", 0) or 0,
             explain=row.get("explain"),
+            last_run_result=last_run_result,
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
         )
@@ -186,15 +206,18 @@ class SQLiteAgentStateStorage(AgentStateStorage):
     async def save_state(self, state: AgentState) -> None:
         conn = await self._get_conn()
         wake_values = self._wake_condition_values(state.wake_condition)
+        last_run_values = self._last_run_result_values(state.last_run_result)
         await conn.execute(
             """
             INSERT OR REPLACE INTO agent_states
                 (id, session_id, parent_id, status, task, pending_input, config_overrides,
                  wake_type, wake_time_value, wake_time_unit, wake_wait_for, wake_wait_mode,
                  wake_completed_ids, wakeup_at, wake_timeout_at, result_summary,
+                 last_run_id, last_run_termination_reason, last_run_summary, last_run_error,
+                 last_run_completed_at,
                  signal_propagated, is_persistent, depth, wake_count, rollback_count,
                  agent_config_id, explain, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 state.id,
@@ -210,6 +233,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 json.dumps(thaw_value(state.config_overrides)),
                 *wake_values,
                 state.result_summary,
+                *last_run_values,
                 1 if state.signal_propagated else 0,
                 1 if state.is_persistent else 0,
                 state.depth,
@@ -222,6 +246,18 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             ),
         )
         await conn.commit()
+
+    def _last_run_result_values(self, last_run_result) -> list[object]:
+        payload = serialize_scheduler_run_result_for_store(last_run_result)
+        if payload is None:
+            return [None, None, None, None, None]
+        return [
+            payload.get("run_id"),
+            payload["termination_reason"],
+            payload.get("summary"),
+            payload.get("error"),
+            payload["completed_at"],
+        ]
 
     async def get_state(self, state_id: str) -> AgentState | None:
         conn = await self._get_conn()
