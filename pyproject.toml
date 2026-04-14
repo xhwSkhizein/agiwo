@@ -18,7 +18,7 @@ dependencies = [
     "tiktoken>=0.7.0",
     "httpx[socks]>=0.27.0",
     "aiofiles>=25.1.0",
-    "browser-control-and-automation-cli>=0.1.2",
+    "browser-control-and-automation-cli>=0.1.3",
 ]
 
 [project.optional-dependencies]

@@ -91,7 +91,7 @@ requires-dist = [
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.34.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.59" },
-    { name = "browser-control-and-automation-cli", specifier = ">=0.1.2" },
+    { name = "browser-control-and-automation-cli", specifier = ">=0.1.3" },
     { name = "bs4", marker = "extra == 'web'", specifier = ">=0.0.2" },
     { name = "curl-cffi", marker = "extra == 'web'", specifier = ">=0.14.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
@@ -233,15 +233,15 @@ wheels = [
 
 [[package]]
 name = "browser-control-and-automation-cli"
-version = "0.1.2"
+version = "0.1.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "playwright" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/29/d7/0590e4883baf2bac4423783ad827358d000df64b59ebc3e55394c90b2667/browser_control_and_automation_cli-0.1.2.tar.gz", hash = "sha256:f5f79a38e0e0bdc39ecf2f706c910a82817c73a51f098d141e693417f9e90583", size = 499296, upload-time = "2026-04-14T14:38:29.787Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2d/10/3255edb47b123a2fca3a47ff9472dd2264ae4cf87d8f2f73df97efc29e6f/browser_control_and_automation_cli-0.1.3.tar.gz", hash = "sha256:517f2cc37f23cd1a357376540981c3b33f748deebd9f3c7e7170f81020fc8371", size = 500085, upload-time = "2026-04-14T15:43:22.189Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/ec/4be010ab3715f42ac623dae874ceaf5aed0021c0b5cc03e792d5d346f28a/browser_control_and_automation_cli-0.1.2-py3-none-any.whl", hash = "sha256:d44b261941c66bbfcd764759739283dbee0231d1ab49b922fbe8960a50fa1fa1", size = 155855, upload-time = "2026-04-14T14:38:28.088Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/59/ecac1fff19f0837383e7f040dc18aaf0f2e664abb65851a511d420b29c51/browser_control_and_automation_cli-0.1.3-py3-none-any.whl", hash = "sha256:9d0c66d73dd7c9161baebd0cec8f777685c42935dc276ee38f76dd1b042869bf", size = 156296, upload-time = "2026-04-14T15:43:23.16Z" },
 ]
 
 [[package]]
