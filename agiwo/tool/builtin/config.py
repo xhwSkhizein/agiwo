@@ -41,18 +41,6 @@ class WebReaderApiConfig:
     model_max_tokens: int = field(
         default_factory=lambda: settings.tool_default_model_max_tokens
     )
-    max_retries: int = 3
-    headless: bool = False
-    wait_strategy: str = "domcontentloaded"
-    max_browsers: int = 1
-    browser_idle_ttl_seconds: int = 300
-    browser_max_uses: int = 20
-    save_login_state: bool = True
-    user_data_dir: str = field(
-        default_factory=lambda: str(settings.get_root_path() / "browser_data")
-    )
-    browser_launch_timeout: int = 30
-    auto_close_browser: bool = True
 
 
 __all__ = [

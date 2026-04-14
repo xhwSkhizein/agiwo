@@ -35,18 +35,6 @@ class StubToolModel:
             yield StreamChunk(content=response)
 
 
-def test_web_reader_config_resolves_user_data_dir_under_root_path(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    root_path = tmp_path / ".agiwo-root"
-    monkeypatch.setattr(settings, "root_path", str(root_path))
-
-    config = WebReaderApiConfig()
-
-    assert config.user_data_dir == str(root_path.resolve() / "browser_data")
-
-
 def test_web_tool_schemas_and_descriptions_match_runtime_support() -> None:
     with patch(
         "agiwo.tool.builtin.web_search.web_search_tool.settings"
@@ -174,6 +162,37 @@ async def test_web_reader_model_init_failure_falls_back_to_original_text(
 
     assert result.is_success is True
     assert "Original content body" in result.content
+
+
+@pytest.mark.asyncio
+async def test_web_reader_fallback_to_browser_cli_when_curl_cffi_fails() -> None:
+    """Test that web_reader falls back to browser_cli when curl_cffi fails."""
+    tool = WebReaderTool(
+        citation_store_config=CitationStoreConfig(
+            storage_type="memory",
+        )
+    )
+    # Mock curl_cffi to fail (return None)
+    tool._curl_cffi_client.fetch = AsyncMock(return_value=None)
+    # Mock browser_cli adapter to succeed
+    tool._browser_cli_adapter.fetch = AsyncMock(
+        return_value=(
+            HtmlContent(title="Browser CLI Title", text="Browser CLI content"),
+            None,
+        )
+    )
+
+    result = await tool.execute(
+        {"url": "https://example.com"},
+        _make_context("reader-fallback"),
+    )
+
+    assert result.is_success is True
+    assert "Browser CLI content" in result.content
+    # Verify curl_cffi was tried first
+    tool._curl_cffi_client.fetch.assert_awaited_once_with("https://example.com")
+    # Verify browser_cli was called as fallback
+    tool._browser_cli_adapter.fetch.assert_awaited_once_with("https://example.com")
 
 
 @pytest.mark.asyncio
