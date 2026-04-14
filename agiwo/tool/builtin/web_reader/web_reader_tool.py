@@ -9,11 +9,11 @@ from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.config import WebReaderApiConfig
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.tool.builtin.utils import truncate_middle
+from agiwo.tool.builtin.web_reader.browser_cli_adapter import BrowserCliAdapter
 from agiwo.tool.builtin.web_reader.citation_writer import WebReaderCitationWriter
 from agiwo.tool.builtin.web_reader.content_fetcher import WebContentFetcher
 from agiwo.tool.builtin.web_reader.content_processor import WebContentProcessor
 from agiwo.tool.builtin.web_reader.curl_cffi import SimpleAsyncClient
-from agiwo.tool.builtin.web_reader.playwright.core import PlaywrightCrawler
 from agiwo.tool.builtin.web_reader.request_resolver import resolve_web_reader_request
 from agiwo.tool.storage.citation import (
     CitationStoreConfig,
@@ -65,10 +65,10 @@ class WebReaderTool(BaseTool):
         )
         self._llm_model = None
         self._curl_cffi_client = SimpleAsyncClient(timeout=self._config.timeout_seconds)
-        self._playwright_crawl = PlaywrightCrawler(config=self._config)
+        self._browser_cli_adapter = BrowserCliAdapter(config=self._config)
         self._content_fetcher = WebContentFetcher(
             client=self._curl_cffi_client,
-            crawler=self._playwright_crawl,
+            browser_cli_adapter=self._browser_cli_adapter,
         )
         self._content_processor = WebContentProcessor(
             model_config=self._model_config,
