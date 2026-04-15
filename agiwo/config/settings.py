@@ -12,6 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ModelProvider = Literal[
     "openai",
+    "openai-response",
     "openai-compatible",
     "deepseek",
     "anthropic",

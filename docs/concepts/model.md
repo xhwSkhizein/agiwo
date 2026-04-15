@@ -67,6 +67,25 @@ model = OpenAIModel(id="gpt-4o", name="gpt-4o")
 # Reads OPENAI_API_KEY from environment
 ```
 
+### OpenAI Responses
+
+For OpenAI models that should use the Responses API instead of Chat
+Completions:
+
+```python
+from agiwo.llm import create_model_from_dict
+
+model = create_model_from_dict(
+    provider="openai-response",
+    model_name="gpt-4.1-mini",
+)
+```
+
+This provider still exposes `Model.arun_stream()` and normalized
+`StreamChunk` output. It currently supports text streaming and function
+calling, and reconstructs each request statelessly from the SDK message
+ledger.
+
 ### Anthropic
 
 ```python

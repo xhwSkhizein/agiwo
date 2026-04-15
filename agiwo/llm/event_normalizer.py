@@ -32,6 +32,15 @@ def _get_val(obj: Any, key: str) -> Any:
     return getattr(obj, key, None)
 
 
+def _get_nested_val(obj: Any, *path: str) -> Any:
+    current = obj
+    for key in path:
+        current = _get_val(current, key)
+        if current is None:
+            return None
+    return current
+
+
 def _coerce_optional_int(value: object | None) -> int | None:
     return value if isinstance(value, int) else None
 
@@ -41,7 +50,10 @@ def _resolve_usage_metric(
     *names: str,
 ) -> int | None:
     for name in names:
-        value = _coerce_optional_int(_get_val(usage_data, name))
+        if "." in name:
+            value = _coerce_optional_int(_get_nested_val(usage_data, *name.split(".")))
+        else:
+            value = _coerce_optional_int(_get_val(usage_data, name))
         if value is not None:
             return value
     return None
@@ -54,6 +66,7 @@ _USAGE_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
         "cache_read_tokens",
         "cache_read_input_tokens",
         "cached_tokens",
+        "input_tokens_details.cached_tokens",
     ),
     "cache_creation_tokens": ("cache_creation_tokens", "cache_creation_input_tokens"),
 }

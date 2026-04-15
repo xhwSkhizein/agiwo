@@ -17,6 +17,7 @@ from agiwo.llm.config_policy import (
 from agiwo.llm.deepseek import DeepseekModel
 from agiwo.llm.nvidia import NvidiaModel
 from agiwo.llm.openai import OpenAIModel
+from agiwo.llm.openai_response import OpenAIResponsesModel
 from agiwo.config.settings import (
     ALL_MODEL_PROVIDERS,
     COMPATIBLE_MODEL_PROVIDERS,
@@ -121,6 +122,7 @@ def _build_model_for_provider(
 
 PROVIDER_SPECS: dict[ModelProvider, ProviderSpec] = {
     "openai": ProviderSpec(model_class=OpenAIModel),
+    "openai-response": ProviderSpec(model_class=OpenAIResponsesModel),
     "openai-compatible": ProviderSpec(
         model_class=OpenAIModel,
         disable_env_fallback=True,

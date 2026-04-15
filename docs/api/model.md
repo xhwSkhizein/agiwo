@@ -67,6 +67,21 @@ model = OpenAIModel(id="gpt-4o", name="gpt-4o")
 # Reads OPENAI_API_KEY from environment
 ```
 
+### `OpenAIResponsesModel`
+
+```python
+from agiwo.llm import create_model_from_dict
+
+model = create_model_from_dict(
+    provider="openai-response",
+    model_name="gpt-4.1-mini",
+)
+```
+
+Uses OpenAI Responses API internally while preserving the SDK `StreamChunk`
+contract. First-version support covers streamed text and function calling.
+Multi-turn replay is stateless and does not use `previous_response_id`.
+
 ### `AnthropicModel`
 
 ```python
@@ -170,4 +185,4 @@ model = create_model_from_dict(
 )
 ```
 
-Supported provider strings: `"openai"`, `"anthropic"`, `"deepseek"`, `"nvidia"`, `"bedrock-anthropic"`, `"openai-compatible"`, `"anthropic-compatible"`.
+Supported provider strings: `"openai"`, `"openai-response"`, `"anthropic"`, `"deepseek"`, `"nvidia"`, `"bedrock-anthropic"`, `"openai-compatible"`, `"anthropic-compatible"`.

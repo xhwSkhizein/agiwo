@@ -33,6 +33,40 @@ class FixedResponseModel(Model):
         yield StreamChunk(finish_reason="stop")
 
 
+class ToolCallDeltaModel(Model):
+    def __init__(self) -> None:
+        super().__init__(id="tool-call-delta-model", name="tool-call-delta-model")
+
+    async def arun_stream(self, messages, tools=None) -> AsyncIterator[StreamChunk]:
+        del messages, tools
+        yield StreamChunk(
+            tool_calls=[
+                {
+                    "index": 0,
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {
+                        "name": "weather_lookup",
+                        "arguments": '{"city":"Par',
+                    },
+                }
+            ]
+        )
+        yield StreamChunk(
+            tool_calls=[
+                {
+                    "index": 0,
+                    "id": "call_123",
+                    "type": "function",
+                    "function": {
+                        "arguments": 'is"}',
+                    },
+                }
+            ]
+        )
+        yield StreamChunk(finish_reason="tool_calls")
+
+
 @pytest.mark.asyncio
 async def test_handle_wait_is_idempotent() -> None:
     agent = Agent(
@@ -84,6 +118,34 @@ async def test_trivial_root_run_keeps_steps_count_stable() -> None:
 
     assert result.response == "final answer"
     assert result.metrics.steps_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_assistant_step_accumulates_chat_compatible_tool_call_deltas() -> (
+    None
+):
+    agent = Agent(
+        AgentConfig(name="tool-call-contract", description="tool call contract test"),
+        model=ToolCallDeltaModel(),
+    )
+
+    await agent.run("weather?", session_id="tool-call-contract-session")
+    steps = await agent.run_step_storage.get_steps(
+        session_id="tool-call-contract-session",
+        agent_id=agent.id,
+    )
+
+    assistant_steps = [step for step in steps if step.role == "assistant"]
+    assert assistant_steps[-1].tool_calls == [
+        {
+            "id": "call_123",
+            "type": "function",
+            "function": {
+                "name": "weather_lookup",
+                "arguments": '{"city":"Paris"}',
+            },
+        }
+    ]
 
 
 async def _collect_stream(stream):
