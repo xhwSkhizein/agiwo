@@ -106,6 +106,9 @@ def configure_logging(
         level=getattr(logging, effective_log_level),
     )
 
+    # Suppress aiosqlite debug logs (they output verbose operation details)
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+
     # Add file handler if specified
     if log_file:
         file_handler = logging.FileHandler(log_file)

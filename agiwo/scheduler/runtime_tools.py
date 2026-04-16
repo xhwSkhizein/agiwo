@@ -25,14 +25,11 @@ class SpawnAgentTool(BaseTool):
     """Spawn a child agent to handle a sub-task."""
 
     name = "spawn_agent"
-    description = (
-        "Spawn a child agent to handle a truly independent sub-task asynchronously. "
-        "ONLY use this when the task genuinely requires parallel execution or delegation "
-        "(e.g., concurrent data fetching, parallel analysis). "
-        "Do NOT spawn a child agent just to perform a simple action you can do directly. "
-        "**IMPORTANT: The spawned child agent will NOT be able to spawn further child agents.**"
-        "After spawning, call sleep_and_wait to wait for the child to complete if needed."
-    )
+    description = """Spawn a child agent to handle independent sub-tasks asynchronously.
+Only use for genuine parallel execution or delegation, such as concurrent data fetching and parallel analysis.
+Do not use for simple actions you can do directly.
+The child agent cannot spawn further agents.
+Call sleep_and_wait to wait for completion if needed."""
 
     def __init__(self, port: SchedulerToolControl) -> None:
         self._port = port
@@ -44,11 +41,7 @@ class SpawnAgentTool(BaseTool):
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": (
-                        "The task for the child agent to complete directly. Keep it brief but thorough, covering necessary context (e.g., background, dependencies, goal, expected outcome) depending on task needs."
-                        "Describe what outcome you need (not what process to follow). "
-                        "Do NOT instruct the child to spawn more agents — it will complete the task itself."
-                    ),
+                    "description": """Brief, complete task for child agent, including necessary context like background, dependencies, goal and expected outcome. Specify desired outcome, not process.Do not ask it to spawn additional agents.""",
                 },
                 "instruction": {
                     "type": "string",
@@ -57,18 +50,11 @@ class SpawnAgentTool(BaseTool):
                 "allowed_skills": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional explicit skill name list the child agent is allowed to use. Must already be expanded and must be a subset of the parent's allowed skills. If omitted, inherits the parent's skills.",
+                    "description": "Optional explicit skill name list the child agent is allowed to use. Must already be expanded and must be a subset of the parent allowed skills. If omitted, inherits the parent skills.",
                 },
                 "fork": {
                     "type": "boolean",
-                    "description": (
-                        "If true, the child agent inherits the parent's full "
-                        "conversation history and identical tool definitions for "
-                        "LLM KV cache reuse. When fork=true, instruction and "
-                        "system_prompt are not allowed to keep the prompt prefix "
-                        "identical. The child will NOT be able to spawn further "
-                        "agents."
-                    ),
+                    "description": """If true, child agent inherits parent full conversation history and tool definitions for LLM KV cache reuse. When fork=true, instruction and system_prompt are forbidden to keep the prompt prefix consistent. Child cannot spawn further agents.""",
                     "default": False,
                 },
             },

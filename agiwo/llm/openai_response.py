@@ -1,16 +1,6 @@
 from typing import AsyncIterator
-
-try:
-    from openai import (
-        AsyncOpenAI,
-        APIConnectionError,
-        APITimeoutError,
-        InternalServerError,
-        RateLimitError,
-    )
-except ImportError:
-    raise ImportError("Please install openai package: pip install openai") from None
-
+import json
+import httpx
 from agiwo.config.settings import get_settings
 from agiwo.llm.base import LLMConfig, Model, StreamChunk
 from agiwo.llm.event_normalizer import normalize_usage_metrics
@@ -24,11 +14,18 @@ from agiwo.utils.retry import retry_async
 
 logger = get_logger(__name__)
 
+
+class HTTPXError(Exception):
+    """Custom exception for httpx errors."""
+
+    pass
+
+
 OPENAI_RETRYABLE = (
-    APIConnectionError,
-    RateLimitError,
-    InternalServerError,
-    APITimeoutError,
+    httpx.HTTPStatusError,
+    httpx.ConnectError,
+    httpx.TimeoutException,
+    httpx.NetworkError,
 )
 
 
@@ -105,7 +102,6 @@ class OpenAIResponsesModel(Model):
         )
         super().__init__(config)
         self.allow_env_fallback = allow_env_fallback
-        self.client = self._create_client()
 
     def _resolve_api_key(self) -> str | None:
         if self.api_key:
@@ -122,12 +118,6 @@ class OpenAIResponsesModel(Model):
         if self.allow_env_fallback:
             return get_settings().openai_base_url
         return None
-
-    def _create_client(self) -> AsyncOpenAI:
-        return AsyncOpenAI(
-            api_key=self._resolve_api_key(),
-            base_url=self._resolve_base_url(),
-        )
 
     def _build_params(
         self,
@@ -261,6 +251,39 @@ class OpenAIResponsesModel(Model):
             return self._build_completed_chunk(_get_attr(event, "response"))
         return None
 
+    async def _parse_sse_line(self, line: str) -> tuple[str, str] | None:
+        """Parse a single SSE line into (event_type, data)."""
+        if not line.strip():
+            return None
+        if line.startswith("event:"):
+            return ("event", line[len("event:").strip()])
+        if line.startswith("data:"):
+            return ("data", line[len("data:").strip()])
+        return None
+
+    async def _parse_sse_stream(self, response: httpx.Response) -> AsyncIterator[dict]:
+        """Parse SSE stream and yield event objects."""
+        current_event = None
+        current_data = None
+
+        async for line in response.aiter_lines():
+            line = line.strip()
+            if not line:
+                # Empty line marks end of an event
+                if current_event and current_data:
+                    try:
+                        yield {"type": current_event, **json.loads(current_data)}
+                    except json.JSONDecodeError:
+                        logger.warning("Failed to parse SSE data", data=current_data)
+                current_event = None
+                current_data = None
+                continue
+
+            if line.startswith("event:"):
+                current_event = line[len("event:") :].strip()
+            elif line.startswith("data:"):
+                current_data = line[len("data:") :].strip()
+
     @retry_async(exceptions=OPENAI_RETRYABLE)
     async def arun_stream(
         self,
@@ -269,7 +292,7 @@ class OpenAIResponsesModel(Model):
     ) -> AsyncIterator[StreamChunk]:
         actual_model = self.id or self.name
         params = self._build_params(messages, tools)
-        logger.debug(
+        logger.info(
             "llm_request",
             model=actual_model,
             messages_count=len(messages),
@@ -279,25 +302,55 @@ class OpenAIResponsesModel(Model):
             detail=params,
         )
 
-        stream = await self.client.responses.create(**params)
+        base_url = self._resolve_base_url()
+        api_key = self._resolve_api_key()
+
+        if not base_url:
+            raise ValueError("base_url is required")
+        if not api_key:
+            raise ValueError("api_key is required")
+
+        url = f"{base_url.rstrip('/')}/responses"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
+
         chunk_count = 0
         tool_calls_state: ToolCallState = {}
         logger.info("openai_responses_stream_started", model=actual_model)
 
-        async for event in stream:
-            stream_chunk = self._event_to_chunk(event, tool_calls_state)
-            if stream_chunk is None:
-                continue
-            if (
-                stream_chunk.content is None
-                and stream_chunk.reasoning_content is None
-                and stream_chunk.tool_calls is None
-                and stream_chunk.usage is None
-                and stream_chunk.finish_reason is None
-            ):
-                continue
-            chunk_count += 1
-            yield stream_chunk
+        # Configure httpx with larger limits and timeout for big requests
+        limits = httpx.Limits(max_keepalive_connections=100, max_connections=100)
+        timeout = httpx.Timeout(120.0, connect=30.0)
+
+        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
+            async with client.stream(
+                "POST", url, json=params, headers=headers
+            ) as response:
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    raise httpx.HTTPStatusError(
+                        f"Request failed with status {response.status_code}: {error_text.decode()}",
+                        request=response.request,
+                        response=response,
+                    )
+
+                async for event in self._parse_sse_stream(response):
+                    stream_chunk = self._event_to_chunk(event, tool_calls_state)
+                    if stream_chunk is None:
+                        continue
+                    if (
+                        stream_chunk.content is None
+                        and stream_chunk.reasoning_content is None
+                        and stream_chunk.tool_calls is None
+                        and stream_chunk.usage is None
+                        and stream_chunk.finish_reason is None
+                    ):
+                        continue
+                    chunk_count += 1
+                    yield stream_chunk
 
         if chunk_count == 0:
             raise RuntimeError(
