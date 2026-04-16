@@ -1,91 +1,80 @@
 # Skills
 
-Skills are file-based instruction sets that extend an agent's capabilities. They're discovered from directories and loaded at runtime.
+Skills are file-based instruction sets that extend an agent's capabilities. Agiwo discovers them from configured directories, keeps their metadata in memory, and loads full `SKILL.md` content only when the agent explicitly activates a skill.
 
 ## How Skills Work
 
 A skill is a directory containing:
 
-```
+```text
 my_skill/
-├── SKILL.md          # Required: instructions for the agent
-├── script.py         # Optional: executable scripts
-├── reference.md      # Optional: reference documentation
-└── config.yaml       # Optional: skill configuration
+├── SKILL.md
+├── scripts/
+├── references/
+└── assets/
 ```
 
-The `SKILL.md` file is the core — its contents are injected into the agent's system prompt when the skill is active.
+`SKILL.md` is required. Its frontmatter provides the discovery metadata, and its body contains the instructions that are loaded when the skill is activated.
 
-## Skill Discovery
+## Prompt-Time Visibility
 
-Skills are discovered from configured directories:
+The agent system prompt no longer includes the full discovered skill catalog.
+
+Instead:
+
+1. `AGIWO_DEFAULT_PROMPT_SKILLS` controls the small subset rendered into the prompt
+2. that subset is still filtered by the agent's `allowed_skills`
+3. if skills are disabled with `allowed_skills=[]`, no skill section is rendered
+
+This keeps prompt size stable even when `skills_dirs` contains many skills.
+
+## Runtime Discovery
+
+Runtime discovery happens through the `skill` tool:
+
+- `mode="search"` recommends one skill or `no_recommendation`
+- `mode="activate"` loads the full `SKILL.md` body for a chosen skill
+
+The normal flow is:
+
+1. the model reads the user request
+2. if a skill might help, it calls `skill` with `mode="search"` and the original user request
+3. if search recommends a specific skill, the model calls `skill` again with `mode="activate"`
+4. if search returns `no_recommendation`, the model continues without a skill
+
+Discovery and activation both respect `allowed_skills`.
+
+## Skill Discovery Config
+
+Skills are discovered from the SDK-level `settings.skills_dirs` configuration, not from per-agent skill directory options:
 
 ```python
-from agiwo.skill import SkillManager, SkillConfig
+from agiwo.config.settings import settings
+from agiwo.skill.manager import get_global_skill_manager
 
-config = SkillConfig(
-    skill_dirs=["./skills", "~/.agiwo/skills"],
-)
+print(settings.skills_dirs)
 
-manager = SkillManager(config)
-await manager.discover()
+manager = get_global_skill_manager()
+await manager.initialize()
 
-# List available skills
-for skill in manager.list_skills():
-    print(f"{skill.name}: {skill.description}")
+for skill in manager.list_available_skills():
+    print(skill.name, skill.description)
 ```
 
-## Skill Loading
+For code references:
 
-Skills are loaded on demand when the agent decides to use them:
+- `settings.skills_dirs` is the SDK-level source of truth
+- `get_global_skill_manager()` is the normal runtime entrypoint
+- `SkillManager` and `SkillDiscoveryConfig` are internal building blocks for that flow
 
-```python
-# The agent's LLM sees available skills and can request one
-# SkillManager.load_skill() reads SKILL.md and returns the content
-# The content is injected into the system prompt
-```
+Do not add per-agent skill directories or legacy `enable_skill` style toggles. Agent-level control should stay on `allowed_skills`.
 
-## Skill Configuration
+Relevant SDK settings:
 
-```python
-@dataclass
-class SkillConfig:
-    skill_dirs: list[str]           # Directories to scan for skills
-    auto_load: bool = False         # Auto-load all discovered skills
-    max_skill_tokens: int = 4096    # Max tokens per skill's SKILL.md
-```
-
-## Creating a Skill
-
-### Minimal skill
-
-```markdown
-<!-- skills/weather/SKILL.md -->
-# Weather Skill
-
-You can check the weather using the weather_check script.
-
-## Usage
-
-```bash
-python script.py --city "Beijing"
-```
-
-## Output Format
-
-Return temperature, condition, and humidity.
-```
-
-### With configuration
-
-```yaml
-# skills/my_skill/config.yaml
-name: my_skill
-version: "1.0"
-description: Does something useful
-dependencies:
-  - requests
-```
+- `AGIWO_SKILLS_DIRS`
+- `AGIWO_DEFAULT_PROMPT_SKILLS`
+- `AGIWO_SKILL_SEARCH_ENABLED`
+- `AGIWO_SKILL_SEARCH_TOP_K`
 
 ## Skill Tool
 
@@ -94,21 +83,28 @@ The `SkillTool` bridges skills to the agent runtime:
 ```python
 from agiwo.skill import SkillTool
 
-# Skills are registered as tools
-# The agent can invoke skill_tool(skill_name, action, params)
+# mode="search" => recommend a skill or no skill
+# mode="activate" => load the chosen SKILL.md body
 ```
 
-## Built-in Skills
+The tool never auto-activates a skill during search.
 
-Agiwo can load skills from:
-- Project-local `./skills/` directory
-- User-global `~/.agiwo/skills/` directory
-- Any directory specified in `SkillConfig.skill_dirs`
+## Creating A Skill
 
-## Best Practices
+Minimal example:
 
-1. **Keep SKILL.md focused** — Clear instructions, not essays
-2. **Use examples** — Show the agent how to use the skill
-3. **Include error handling** — What to do when things go wrong
-4. **Version your skills** — Use `config.yaml` to track versions
-5. **Test skills independently** — Scripts should work standalone before integrating
+```markdown
+---
+name: weather
+description: Check weather conditions and summarize results.
+---
+
+Use the weather helper script when the user asks for weather information.
+```
+
+Best practices:
+
+1. Keep `SKILL.md` focused and procedural.
+2. Put long reference material in `references/` instead of the main skill body.
+3. Keep scripts standalone so they can be run directly when the skill requires them.
+4. Make the frontmatter description concrete, because discovery depends on metadata quality.

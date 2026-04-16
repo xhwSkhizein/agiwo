@@ -5,12 +5,15 @@ This module provides a tool implementation that allows agents to activate
 skills by loading their complete SKILL.md content into the context.
 """
 
+import json
 import time
 from typing import Any
 
+from agiwo.config.settings import get_settings
 from agiwo.skill.exceptions import SkillNotFoundError
 from agiwo.skill.loader import SkillLoader
-from agiwo.skill.registry import SkillRegistry
+from agiwo.skill.registry import SkillMetadata, SkillRegistry
+from agiwo.skill.search import SkillSearchRecommendation, SkillSearchService
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
@@ -34,19 +37,21 @@ class SkillTool(BaseTool):
         registry: SkillRegistry,
         loader: SkillLoader,
         allowed_skills: list[str] | None = None,
+        search_service: SkillSearchService | None = None,
     ) -> None:
         super().__init__()
         self.registry = registry
         self.loader = loader
+        self._search_service = search_service
         self._allowed_skills = (
             frozenset(allowed_skills) if allowed_skills is not None else None
         )
 
     name = "skill"
     description = (
-        "Activate an Agent Skill by loading its complete instructions. "
-        "Use this tool when a user task matches a skill's description or user explicitly requests a skill."
-        "After activation, follow the instructions in the skill's SKILL.md file."
+        "Search for a matching skill or activate a specific skill. "
+        "Use mode=search with the user's original request when you are unsure whether a skill is needed. "
+        "Use mode=activate only after you have chosen a specific skill."
     )
 
     def get_parameters(self) -> dict[str, Any]:
@@ -54,12 +59,21 @@ class SkillTool(BaseTool):
         return {
             "type": "object",
             "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["search", "activate"],
+                    "description": "Search for a recommended skill or activate one by name",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Original user request when mode=search",
+                },
                 "skill_name": {
                     "type": "string",
-                    "description": "Name of the skill to activate",
+                    "description": "Name of the skill to activate when mode=activate",
                 },
             },
-            "required": ["skill_name"],
+            "required": ["mode"],
         }
 
     async def execute(
@@ -81,6 +95,68 @@ class SkillTool(BaseTool):
             in 'content_for_user' field
         """
         start_time = time.time()
+        mode = parameters.get("mode")
+        if mode == "search":
+            return await self._execute_search(parameters, context, start_time)
+        if mode == "activate":
+            return await self._execute_activate(parameters, context, start_time)
+        return ToolResult.failed(
+            tool_name=self.name,
+            error=f"Invalid mode: {mode}",
+            tool_call_id=context.tool_call_id,
+            input_args=parameters,
+            start_time=start_time,
+        )
+
+    async def _execute_search(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+        start_time: float,
+    ) -> ToolResult:
+        query = parameters.get("query")
+        if not isinstance(query, str) or not query.strip():
+            return ToolResult.failed(
+                tool_name=self.name,
+                error="Missing required parameter: query",
+                tool_call_id=context.tool_call_id,
+                input_args=parameters,
+                start_time=start_time,
+            )
+        if not get_settings().skill_search_enabled:
+            recommendation = SkillSearchRecommendation(decision="no_recommendation")
+        else:
+            if self._search_service is None:
+                raise RuntimeError(
+                    "skill search is enabled but SkillTool was created without a search_service"
+                )
+            recommendation = await self._search_service.search(
+                query=query,
+                metadata_items=self._searchable_metadata(),
+            )
+
+        payload = {
+            "decision": recommendation.decision,
+            "skill_name": recommendation.skill_name,
+            "reason": recommendation.reason,
+        }
+
+        return ToolResult.success(
+            tool_name=self.name,
+            tool_call_id=context.tool_call_id,
+            input_args=parameters,
+            content=json.dumps(payload),
+            content_for_user="Skill search completed.",
+            output=payload,
+            start_time=start_time,
+        )
+
+    async def _execute_activate(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+        start_time: float,
+    ) -> ToolResult:
         skill_name = parameters.get("skill_name")
         error: str | None = None
 
@@ -152,3 +228,12 @@ class SkillTool(BaseTool):
                 input_args=parameters,
                 start_time=start_time,
             )
+
+    def _searchable_metadata(self) -> list[SkillMetadata]:
+        metadata_items = [
+            self.registry.get_metadata(name) for name in self.registry.list_available()
+        ]
+        filtered = [item for item in metadata_items if item is not None]
+        if self._allowed_skills is None:
+            return filtered
+        return [item for item in filtered if item.name in self._allowed_skills]

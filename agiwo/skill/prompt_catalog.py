@@ -19,14 +19,12 @@ class SkillPromptCatalog:
         if not metadata_items:
             return ""
 
-        lines = ["## Available Skills"]
-        lines.append("\n")
+        lines = ["## Skills", ""]
         lines.append(
-            "Skills are tools. Use them quietly. The user doesn't need to see the machinery."
+            "Skills are optional. Do not use one unless it is clearly helpful."
         )
         lines.append(
-            "These skills are discovered at startup. Each entry includes a name and description. "
-            "Use the Skill tool to activate it when needed."
+            "If you are unsure, call `skill.search` with the user's original request before activating any skill."
         )
         lines.append("")
         lines.append("<available_skills>")
@@ -34,26 +32,8 @@ class SkillPromptCatalog:
             lines.append("  <skill>")
             lines.append(f"    <name>{metadata.name}</name>")
             lines.append(f"    <description>{metadata.description}</description>")
-            lines.append(f"    <location>{metadata.path}</location>")
             lines.append("  </skill>")
         lines.append("</available_skills>")
-        lines.append("")
-        lines.append("### How to use skills:")
-        lines.append(
-            "1. When a user task matches a skill's description, use the Skill tool to activate it."
-        )
-        lines.append(
-            "2. After activation, follow the instructions in the skill's SKILL.md file."
-        )
-        lines.append(
-            "3. Load reference files (references/) only when needed for specific steps."
-        )
-        lines.append(
-            "4. Execute scripts (scripts/) only when the skill instructions require it."
-        )
-        lines.append(
-            "5. Use assets (assets/) as templates or resources, don't load their content."
-        )
         return "\n".join(lines)
 
     def compute_change_token(self, skills_dirs: list[Path]) -> str:

@@ -27,6 +27,11 @@ from agiwo.skill.prompt_catalog import (
 )
 from agiwo.skill.skill_tool import SkillTool
 from agiwo.skill.registry import SkillMetadata, SkillRegistry
+from agiwo.skill.search import (
+    SkillSearchCandidate,
+    SkillSearchRecommendation,
+    SkillSearchService,
+)
 
 
 __all__ = [
@@ -49,4 +54,7 @@ __all__ = [
     "validate_expanded_allowed_skills",
     "SkillPromptCatalog",
     "SkillPromptProvider",
+    "SkillSearchCandidate",
+    "SkillSearchRecommendation",
+    "SkillSearchService",
 ]
