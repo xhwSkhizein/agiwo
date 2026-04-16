@@ -47,8 +47,7 @@ AgIWO_CONSOLE_FEISHU_BOT_OPEN_ID=ou_bot_xxxx    # Required for group @mention de
 The Feishu channel starts automatically with the Console server:
 
 ```bash
-cd console
-uv run uvicorn server.app:app --reload --env-file .env
+agiwo-console serve --env-file .env
 ```
 
 ## Architecture

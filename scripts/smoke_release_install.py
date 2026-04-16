@@ -9,13 +9,27 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: python scripts/smoke_release_install.py <wheel-path>")
+def resolve_cli_path(venv_path: Path, name: str) -> Path:
+    if sys.platform == "win32":
+        return venv_path / "Scripts" / f"{name}.exe"
+    return venv_path / "bin" / name
 
-    wheel_path = Path(sys.argv[1]).resolve()
-    if not wheel_path.is_file():
-        raise SystemExit(f"Wheel not found: {wheel_path}")
+
+def main() -> int:
+    if not (2 <= len(sys.argv) <= 3):
+        raise SystemExit(
+            "Usage: python scripts/smoke_release_install.py <agiwo-wheel-path> [agiwo-console-wheel-path]"
+        )
+
+    sdk_wheel_path = Path(sys.argv[1]).resolve()
+    if not sdk_wheel_path.is_file():
+        raise SystemExit(f"Wheel not found: {sdk_wheel_path}")
+
+    console_wheel_path: Path | None = None
+    if len(sys.argv) == 3:
+        console_wheel_path = Path(sys.argv[2]).resolve()
+        if not console_wheel_path.is_file():
+            raise SystemExit(f"Wheel not found: {console_wheel_path}")
 
     uv = shutil.which("uv")
     if uv is None:
@@ -24,14 +38,20 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         venv_path = tmp_path / "venv"
-        python_path = (
-            venv_path / "Scripts" / "python.exe"
-            if sys.platform == "win32"
-            else venv_path / "bin" / "python"
-        )
+        python_path = resolve_cli_path(venv_path, "python")
 
         run([uv, "venv", str(venv_path)])
-        run([uv, "pip", "install", "--python", str(python_path), str(wheel_path)])
+        install_cmd = [
+            uv,
+            "pip",
+            "install",
+            "--python",
+            str(python_path),
+            str(sdk_wheel_path),
+        ]
+        if console_wheel_path is not None:
+            install_cmd.append(str(console_wheel_path))
+        run(install_cmd)
         run(
             [
                 str(python_path),
@@ -48,6 +68,11 @@ def main() -> int:
                 ),
             ]
         )
+
+        if console_wheel_path is not None:
+            cli_path = resolve_cli_path(venv_path, "agiwo-console")
+            run([str(cli_path), "--help"])
+
     return 0
 
 

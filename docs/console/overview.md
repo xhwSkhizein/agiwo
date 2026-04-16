@@ -23,12 +23,14 @@ Console
 ### Start the API Server
 
 ```bash
-cd console
-cp .env.example .env
-# Edit .env with your provider credentials
-
-uv run uvicorn server.app:app --reload --env-file .env
+pip install agiwo-console
+cat > .env <<'EOF'
+OPENAI_API_KEY=...
+EOF
+agiwo-console serve --env-file .env
 ```
+
+If you are running from the source repository instead, you can still start from `console/.env.example.full`.
 
 The server starts at `http://localhost:8422`.
 

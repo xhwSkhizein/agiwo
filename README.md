@@ -210,10 +210,14 @@ The Console is a separately published control-plane package and is intentionally
 The Console environment template lives at [console/.env.example.full](console/.env.example.full).
 
 ```bash
-cd console
-cp .env.example.full .env
-uv run uvicorn server.app:app --reload --env-file .env
+pip install agiwo-console
+cat > .env <<'EOF'
+OPENAI_API_KEY=...
+EOF
+agiwo-console serve --env-file .env
 ```
+
+If you are running from source instead of the published package, the full template lives at `console/.env.example.full`.
 
 The API server defaults to `http://localhost:8422`.
 
