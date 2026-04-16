@@ -1,0 +1,146 @@
+name: Release Publish
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      release_version: ${{ steps.version.outputs.release_version }}
+    steps:
+      - name: Normalize release tag
+        id: version
+        shell: bash
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected release tag in the form vX.Y.Z, got: $tag" >&2
+            exit 1
+          fi
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+  build-sdk:
+    name: Build SDK
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Validate release metadata
+        run: uv run python scripts/check_release_metadata.py "${{ needs.prepare.outputs.release_version }}"
+
+      - name: Build SDK package
+        run: uv build
+
+      - name: Smoke test built SDK wheel
+        run: uv run python scripts/smoke_release_install.py "$(ls dist/agiwo-*.whl | head -n 1)"
+
+      - name: Upload SDK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish-sdk:
+    name: Publish SDK
+    runs-on: ubuntu-latest
+    needs: [build-sdk]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download SDK artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-dist
+          path: dist
+
+      - name: Publish SDK to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          print-hash: true
+
+  build-console:
+    name: Build Console
+    runs-on: ubuntu-latest
+    needs: [prepare, publish-sdk]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          version: latest
+
+      - name: Set up Python
+        run: uv python install 3.11
+
+      - name: Install SDK dependencies
+        run: uv sync
+
+      - name: Install Console dependencies
+        run: (cd console && uv sync)
+
+      - name: Validate release metadata
+        run: uv run python scripts/check_release_metadata.py "${{ needs.prepare.outputs.release_version }}"
+
+      - name: Build SDK package
+        run: uv build
+
+      - name: Build Console package
+        run: (cd console && uv build)
+
+      - name: Smoke test built Console wheel
+        run: uv run python scripts/smoke_release_install.py "$(ls dist/agiwo-*.whl | head -n 1)" "$(ls console/dist/agiwo_console-*.whl | head -n 1)"
+
+      - name: Upload Console artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: console-dist
+          path: console/dist/*
+          if-no-files-found: error
+
+  publish-console:
+    name: Publish Console
+    runs-on: ubuntu-latest
+    needs: [build-console]
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download Console artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: console-dist
+          path: dist
+
+      - name: Publish Console to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          print-hash: true

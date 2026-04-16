@@ -18,7 +18,7 @@ async def main() -> None:
             description="A friendly assistant",
             system_prompt="You are concise. Answer in one sentence.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
     result = await agent.run("What is the capital of France?")

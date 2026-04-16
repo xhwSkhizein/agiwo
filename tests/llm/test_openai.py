@@ -10,6 +10,25 @@ def mock_openai_client():
     return client
 
 
+@patch("agiwo.llm.openai.get_settings")
+def test_openai_model_name_only_defaults_id(mock_get_settings):
+    mock_settings = mock_get_settings.return_value
+    mock_settings.openai_api_key = None
+
+    model = OpenAIModel(name="gpt-5.4", api_key="test-key")
+
+    assert model.id == "gpt-5.4"
+    assert model.name == "gpt-5.4"
+
+
+def test_openai_model_requires_name_or_id():
+    with pytest.raises(
+        TypeError,
+        match="OpenAIModel requires at least one of id or name",
+    ):
+        OpenAIModel()
+
+
 @pytest.mark.asyncio
 @patch("agiwo.llm.openai.get_settings")
 async def test_openai_model_arun_stream_basic(mock_get_settings, mock_openai_client):

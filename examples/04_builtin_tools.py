@@ -24,7 +24,7 @@ async def main() -> None:
                 "and bash when you need to check system state."
             ),
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
         # No tools=[] needed — builtins are auto-included
     )
 

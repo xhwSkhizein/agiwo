@@ -27,7 +27,7 @@ async def main() -> None:
             description="An agent with hooks",
             system_prompt="You are a helpful assistant.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
         hooks=hooks,
     )
 

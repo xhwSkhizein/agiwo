@@ -15,6 +15,7 @@ Welcome to the Agiwo documentation. Agiwo is a streaming-first AI Agent SDK and 
 - **[Hooks](./guides/hooks.md)** — Observe and intercept agent lifecycle events
 - **[Storage & Observability](./guides/storage.md)** — Persist runs, sessions, and traces
 - **[Skills](./guides/skills.md)** — File-based skill discovery and loading
+- **[Release Publishing](./release.md)** — Maintainer runbook for GitHub Release driven PyPI publishing
 
 ## Console
 

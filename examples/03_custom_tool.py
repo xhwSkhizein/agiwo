@@ -64,7 +64,7 @@ async def main() -> None:
             description="Can check weather",
             system_prompt="Use the get_weather tool when asked about weather.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
         tools=[WeatherTool()],
     )
 

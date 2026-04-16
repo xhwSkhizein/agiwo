@@ -20,7 +20,7 @@ async def main() -> None:
             description="Researches a specific topic",
             system_prompt="Research the given topic and provide 3 key findings.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
     # Synthesizer agent — combines multiple findings
@@ -30,7 +30,7 @@ async def main() -> None:
             description="Combines research into a summary",
             system_prompt="Given multiple research findings, write a cohesive summary.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
     async with Scheduler() as scheduler:

@@ -19,7 +19,7 @@ async def main() -> None:
             description="A thorough analyst",
             system_prompt="You analyze topics in depth. Be systematic.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
     async with Scheduler() as scheduler:

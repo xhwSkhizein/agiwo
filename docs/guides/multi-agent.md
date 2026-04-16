@@ -17,7 +17,7 @@ researcher = Agent(
         description="Researches topics thoroughly and returns summaries",
         system_prompt="You are a research specialist. Be thorough and cite sources.",
     ),
-    model=OpenAIModel(id="gpt-4o", name="gpt-4o"),
+    model=OpenAIModel(name="gpt-5.4"),
 )
 
 # Orchestrator agent that can delegate to the researcher
@@ -27,7 +27,7 @@ orchestrator = Agent(
         description="Coordinates research tasks",
         system_prompt="Delegate independent research tasks to the researcher tool.",
     ),
-    model=OpenAIModel(id="gpt-4o", name="gpt-4o"),
+    model=OpenAIModel(name="gpt-5.4"),
     tools=[researcher.as_tool()],
 )
 

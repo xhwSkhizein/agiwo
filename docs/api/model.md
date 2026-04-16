@@ -63,7 +63,7 @@ class StreamChunk:
 ```python
 from agiwo.llm import OpenAIModel
 
-model = OpenAIModel(id="gpt-4o", name="gpt-4o")
+model = OpenAIModel(name="gpt-5.4")
 # Reads OPENAI_API_KEY from environment
 ```
 

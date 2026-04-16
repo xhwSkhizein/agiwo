@@ -22,7 +22,7 @@ async def main() -> None:
                 "provide 3-5 key facts with brief explanations. Be factual and concise."
             ),
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
     # Orchestrator: delegates research, then synthesizes
@@ -36,7 +36,7 @@ async def main() -> None:
                 "Use the researcher tool to gather facts before writing."
             ),
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
         tools=[researcher.as_tool()],
     )
 
