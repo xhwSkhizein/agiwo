@@ -125,13 +125,13 @@ class SkillManager:
 
     def _resolve_default_prompt_skill_names(self) -> list[str]:
         runtime_settings = get_settings()
-        return (
-            self.validate_explicit_allowed_skills(
-                runtime_settings.default_prompt_skills,
-                available_skill_names=self.list_available_skill_names(),
-            )
-            or []
+        normalized = normalize_allowed_skills(runtime_settings.default_prompt_skills)
+        validate_expanded_allowed_skills(normalized)
+        validate_known_allowed_skills(
+            normalized,
+            self.list_available_skill_names(),
         )
+        return list(normalized) if normalized is not None else []
 
     def _select_prompt_metadata(
         self,
