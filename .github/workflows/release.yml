@@ -45,11 +45,11 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
 
+      - name: Apply release metadata from tag
+        run: uv run python scripts/check_release_metadata.py --apply "${{ needs.prepare.outputs.release_version }}"
+
       - name: Install dependencies
         run: uv sync
-
-      - name: Validate release metadata
-        run: uv run python scripts/check_release_metadata.py "${{ needs.prepare.outputs.release_version }}"
 
       - name: Build SDK package
         run: uv build
@@ -99,14 +99,14 @@ jobs:
       - name: Set up Python
         run: uv python install 3.11
 
+      - name: Apply release metadata from tag
+        run: uv run python scripts/check_release_metadata.py --apply "${{ needs.prepare.outputs.release_version }}"
+
       - name: Install SDK dependencies
         run: uv sync
 
       - name: Install Console dependencies
         run: (cd console && uv sync)
-
-      - name: Validate release metadata
-        run: uv run python scripts/check_release_metadata.py "${{ needs.prepare.outputs.release_version }}"
 
       - name: Build SDK package
         run: uv build
