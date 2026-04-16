@@ -28,17 +28,8 @@ class WebReaderTool(BaseTool):
     """Fetch and optionally post-process web content for the agent."""
 
     name = "web_reader"
-    description = (
-        "Fetch web content into text only format.\n"
-        "**Usage modes:**\n"
-        "1. **By search index**: `index=0` (recommended, uses web_search results)\n"
-        '2. **By direct URL**: `url="https://..."` (backward compatible)\n'
-        "\n"
-        "**Content processing options:**\n"
-        "- `search_query`: if provided, return content relevant to your specific query\n"
-        "- `summarize`: if provided, generate concise summary of main content\n"
-        "- Note: These options are mutually exclusive"
-    )
+    description = """Fetch web content as plain text. Modes: 1. index=0 uses web search results (recommended) 2. url=https://... for direct URL.
+Options are mutually exclusive: search_query returns relevant content, summarize generates concise summary."""
     cacheable = True
     is_stateless = True
 
