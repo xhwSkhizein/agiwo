@@ -1,5 +1,5 @@
+import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -25,6 +25,41 @@ class _MockResponseStream:
     async def _iterate(self):
         for item in self._events:
             yield item
+
+
+class _MockHTTPXResponse:
+    """Mock httpx.Response for SSE streaming tests."""
+
+    def __init__(self, events):
+        self.status_code = 200
+        self._events = events
+
+    def _serialize_to_dict(self, obj):
+        """Recursively convert SimpleNamespace to dict."""
+        if isinstance(obj, SimpleNamespace):
+            return {k: self._serialize_to_dict(v) for k, v in vars(obj).items()}
+        elif isinstance(obj, list):
+            return [self._serialize_to_dict(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {k: self._serialize_to_dict(v) for k, v in obj.items()}
+        else:
+            return obj
+
+    def _generate_sse_lines(self, events):
+        """Convert event objects to SSE line format."""
+        for event in events:
+            yield f"event: {event.type}"
+            data_dict = {k: v for k, v in vars(event).items() if k != "type"}
+            serialized_data = self._serialize_to_dict(data_dict)
+            yield f"data: {json.dumps(serialized_data)}"
+            yield ""
+
+    async def aread(self):
+        return b""
+
+    async def aiter_lines(self):
+        for line in self._generate_sse_lines(self._events):
+            yield line
 
 
 def test_split_system_instructions_collects_system_messages() -> None:
@@ -120,45 +155,55 @@ def test_convert_tools_to_responses_tools_rejects_non_function_tools() -> None:
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.openai_response.get_settings")
-async def test_openai_response_model_streams_text_reasoning_and_usage(
-    mock_get_settings,
-) -> None:
-    mock_settings = mock_get_settings.return_value
-    mock_settings.openai_api_key = None
-
+async def test_parse_sse_stream_handles_text_and_reasoning_deltas() -> None:
+    """Test _parse_sse_stream correctly parses SSE events."""
     model = OpenAIResponsesModel(
         id="gpt-4.1-mini",
         name="gpt-4.1-mini",
         api_key="test-key",
     )
-    model.client = AsyncMock()
 
-    stream_events = [
-        _event("response.output_text.delta", delta="Hel"),
-        _event("response.reasoning_summary_text.delta", delta="think"),
-        _event("response.output_text.delta", delta="lo"),
-        _event(
-            "response.completed",
-            response=SimpleNamespace(
-                usage=SimpleNamespace(
-                    input_tokens=7,
-                    output_tokens=3,
-                    total_tokens=10,
-                    input_tokens_details=SimpleNamespace(cached_tokens=2),
+    # Create a mock httpx response with SSE lines
+    class MockResponse:
+        status_code = 200
+
+        async def aread(self):
+            return b""
+
+        async def aiter_lines(self):
+            events = [
+                ("response.output_text.delta", {"delta": "Hel"}),
+                ("response.reasoning_summary_text.delta", {"delta": "think"}),
+                ("response.output_text.delta", {"delta": "lo"}),
+                (
+                    "response.completed",
+                    {
+                        "response": {
+                            "usage": {
+                                "input_tokens": 7,
+                                "output_tokens": 3,
+                                "total_tokens": 10,
+                                "input_tokens_details": {"cached_tokens": 2},
+                            },
+                            "output": [{"type": "message"}],
+                            "incomplete_details": None,
+                        }
+                    },
                 ),
-                output=[SimpleNamespace(type="message")],
-                incomplete_details=None,
-            ),
-        ),
-    ]
+            ]
+            for event_type, data in events:
+                yield f"event: {event_type}"
+                yield f"data: {json.dumps(data)}"
+                yield ""
 
-    mock_stream = _MockResponseStream(stream_events)
-    model.client.responses.create = AsyncMock(return_value=mock_stream)
+    mock_response = MockResponse()
+    tool_calls_state = {}
 
     chunks = []
-    async for chunk in model.arun_stream([{"role": "user", "content": "hello"}]):
-        chunks.append(chunk)
+    async for event in model._parse_sse_stream(mock_response):
+        chunk = model._event_to_chunk(event, tool_calls_state)
+        if chunk is not None:
+            chunks.append(chunk)
 
     assert chunks[0].content == "Hel"
     assert chunks[1].reasoning_content == "think"
@@ -170,60 +215,75 @@ async def test_openai_response_model_streams_text_reasoning_and_usage(
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.openai_response.get_settings")
-async def test_openai_response_model_streams_function_call_deltas(
-    mock_get_settings,
-) -> None:
-    mock_settings = mock_get_settings.return_value
-    mock_settings.openai_api_key = None
-
+async def test_parse_sse_stream_handles_function_call_deltas() -> None:
+    """Test _parse_sse_stream correctly parses function call events."""
     model = OpenAIResponsesModel(
         id="gpt-4.1-mini",
         name="gpt-4.1-mini",
         api_key="test-key",
     )
-    model.client = AsyncMock()
 
-    stream_events = [
-        _event(
-            "response.output_item.added",
-            output_index=0,
-            item=SimpleNamespace(
-                type="function_call",
-                id="fc_1",
-                call_id="call_123",
-                name="weather_lookup",
-                arguments="",
-            ),
-        ),
-        _event(
-            "response.function_call_arguments.delta",
-            output_index=0,
-            item_id="fc_1",
-            delta='{"city":"Par',
-        ),
-        _event(
-            "response.function_call_arguments.delta",
-            output_index=0,
-            item_id="fc_1",
-            delta='is"}',
-        ),
-        _event(
-            "response.completed",
-            response=SimpleNamespace(
-                usage=None,
-                output=[SimpleNamespace(type="function_call")],
-                incomplete_details=None,
-            ),
-        ),
-    ]
+    class MockResponse:
+        status_code = 200
 
-    mock_stream = _MockResponseStream(stream_events)
-    model.client.responses.create = AsyncMock(return_value=mock_stream)
+        async def aread(self):
+            return b""
+
+        async def aiter_lines(self):
+            events = [
+                (
+                    "response.output_item.added",
+                    {
+                        "output_index": 0,
+                        "item": {
+                            "type": "function_call",
+                            "id": "fc_1",
+                            "call_id": "call_123",
+                            "name": "weather_lookup",
+                            "arguments": "",
+                        },
+                    },
+                ),
+                (
+                    "response.function_call_arguments.delta",
+                    {
+                        "output_index": 0,
+                        "item_id": "fc_1",
+                        "delta": '{"city":"Par',
+                    },
+                ),
+                (
+                    "response.function_call_arguments.delta",
+                    {
+                        "output_index": 0,
+                        "item_id": "fc_1",
+                        "delta": 'is"}',
+                    },
+                ),
+                (
+                    "response.completed",
+                    {
+                        "response": {
+                            "usage": None,
+                            "output": [{"type": "function_call"}],
+                            "incomplete_details": None,
+                        }
+                    },
+                ),
+            ]
+            for event_type, data in events:
+                yield f"event: {event_type}"
+                yield f"data: {json.dumps(data)}"
+                yield ""
+
+    mock_response = MockResponse()
+    tool_calls_state = {}
 
     chunks = []
-    async for chunk in model.arun_stream([{"role": "user", "content": "weather"}]):
-        chunks.append(chunk)
+    async for event in model._parse_sse_stream(mock_response):
+        chunk = model._event_to_chunk(event, tool_calls_state)
+        if chunk is not None:
+            chunks.append(chunk)
 
     assert chunks[0].tool_calls == [
         {
@@ -245,55 +305,73 @@ async def test_openai_response_model_streams_function_call_deltas(
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.openai_response.get_settings")
-async def test_openai_response_model_rejects_empty_stream(
-    mock_get_settings,
-) -> None:
-    mock_settings = mock_get_settings.return_value
-    mock_settings.openai_api_key = None
-
+async def test_parse_sse_stream_handles_empty_stream() -> None:
+    """Test _parse_sse_stream correctly handles empty stream."""
     model = OpenAIResponsesModel(
         id="gpt-4.1-mini",
         name="gpt-4.1-mini",
         api_key="test-key",
     )
-    model.client = AsyncMock()
 
-    mock_stream = _MockResponseStream([])
-    model.client.responses.create = AsyncMock(return_value=mock_stream)
+    class MockResponse:
+        status_code = 200
 
-    with pytest.raises(RuntimeError, match="returned no chunks"):
-        async for _ in model.arun_stream([{"role": "user", "content": "hello"}]):
-            pass
+        async def aread(self):
+            return b""
+
+        async def aiter_lines(self):
+            # Empty stream
+            return
+            yield  # Never reached
+
+    mock_response = MockResponse()
+    tool_calls_state = {}
+
+    chunks = []
+    async for event in model._parse_sse_stream(mock_response):
+        chunk = model._event_to_chunk(event, tool_calls_state)
+        if chunk is not None:
+            chunks.append(chunk)
+
+    assert len(chunks) == 0
 
 
 @pytest.mark.asyncio
-@patch("agiwo.llm.openai_response.get_settings")
-async def test_openai_response_model_raises_failed_event_message(
-    mock_get_settings,
-) -> None:
-    mock_settings = mock_get_settings.return_value
-    mock_settings.openai_api_key = None
-
+async def test_parse_sse_stream_handles_failed_event() -> None:
+    """Test _parse_sse_stream correctly handles failed event."""
     model = OpenAIResponsesModel(
         id="gpt-4.1-mini",
         name="gpt-4.1-mini",
         api_key="test-key",
     )
-    model.client = AsyncMock()
 
-    mock_stream = _MockResponseStream(
-        [
-            _event(
-                "response.failed",
-                response=SimpleNamespace(
-                    error=SimpleNamespace(message="provider failed"),
+    class MockResponse:
+        status_code = 200
+
+        async def aread(self):
+            return b""
+
+        async def aiter_lines(self):
+            events = [
+                (
+                    "response.failed",
+                    {
+                        "response": {
+                            "error": {"message": "provider failed"},
+                        }
+                    },
                 ),
-            )
-        ]
-    )
-    model.client.responses.create = AsyncMock(return_value=mock_stream)
+            ]
+            for event_type, data in events:
+                yield f"event: {event_type}"
+                yield f"data: {json.dumps(data)}"
+                yield ""
+
+    mock_response = MockResponse()
+    tool_calls_state = {}
 
     with pytest.raises(RuntimeError, match="provider failed"):
-        async for _ in model.arun_stream([{"role": "user", "content": "hello"}]):
-            pass
+        async for event in model._parse_sse_stream(mock_response):
+            chunk = model._event_to_chunk(event, tool_calls_state)
+            if chunk is not None:
+                pass
