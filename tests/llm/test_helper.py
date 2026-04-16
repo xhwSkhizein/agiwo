@@ -69,6 +69,22 @@ def test_normalize_usage_metrics_partial_data():
     assert result["total_tokens"] is None
 
 
+def test_normalize_usage_metrics_openai_responses_nested_cached_tokens():
+    usage_data = {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+        "input_tokens_details": {"cached_tokens": 3},
+    }
+
+    result = normalize_usage_metrics(usage_data)
+
+    assert result["input_tokens"] == 10
+    assert result["output_tokens"] == 5
+    assert result["total_tokens"] == 15
+    assert result["cache_read_tokens"] == 3
+
+
 def test_normalize_anthropic_stop_reason_maps_shared_semantics():
     assert normalize_anthropic_stop_reason("tool_use") == "tool_calls"
     assert normalize_anthropic_stop_reason("max_tokens") == "length"

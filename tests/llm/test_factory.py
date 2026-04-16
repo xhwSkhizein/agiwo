@@ -4,6 +4,7 @@ from agiwo.llm import ModelSpec, create_model, create_model_from_dict
 from agiwo.llm.anthropic import AnthropicModel
 from agiwo.llm.deepseek import DeepseekModel
 from agiwo.llm.openai import OpenAIModel
+from agiwo.llm.openai_response import OpenAIResponsesModel
 
 
 def test_create_model_builds_provider_specific_instance() -> None:
@@ -20,6 +21,24 @@ def test_create_model_builds_provider_specific_instance() -> None:
     assert model.name == "claude-3-5-sonnet-20240620"
     assert model.temperature == 0.1
     assert model.max_output_tokens == 512
+
+
+def test_create_model_builds_openai_response_instance(monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    model = create_model(
+        ModelSpec(
+            provider="openai-response",
+            model_name="gpt-4.1-mini",
+            temperature=0.2,
+            max_output_tokens=256,
+        )
+    )
+
+    assert isinstance(model, OpenAIResponsesModel)
+    assert model.provider == "openai-response"
+    assert model.temperature == 0.2
+    assert model.max_output_tokens == 256
 
 
 def test_create_model_from_dict_uses_max_output_tokens(
@@ -60,6 +79,23 @@ def test_create_model_from_dict_resolves_openai_compatible_api_key_env(
     assert model.api_key == "minimax-key"
     assert model.base_url == "https://api.minimax.chat/v1"
     assert model.allow_env_fallback is False
+
+
+def test_create_model_from_dict_builds_openai_response_instance(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    model = create_model_from_dict(
+        provider="openai-response",
+        model_name="gpt-4.1-mini",
+        params={"temperature": 0.15, "max_output_tokens": 111},
+    )
+
+    assert isinstance(model, OpenAIResponsesModel)
+    assert model.provider == "openai-response"
+    assert model.temperature == 0.15
+    assert model.max_output_tokens == 111
 
 
 def test_create_model_from_dict_rejects_openai_compatible_without_env_name(

@@ -5,6 +5,7 @@ from agiwo.llm.factory import (
     create_model_from_dict,
 )
 from agiwo.llm.openai import OpenAIModel
+from agiwo.llm.openai_response import OpenAIResponsesModel
 from agiwo.llm.anthropic import AnthropicModel
 from agiwo.llm.bedrock_anthropic import BedrockAnthropicModel
 from agiwo.llm.deepseek import DeepseekModel
@@ -20,6 +21,7 @@ __all__ = [
     "create_model",
     "create_model_from_dict",
     "OpenAIModel",
+    "OpenAIResponsesModel",
     "AnthropicModel",
     "BedrockAnthropicModel",
     "DeepseekModel",
