@@ -26,13 +26,13 @@ Do not publish releases with bare tags like `0.1.0`.
 ## Publish Flow
 
 1. Merge the release-ready changes into `main`.
-2. Confirm the root `pyproject.toml` version matches the intended release version.
-3. Confirm `console/pyproject.toml` uses the same version and still depends on the matching `agiwo` release line.
-4. Create a GitHub Release with tag `vX.Y.Z`.
-5. Publish the release.
-6. Open the `Release Publish` workflow in GitHub Actions and confirm all jobs succeed.
+2. Create a GitHub Release with tag `vX.Y.Z`.
+3. Publish the release.
+4. Open the `Release Publish` workflow in GitHub Actions and confirm all jobs succeed.
 
-The workflow will normalize the `v` tag, validate package metadata, build both packages, run the release smoke checks, publish `agiwo`, and then publish `agiwo-console`.
+The GitHub Release tag is the single version source for package publishing. The workflow normalizes the `v` tag, rewrites the package metadata in CI to match the release version, builds both packages, runs the release smoke checks, publishes `agiwo`, and then publishes `agiwo-console`.
+
+You do not need to manually edit the package version in `pyproject.toml` or `console/pyproject.toml` before creating the release.
 
 ## Failure Handling
 
