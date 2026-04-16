@@ -35,12 +35,12 @@ Every provider yields standardized `StreamChunk` objects:
 
 ## Model Configuration
 
-All models share these fields:
+All runtime models expose these fields through `LLMConfig`, even if individual provider constructors offer slightly different ergonomics:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `id` | (required) | Provider model ID (e.g., `"gpt-4o"`) |
-| `name` | (required) | Human-readable name |
+| `id` | provider-specific | Provider model ID (for `OpenAIModel`, omitting `id` mirrors `name`) |
+| `name` | provider-specific | Human-readable or provider-facing model name |
 | `temperature` | `0.7` | Sampling temperature (0.0–2.0) |
 | `top_p` | `1.0` | Nucleus sampling |
 | `max_output_tokens` | `4096` | Max tokens in response |
@@ -63,7 +63,7 @@ Pricing fields (for cost tracking):
 ```python
 from agiwo.llm import OpenAIModel
 
-model = OpenAIModel(id="gpt-4o", name="gpt-4o")
+model = OpenAIModel(name="gpt-5.4")
 # Reads OPENAI_API_KEY from environment
 ```
 

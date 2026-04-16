@@ -12,9 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Contributing guide (`CONTRIBUTING.md`)
 - CI pipeline (lint + test on PR)
 - GitHub issue and PR templates
-- Optional dependency groups (`pip install agiwo[anthropic,web,feishu,mongo,observability]`)
+- Release packaging and documentation cleanup for the first public release
 
-## [0.1.0] - 2026-03-17
+## [0.1.0] - 2026-04-16
 
 ### Added
 - Streaming-first Agent SDK with `run()`, `run_stream()`, and `start()` API

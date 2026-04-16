@@ -1,6 +1,6 @@
 # Console Overview
 
-The Console is a control plane for managing Agiwo agents. It consists of a FastAPI backend and a Next.js frontend.
+The Console is a self-hosted control plane for managing Agiwo agents. It consists of a FastAPI backend and a Next.js frontend, is currently best suited for internal deployments, and should not yet be treated as a production-ready end-user product.
 
 ## Architecture
 
@@ -45,6 +45,12 @@ npm run dev
 ```
 
 The UI starts at `http://localhost:3000`.
+
+## Current Positioning
+
+- Recommended use: internal/self-hosted operator workflows
+- Built-in channel integrations today: Feishu only
+- Production readiness: not yet production-ready
 
 ## Health Check
 
@@ -102,7 +108,7 @@ SDK settings (`AGIWO_*`) and provider credentials (`OPENAI_API_KEY`, etc.) are a
 
 ### Channels
 
-- **Feishu**: Full integration with Feishu messaging
+- **Feishu**: Built-in integration with Feishu messaging
   - WebSocket connection for real-time messages
   - Command parsing and routing (`/status`, `/new`, `/switch`, etc.)
   - Group and direct message support

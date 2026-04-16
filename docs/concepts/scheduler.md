@@ -44,7 +44,7 @@ async def main() -> None:
             description="Coordinates long-running work",
             system_prompt="Delegate only truly independent work.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
     async with Scheduler() as scheduler:

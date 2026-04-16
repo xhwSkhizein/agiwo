@@ -133,8 +133,7 @@ When `input_price`, `output_price`, and `cache_hit_price` are set on the Model, 
 
 ```python
 model = OpenAIModel(
-    id="gpt-4o",
-    name="gpt-4o",
+    name="gpt-5.4",
     input_price=0.005,     # per 1K tokens
     output_price=0.015,    # per 1K tokens
     cache_hit_price=0.001, # per 1K tokens (cached)

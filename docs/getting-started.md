@@ -15,7 +15,7 @@ cd agiwo
 uv sync
 ```
 
-### With pip (coming soon)
+### With pip
 
 ```bash
 pip install agiwo
@@ -23,10 +23,10 @@ pip install agiwo
 
 ## Configuration
 
-Agiwo reads provider credentials from environment variables. Create a `.env` file in your project root:
+Agiwo reads provider credentials from environment variables. Install once with `pip install agiwo`, then configure only the providers you plan to use. Create a `.env` file in your project root:
 
 ```bash
-# At least one provider is required
+# Example provider credentials
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 DEEPSEEK_API_KEY=sk-...
@@ -66,7 +66,7 @@ async def main() -> None:
             description="A helpful assistant",
             system_prompt="You are a concise assistant. Answer in one sentence.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
     result = await agent.run("What is the capital of France?")
@@ -143,7 +143,7 @@ agent = Agent(
         description="Can do math",
         system_prompt="Use the calculator tool for arithmetic.",
     ),
-    model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+    model=OpenAIModel(name="gpt-5.4"),
     tools=[CalculatorTool()],
 )
 ```

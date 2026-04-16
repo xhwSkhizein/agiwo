@@ -35,6 +35,15 @@ uv run pytest tests/ -v
 # Console backend tests
 (cd console && uv run pytest tests/ -v)
 
+# Console frontend checks
+(cd console/web && npm run lint)
+(cd console/web && npm test)
+(cd console/web && npm run build)
+
+# Release smoke check from built wheel
+uv build
+uv run python scripts/smoke_release_install.py dist/agiwo-0.1.0-py3-none-any.whl
+
 # Run a specific test file
 uv run pytest tests/agent/test_agent_tool.py -v
 ```
@@ -106,9 +115,10 @@ See [AGENTS.md](./AGENTS.md) for detailed architecture documentation.
 1. Create a feature branch from `main`
 2. Make your changes with clear, focused commits
 3. Run `uv run python scripts/lint.py changed` before committing
-4. Ensure tests pass: `uv run pytest tests/ -v`
-5. Update documentation if you changed public APIs
-6. Open a PR with a clear description of what and why
+4. Ensure tests pass: `uv run pytest tests/ -v` and `(cd console && uv run pytest tests/ -v)`
+5. If you changed release-facing behavior, also run `(cd console/web && npm run lint && npm test && npm run build)` and `uv run python scripts/smoke_release_install.py dist/agiwo-0.1.0-py3-none-any.whl` after `uv build`
+6. Update documentation if you changed public APIs
+7. Open a PR with a clear description of what and why
 
 ### Commit Messages
 

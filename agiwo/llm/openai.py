@@ -31,8 +31,8 @@ OPENAI_RETRYABLE = (
 class OpenAIModel(Model):
     def __init__(
         self,
-        id: str,
-        name: str,
+        id: str | None = None,
+        name: str | None = None,
         api_key: str | None = None,
         base_url: str | None = "https://api.openai.com/v1",
         allow_env_fallback: bool = True,
@@ -47,9 +47,14 @@ class OpenAIModel(Model):
         output_price: float = 0.0,
         provider: str = "openai",
     ):
+        if id is None and name is None:
+            raise TypeError("OpenAIModel requires at least one of id or name")
+
+        resolved_id = id or name
+        resolved_name = name or id
         config = LLMConfig(
-            id=id,
-            name=name,
+            id=resolved_id,
+            name=resolved_name,
             api_key=api_key,
             base_url=base_url,
             temperature=temperature,

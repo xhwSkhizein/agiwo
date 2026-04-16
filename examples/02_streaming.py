@@ -18,7 +18,7 @@ async def main() -> None:
             description="A creative storyteller",
             system_prompt="You are a creative writer. Be vivid and engaging.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini", name="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
     print("Streaming response:\n")

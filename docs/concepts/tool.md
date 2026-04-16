@@ -110,7 +110,7 @@ Agiwo includes these tools out of the box:
 | `bash` | Execute shell commands with security sandboxing |
 | `bash_process` | Manage long-running background processes (inspect logs, stop, send input) |
 | `web_search` | Search the web via multiple search engines |
-| `web_reader` | Fetch and extract readable content from URLs (supports curl and Playwright) |
+| `web_reader` | Fetch and extract readable content from URLs (supports lightweight fetch plus browser fallback) |
 | `memory_retrieval` | Hybrid BM25 + vector search over MEMORY/ files |
 
 Builtin tools are automatically included when you create an Agent. They live in `agiwo/tool/builtin/`.

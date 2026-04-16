@@ -36,7 +36,7 @@ Agiwo has three main areas:
 Agiwo has two parts:
 
 - **SDK**: an async, streaming-first Python framework for building LLM agents with tools, hooks, storage, observability, skills, and scheduler-based orchestration.
-- **Console**: a FastAPI + Next.js control plane for managing agent configs, chatting over SSE, inspecting scheduler state, viewing traces, and integrating channels such as Feishu.
+- **Console**: an optional self-hosted FastAPI + Next.js control plane for managing agent configs, chatting over SSE, inspecting scheduler state, and integrating channels. It is currently best suited for internal deployments, supports Feishu as its only built-in channel integration, and is not yet production-ready.
 
 The project favors explicit runtime wiring over hidden global state. Agent execution, tool execution, scheduler orchestration, and persistence are all separate layers.
 
@@ -47,30 +47,26 @@ The project favors explicit runtime wiring over hidden global state. Agent execu
 - Scheduler orchestration for roots and child agents, including `submit`, `route_root_input`, `stream`, `wait_for`, `steer`, and cancellation flows
 - Run and step persistence plus trace collection with memory, SQLite, and MongoDB-backed storage options
 - Global skill discovery with per-agent allowlisting through explicit `allowed_skills`
-- Console APIs and web control plane for agent config management, session chat, scheduler views, trace inspection, and channel integration
+- Optional Console package for control-plane operations, trace inspection, session chat, and Feishu channel integration
 
 ## Quick Start
 
 ### Install
 
 ```bash
-# Core SDK (OpenAI provider only)
+# SDK
 pip install agiwo
+```
 
-# With specific providers/features
-pip install "agiwo[anthropic]"          # Anthropic provider
-pip install "agiwo[web]"               # Web tools (web_reader, Playwright)
-pip install "agiwo[feishu]"            # Feishu channel integration
-pip install "agiwo[mongo]"             # MongoDB storage backends
-pip install "agiwo[all]"               # Everything
+For development from source:
 
-# From source (development)
+```bash
 git clone https://github.com/xhwSkhizein/agiwo.git
 cd agiwo
 uv sync
 ```
 
-For SDK-only usage, export provider credentials in your shell or place them in a local `.env`.
+For SDK usage, export provider credentials in your shell or place them in a local `.env`. Set only the credentials for the providers you actually use.
 
 Example:
 
@@ -94,7 +90,7 @@ async def main() -> None:
             description="A helpful assistant",
             system_prompt="You are a concise assistant.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
     result = await agent.run("What is 2 + 2?")
@@ -201,6 +197,13 @@ asyncio.run(main())
 For long-running roots, the scheduler API also supports `submit`, `enqueue_input`, `route_root_input`, `stream`, `wait_for`, `steer`, `cancel`, and `shutdown`.
 
 ## Console
+
+The Console is a separately published control-plane package and is intentionally positioned below the SDK in scope and readiness.
+
+- Package: `pip install agiwo-console`
+- Recommended deployment model: internal/self-hosted use
+- Built-in channel integrations today: Feishu only
+- Readiness: useful for operators, not yet production-ready
 
 ### Start The API Server
 
@@ -328,7 +331,7 @@ uv run pytest tests/ -v
 
 ## Current Status
 
-The project is usable for experimentation and development. Core SDK APIs (Agent, Tool, Scheduler) are stabilizing; Console APIs continue to evolve with new features.
+The project is usable for experimentation and development. Core SDK APIs (Agent, Tool, Scheduler) are stabilizing. The Console remains an internal-use control plane that is still evolving and should not yet be treated as production-ready.
 
 Areas that still change:
 
