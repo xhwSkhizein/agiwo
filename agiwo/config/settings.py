@@ -240,6 +240,19 @@ class AgiwoSettings(BaseSettings):
         default_factory=lambda: ["examples/skills", "skills"],
         description="Skill directories to scan (relative to root_path if not absolute)",
     )
+    default_prompt_skills: list[str] = Field(
+        default_factory=list,
+        description="Explicit skill names rendered into the agent system prompt",
+    )
+    skill_search_enabled: bool = Field(
+        default=True,
+        description="Whether runtime skill recommendation is enabled",
+    )
+    skill_search_top_k: int = Field(
+        default=6,
+        ge=1,
+        description="How many skill metadata candidates to send to the search judge",
+    )
 
     # === Scheduler ===
     event_debounce_min_count: int = Field(

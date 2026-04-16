@@ -67,3 +67,17 @@ def test_tool_model_name_allows_explicit_name_for_compatible_provider(
 
     assert settings.tool_default_model_provider == "openai-compatible"
     assert settings.get_tool_model_name() == "MiniMax-M2.5"
+
+
+def test_skill_search_settings_are_loaded(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "AGIWO_DEFAULT_PROMPT_SKILLS", '["brainstorming","writing-plans"]'
+    )
+    monkeypatch.setenv("AGIWO_SKILL_SEARCH_ENABLED", "false")
+    monkeypatch.setenv("AGIWO_SKILL_SEARCH_TOP_K", "4")
+
+    settings = load_settings(include_env_file=False)
+
+    assert settings.default_prompt_skills == ["brainstorming", "writing-plans"]
+    assert settings.skill_search_enabled is False
+    assert settings.skill_search_top_k == 4

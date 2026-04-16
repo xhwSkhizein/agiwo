@@ -20,6 +20,7 @@ from agiwo.skill.config import SkillDiscoveryConfig, resolve_skill_dirs
 from agiwo.skill.loader import SkillLoader
 from agiwo.skill.prompt_catalog import SkillPromptCatalog
 from agiwo.skill.registry import SkillMetadata, SkillRegistry
+from agiwo.skill.search import SkillSearchRecommendation, SkillSearchService
 from agiwo.skill.skill_tool import SkillTool
 from agiwo.utils.logging import get_logger
 
@@ -87,6 +88,7 @@ class SkillManager:
         self.loader = SkillLoader(self.registry)
         self._prompt_catalog = SkillPromptCatalog()
         self._skill_tool: SkillTool | None = None
+        self._search_service: SkillSearchService | None = None
         self._metadata_cache: list[SkillMetadata] = []
         self._change_token = ""
         self._initialized = False
@@ -105,6 +107,7 @@ class SkillManager:
             return
         skills_dirs = self.get_resolved_skills_dirs()
         self._metadata_cache = self.registry.discover_skills_sync(skills_dirs)
+        self._resolve_default_prompt_skill_names()
         self._change_token = self._prompt_catalog.compute_change_token(skills_dirs)
         self._initialized = True
         logger.info("skill_manager_initialized", skill_count=len(self._metadata_cache))
@@ -117,23 +120,68 @@ class SkillManager:
             registry=self.registry,
             loader=self.loader,
             allowed_skills=allowed_skills,
+            search_service=self._get_search_service(),
         )
+
+    def _resolve_default_prompt_skill_names(self) -> list[str]:
+        runtime_settings = get_settings()
+        return self.validate_explicit_allowed_skills(
+            runtime_settings.default_prompt_skills,
+            available_skill_names=self.list_available_skill_names(),
+        ) or []
+
+    def _select_prompt_metadata(
+        self,
+        allowed_skills: list[str] | None = None,
+    ) -> list[SkillMetadata]:
+        default_names = set(self._resolve_default_prompt_skill_names())
+        items = [item for item in self._metadata_cache if item.name in default_names]
+        if allowed_skills is None:
+            return items
+        allowed_set = set(allowed_skills)
+        return [item for item in items if item.name in allowed_set]
 
     def render_skills_section(
         self,
         allowed_skills: list[str] | None = None,
     ) -> str:
-        items = self._metadata_cache
-        if allowed_skills is not None:
-            allowed_set = set(allowed_skills)
-            items = [item for item in items if item.name in allowed_set]
-        return self._prompt_catalog.render_section(items)
+        return self._prompt_catalog.render_section(
+            self._select_prompt_metadata(allowed_skills)
+        )
 
     def list_available_skills(self) -> list[SkillMetadata]:
         return list(self._metadata_cache)
 
     def list_available_skill_names(self) -> list[str]:
         return [item.name for item in self._metadata_cache]
+
+    def _get_search_service(self) -> SkillSearchService:
+        if self._search_service is None:
+            self._search_service = SkillSearchService()
+        return self._search_service
+
+    async def search_skills(
+        self,
+        *,
+        query: str,
+        allowed_skills: list[str] | None,
+    ) -> SkillSearchRecommendation:
+        self.initialize_sync()
+        runtime_settings = get_settings()
+        if not runtime_settings.skill_search_enabled:
+            return SkillSearchRecommendation(decision="no_recommendation")
+
+        metadata_items = self._metadata_cache
+        if allowed_skills is not None:
+            allowed_set = set(allowed_skills)
+            metadata_items = [
+                item for item in metadata_items if item.name in allowed_set
+            ]
+
+        return await self._get_search_service().search(
+            query=query,
+            metadata_items=metadata_items,
+        )
 
     def expand_allowed_skills(
         self,
@@ -174,6 +222,7 @@ class SkillManager:
         """
         skills_dirs = self.get_resolved_skills_dirs()
         self._metadata_cache = await self.registry.discover_skills(skills_dirs)
+        self._resolve_default_prompt_skill_names()
         self._change_token = self._prompt_catalog.compute_change_token(skills_dirs)
         self._initialized = True
         logger.info("skills_reloaded", skill_count=len(self._metadata_cache))
