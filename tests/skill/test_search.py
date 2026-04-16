@@ -45,6 +45,11 @@ class StubJudgeModel(Model):
         yield StreamChunk(content=self.payload)
 
 
+def test_search_service_rejects_non_positive_top_k() -> None:
+    with pytest.raises(ValueError, match="top_k must be at least 1"):
+        SkillSearchService(top_k=0)
+
+
 @pytest.mark.asyncio
 async def test_search_returns_specific_skill_from_top_k() -> None:
     service = SkillSearchService(

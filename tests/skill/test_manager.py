@@ -67,9 +67,17 @@ async def test_search_skills_applies_allowed_skill_filter() -> None:
 
     manager._search_service = StubSearchService()
 
-    result = await manager.search_skills(
-        query="help me plan",
-        allowed_skills=["brainstorming"],
+    fake_settings = SimpleNamespace(
+        default_prompt_skills=[],
+        skill_search_enabled=True,
+        skill_search_top_k=6,
+        root_path="/tmp",
+        skills_dirs=[],
     )
+    with patch("agiwo.skill.manager.get_settings", return_value=fake_settings):
+        result = await manager.search_skills(
+            query="help me plan",
+            allowed_skills=["brainstorming"],
+        )
 
     assert result.skill_name == "brainstorming"

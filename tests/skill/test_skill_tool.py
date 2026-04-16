@@ -102,6 +102,39 @@ async def test_skill_tool_search_respects_disabled_runtime_setting(
 
 
 @pytest.mark.asyncio
+async def test_skill_tool_search_requires_search_service_when_enabled(
+    tmp_path: Path,
+) -> None:
+    skill_dir = tmp_path / "brainstorming"
+    skill_dir.mkdir()
+    skill_md = skill_dir / "SKILL.md"
+    skill_md.write_text(
+        "---\nname: brainstorming\ndescription: Explore design first.\n---\n\nUse this skill.",
+        encoding="utf-8",
+    )
+
+    registry = SkillRegistry()
+    registry.discover_skills_sync([tmp_path])
+    loader = SkillLoader(registry)
+    tool = SkillTool(
+        registry=registry,
+        loader=loader,
+        allowed_skills=["brainstorming"],
+    )
+
+    fake_settings = SimpleNamespace(skill_search_enabled=True)
+    with patch("agiwo.skill.skill_tool.get_settings", return_value=fake_settings):
+        with pytest.raises(
+            RuntimeError,
+            match="skill search is enabled but SkillTool was created without a search_service",
+        ):
+            await tool.execute(
+                {"mode": "search", "query": "help me explore this change"},
+                build_tool_context(),
+            )
+
+
+@pytest.mark.asyncio
 async def test_skill_tool_activate_keeps_existing_behavior(tmp_path: Path) -> None:
     skill_dir = tmp_path / "brainstorming"
     skill_dir.mkdir()

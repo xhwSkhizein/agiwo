@@ -126,13 +126,13 @@ class SkillTool(BaseTool):
         if not get_settings().skill_search_enabled:
             recommendation = SkillSearchRecommendation(decision="no_recommendation")
         else:
-            recommendation = (
-                await self._search_service.search(
-                    query=query,
-                    metadata_items=self._searchable_metadata(),
+            if self._search_service is None:
+                raise RuntimeError(
+                    "skill search is enabled but SkillTool was created without a search_service"
                 )
-                if self._search_service is not None
-                else SkillSearchRecommendation(decision="no_recommendation")
+            recommendation = await self._search_service.search(
+                query=query,
+                metadata_items=self._searchable_metadata(),
             )
 
         payload = {

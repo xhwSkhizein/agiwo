@@ -8,7 +8,8 @@ from typing import Literal
 from agiwo.config.settings import get_settings
 from agiwo.embedding import EmbeddingFactory
 from agiwo.embedding.base import EmbeddingModel
-from agiwo.llm import Model, ModelSpec, create_model
+from agiwo.llm import Model, ModelSpec
+from agiwo.llm.factory import create_model
 from agiwo.skill.registry import SkillMetadata
 
 
@@ -41,7 +42,10 @@ class SkillSearchService:
         settings = get_settings()
         self._embedding_model = embedding_model
         self._judge_model = judge_model
-        self._top_k = top_k or settings.skill_search_top_k
+        resolved_top_k = settings.skill_search_top_k if top_k is None else int(top_k)
+        if resolved_top_k < 1:
+            raise ValueError("top_k must be at least 1")
+        self._top_k = resolved_top_k
 
     async def search(
         self,

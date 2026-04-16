@@ -46,23 +46,28 @@ Discovery and activation both respect `allowed_skills`.
 
 ## Skill Discovery Config
 
-Skills are discovered from the SDK-level `skills_dirs` setting:
+Skills are discovered from the SDK-level `settings.skills_dirs` configuration, not from per-agent skill directory options:
 
 ```python
-from agiwo.skill.config import SkillDiscoveryConfig
-from agiwo.skill.manager import SkillManager
+from agiwo.config.settings import settings
+from agiwo.skill.manager import get_global_skill_manager
 
-config = SkillDiscoveryConfig(
-    skills_dirs=["skills", "~/.agiwo/skills"],
-    root_path=".agiwo",
-)
+print(settings.skills_dirs)
 
-manager = SkillManager(config)
+manager = get_global_skill_manager()
 await manager.initialize()
 
 for skill in manager.list_available_skills():
     print(skill.name, skill.description)
 ```
+
+For code references:
+
+- `settings.skills_dirs` is the SDK-level source of truth
+- `get_global_skill_manager()` is the normal runtime entrypoint
+- `SkillManager` and `SkillDiscoveryConfig` are internal building blocks for that flow
+
+Do not add per-agent skill directories or legacy `enable_skill` style toggles. Agent-level control should stay on `allowed_skills`.
 
 Relevant SDK settings:
 
