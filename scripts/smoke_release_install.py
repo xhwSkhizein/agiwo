@@ -4,9 +4,19 @@ import sys
 import tempfile
 from pathlib import Path
 
+TIMEOUT_SECONDS = 300
+
 
 def run(cmd: list[str]) -> None:
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True, timeout=TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        print(
+            "Command timed out after "
+            f"{TIMEOUT_SECONDS}s: {' '.join(str(part) for part in cmd)}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
 
 
 def resolve_cli_path(venv_path: Path, name: str) -> Path:

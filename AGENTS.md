@@ -181,7 +181,7 @@
 ```bash
 # 安装依赖
 uv sync
-cd console && uv sync
+(cd console && uv sync)
 
 # 标准检查
 uv run python scripts/lint.py changed
@@ -196,17 +196,17 @@ uv run python scripts/repo_guard.py
 uv run pytest tests/ -v
 
 # Console 后端测试
-cd console && uv run pytest tests/ -v
+(cd console && uv run pytest tests/ -v)
 
 # Console 前端检查
-cd console/web && npm run lint
-cd console/web && npm test
-cd console/web && npm run build
+(cd console/web && npm run lint)
+(cd console/web && npm test)
+(cd console/web && npm run build)
 
 # release 前构建与安装验证
 uv build
 uv run python scripts/smoke_release_install.py dist/agiwo-0.1.0-py3-none-any.whl
-cd console && uv build
+(cd console && uv build)
 ```
 
 
