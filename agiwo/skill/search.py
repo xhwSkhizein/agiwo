@@ -140,7 +140,9 @@ class SkillSearchService:
 
         skill_name = payload.get("skill_name")
         if not isinstance(skill_name, str):
-            return SkillSearchRecommendation(decision="no_recommendation", reason=reason)
+            return SkillSearchRecommendation(
+                decision="no_recommendation", reason=reason
+            )
         if any(candidate.metadata.name == skill_name for candidate in candidates):
             return SkillSearchRecommendation(
                 decision="recommend",

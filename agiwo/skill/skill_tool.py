@@ -231,8 +231,7 @@ class SkillTool(BaseTool):
 
     def _searchable_metadata(self) -> list[SkillMetadata]:
         metadata_items = [
-            self.registry.get_metadata(name)
-            for name in self.registry.list_available()
+            self.registry.get_metadata(name) for name in self.registry.list_available()
         ]
         filtered = [item for item in metadata_items if item is not None]
         if self._allowed_skills is None:

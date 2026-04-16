@@ -88,7 +88,9 @@ async def test_search_downgrades_to_no_recommendation_when_embedding_fails() -> 
 
     result = await service.search(
         query="help me design this change",
-        metadata_items=[_meta("brainstorming", "Explore design before implementation.")],
+        metadata_items=[
+            _meta("brainstorming", "Explore design before implementation.")
+        ],
     )
 
     assert result.decision == "no_recommendation"
