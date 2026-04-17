@@ -206,7 +206,7 @@ The Console is a separately published control-plane package and is intentionally
 - Built-in channel integrations today: Feishu only
 - Readiness: useful for operators, not yet production-ready
 
-### Start The API Server
+### Start The API Server (Host Mode)
 
 The Console environment template lives at [console/.env.example.full](console/.env.example.full).
 
@@ -229,6 +229,33 @@ Useful routes:
 - `POST /api/chat/{agent_id}`
 - `GET /api/scheduler/states`
 - `GET /api/traces`
+
+### Start The Complete Console In Docker
+
+The Docker path starts the backend, Web UI, Agent runtime, and Bash execution inside one managed container.
+
+```bash
+pip install agiwo-console
+cat > .env <<'EOF'
+OPENAI_API_KEY=...
+EOF
+agiwo-console container up \
+  --data-dir "$HOME/agiwo-data" \
+  --env-file .env
+```
+
+Optional agent-visible host directories must be declared explicitly:
+
+```bash
+agiwo-console container up \
+  --data-dir "$HOME/agiwo-data" \
+  --env-file .env \
+  --mount "$HOME/projects:projects" \
+  --mount "$HOME/media:media"
+```
+
+The managed container exposes one default public entrypoint at `http://localhost:8422`.
+All default persistence is rooted under the mounted data directory. Host directories are not visible to the Agent runtime unless they are passed with `--mount`.
 
 ### Start The Web UI
 

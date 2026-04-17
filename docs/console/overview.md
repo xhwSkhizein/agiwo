@@ -20,7 +20,7 @@ Console
 
 ## Quick Start
 
-### Start the API Server
+### Start the API Server (Host Mode)
 
 ```bash
 pip install agiwo-console
@@ -33,6 +33,31 @@ agiwo-console serve --env-file .env
 If you are running from the source repository instead, you can still start from `console/.env.example.full`.
 
 The server starts at `http://localhost:8422`.
+
+### Start the Complete Console in Docker
+
+```bash
+pip install agiwo-console
+cat > .env <<'EOF'
+OPENAI_API_KEY=...
+EOF
+agiwo-console container up \
+  --data-dir "$HOME/agiwo-data" \
+  --env-file .env
+```
+
+The Docker path starts the FastAPI backend, Web UI, Agent runtime, and Bash execution in one managed container. The public entrypoint is still `http://localhost:8422`, but the runtime now lives inside the container instead of on the host.
+
+If the Agent should see host directories, declare them explicitly:
+
+```bash
+agiwo-console container up \
+  --data-dir "$HOME/agiwo-data" \
+  --env-file .env \
+  --mount "$HOME/projects:projects"
+```
+
+Mounted host directories appear inside the container as `/mnt/host/<alias>`. Undeclared host paths are not visible to the Agent runtime.
 
 ### Start the Web UI
 
