@@ -173,11 +173,13 @@
 - 与 CI Lint job 对齐的轻量本地门禁统一使用：`uv run python scripts/lint.py ci`
 - 安装仓库内 git hooks：`uv run python scripts/install_git_hooks.py`
 - `pre-commit` 会自动运行 `uv run python scripts/lint.py ci`，本地未通过时禁止提交。
+- `pre-push` 会自动运行 `uv run python scripts/check.py pre-push`，作为推送前兜底门禁；不要等到 push 时才第一次发现问题。
 - `scripts/lint.py changed` 不包含 `ruff format --check`，只能用于开发中的快速回路，不能视为 CI lint 全通过。
+- `scripts/check.py console-tests` 会强制设置 `AGIWO_ROOT_PATH="$(pwd)/console/.agiwo"`，避免本地 `console/.env` 污染测试结果。
 - Required checks by change type:
   - 只改 Python 代码：至少运行 `uv run python scripts/lint.py ci`，并运行受影响测试。
   - 改 `pyproject.toml`、workflow、打包、发布脚本：除上面外，还要跑构建与 smoke install。
-  - 改 Console 后端：除上面外，还要跑 `cd console && AGIWO_ROOT_PATH="$(pwd)/.agiwo" uv run pytest tests/ -v --tb=short`
+  - 改 Console 后端：除上面外，还要跑 `uv run python scripts/check.py console-tests`
   - 改前端：运行 `cd console/web && npm run lint && npm test && npm run build`
 - 不要写 schema migration；数据模型变更时直接让旧数据失败并通知用户清理。
 
@@ -201,7 +203,10 @@ uv run python scripts/lint.py ci
 uv run pytest tests/ -v
 
 # Console 后端测试
-(cd console && AGIWO_ROOT_PATH="$(pwd)/.agiwo" uv run pytest tests/ -v --tb=short)
+uv run python scripts/check.py console-tests
+
+# 推送前完整本地门禁
+uv run python scripts/check.py pre-push
 
 # Console 前端检查
 (cd console/web && npm run lint)

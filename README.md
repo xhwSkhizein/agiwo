@@ -328,6 +328,12 @@ The commit gate uses the CI-equivalent lightweight lint command:
 uv run python scripts/lint.py ci
 ```
 
+The push gate runs the full local verification workflow:
+
+```bash
+uv run python scripts/check.py pre-push
+```
+
 If the worktree is already dirty, lint only the files you touched:
 
 ```bash
@@ -338,7 +344,7 @@ Run tests:
 
 ```bash
 uv run pytest tests/ -v
-(cd console && uv run pytest tests/ -v)
+uv run python scripts/check.py console-tests
 ```
 
 ## Current Status
@@ -351,4 +357,4 @@ Areas that still change:
 - Scheduler orchestration edge cases and operator-facing controls
 - Trace query APIs and visualization
 
-If you are changing the architecture, update both [AGENTS.md](AGENTS.md) and this README so the repo-level guidance stays aligned with the code.
+If you are changing the architecture or developer workflow, update both [AGENTS.md](AGENTS.md) and this README so the repo-level guidance stays aligned with the code.
