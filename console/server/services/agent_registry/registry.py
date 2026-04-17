@@ -3,11 +3,11 @@
 from datetime import datetime
 
 from agiwo.llm.config_policy import validate_provider_model_params
-from agiwo.skill.manager import get_global_skill_manager
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from server.config import ConsoleConfig
 from server.models.agent_config import AgentOptionsInput, ModelParamsInput
+from server.services.agent_registry.defaults import build_default_agent_record
 from server.services.agent_registry.models import AgentConfigRecord
 from server.services.agent_registry.store import (
     AgentRegistryStore,
@@ -92,7 +92,7 @@ class AgentRegistry:
 
         if offset == 0:
             records = await store.list_agents(limit=max(limit - 1, 0), offset=0)
-            return [self._build_default_agent_record(), *records]
+            return [build_default_agent_record(self._config.default_agent), *records]
 
         return await store.list_agents(limit=limit, offset=offset - 1)
 
@@ -104,30 +104,9 @@ class AgentRegistry:
 
         # DB 中没有，检查是否是默认 Agent
         if agent_id == self._config.default_agent.id:
-            return self._build_default_agent_record()
+            return build_default_agent_record(self._config.default_agent)
 
         return None
-
-    def _build_default_agent_record(self) -> AgentConfigRecord:
-        """Build default agent from .env config (not persisted to DB)."""
-        template = self._config.default_agent
-        allowed_skills = get_global_skill_manager().expand_allowed_skills(
-            template.allowed_skills
-        )
-        return AgentConfigRecord(
-            id=template.id,
-            name=template.name,
-            description=template.description,
-            model_provider=template.model_provider,
-            model_name=template.model_name,
-            system_prompt=template.system_prompt,
-            allowed_tools=template.allowed_tools,
-            allowed_skills=allowed_skills,
-            options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
-            model_params=ModelParamsInput.model_validate(
-                template.model_params or {}
-            ).model_dump(exclude_none=True),
-        )
 
     async def get_agent_by_name(self, agent_name: str) -> AgentConfigRecord | None:
         """Get agent by name. Returns default agent from .env if not in DB."""
@@ -137,7 +116,7 @@ class AgentRegistry:
 
         # DB 中没有，检查是否是默认 Agent 的名称
         if agent_name == self._config.default_agent.name:
-            return self._build_default_agent_record()
+            return build_default_agent_record(self._config.default_agent)
 
         return None
 

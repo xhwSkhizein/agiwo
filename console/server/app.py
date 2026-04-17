@@ -20,7 +20,7 @@ from server.channels.utils import safe_close_all
 from server.channels.feishu import FeishuChannelService
 from server.services.session_store import create_session_store
 from server.config import ConsoleConfig
-from server.services.agent_registry import AgentRegistry
+from server.services.agent_registry import AgentRegistry, build_default_agent_record
 from server.services.runtime import AgentRuntimeCache
 from server.services.runtime_config import RuntimeConfigService
 from server.services.storage_wiring import (
@@ -85,7 +85,7 @@ async def lifespan(app: FastAPI):
         )
         if base_agent is None:
             # 使用 .env 中的默认 Agent（不持久化到 DB）
-            base_agent = agent_registry._build_default_agent_record()
+            base_agent = build_default_agent_record(config.default_agent)
             logger.info("using_default_agent_from_env", name=base_agent.name)
 
         feishu_channel_service = FeishuChannelService(
@@ -125,7 +125,9 @@ async def lifespan(app: FastAPI):
     closables: list[object] = []
     if feishu_channel_service is not None:
         closables.append(feishu_channel_service)
-    closables.extend([agent_runtime_cache, agent_registry, run_step_storage])
+    closables.extend(
+        [agent_runtime_cache, console_session_store, agent_registry, run_step_storage]
+    )
     if trace_storage is not None:
         closables.append(trace_storage)
     try:

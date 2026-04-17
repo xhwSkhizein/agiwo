@@ -198,6 +198,9 @@ class TestSQLiteAgentStateStorage:
             status=AgentStateStatus.WAITING,
             explain="waiting for child",
             pending_input="next input",
+            wake_count=2,
+            rollback_count=1,
+            no_progress=True,
             wake_condition=WakeCondition(
                 type=WakeType.WAITSET,
                 wait_for=["child-1"],
@@ -218,10 +221,26 @@ class TestSQLiteAgentStateStorage:
         assert retrieved.status == AgentStateStatus.WAITING
         assert retrieved.pending_input == "next input"
         assert retrieved.explain == "waiting for child"
+        assert retrieved.wake_count == 2
+        assert retrieved.rollback_count == 1
+        assert retrieved.no_progress is True
         assert retrieved.wake_condition is not None
         assert retrieved.wake_condition.completed_ids == ("child-1",)
         assert retrieved.last_run_result is not None
         assert retrieved.last_run_result.summary == "done"
+
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_save_and_get_round_trip_with_default_no_progress(self, tmp_path):
+        store = SQLiteAgentStateStorage(str(tmp_path / "scheduler.db"))
+        state = _make_state(id="sqlite-no-progress", no_progress=False)
+
+        await store.save_state(state)
+        retrieved = await store.get_state("sqlite-no-progress")
+
+        assert retrieved is not None
+        assert retrieved.no_progress is False
 
         await store.close()
 

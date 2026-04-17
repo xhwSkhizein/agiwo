@@ -1,5 +1,7 @@
 """Tests for scheduler context rollback — signal propagation and gating."""
 
+import pytest
+
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.run import RunLedger, RunOutput
 from agiwo.scheduler.commands import SleepRequest
@@ -10,6 +12,7 @@ from agiwo.scheduler.models import (
     WakeCondition,
     WakeType,
 )
+from agiwo.scheduler.store.sqlite import SQLiteAgentStateStorage
 
 
 class TestSleepRequestNoProgress:
@@ -76,6 +79,32 @@ class TestAgentOptionsRollbackConfig:
     def test_can_disable(self):
         opts = AgentOptions(enable_context_rollback=False)
         assert opts.enable_context_rollback is False
+
+
+class TestNoProgressPersistence:
+    @pytest.mark.asyncio
+    async def test_sqlite_round_trip_preserves_no_progress(self, tmp_path):
+        store = SQLiteAgentStateStorage(str(tmp_path / "scheduler.db"))
+        state = AgentState(
+            id="a1",
+            session_id="s1",
+            status=AgentStateStatus.WAITING,
+            task="root",
+            no_progress=True,
+            wake_condition=WakeCondition(
+                type=WakeType.PERIODIC,
+                time_value=60,
+                time_unit=TimeUnit.SECONDS,
+            ),
+        )
+
+        await store.save_state(state)
+        restored = await store.get_state("a1")
+
+        assert restored is not None
+        assert restored.no_progress is True
+
+        await store.close()
 
 
 class TestRunOutputMetadata:

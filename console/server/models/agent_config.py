@@ -28,6 +28,11 @@ class AgentOptionsInput(BaseModel):
     relevant_memory_max_token: int = Field(default=2048, ge=1)
     stream_cleanup_timeout: float = Field(default=300.0, gt=0)
     compact_prompt: str = ""
+    enable_context_rollback: bool = True
+    enable_tool_retrospect: bool = True
+    retrospect_token_threshold: int = Field(default=1024, ge=1)
+    retrospect_round_interval: int = Field(default=5, ge=1)
+    retrospect_accumulated_token_threshold: int = Field(default=8192, ge=1)
 
     @model_validator(mode="before")
     @classmethod

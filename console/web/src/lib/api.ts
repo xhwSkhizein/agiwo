@@ -456,6 +456,11 @@ export interface AgentOptionsPayload {
   relevant_memory_max_token: number;
   stream_cleanup_timeout: number;
   compact_prompt: string;
+  enable_context_rollback: boolean;
+  enable_tool_retrospect: boolean;
+  retrospect_token_threshold: number;
+  retrospect_round_interval: number;
+  retrospect_accumulated_token_threshold: number;
 }
 
 export interface ModelParamsPayload {
