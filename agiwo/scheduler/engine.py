@@ -219,10 +219,10 @@ class Scheduler:
                 f"Cannot submit concurrently. Use a different agent_id or enqueue_input()."
             )
 
-        runtime_agent = await self._ensure_root_runtime_agent(agent, agent.id)
+        await self._ensure_root_runtime_agent(agent, agent.id)
         resolved_session_id = session_id or str(uuid4())
         state = AgentState(
-            id=runtime_agent.id,
+            id=agent.id,
             session_id=resolved_session_id,
             status=AgentStateStatus.RUNNING,
             task=user_input,
@@ -727,6 +727,13 @@ class Scheduler:
         / ``trace_storage`` / workspace state across turns).  Otherwise we
         build a new runtime agent (clone + inject scheduler system tools),
         close the previous runtime agent, and record the new canonical.
+
+        Common same-``state_id`` races are already constrained by
+        ``submit()`` rejecting concurrent roots in ``ACTIVE_AGENT_STATUSES``
+        and by ``_cleanup_after_run()`` eagerly closing non-persistent roots.
+        A rare concurrent rebind/pop edge case would still need a per-state
+        runtime lock if future changes keep returned runtime-agent references
+        alive across canonical swaps.
         """
         cached_canonical = self._rt.canonical_agents.get(state_id)
         cached_runtime = self._rt.agents.get(state_id)
@@ -744,7 +751,7 @@ class Scheduler:
 
         self._rt.agents[state_id] = runtime_agent
         self._rt.canonical_agents[state_id] = canonical_agent
-        if cached_runtime is not None and cached_runtime is not runtime_agent:
+        if cached_runtime is not None:
             try:
                 await cached_runtime.close()
             except Exception:  # noqa: BLE001

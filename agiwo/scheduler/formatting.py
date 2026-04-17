@@ -134,7 +134,7 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
     events are rendered into the narrative text block; USER_HINT events
     contribute both text and non-text ``ContentPart`` entries.
     """
-    lines = [f"You have {len(events)} new notification(s):\n"]
+    lines = [f"You have {len(events)} new notification(s):", ""]
     extra_parts: list[ContentPart] = []
     channel_context: ChannelContext | None = None
     for event in events:
@@ -169,9 +169,11 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
                 )
             )
         elif event.event_type == SchedulerEventType.USER_HINT:
+            lines.append(header)
             hint_message = _decode_user_hint_message(event)
-            if hint_message is not None:
-                lines.append(header)
+            if hint_message is None:
+                lines.append("User hint: (undecodable payload)")
+            else:
                 for part in hint_message.content:
                     if part.type == ContentType.TEXT:
                         if part.text and part.text.strip():
@@ -180,7 +182,7 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
                         extra_parts.append(part)
                 if channel_context is None and hint_message.context is not None:
                     channel_context = hint_message.context
-                lines.append("")
+            lines.append("")
         else:
             lines.append(header)
             lines.append("")

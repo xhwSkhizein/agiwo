@@ -284,6 +284,7 @@ def test_build_events_message_preserves_multimodal_and_channel_context() -> None
 
     assert isinstance(merged, UserMessage)
     text = merged.extract_text()
+    assert text.startswith("You have 2 new notification(s):\n\n### User Hint")
     assert "User hint: see attachment" in text
     assert "Child Completed" in text
     assert any(p.type == ContentType.FILE for p in merged.content)
@@ -291,7 +292,7 @@ def test_build_events_message_preserves_multimodal_and_channel_context() -> None
     assert merged.context.source == "feishu"
 
 
-def test_build_events_message_skips_empty_user_hint_header() -> None:
+def test_build_events_message_marks_undecodable_user_hint() -> None:
     events = (
         PendingEvent(
             id="hint-empty",
@@ -315,5 +316,6 @@ def test_build_events_message_skips_empty_user_hint_header() -> None:
     merged = build_events_message(events)
 
     text = merged.extract_text()
-    assert "### User Hint - Agent: unknown" not in text
+    assert "### User Hint - Agent: unknown" in text
+    assert "User hint: (undecodable payload)" in text
     assert "### Child Completed - Agent: worker-1" in text

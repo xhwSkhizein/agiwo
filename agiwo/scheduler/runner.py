@@ -94,7 +94,11 @@ class SchedulerRunner:
                     session_id=state.resolve_runtime_session_id(),
                     abort_signal=abort_signal,
                 )
-                await self._handle_agent_output(action, output)
+                # ``_finalize_if_aborted_terminal()`` relies on the abort signal
+                # surviving until output handling finishes; the map entry is
+                # only removed in the ``finally`` block below via
+                # ``abort_signals.pop(...)``.
+                await self._handle_agent_output(action, output, abort_signal)
         except Exception as error:  # noqa: BLE001
             logger.exception(
                 "scheduler_dispatch_failed",
@@ -406,13 +410,14 @@ class SchedulerRunner:
         self,
         action: DispatchAction,
         output: RunOutput,
+        abort_signal: AbortSignal | None,
     ) -> None:
         state = action.state
         current_state = await self._ctx.store.get_state(state.id)
         if current_state is None:
             return
 
-        if await self._finalize_if_aborted_terminal(current_state):
+        if await self._finalize_if_aborted_terminal(current_state, abort_signal):
             return
 
         text = output.response
@@ -601,18 +606,27 @@ class SchedulerRunner:
     async def _finalize_if_aborted_terminal(
         self,
         state: AgentState,
+        abort_signal: AbortSignal | None,
     ) -> bool:
         """Finalize terminal aborted states before further result handling.
 
         Returns ``True`` when the caller should stop further result handling.
 
         - If the state is already terminal and aborted, preserve whatever
-          ``last_run_result`` was written by the cancel/shutdown path.
+          ``last_run_result`` was written by the cancel/shutdown path so
+          ``wait_for()`` can return immediately with ``SchedulerRunResult``
+          carrying ``termination_reason=CANCELLED``.
         - As a defensive fallback, if the terminal+aborted state has no
           ``last_run_result`` yet, write a ``CANCELLED`` record so that
           ``wait_for()`` returns promptly instead of waiting on timeout.
         """
-        abort_signal = self._ctx.rt.abort_signals.get(state.id)
+        cached_abort_signal = self._ctx.rt.abort_signals.get(state.id)
+        if abort_signal is None:
+            abort_signal = cached_abort_signal
+        elif cached_abort_signal is not None:
+            assert cached_abort_signal is abort_signal, (
+                "abort_signals cache diverged before output finalization"
+            )
         if not (
             state.is_terminal()
             and abort_signal is not None
