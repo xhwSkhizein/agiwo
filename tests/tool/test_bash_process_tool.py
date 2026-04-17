@@ -4,6 +4,8 @@ import pytest
 
 from agiwo.tool.base import ToolResult
 from agiwo.tool.builtin.bash_tool.process_tool import BashProcessTool
+from agiwo.tool.context import ToolContext
+from tests.utils.agent_context import build_tool_context
 
 pytest_plugins = ("tests.tool.bash_tool_test_support",)
 
@@ -355,3 +357,183 @@ class TestBashProcessToolDefaultConstruction:
         tool = BashProcessTool()
         assert tool.name == "bash_process"
         assert "background jobs" in tool.description
+        assert "this agent" in tool.description
+
+
+class TestBashProcessToolOwnerIsolation:
+    """Regression for Issue 1: bash_process must be agent-scoped."""
+
+    @pytest.fixture
+    def agent_b_context(self):
+        return build_tool_context(agent_id="agent_b", agent_name="agent_b")
+
+    async def test_jobs_excludes_other_agents(
+        self, bash_tool, bash_process_tool, mock_context, agent_b_context
+    ):
+        await bash_tool.execute(
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_iso_1"},
+            mock_context,
+        )
+
+        result = await bash_process_tool.execute(
+            {"action": "jobs", "tool_call_id": "tc_iso_2"},
+            agent_b_context,
+        )
+
+        assert result.output["ok"] is True
+        assert result.output["count"] == 0
+        assert "no jobs" in result.output["stdout"]
+
+    async def test_status_hides_other_agents_job(
+        self, bash_tool, bash_process_tool, mock_context, agent_b_context
+    ):
+        job_result = await bash_tool.execute(
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_iso_3"},
+            mock_context,
+        )
+        job_id = job_result.output["job_id"]
+
+        result = await bash_process_tool.execute(
+            {"action": "status", "job_id": job_id, "tool_call_id": "tc_iso_4"},
+            agent_b_context,
+        )
+
+        assert result.output["ok"] is False
+        assert result.output["exit_code"] == 1
+        assert "job not found" in result.output["stderr"]
+
+    async def test_stop_hides_other_agents_job(
+        self, bash_tool, bash_process_tool, mock_context, agent_b_context
+    ):
+        job_result = await bash_tool.execute(
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_iso_5"},
+            mock_context,
+        )
+        job_id = job_result.output["job_id"]
+
+        result = await bash_process_tool.execute(
+            {"action": "stop", "job_id": job_id, "tool_call_id": "tc_iso_6"},
+            agent_b_context,
+        )
+
+        assert result.output["ok"] is False
+        assert "job not found" in result.output["stderr"]
+        # Victim job still running (mock sandbox keeps state).
+        sandbox_record = bash_process_tool.config.sandbox._processes[job_id]
+        assert sandbox_record["state"] == "running"
+
+    async def test_paths_hides_other_agents_job(
+        self, bash_tool, bash_process_tool, mock_context, agent_b_context
+    ):
+        job_result = await bash_tool.execute(
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_iso_7"},
+            mock_context,
+        )
+        job_id = job_result.output["job_id"]
+
+        result = await bash_process_tool.execute(
+            {"action": "paths", "job_id": job_id, "tool_call_id": "tc_iso_8"},
+            agent_b_context,
+        )
+
+        assert result.output["ok"] is False
+        assert "job not found" in result.output["stderr"]
+
+    async def test_logs_hides_other_agents_job(
+        self, bash_tool, bash_process_tool, mock_context, agent_b_context
+    ):
+        job_result = await bash_tool.execute(
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_iso_9"},
+            mock_context,
+        )
+        job_id = job_result.output["job_id"]
+
+        result = await bash_process_tool.execute(
+            {"action": "logs", "job_id": job_id, "tool_call_id": "tc_iso_10"},
+            agent_b_context,
+        )
+
+        assert result.output["ok"] is False
+        assert "job not found" in result.output["stderr"]
+
+    async def test_input_hides_other_agents_job(
+        self, bash_tool, bash_process_tool, mock_context, agent_b_context
+    ):
+        job_result = await bash_tool.execute(
+            {
+                "command": "codex",
+                "pty": True,
+                "background": True,
+                "tool_call_id": "tc_iso_11",
+            },
+            mock_context,
+        )
+        job_id = job_result.output["job_id"]
+
+        result = await bash_process_tool.execute(
+            {
+                "action": "input",
+                "job_id": job_id,
+                "text": "hi",
+                "tool_call_id": "tc_iso_12",
+            },
+            agent_b_context,
+        )
+
+        assert result.output["ok"] is False
+        assert "job not found" in result.output["stderr"]
+        assert bash_process_tool.config.sandbox.stdin_writes == []
+
+    async def test_jobs_with_none_agent_id_lists_workspace_view(
+        self, bash_tool, bash_process_tool
+    ):
+        """Regression: ``context.agent_id is None`` is the admin/CLI path;
+        ``_jobs`` must fall back to ``list_processes()`` (workspace view)
+        instead of filtering by a literal ``None`` agent_id, otherwise admin
+        tools would never see any work.
+        """
+        ctx_a = build_tool_context(agent_id="agent_a", agent_name="agent_a")
+        ctx_b = build_tool_context(agent_id="agent_b", agent_name="agent_b")
+        await bash_tool.execute(
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_adm_1"},
+            ctx_a,
+        )
+        await bash_tool.execute(
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_adm_2"},
+            ctx_b,
+        )
+
+        admin_ctx = ToolContext(session_id="s", agent_id=None, agent_name=None)
+        result = await bash_process_tool.execute(
+            {"action": "jobs", "tool_call_id": "tc_adm_3"},
+            admin_ctx,
+        )
+
+        assert result.output["ok"] is True
+        assert result.output["count"] == 2
+        job_agents = {
+            bash_process_tool.config.sandbox._processes[j["process_id"]]["agent_id"]
+            for j in result.output["jobs"]
+        }
+        assert job_agents == {"agent_a", "agent_b"}
+
+    async def test_owner_can_still_operate(
+        self, bash_tool, bash_process_tool, mock_context
+    ):
+        job_result = await bash_tool.execute(
+            {"command": "sleep 10", "background": True, "tool_call_id": "tc_iso_13"},
+            mock_context,
+        )
+        job_id = job_result.output["job_id"]
+
+        status = await bash_process_tool.execute(
+            {"action": "status", "job_id": job_id, "tool_call_id": "tc_iso_14"},
+            mock_context,
+        )
+        stop = await bash_process_tool.execute(
+            {"action": "stop", "job_id": job_id, "tool_call_id": "tc_iso_15"},
+            mock_context,
+        )
+
+        assert status.output["ok"] is True
+        assert stop.output["ok"] is True

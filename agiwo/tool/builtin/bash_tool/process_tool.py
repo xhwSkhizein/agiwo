@@ -38,13 +38,22 @@ class BashLogsRequest:
 @default_enable
 @builtin_tool("bash_process")
 class BashProcessTool(BaseTool, AgentProcessRegistry):
-    """Manage background processes started by the bash tool."""
+    """Manage background processes started by the bash tool.
+
+    Owner boundary: every action is scoped to the caller's ``agent_id``
+    (``context.agent_id``). Cross-agent access returns ``job not found`` to
+    avoid leaking existence of other agents' jobs. The sandbox registry itself
+    is workspace-scoped; the scheduler uses :class:`AgentProcessRegistry` for
+    parent/child privileged inspection instead of this tool.
+    """
 
     name = "bash_process"
     description = (
-        "Manage background jobs started by the `bash` tool. "
-        "Choose an `action` to list jobs, inspect status, read logs, stop a job, "
-        "show log paths, or write stdin to a running PTY job."
+        "Manage background jobs started by this agent via the `bash` tool. "
+        "Jobs are scoped to the calling agent: you only see and control jobs "
+        "you started. Choose an `action` to list your jobs, inspect status, "
+        "read logs, stop a job, show log paths, or write stdin to a running "
+        "PTY job."
     )
     cacheable: bool = False
     timeout_seconds: int = 30
@@ -145,7 +154,7 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             )
 
         try:
-            return await handler(parameters, tool_call_id)
+            return await handler(parameters, context)
         except TimeoutError:
             return self._error(
                 parameters, "log retrieval timed out", tool_call_id=tool_call_id
@@ -167,8 +176,9 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         return [self._serialize_process(process) for process in processes]
 
     async def _jobs(
-        self, parameters: dict[str, Any], tool_call_id: str = ""
+        self, parameters: dict[str, Any], context: ToolContext
     ) -> ToolResult:
+        tool_call_id = context.tool_call_id
         running_only = self._parse_bool(parameters.get("running_only"))
         if parameters.get("running_only") is not None and running_only is None:
             return self._error(
@@ -179,7 +189,14 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             )
 
         state = "running" if running_only else "all"
-        jobs = await self.config.sandbox.list_processes(state=state)
+        # Agent-scoped listing: callers only see jobs they started. Admin/CLI
+        # contexts (agent_id is None) fall back to the workspace view.
+        if context.agent_id is None:
+            jobs = await self.config.sandbox.list_processes(state=state)
+        else:
+            jobs = await self.config.sandbox.list_processes_by_agent(
+                context.agent_id, state=state
+            )
         if not jobs:
             return self._ok(
                 parameters,
@@ -209,8 +226,9 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         )
 
     async def _status(
-        self, parameters: dict[str, Any], tool_call_id: str = ""
+        self, parameters: dict[str, Any], context: ToolContext
     ) -> ToolResult:
+        tool_call_id = context.tool_call_id
         job_id = self._require_job_id(parameters)
         if job_id is None:
             return self._error(
@@ -221,8 +239,12 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             )
 
         try:
-            status = await self.config.sandbox.get_process_status(job_id)
-            info = await self.config.sandbox.attach_process(job_id)
+            status = await self.config.sandbox.get_process_status(
+                job_id, owner_agent_id=context.agent_id
+            )
+            info = await self.config.sandbox.attach_process(
+                job_id, owner_agent_id=context.agent_id
+            )
         except KeyError:
             return self._error(
                 parameters,
@@ -256,8 +278,9 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         )
 
     async def _paths(
-        self, parameters: dict[str, Any], tool_call_id: str = ""
+        self, parameters: dict[str, Any], context: ToolContext
     ) -> ToolResult:
+        tool_call_id = context.tool_call_id
         job_id = self._require_job_id(parameters)
         if job_id is None:
             return self._error(
@@ -268,7 +291,9 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             )
 
         try:
-            logs = await self.config.sandbox.get_process_logs_info(job_id)
+            logs = await self.config.sandbox.get_process_logs_info(
+                job_id, owner_agent_id=context.agent_id
+            )
         except KeyError:
             return self._error(
                 parameters,
@@ -293,8 +318,9 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         )
 
     async def _stop(
-        self, parameters: dict[str, Any], tool_call_id: str = ""
+        self, parameters: dict[str, Any], context: ToolContext
     ) -> ToolResult:
+        tool_call_id = context.tool_call_id
         job_id = self._require_job_id(parameters)
         if job_id is None:
             return self._error(
@@ -315,7 +341,9 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
 
         signal_name = "KILL" if force else "TERM"
         try:
-            await self.config.sandbox.stop_process(job_id, signal=signal_name)
+            await self.config.sandbox.stop_process(
+                job_id, signal=signal_name, owner_agent_id=context.agent_id
+            )
         except KeyError:
             return self._error(
                 parameters,
@@ -333,8 +361,9 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         )
 
     async def _input(
-        self, parameters: dict[str, Any], tool_call_id: str = ""
+        self, parameters: dict[str, Any], context: ToolContext
     ) -> ToolResult:
+        tool_call_id = context.tool_call_id
         job_id = self._require_job_id(parameters)
         if job_id is None:
             return self._error(
@@ -367,7 +396,9 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
             data += "\n"
 
         try:
-            await self.config.sandbox.write_process_stdin(job_id, data)
+            await self.config.sandbox.write_process_stdin(
+                job_id, data, owner_agent_id=context.agent_id
+            )
         except KeyError:
             return self._error(
                 parameters,
@@ -389,14 +420,17 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
         )
 
     async def _logs(
-        self, parameters: dict[str, Any], tool_call_id: str = ""
+        self, parameters: dict[str, Any], context: ToolContext
     ) -> ToolResult:
+        tool_call_id = context.tool_call_id
         request = self._resolve_logs_request(parameters, tool_call_id=tool_call_id)
         if isinstance(request, ToolResult):
             return request
 
         try:
-            log_info = await self.config.sandbox.get_process_logs_info(request.job_id)
+            log_info = await self.config.sandbox.get_process_logs_info(
+                request.job_id, owner_agent_id=context.agent_id
+            )
         except KeyError:
             return self._error(
                 parameters,

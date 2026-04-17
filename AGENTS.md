@@ -90,7 +90,10 @@
 - `AgentTool` / `as_tool()` 属于 `agiwo.agent.nested.agent_tool`，并由 `Agent.as_tool()` 暴露；它是 agent runtime adapter，属于功能工具，受 `allowed_tools` 约束。
 - 生产代码统一通过 `ToolResult.success()/failed()/aborted()/denied()` 构造结果。
 - builtin tools 放在 `agiwo/tool/builtin/`，通过 `@builtin_tool(...)` 注册；`@default_enable` 控制默认自动启用。
-- `bash` 与 `bash_process` 是分离工具；后台任务的巡检/日志/停止/输入属于 `bash_process`。
+- `bash` 与 `bash_process` 是分离工具；后台任务的巡检/日志/停止/输入属于 `bash_process`，两者各自 `@default_enable`，`allowed_tools` 是唯一的开关，不会在 `ToolManager` 层做自动配对。
+- `bash_process` 的可见/可操作边界按 caller `context.agent_id` 隔离：跨 agent 访问统一返回 `job not found`，避免 id 枚举泄漏；sandbox registry 自身仍是 workspace 级共享资源。
+- Scheduler 需要 parent 视角看 child 的后台进程时走 `agiwo.tool.process.AgentProcessRegistry` protocol（由 `scheduler.tool_control.inspect_child_processes` 使用），不经过 `bash_process` action，因此不受 owner check 约束。
+- `ProcessRegistry.stop_process` 用 `os.killpg` 对整个进程组发信号并等待 leader 退出后再落盘 `state=exited`；所有 `start_process` 路径都带 `start_new_session=True` 以保证 `pgid == pid`。
 - 共享 MEMORY 检索统一通过 `agiwo.memory.WorkspaceMemoryService`，builtin retrieval tool 只是 adapter。
 - citation 等工具侧持久化在 `agiwo/tool/storage/citation/`。
 

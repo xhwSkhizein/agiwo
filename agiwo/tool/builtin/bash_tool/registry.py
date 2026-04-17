@@ -1,4 +1,11 @@
-"""Process registry for managing long-running processes."""
+"""Process registry for managing long-running processes.
+
+Ownership model:
+    Records carry ``agent_id`` from ``start_process``. All per-process
+    operations accept a keyword-only ``owner_agent_id`` and raise ``KeyError``
+    (indistinguishable from "not found") when the caller does not own the
+    record. ``owner_agent_id=None`` bypasses the check (admin/CLI path).
+"""
 
 import errno
 import json
@@ -7,6 +14,7 @@ import pty
 import signal
 import subprocess
 import threading
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -119,6 +127,9 @@ class ProcessRegistry:
         stderr_fp = open(stderr_path, "w")
 
         process_env = {**os.environ, **env} if env else None
+        # start_new_session=True makes the shell a session/process-group leader
+        # with pgid == pid, so stop_process can signal the whole group and avoid
+        # leaking reparented descendants (e.g. python -c 'subprocess.Popen(...)').
         process = subprocess.Popen(
             command,
             shell=True,
@@ -126,6 +137,7 @@ class ProcessRegistry:
             stderr=stderr_fp,
             cwd=cwd,
             env=process_env,
+            start_new_session=True,
         )
 
         record = ProcessRecord(
@@ -150,8 +162,8 @@ class ProcessRegistry:
 
     @staticmethod
     def _cleanup_pty_resources(
-        stdout_fp: Any,
-        stderr_fp: Any,
+        stdout_fp: IO[str],
+        stderr_fp: IO[str],
         master_fd: int | None,
         slave_fd: int | None,
     ) -> None:
@@ -241,22 +253,28 @@ class ProcessRegistry:
         self._save_registry()
         return process_id
 
-    def attach_process(self, process_id: str) -> ProcessInfo:
+    def attach_process(
+        self,
+        process_id: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> ProcessInfo:
         """Attach to an existing process.
 
         Args:
             process_id: Process ID to attach to.
+            owner_agent_id: Caller's agent id. ``None`` bypasses the owner
+                check (admin/CLI); otherwise the record's ``agent_id`` must
+                match.
 
         Returns:
             ProcessInfo with process metadata.
 
         Raises:
-            KeyError: If process not found.
+            KeyError: If the process does not exist or is not owned by the
+                caller (same exception to avoid id enumeration leakage).
         """
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-
-        record = self._processes[process_id]
+        record = self._require_record(process_id, owner_agent_id)
         self._update_process_status(record)
 
         return ProcessInfo(
@@ -268,22 +286,19 @@ class ProcessRegistry:
             exit_code=record.exit_code,
         )
 
-    def get_process_status(self, process_id: str) -> ProcessStatus:
+    def get_process_status(
+        self,
+        process_id: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> ProcessStatus:
         """Get status of a process.
 
-        Args:
-            process_id: Process ID to query.
-
-        Returns:
-            ProcessStatus with current state.
-
         Raises:
-            KeyError: If process not found.
+            KeyError: If the process does not exist or is not owned by the
+                caller.
         """
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-
-        record = self._processes[process_id]
+        record = self._require_record(process_id, owner_agent_id)
         self._update_process_status(record)
 
         return ProcessStatus(
@@ -294,60 +309,59 @@ class ProcessRegistry:
         )
 
     def stop_process(
-        self, process_id: str, signal_name: Literal["TERM", "KILL"]
+        self,
+        process_id: str,
+        signal_name: Literal["TERM", "KILL"],
+        *,
+        owner_agent_id: str | None = None,
     ) -> None:
-        """Stop a running process.
+        """Stop a running process (and its whole process group).
 
-        Args:
-            process_id: Process ID to stop.
-            signal_name: Signal to send ("TERM" or "KILL").
+        The pipe/pty launchers use ``start_new_session=True``, so the record's
+        ``pid`` is the process-group leader. This method signals the entire
+        group via :func:`os.killpg` and waits for the whole process group to
+        disappear before committing ``state = "exited"``. TERM escalates to
+        KILL after a grace period if any descendant refuses to die.
 
         Raises:
-            KeyError: If process not found.
+            KeyError: If the process does not exist or is not owned by the
+                caller.
         """
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-
-        record = self._processes[process_id]
+        record = self._require_record(process_id, owner_agent_id)
         self._update_process_status(record)
 
-        if record.state == "running":
-            sig = signal.SIGTERM if signal_name == "TERM" else signal.SIGKILL
-            process = self._process_refs.get(process_id)
+        if record.state != "running":
+            return
 
-            # Prefer stopping through in-memory Popen handle. Only fall back to raw PID
-            # if it is still the same OS process we originally started.
-            if process is None and not self._is_same_process(record):
-                record.state = "exited"
-                record.exit_code = -1
-                self._close_file_handles(process_id)
-                self._close_pty_handle(process_id)
-                self._save_registry()
-                return
+        sig = signal.SIGTERM if signal_name == "TERM" else signal.SIGKILL
+        process = self._process_refs.get(process_id)
 
-            try:
-                if process is not None:
-                    process.send_signal(sig)
-                else:
-                    os.kill(record.pid, sig)
-                record.state = "exited"
-                record.exit_code = -1
-                self._close_file_handles(process_id)
-                self._close_pty_handle(process_id)
-                self._save_registry()
-            except OSError:
-                record.state = "exited"
-                record.exit_code = -1
-                self._close_file_handles(process_id)
-                self._close_pty_handle(process_id)
-                self._save_registry()
+        # Without an in-memory handle, only trust the pid if start-time still
+        # matches. Otherwise another process may have reclaimed the pid.
+        if process is None and not self._is_same_process(record):
+            self._finalize_exited(record, process=None)
+            return
 
-    def write_process_stdin(self, process_id: str, data: str) -> None:
+        self._kill_process_group(record, sig)
+        group_exited = self._wait_for_process_group_exit(record, process)
+        if not group_exited and signal_name == "TERM":
+            self._kill_process_group(record, signal.SIGKILL)
+            group_exited = self._wait_for_process_group_exit(record, process)
+        if not group_exited:
+            raise RuntimeError(f"Process group did not exit: {process_id}")
+        if process is not None:
+            process.poll()
+        self._finalize_exited(record, process)
+
+    def write_process_stdin(
+        self,
+        process_id: str,
+        data: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> None:
         """Write stdin to a running PTY process."""
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-
-        record = self._processes[process_id]
+        record = self._require_record(process_id, owner_agent_id)
         self._update_process_status(record)
         if record.state != "running":
             raise RuntimeError(f"Process is not running: {process_id}")
@@ -415,27 +429,108 @@ class ProcessRegistry:
                 )
         return results
 
-    def get_process_logs_info(self, process_id: str) -> ProcessLogInfo:
+    def get_process_logs_info(
+        self,
+        process_id: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> ProcessLogInfo:
         """Get log file paths for a process.
 
-        Args:
-            process_id: Process ID to query.
-
-        Returns:
-            ProcessLogInfo with log file paths.
-
         Raises:
-            KeyError: If process not found.
+            KeyError: If the process does not exist or is not owned by the
+                caller.
         """
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-
-        record = self._processes[process_id]
+        record = self._require_record(process_id, owner_agent_id)
         return ProcessLogInfo(
             stdout_path=record.stdout_path,
             stderr_path=record.stderr_path,
             mode=record.mode,
         )
+
+    def _require_record(
+        self,
+        process_id: str,
+        owner_agent_id: str | None,
+    ) -> ProcessRecord:
+        """Look up a record and enforce the owner boundary.
+
+        ``owner_agent_id is None`` means the caller has no agent identity
+        (CLI, tests, admin); owner is not enforced in that case. Otherwise the
+        record's ``agent_id`` must match exactly; mismatch raises the same
+        ``KeyError`` as 'not found' to avoid leaking existence.
+        """
+        record = self._processes.get(process_id)
+        if record is None:
+            raise KeyError(f"Process not found: {process_id}")
+        if owner_agent_id is not None and record.agent_id != owner_agent_id:
+            raise KeyError(f"Process not found: {process_id}")
+        return record
+
+    def _kill_process_group(self, record: ProcessRecord, sig: int) -> None:
+        """Signal the record's process group; fall back to pid on OSError.
+
+        With ``start_new_session=True`` the leader's pgid equals its pid.
+        ``ProcessLookupError`` is treated as already-dead (idempotent).
+        """
+        try:
+            os.killpg(record.pid, sig)
+            return
+        except ProcessLookupError:
+            return
+        except OSError:
+            pass
+        try:
+            os.kill(record.pid, sig)
+        except OSError:
+            pass
+
+    @staticmethod
+    def _process_group_alive(pgid: int) -> bool:
+        """Return whether a process group still has live members."""
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return True
+        return True
+
+    def _wait_for_process_group_exit(
+        self,
+        record: ProcessRecord,
+        process: subprocess.Popen[Any] | None,
+        *,
+        timeout: float = 3.0,
+    ) -> bool:
+        """Block until the whole process group exits or ``timeout`` elapses."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if process is not None:
+                process.poll()
+            if not self._process_group_alive(record.pid):
+                return True
+            time.sleep(0.05)
+        if process is not None:
+            process.poll()
+        return not self._process_group_alive(record.pid)
+
+    def _finalize_exited(
+        self,
+        record: ProcessRecord,
+        process: subprocess.Popen[Any] | None,
+    ) -> None:
+        """Commit the exited state with a best-effort real exit code."""
+        record.state = "exited"
+        if process is not None and process.returncode is not None:
+            record.exit_code = process.returncode
+        else:
+            record.exit_code = -1
+        self._close_file_handles(record.process_id)
+        self._close_pty_handle(record.process_id)
+        self._save_registry()
 
     def _update_process_status(self, record: ProcessRecord) -> None:
         """Update process status by checking if still running."""

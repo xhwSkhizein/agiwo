@@ -108,7 +108,7 @@ Agiwo includes these tools out of the box:
 | Tool | Description |
 |------|-------------|
 | `bash` | Execute shell commands with security sandboxing |
-| `bash_process` | Manage long-running background processes (inspect logs, stop, send input) |
+| `bash_process` | Manage background jobs started by the calling agent (inspect logs, stop, send input). Owner-scoped: each agent only sees and controls its own jobs; the scheduler uses a separate `AgentProcessRegistry` path for parent-level inspection. |
 | `web_search` | Search the web via multiple search engines |
 | `web_reader` | Fetch and extract readable content from URLs (supports lightweight fetch plus browser fallback) |
 | `memory_retrieval` | Hybrid BM25 + vector search over MEMORY/ files |
