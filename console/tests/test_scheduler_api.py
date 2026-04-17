@@ -24,7 +24,7 @@ from agiwo.scheduler.models import (
     WakeType,
     TimeUnit,
 )
-from agiwo.agent import TerminationReason
+from agiwo.agent import TerminationReason, UserMessage
 from agiwo.scheduler.engine import Scheduler
 
 from server.app import create_app
@@ -244,7 +244,7 @@ async def _seed_tree_states(client: AsyncClient) -> None:
             target_agent_id="root-tree",
             session_id="sess-tree",
             event_type=SchedulerEventType.USER_HINT,
-            payload={"hint": "Root hint"},
+            payload={"user_input": UserMessage.to_storage_value("Root hint")},
             created_at=base_time.replace(minute=10),
         ),
         PendingEvent(
@@ -261,7 +261,7 @@ async def _seed_tree_states(client: AsyncClient) -> None:
             target_agent_id="child-running",
             session_id="sess-tree",
             event_type=SchedulerEventType.USER_HINT,
-            payload={"hint": "Second hint"},
+            payload={"user_input": UserMessage.to_storage_value("Second hint")},
             created_at=base_time.replace(minute=12),
         ),
         PendingEvent(
@@ -269,7 +269,7 @@ async def _seed_tree_states(client: AsyncClient) -> None:
             target_agent_id="grandchild-completed",
             session_id="sess-tree",
             event_type=SchedulerEventType.USER_HINT,
-            payload={"hint": "Nested hint"},
+            payload={"user_input": UserMessage.to_storage_value("Nested hint")},
             created_at=base_time.replace(minute=13),
         ),
     ]

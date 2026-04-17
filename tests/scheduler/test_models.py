@@ -1,6 +1,8 @@
 """Tests for scheduler data models."""
 
+import copy
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 
 from agiwo.agent import TerminationReason
 from agiwo.scheduler.models import (
@@ -232,6 +234,68 @@ class TestPendingEvent:
         assert event.event_type == SchedulerEventType.CHILD_COMPLETED
         assert event.payload["result"] == "done"
         assert event.source_agent_id == "child-agent"
+        assert event.urgent is False
+
+    def test_urgent_flag_defaults_false_and_can_be_set(self):
+        now = datetime.now(timezone.utc)
+        urgent_event = PendingEvent(
+            id="evt-u",
+            target_agent_id="root",
+            session_id="sess",
+            event_type=SchedulerEventType.USER_HINT,
+            payload={"user_input": "hi"},
+            created_at=now,
+            urgent=True,
+        )
+        normal_event = PendingEvent(
+            id="evt-n",
+            target_agent_id="root",
+            session_id="sess",
+            event_type=SchedulerEventType.USER_HINT,
+            payload={"user_input": "hi"},
+            created_at=now,
+        )
+        assert urgent_event.urgent is True
+        assert normal_event.urgent is False
+
+
+class TestMappingProxyDeepcopy:
+    """Regression guard against the old ``copy._deepcopy_dispatch`` hack."""
+
+    def test_agent_state_deepcopy_preserves_frozen_mapping(self):
+        state = AgentState(
+            id="deep-1",
+            session_id="sess",
+            status=AgentStateStatus.RUNNING,
+            task="task",
+            config_overrides={"nested": {"key": "value"}, "list": [1, 2]},
+        )
+        cloned = copy.deepcopy(state)
+        assert cloned is not state
+        assert cloned.config_overrides["nested"]["key"] == "value"
+        assert tuple(cloned.config_overrides["list"]) == (1, 2)
+
+    def test_pending_event_deepcopy_preserves_payload(self):
+        now = datetime.now(timezone.utc)
+        event = PendingEvent(
+            id="deep-2",
+            target_agent_id="root",
+            session_id="sess",
+            event_type=SchedulerEventType.USER_HINT,
+            payload={"user_input": "hi", "nested": {"k": "v"}},
+            created_at=now,
+        )
+        cloned = copy.deepcopy(event)
+        assert cloned is not event
+        assert cloned.payload["user_input"] == "hi"
+        assert cloned.payload["nested"]["k"] == "v"
+
+    def test_mapping_proxy_not_in_global_dispatch(self):
+        """The scheduler.models import must not mutate ``copy._deepcopy_dispatch``."""
+        # Importing models already triggered any side effects; the dispatch
+        # table should not carry a scheduler-specific handler anymore.
+        dispatch = getattr(copy, "_deepcopy_dispatch", {})
+        assert MappingProxyType not in dispatch
 
 
 class TestSchedulerConfig:

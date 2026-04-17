@@ -12,6 +12,7 @@ from agiwo.agent import Agent
 from agiwo.agent import AgentConfig, AgentOptions
 from agiwo.agent import AgentHooks
 from agiwo.agent import AgentStreamItem, RunCompletedEvent, TerminationReason
+from agiwo.agent import ChannelContext, ContentPart, ContentType
 from agiwo.agent.models.step import MessageRole, StepRecord, UserMessage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.llm.base import Model, StreamChunk
@@ -1096,6 +1097,32 @@ class TestSchedulerCancel:
             s = await store.get_state(sid)
             assert s.status == AgentStateStatus.FAILED
             assert s.result_summary == "test cancel"
+            assert s.last_run_result is not None
+            assert s.last_run_result.termination_reason == TerminationReason.CANCELLED
+            assert s.last_run_result.error == "test cancel"
+
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_cancel_releases_wait_for_immediately(self):
+        """wait_for() must return promptly with CANCELLED once cancel completes."""
+        scheduler = Scheduler(_fast_config())
+        store = scheduler._store
+
+        root = AgentState(
+            id="wait-cancel",
+            session_id="sess",
+            status=AgentStateStatus.RUNNING,
+            task="root",
+            parent_id=None,
+        )
+        await store.save_state(root)
+
+        await scheduler.cancel("wait-cancel", "stop it")
+
+        output = await scheduler.wait_for("wait-cancel", timeout=2.0)
+        assert output.termination_reason == TerminationReason.CANCELLED
+        assert output.error == "stop it"
 
         await scheduler.stop()
 
@@ -1172,7 +1199,7 @@ class TestSchedulerDebounce:
             target_agent_id="agent-running",
             session_id="sess",
             event_type=SchedulerEventType.USER_HINT,
-            payload={"hint": "check this"},
+            payload={"user_input": UserMessage.to_storage_value("check this")},
             source_agent_id=None,
             created_at=datetime.now(timezone.utc),
         )
@@ -1294,7 +1321,7 @@ class TestSchedulerDebounce:
                 target_agent_id="parent-timeout",
                 session_id="sess",
                 event_type=SchedulerEventType.USER_HINT,
-                payload={"hint": "still here"},
+                payload={"user_input": UserMessage.to_storage_value("still here")},
                 source_agent_id=None,
                 created_at=datetime.now(timezone.utc),
             )
@@ -1418,3 +1445,220 @@ class TestSchedulerWaiters:
         assert first.termination_reason == TerminationReason.COMPLETED
         assert second.termination_reason == TerminationReason.COMPLETED
         assert first.response == second.response
+
+
+class TestSchedulerSteer:
+    @pytest.mark.asyncio
+    async def test_steer_urgent_writes_urgent_pending_event(self):
+        """steer(..., urgent=True) on WAITING state must set PendingEvent.urgent."""
+        scheduler = Scheduler(_fast_config())
+        await scheduler._store.save_state(
+            AgentState(
+                id="waiting-root",
+                session_id="sess",
+                status=AgentStateStatus.WAITING,
+                task="root",
+                parent_id=None,
+            )
+        )
+
+        ok = await scheduler.steer("waiting-root", "please continue", urgent=True)
+        assert ok is True
+
+        events = await scheduler._store.list_events(
+            target_agent_id="waiting-root",
+            session_id="sess",
+        )
+        assert len(events) == 1
+        event = events[0]
+        assert event.event_type == SchedulerEventType.USER_HINT
+        assert event.urgent is True
+        # Payload uses the new structured ``user_input`` key only.
+        assert "hint" not in event.payload
+        decoded = UserMessage.from_storage_value(event.payload["user_input"])
+        assert UserMessage.from_value(decoded).extract_text() == "please continue"
+
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_steer_defaults_to_non_urgent(self):
+        scheduler = Scheduler(_fast_config())
+        await scheduler._store.save_state(
+            AgentState(
+                id="waiting-root",
+                session_id="sess",
+                status=AgentStateStatus.WAITING,
+                task="root",
+                parent_id=None,
+            )
+        )
+
+        await scheduler.steer("waiting-root", "just a hint")
+
+        events = await scheduler._store.list_events(
+            target_agent_id="waiting-root",
+            session_id="sess",
+        )
+        assert len(events) == 1
+        assert events[0].urgent is False
+
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_steer_preserves_structured_user_input(self):
+        """Multimodal UserMessage must round-trip through the PendingEvent payload."""
+        scheduler = Scheduler(_fast_config())
+        await scheduler._store.save_state(
+            AgentState(
+                id="waiting-root",
+                session_id="sess",
+                status=AgentStateStatus.WAITING,
+                task="root",
+                parent_id=None,
+            )
+        )
+
+        user_input = UserMessage(
+            content=[
+                ContentPart(type=ContentType.TEXT, text="look at this image"),
+                ContentPart(
+                    type=ContentType.IMAGE,
+                    url="/tmp/image.png",
+                    mime_type="image/png",
+                    metadata={"name": "image.png"},
+                ),
+            ],
+            context=ChannelContext(source="feishu", metadata={"chat_id": "oc-1"}),
+        )
+
+        await scheduler.steer("waiting-root", user_input, urgent=True)
+
+        events = await scheduler._store.list_events(
+            target_agent_id="waiting-root",
+            session_id="sess",
+        )
+        assert len(events) == 1
+        payload_user_input = events[0].payload["user_input"]
+        decoded = UserMessage.from_value(
+            UserMessage.from_storage_value(payload_user_input)
+        )
+        # Text, image, and ChannelContext must all survive persistence.
+        assert decoded.extract_text() == "look at this image"
+        image_parts = [p for p in decoded.content if p.type == ContentType.IMAGE]
+        assert len(image_parts) == 1
+        assert image_parts[0].url == "/tmp/image.png"
+        assert decoded.context is not None
+        assert decoded.context.source == "feishu"
+        assert decoded.context.metadata["chat_id"] == "oc-1"
+
+        await scheduler.stop()
+
+
+class TestSchedulerRuntimeAgentReuse:
+    @pytest.mark.asyncio
+    async def test_persistent_root_reuses_runtime_agent_across_turns(self):
+        """Persistent roots must preserve their run_step_storage across turns.
+
+        This guards against the earlier bug where ``submit`` / ``enqueue_input``
+        cloned the ``Agent`` on every call and, under the default in-memory
+        storage backend, silently lost prior step history.
+        """
+        async with Scheduler(_fast_config()) as scheduler:
+            model = MockModel(
+                [
+                    _simple_completion("first response"),
+                    _simple_completion("second response"),
+                ]
+            )
+            canonical = _make_agent(
+                name="persist",
+                model=model,
+                id="persist",
+                tools=[],
+            )
+
+            state_id = await scheduler.submit(
+                canonical,
+                "first turn",
+                session_id="sess-persist",
+                persistent=True,
+            )
+            first_output = await scheduler.wait_for(state_id, timeout=_TEST_RUN_TIMEOUT)
+            assert first_output.termination_reason == TerminationReason.COMPLETED
+            runtime_after_first = scheduler.get_registered_agent(state_id)
+            assert runtime_after_first is not None
+
+            storage_after_first = runtime_after_first.run_step_storage
+            steps_after_first = await storage_after_first.get_steps(
+                session_id="sess-persist",
+                agent_id=state_id,
+            )
+
+            await scheduler.enqueue_input(
+                state_id,
+                "second turn",
+                agent=canonical,
+            )
+            second_output = await scheduler.wait_for(
+                state_id, timeout=_TEST_RUN_TIMEOUT
+            )
+            assert second_output.termination_reason == TerminationReason.COMPLETED
+
+            runtime_after_second = scheduler.get_registered_agent(state_id)
+            # Strict reuse: same Python runtime agent, same storage instance.
+            assert runtime_after_second is runtime_after_first
+            assert runtime_after_second.run_step_storage is storage_after_first
+
+            steps_after_second = await storage_after_first.get_steps(
+                session_id="sess-persist",
+                agent_id=state_id,
+            )
+            assert len(steps_after_second) > len(steps_after_first)
+
+    @pytest.mark.asyncio
+    async def test_non_persistent_root_closed_after_terminal(self):
+        """Non-persistent roots must be popped + closed after reaching terminal."""
+        async with Scheduler(_fast_config()) as scheduler:
+            model = MockModel([_simple_completion("ok")])
+            agent = _make_agent(name="simple", model=model, id="simple", tools=[])
+
+            state_id = await scheduler.submit(agent, "hello")
+            output = await scheduler.wait_for(state_id, timeout=_TEST_RUN_TIMEOUT)
+            assert output.termination_reason == TerminationReason.COMPLETED
+
+            # Allow _cleanup_after_run to run.
+            await asyncio.sleep(_TEST_SETTLE_WAIT)
+
+            assert scheduler.get_registered_agent(state_id) is None
+            assert state_id not in scheduler._rt.agents
+            assert state_id not in scheduler._rt.canonical_agents
+            assert state_id not in scheduler._rt.execution_handles
+
+    @pytest.mark.asyncio
+    async def test_rebind_replaces_runtime_agent(self):
+        """Passing a different canonical Agent to rebind must refresh the runtime."""
+        async with Scheduler(_fast_config()) as scheduler:
+            model_one = MockModel([_simple_completion("first")])
+            first_canonical = _make_agent(
+                name="persist", model=model_one, id="persist", tools=[]
+            )
+            state_id = await scheduler.submit(
+                first_canonical,
+                "first",
+                session_id="sess-rebind",
+                persistent=True,
+            )
+            await scheduler.wait_for(state_id, timeout=_TEST_RUN_TIMEOUT)
+
+            first_runtime = scheduler.get_registered_agent(state_id)
+
+            model_two = MockModel([_simple_completion("second")])
+            second_canonical = _make_agent(
+                name="persist", model=model_two, id="persist", tools=[]
+            )
+            rebound = await scheduler.rebind_agent(state_id, second_canonical)
+            assert rebound is True
+
+            new_runtime = scheduler.get_registered_agent(state_id)
+            assert new_runtime is not None
+            assert new_runtime is not first_runtime

@@ -154,16 +154,16 @@ def plan_tick(
                 continue
 
         key = (state.id, state.session_id)
-        if key in debounced_targets:
-            grouped_events = tuple(event_groups.get(key, []))
-            if grouped_events:
-                actions.append(
-                    DispatchAction(
-                        state=state,
-                        reason=DispatchReason.WAKE_EVENTS,
-                        events=grouped_events,
-                    )
+        grouped_events = tuple(event_groups.get(key, []))
+        has_urgent_event = any(event.urgent for event in grouped_events)
+        if grouped_events and (has_urgent_event or key in debounced_targets):
+            actions.append(
+                DispatchAction(
+                    state=state,
+                    reason=DispatchReason.WAKE_EVENTS,
+                    events=grouped_events,
                 )
+            )
 
     return actions
 

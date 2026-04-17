@@ -5,10 +5,9 @@ This module owns the persisted scheduler state snapshot plus related enums and
 configuration models.
 """
 
-import copy
 from collections.abc import Collection, Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
@@ -22,12 +21,20 @@ from agiwo.skill.allowlist import (
 
 
 def _deepcopy_mapping_proxy(
-    x: MappingProxyType, memo: dict[int, Any]
+    value: MappingProxyType, memo: dict[int, object]
 ) -> MappingProxyType:
-    return MappingProxyType(deepcopy(dict(x), memo))
+    """Deepcopy helper for ``MappingProxyType``.
 
-
-copy._deepcopy_dispatch[MappingProxyType] = _deepcopy_mapping_proxy
+    Python 3.10 / 3.11 cannot natively ``deepcopy`` a ``MappingProxyType``
+    (support landed in 3.12).  We handle it explicitly inside the
+    ``__deepcopy__`` methods of the data classes that carry frozen proxies,
+    rather than mutating the global ``copy._deepcopy_dispatch`` table.
+    Nested values are routed through :func:`_deepcopy_frozen_field` so that
+    inner ``MappingProxyType`` / ``tuple`` structures are cloned correctly.
+    """
+    return MappingProxyType(
+        {key: _deepcopy_frozen_field(item, memo) for key, item in value.items()}
+    )
 
 
 class AgentStateStatus(str, Enum):
@@ -119,6 +126,35 @@ def thaw_value(value: object) -> object:
     if isinstance(value, tuple):
         return [thaw_value(item) for item in value]
     return value
+
+
+def _deepcopy_frozen_field(value: object, memo: dict[int, object]) -> object:
+    """Deepcopy a field, handling ``MappingProxyType`` / frozen tuples explicitly.
+
+    The stdlib ``deepcopy`` cannot clone ``MappingProxyType`` on Python 3.10
+    / 3.11, and frozen tuples may contain further ``MappingProxyType`` items
+    after ``_freeze_value`` normalization.  This helper recurses through
+    both structures so that we do not need the old global
+    ``copy._deepcopy_dispatch`` monkey-patch.
+    """
+    if isinstance(value, MappingProxyType):
+        return _deepcopy_mapping_proxy(value, memo)
+    if isinstance(value, tuple):
+        return tuple(_deepcopy_frozen_field(item, memo) for item in value)
+    return deepcopy(value, memo)
+
+
+def _deepcopy_dataclass_with_frozen_mappings(
+    instance: object, memo: dict[int, object]
+) -> object:
+    """Deepcopy helper for frozen-slots dataclasses carrying ``MappingProxyType``."""
+    cls = type(instance)
+    new = cls.__new__(cls)
+    memo[id(instance)] = new
+    for f in fields(instance):
+        cloned = _deepcopy_frozen_field(getattr(instance, f.name), memo)
+        object.__setattr__(new, f.name, cloned)
+    return new
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +293,9 @@ class AgentState:
             if isinstance(self.config_overrides, MappingProxyType)
             else _freeze_value(self.config_overrides),
         )
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "AgentState":
+        return _deepcopy_dataclass_with_frozen_mappings(self, memo)  # type: ignore[return-value]
 
     @property
     def is_root(self) -> bool:
@@ -402,7 +441,12 @@ class AgentState:
 
 @dataclass(frozen=True, slots=True)
 class PendingEvent:
-    """An event in an agent's pending event queue."""
+    """An event in an agent's pending event queue.
+
+    ``urgent`` marks events that must bypass tick-level debounce (e.g. a
+    user-initiated steer to a WAITING root). Non-urgent events continue to
+    follow the normal ``event_debounce_*`` rules.
+    """
 
     id: str
     target_agent_id: str
@@ -411,6 +455,7 @@ class PendingEvent:
     payload: Mapping[str, Any]
     created_at: datetime
     source_agent_id: str | None = None
+    urgent: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -420,6 +465,9 @@ class PendingEvent:
             if isinstance(self.payload, MappingProxyType)
             else _freeze_value(self.payload),
         )
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "PendingEvent":
+        return _deepcopy_dataclass_with_frozen_mappings(self, memo)  # type: ignore[return-value]
 
     def with_payload(self, payload: Mapping[str, Any]) -> "PendingEvent":
         return replace(self, payload=_freeze_value(payload))
@@ -440,6 +488,9 @@ class AgentStateStorageConfig:
             if isinstance(self.config, MappingProxyType)
             else _freeze_value(self.config),
         )
+
+    def __deepcopy__(self, memo: dict[int, object]) -> "AgentStateStorageConfig":
+        return _deepcopy_dataclass_with_frozen_mappings(self, memo)  # type: ignore[return-value]
 
 
 @dataclass(frozen=True, slots=True)
