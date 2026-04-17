@@ -376,6 +376,25 @@ export function AgentForm({
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const setBoundedIntegerField = (
+    key:
+      | "retrospectTokenThreshold"
+      | "retrospectRoundInterval"
+      | "retrospectAccumulatedTokenThreshold",
+    rawValue: string,
+    min: number,
+    max: number,
+  ) => {
+    if (rawValue.trim() === "") {
+      return;
+    }
+    const parsed = Number.parseInt(rawValue, 10);
+    if (Number.isNaN(parsed)) {
+      return;
+    }
+    setField(key, Math.min(max, Math.max(min, parsed)));
+  };
+
   const toggleTool = (toolName: string) => {
     setLocalError(null);
     setForm((prev) => ({
@@ -814,7 +833,12 @@ export function AgentForm({
                 type="number"
                 value={form.retrospectTokenThreshold}
                 onChange={(event) =>
-                  setField("retrospectTokenThreshold", Number(event.target.value))
+                  setBoundedIntegerField(
+                    "retrospectTokenThreshold",
+                    event.target.value,
+                    1,
+                    131072,
+                  )
                 }
                 min={1}
                 max={131072}
@@ -832,7 +856,12 @@ export function AgentForm({
                 type="number"
                 value={form.retrospectRoundInterval}
                 onChange={(event) =>
-                  setField("retrospectRoundInterval", Number(event.target.value))
+                  setBoundedIntegerField(
+                    "retrospectRoundInterval",
+                    event.target.value,
+                    1,
+                    100,
+                  )
                 }
                 min={1}
                 max={100}
@@ -850,9 +879,11 @@ export function AgentForm({
                 type="number"
                 value={form.retrospectAccumulatedTokenThreshold}
                 onChange={(event) =>
-                  setField(
+                  setBoundedIntegerField(
                     "retrospectAccumulatedTokenThreshold",
-                    Number(event.target.value),
+                    event.target.value,
+                    1,
+                    262144,
                   )
                 }
                 min={1}

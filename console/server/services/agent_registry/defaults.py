@@ -24,7 +24,7 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
             list(template.allowed_tools) if template.allowed_tools is not None else None
         ),
         allowed_skills=allowed_skills,
-        options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
+        options=AgentOptionsInput().model_dump(exclude_none=True),
         model_params=ModelParamsInput.model_validate(
             template.model_params or {}
         ).model_dump(exclude_none=True),
