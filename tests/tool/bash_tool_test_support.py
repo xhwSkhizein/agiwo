@@ -103,10 +103,21 @@ class MockSandbox:
         }
         return process_id
 
-    async def attach_process(self, process_id: str) -> ProcessInfo:
-        if process_id not in self._processes:
+    def _require_owned(self, process_id: str, owner_agent_id: str | None) -> dict:
+        process = self._processes.get(process_id)
+        if process is None:
             raise KeyError(f"Process not found: {process_id}")
-        process = self._processes[process_id]
+        if owner_agent_id is not None and process.get("agent_id") != owner_agent_id:
+            raise KeyError(f"Process not found: {process_id}")
+        return process
+
+    async def attach_process(
+        self,
+        process_id: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> ProcessInfo:
+        process = self._require_owned(process_id, owner_agent_id)
         return ProcessInfo(
             process_id=process_id,
             command=process["command"],
@@ -116,10 +127,13 @@ class MockSandbox:
             exit_code=process["exit_code"],
         )
 
-    async def get_process_status(self, process_id: str) -> ProcessStatus:
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-        process = self._processes[process_id]
+    async def get_process_status(
+        self,
+        process_id: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> ProcessStatus:
+        process = self._require_owned(process_id, owner_agent_id)
         return ProcessStatus(
             state=process["state"],
             mode=process["mode"],
@@ -127,11 +141,16 @@ class MockSandbox:
             exit_code=process["exit_code"],
         )
 
-    async def stop_process(self, process_id: str, signal: str = "TERM") -> None:
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-        self._processes[process_id]["state"] = "exited"
-        self._processes[process_id]["exit_code"] = -9 if signal == "KILL" else -15
+    async def stop_process(
+        self,
+        process_id: str,
+        signal: str = "TERM",
+        *,
+        owner_agent_id: str | None = None,
+    ) -> None:
+        process = self._require_owned(process_id, owner_agent_id)
+        process["state"] = "exited"
+        process["exit_code"] = -9 if signal == "KILL" else -15
 
     async def list_processes(self, state: str = "all") -> list[ProcessInfo]:
         results = []
@@ -173,19 +192,28 @@ class MockSandbox:
             )
         return results
 
-    async def get_process_logs_info(self, process_id: str) -> ProcessLogInfo:
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
+    async def get_process_logs_info(
+        self,
+        process_id: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> ProcessLogInfo:
+        process = self._require_owned(process_id, owner_agent_id)
         return ProcessLogInfo(
             stdout_path=f"/tmp/{process_id}.stdout",
             stderr_path=f"/tmp/{process_id}.stderr",
-            mode=self._processes[process_id]["mode"],
+            mode=process["mode"],
         )
 
-    async def write_process_stdin(self, process_id: str, data: str) -> None:
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-        if self._processes[process_id]["mode"] != "pty":
+    async def write_process_stdin(
+        self,
+        process_id: str,
+        data: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> None:
+        process = self._require_owned(process_id, owner_agent_id)
+        if process["mode"] != "pty":
             raise RuntimeError("Process does not support stdin writes (not PTY mode)")
         self.stdin_writes.append({"process_id": process_id, "data": data})
 

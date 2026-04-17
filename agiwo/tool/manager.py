@@ -12,7 +12,6 @@ from agiwo.tool.builtin.registry import (
     DEFAULT_TOOLS,
     ensure_builtin_tools_loaded,
 )
-from agiwo.tool.builtin.bash_tool import ensure_bash_tool_pair
 from agiwo.tool.reference import (
     AgentToolReference,
     BuiltinToolReference,
@@ -437,16 +436,14 @@ class ToolManager:
         return result
 
     def _finalize_tools(self, tools: list[BaseTool]) -> tuple[BaseTool, ...]:
-        """Apply final consistency checks and return immutable tuple.
+        """Return an immutable tuple of resolved tool instances.
 
-        Args:
-            tools: List of tool instances
-
-        Returns:
-            Finalized tuple of tool instances
+        ``bash`` and ``bash_process`` are independent default-enabled builtins
+        and must not be auto-paired here: an explicit ``allowed_tools=['bash']``
+        must really return only ``bash``, otherwise the ``allowed_tools``
+        capability boundary would be violated.
         """
-        resolved = ensure_bash_tool_pair(tools)
-        return tuple(resolved)
+        return tuple(tools)
 
     def render_tools_section(self, allowed_tools: list[str] | None = None) -> str:
         """Render a markdown section describing available tools.

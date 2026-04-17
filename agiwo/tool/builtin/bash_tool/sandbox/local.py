@@ -410,21 +410,43 @@ class LocalSandbox(Sandbox):
             pty_rows=pty_rows,
         )
 
-    async def attach_process(self, process_id: str) -> ProcessInfo:
-        return self._registry.attach_process(process_id)
+    async def attach_process(
+        self,
+        process_id: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> ProcessInfo:
+        return self._registry.attach_process(process_id, owner_agent_id=owner_agent_id)
 
-    async def get_process_status(self, process_id: str) -> ProcessStatus:
-        return self._registry.get_process_status(process_id)
+    async def get_process_status(
+        self,
+        process_id: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> ProcessStatus:
+        return self._registry.get_process_status(
+            process_id, owner_agent_id=owner_agent_id
+        )
 
-    async def stop_process(self, process_id: str, signal: str = "TERM") -> None:
-        self._registry.stop_process(process_id, signal)
+    async def stop_process(
+        self,
+        process_id: str,
+        signal: str = "TERM",
+        *,
+        owner_agent_id: str | None = None,
+    ) -> None:
+        self._registry.stop_process(process_id, signal, owner_agent_id=owner_agent_id)
 
     async def write_process_stdin(
         self,
         process_id: str,
         data: str,
+        *,
+        owner_agent_id: str | None = None,
     ) -> None:
-        self._registry.write_process_stdin(process_id, data)
+        self._registry.write_process_stdin(
+            process_id, data, owner_agent_id=owner_agent_id
+        )
 
     async def list_processes(
         self,
@@ -439,8 +461,15 @@ class LocalSandbox(Sandbox):
     ) -> list[ProcessInfo]:
         return self._registry.list_processes_by_agent(agent_id, state)
 
-    async def get_process_logs_info(self, process_id: str) -> ProcessLogInfo:
-        return self._registry.get_process_logs_info(process_id)
+    async def get_process_logs_info(
+        self,
+        process_id: str,
+        *,
+        owner_agent_id: str | None = None,
+    ) -> ProcessLogInfo:
+        return self._registry.get_process_logs_info(
+            process_id, owner_agent_id=owner_agent_id
+        )
 
     def _build_env(self, extra_env: dict[str, str] | None) -> dict[str, str] | None:
         """Merge extra environment variables with current process environment."""

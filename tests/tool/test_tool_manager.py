@@ -288,16 +288,15 @@ class TestMergeTools:
 class TestFinalizeTools:
     """Test _finalize_tools method."""
 
-    @patch("agiwo.tool.manager.ensure_bash_tool_pair")
-    def test_finalize_calls_bash_pair(self, mock_ensure, tool_manager):
-        """Should call ensure_bash_tool_pair for consistency."""
-        tools = [Mock(name="tool1")]
-        mock_ensure.return_value = tools
+    def test_finalize_returns_tuple_without_mutation(self, tool_manager):
+        """``_finalize_tools`` must not silently inject tools; allowlist is
+        the sole gate (no more ensure_bash_tool_pair auto-pairing)."""
+        a = Mock(spec=BaseTool)
+        a.name = "bash"
+        result = tool_manager._finalize_tools([a])
 
-        result = tool_manager._finalize_tools(tools)
-
-        mock_ensure.assert_called_once_with(tools)
-        assert result == tuple(tools)
+        assert isinstance(result, tuple)
+        assert result == (a,)
 
 
 class TestNormalizeAllowedTools:
@@ -336,9 +335,33 @@ class TestGetToolsIntegration:
     def test_get_tools_explicit_allowlist(self, tool_manager):
         """Get tools with explicit allowlist."""
         tools = tool_manager.get_tools(allowed_tools=["bash"])
-        assert len(tools) >= 1  # At least bash (bash_process may be auto-added)
         tool_names = {t.name for t in tools}
         assert "bash" in tool_names
+
+    def test_get_tools_allowlist_excludes_bash_process(self, tool_manager):
+        """Regression for Issue 3: allowed_tools=['bash'] must NOT auto-add
+        bash_process, otherwise the allowlist boundary is bypassed."""
+        tools = tool_manager.get_tools(allowed_tools=["bash"])
+        tool_names = {t.name for t in tools}
+        assert "bash_process" not in tool_names
+
+    def test_get_tools_allowlist_excludes_bash_when_only_bash_process(
+        self, tool_manager
+    ):
+        """Symmetric case: allowed_tools=['bash_process'] must NOT drag bash
+        along. Previously ``ensure_bash_tool_pair`` auto-added the sibling in
+        both directions."""
+        tools = tool_manager.get_tools(allowed_tools=["bash_process"])
+        tool_names = {t.name for t in tools}
+        assert "bash_process" in tool_names
+        assert "bash" not in tool_names
+
+    def test_get_tools_defaults_include_both_bash_tools(self, tool_manager):
+        """When allowed_tools=None, both builtins are default-enabled."""
+        tools = tool_manager.get_tools(allowed_tools=None)
+        tool_names = {t.name for t in tools}
+        assert "bash" in tool_names
+        assert "bash_process" in tool_names
 
     def test_get_tools_empty_allowlist(self, tool_manager):
         """Empty allowlist should return no builtin tools."""
