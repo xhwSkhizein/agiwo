@@ -22,7 +22,7 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: uv sync
@@ -52,7 +52,7 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: uv sync
@@ -72,7 +72,7 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: cd console && uv sync
@@ -117,7 +117,7 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: uv sync
@@ -140,7 +140,7 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: cd console && uv sync

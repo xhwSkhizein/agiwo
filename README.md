@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <a href="https://github.com/xhwSkhizein/agiwo/actions/workflows/ci.yml">
     <img src="https://github.com/xhwSkhizein/agiwo/actions/workflows/ci.yml/badge.svg" alt="CI">

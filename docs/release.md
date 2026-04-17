@@ -30,7 +30,7 @@ Do not publish releases with bare tags like `0.1.0`.
 3. Publish the release.
 4. Open the `Release Publish` workflow in GitHub Actions and confirm all jobs succeed.
 
-The GitHub Release tag is the single version source for package publishing. The workflow normalizes the `v` tag, rewrites the package metadata in CI to match the release version, builds both packages, runs the release smoke checks, publishes `agiwo`, and then publishes `agiwo-console`.
+The GitHub Release tag is the single version source for package publishing. The workflow normalizes the `v` tag, rewrites the package metadata in CI to match the release version, builds both packages, runs the release smoke checks on Python 3.10, publishes `agiwo`, and then publishes `agiwo-console`.
 
 You do not need to manually edit the package version in `pyproject.toml` or `console/pyproject.toml` before creating the release.
 

@@ -1050,7 +1050,7 @@ def _detect_import_from_errors(path: Path, node: ast.ImportFrom) -> list[GuardEr
                         "AGW010",
                         (
                             "Do not use `from __future__ import annotations`; "
-                            "the project standard is Python 3.11+ native annotations."
+                            "the project standard is Python 3.10+ native annotations."
                         ),
                     )
                 )

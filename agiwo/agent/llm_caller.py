@@ -90,11 +90,12 @@ async def stream_assistant_step(
     try:
         while True:
             try:
-                async with asyncio.timeout(_CHUNK_TIMEOUT_SECONDS):
-                    chunk = await stream.__anext__()
+                chunk = await asyncio.wait_for(
+                    stream.__anext__(), timeout=_CHUNK_TIMEOUT_SECONDS
+                )
             except StopAsyncIteration:
                 break
-            except TimeoutError as exc:
+            except asyncio.TimeoutError as exc:
                 raise TimeoutError(
                     f"LLM stream stalled: no chunk received for {_CHUNK_TIMEOUT_SECONDS}s"
                 ) from exc

@@ -1,19 +1,113 @@
+import ast
 import re
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
 
 VERSION_PATTERN = re.compile(r"^(version\s*=\s*)(['\"])([^'\"]+)(['\"])$", re.MULTILINE)
 CONSOLE_DEP_PATTERN = re.compile(r"agiwo\s*~=\s*\d+\.\d+\.\d+")
 
 
 def load_project(pyproject_path: Path) -> dict[str, object]:
-    with pyproject_path.open("rb") as file:
-        data = tomllib.load(file)
+    if tomllib is not None:
+        with pyproject_path.open("rb") as file:
+            data = tomllib.load(file)
+    else:
+        data = _load_project_fallback(pyproject_path)
     project = data.get("project")
     if not isinstance(project, dict):
         raise SystemExit(f"Missing [project] table in {pyproject_path}")
     return project
+
+
+def _load_project_fallback(pyproject_path: Path) -> dict[str, object]:
+    content = pyproject_path.read_text(encoding="utf-8")
+    return {"project": _parse_project_table(content, pyproject_path)}
+
+
+def _parse_project_table(content: str, pyproject_path: Path) -> dict[str, object]:
+    project_lines = _extract_project_lines(content, pyproject_path)
+
+    project: dict[str, object] = {}
+    idx = 0
+    while idx < len(project_lines):
+        line = project_lines[idx].strip()
+        if not line or line.startswith("#"):
+            idx += 1
+            continue
+        if "=" not in line:
+            raise SystemExit(f"Unsupported TOML syntax in {pyproject_path}: {line}")
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value_parts, idx = _collect_value_parts(
+            project_lines, idx, value.strip(), pyproject_path
+        )
+        parsed_value = _parse_toml_value(" ".join(value_parts), pyproject_path)
+        project[key] = parsed_value
+        idx += 1
+
+    return project
+
+
+def _extract_project_lines(content: str, pyproject_path: Path) -> list[str]:
+    in_project = False
+    project_lines: list[str] = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if stripped == "[project]":
+                in_project = True
+                continue
+            if in_project:
+                break
+        if in_project:
+            project_lines.append(line)
+    if not in_project:
+        raise SystemExit(f"Missing [project] table in {pyproject_path}")
+    return project_lines
+
+
+def _collect_value_parts(
+    project_lines: list[str],
+    idx: int,
+    initial_value: str,
+    pyproject_path: Path,
+) -> tuple[list[str], int]:
+    value_parts = [initial_value]
+    if not initial_value.startswith("["):
+        return value_parts, idx
+
+    while value_parts[-1] and not value_parts[-1].rstrip().endswith("]"):
+        idx += 1
+        if idx >= len(project_lines):
+            raise SystemExit(f"Unterminated TOML array in {pyproject_path}")
+        value_parts.append(project_lines[idx].strip())
+    return value_parts, idx
+
+
+def _parse_toml_value(value: str, pyproject_path: Path) -> object:
+    normalized = value.strip()
+    if normalized.startswith("["):
+        try:
+            parsed = ast.literal_eval(normalized)
+        except (SyntaxError, ValueError) as exc:
+            raise SystemExit(f"Unsupported TOML array value in {pyproject_path}") from exc
+        if not isinstance(parsed, list):
+            raise SystemExit(f"Expected TOML array value in {pyproject_path}")
+        return parsed
+    if normalized.startswith(("'", '"')):
+        try:
+            parsed = ast.literal_eval(normalized)
+        except (SyntaxError, ValueError) as exc:
+            raise SystemExit(f"Unsupported TOML string value in {pyproject_path}") from exc
+        if not isinstance(parsed, str):
+            raise SystemExit(f"Expected TOML string value in {pyproject_path}")
+        return parsed
+    return normalized
 
 
 def parse_release_version(release_version: str) -> tuple[str, str, str]:
