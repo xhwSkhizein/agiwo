@@ -69,8 +69,7 @@ def _validate_feishu_config(config: ConsoleConfig) -> None:
         missing.append("AGIWO_CONSOLE_FEISHU_DEFAULT_AGENT_NAME")
     if missing:
         raise RuntimeError(
-            "Feishu channel enabled but missing required config: "
-            + ", ".join(missing)
+            "Feishu channel enabled but missing required config: " + ", ".join(missing)
         )
 
 
