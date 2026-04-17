@@ -45,6 +45,11 @@ type AgentFormState = {
   relevantMemoryMaxToken: number;
   streamCleanupTimeout: number;
   compactPrompt: string;
+  enableContextRollback: boolean;
+  enableToolRetrospect: boolean;
+  retrospectTokenThreshold: number;
+  retrospectRoundInterval: number;
+  retrospectAccumulatedTokenThreshold: number;
   maxOutputTokens: number;
   maxContextWindow: number;
   temperature: number;
@@ -76,6 +81,11 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   relevantMemoryMaxToken: 2048,
   streamCleanupTimeout: 300,
   compactPrompt: "",
+  enableContextRollback: true,
+  enableToolRetrospect: true,
+  retrospectTokenThreshold: 1024,
+  retrospectRoundInterval: 5,
+  retrospectAccumulatedTokenThreshold: 8192,
   maxOutputTokens: 4096,
   maxContextWindow: 200000,
   temperature: 0.7,
@@ -130,6 +140,12 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     relevantMemoryMaxToken: agent.options?.relevant_memory_max_token ?? 2048,
     streamCleanupTimeout: agent.options?.stream_cleanup_timeout ?? 300,
     compactPrompt: agent.options?.compact_prompt ?? "",
+    enableContextRollback: agent.options?.enable_context_rollback ?? true,
+    enableToolRetrospect: agent.options?.enable_tool_retrospect ?? true,
+    retrospectTokenThreshold: agent.options?.retrospect_token_threshold ?? 1024,
+    retrospectRoundInterval: agent.options?.retrospect_round_interval ?? 5,
+    retrospectAccumulatedTokenThreshold:
+      agent.options?.retrospect_accumulated_token_threshold ?? 8192,
     maxOutputTokens: agent.model_params?.max_output_tokens ?? 4096,
     maxContextWindow: agent.model_params?.max_context_window ?? 200000,
     temperature: agent.model_params?.temperature ?? 0.7,
@@ -360,6 +376,25 @@ export function AgentForm({
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const setBoundedIntegerField = (
+    key:
+      | "retrospectTokenThreshold"
+      | "retrospectRoundInterval"
+      | "retrospectAccumulatedTokenThreshold",
+    rawValue: string,
+    min: number,
+    max: number,
+  ) => {
+    if (rawValue.trim() === "") {
+      return;
+    }
+    const parsed = Number.parseInt(rawValue, 10);
+    if (Number.isNaN(parsed)) {
+      return;
+    }
+    setField(key, Math.min(max, Math.max(min, parsed)));
+  };
+
   const toggleTool = (toolName: string) => {
     setLocalError(null);
     setForm((prev) => ({
@@ -424,6 +459,12 @@ export function AgentForm({
         relevant_memory_max_token: form.relevantMemoryMaxToken,
         stream_cleanup_timeout: form.streamCleanupTimeout,
         compact_prompt: form.compactPrompt,
+        enable_context_rollback: form.enableContextRollback,
+        enable_tool_retrospect: form.enableToolRetrospect,
+        retrospect_token_threshold: form.retrospectTokenThreshold,
+        retrospect_round_interval: form.retrospectRoundInterval,
+        retrospect_accumulated_token_threshold:
+          form.retrospectAccumulatedTokenThreshold,
       },
       model_params: {
         base_url: form.baseUrl.trim() === "" ? null : form.baseUrl.trim(),
@@ -453,7 +494,9 @@ export function AgentForm({
   const openCompatibilitySection = compatibilityRequired || hasCompatibilitySettings;
   const openWorkflowSection =
     form.terminationSummaryPrompt.trim() !== "" ||
-    form.compactPrompt.trim() !== "";
+    form.compactPrompt.trim() !== "" ||
+    !form.enableContextRollback ||
+    !form.enableToolRetrospect;
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
@@ -759,6 +802,97 @@ export function AgentForm({
             placeholder="Optional compact prompt"
           />
         </Field>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <ToggleCard
+            id={fieldId("enable-context-rollback")}
+            label="Enable Context Rollback"
+            description="Drop no-progress periodic rounds so long-running loops do not keep useless context."
+            checked={form.enableContextRollback}
+            onChange={(checked) => setField("enableContextRollback", checked)}
+          />
+
+          <ToggleCard
+            id={fieldId("enable-tool-retrospect")}
+            label="Enable Tool Retrospect"
+            description="Condense bulky tool outputs before they start dominating the prompt window."
+            checked={form.enableToolRetrospect}
+            onChange={(checked) => setField("enableToolRetrospect", checked)}
+          />
+        </div>
+
+        {form.enableToolRetrospect && (
+          <div className="grid gap-4 md:grid-cols-3">
+            <Field
+              id={fieldId("retrospect-token-threshold")}
+              label="Retrospect Token Threshold"
+              hint="Retrospect once a single tool result exceeds this token estimate."
+            >
+              <input
+                id={fieldId("retrospect-token-threshold")}
+                type="number"
+                value={form.retrospectTokenThreshold}
+                onChange={(event) =>
+                  setBoundedIntegerField(
+                    "retrospectTokenThreshold",
+                    event.target.value,
+                    1,
+                    131072,
+                  )
+                }
+                min={1}
+                max={131072}
+                className="ui-input"
+              />
+            </Field>
+
+            <Field
+              id={fieldId("retrospect-round-interval")}
+              label="Retrospect Round Interval"
+              hint="Force a retrospect pass every N rounds when tool usage keeps growing."
+            >
+              <input
+                id={fieldId("retrospect-round-interval")}
+                type="number"
+                value={form.retrospectRoundInterval}
+                onChange={(event) =>
+                  setBoundedIntegerField(
+                    "retrospectRoundInterval",
+                    event.target.value,
+                    1,
+                    100,
+                  )
+                }
+                min={1}
+                max={100}
+                className="ui-input"
+              />
+            </Field>
+
+            <Field
+              id={fieldId("retrospect-accumulated-token-threshold")}
+              label="Retrospect Accumulated Token Threshold"
+              hint="Retrospect once multiple tool results together exceed this token estimate."
+            >
+              <input
+                id={fieldId("retrospect-accumulated-token-threshold")}
+                type="number"
+                value={form.retrospectAccumulatedTokenThreshold}
+                onChange={(event) =>
+                  setBoundedIntegerField(
+                    "retrospectAccumulatedTokenThreshold",
+                    event.target.value,
+                    1,
+                    262144,
+                  )
+                }
+                min={1}
+                max={262144}
+                className="ui-input"
+              />
+            </Field>
+          </div>
+        )}
       </DisclosureSection>
 
       <DisclosureSection

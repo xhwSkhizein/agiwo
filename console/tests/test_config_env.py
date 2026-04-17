@@ -3,7 +3,9 @@ from pydantic import ValidationError
 
 import agiwo.agent.agent as agent_module
 import agiwo.skill as skill_module
+import server.services.agent_registry.defaults as registry_defaults_module
 import server.services.agent_registry.models as registry_models_module
+from agiwo.agent.models.config import AgentOptions as SDKAgentOptions
 from agiwo.agent import AgentOptions
 from agiwo.llm.base import Model
 from agiwo.llm.openai import OpenAIModel
@@ -14,13 +16,17 @@ import server.services.runtime.agent_factory as agent_factory_module
 from server.config import ConsoleConfig, DefaultAgentConfig
 from server.models.agent_config import AgentOptionsInput
 from server.models.view import AgentConfigPayload
+from server.services.agent_registry import (
+    AgentConfigRecord,
+    AgentRegistry,
+    build_default_agent_record as build_registry_default_agent_record,
+)
 from server.services.runtime.agent_factory import (
     agent_options_input_to_agent_options,
     build_agent,
     build_default_agent_record,
     build_model,
 )
-from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.storage_wiring import (
     build_run_step_storage_config,
     build_trace_storage_config,
@@ -87,7 +93,7 @@ def stub_skill_manager(monkeypatch: pytest.MonkeyPatch) -> DummySkillManager:
         lambda: manager,
     )
     monkeypatch.setattr(
-        agent_factory_module,
+        registry_defaults_module,
         "get_global_skill_manager",
         lambda: manager,
     )
@@ -244,6 +250,11 @@ def test_agent_options_input_maps_all_fields() -> None:
             "relevant_memory_max_token": 1024,
             "stream_cleanup_timeout": 90.5,
             "compact_prompt": "Compact the context",
+            "enable_context_rollback": False,
+            "enable_tool_retrospect": False,
+            "retrospect_token_threshold": 2049,
+            "retrospect_round_interval": 7,
+            "retrospect_accumulated_token_threshold": 16384,
         }
     )
     options = agent_options_input_to_agent_options(
@@ -262,6 +273,53 @@ def test_agent_options_input_maps_all_fields() -> None:
     assert options.relevant_memory_max_token == 1024
     assert options.stream_cleanup_timeout == 90.5
     assert options.compact_prompt == "Compact the context"
+    assert options.enable_context_rollback is False
+    assert options.enable_tool_retrospect is False
+    assert options.retrospect_token_threshold == 2049
+    assert options.retrospect_round_interval == 7
+    assert options.retrospect_accumulated_token_threshold == 16384
+
+
+def test_console_agent_options_input_matches_sdk_agent_options() -> None:
+    expected = set(SDKAgentOptions.model_fields) - {"storage"}
+    actual = set(AgentOptionsInput.model_fields)
+    assert actual == expected
+
+
+@pytest.mark.asyncio
+async def test_default_agent_record_is_consistent_across_entrypoints(
+    stub_skill_manager: DummySkillManager,
+) -> None:
+    del stub_skill_manager
+    config = ConsoleConfig(
+        run_step_storage_type="memory",
+        trace_storage_type="memory",
+        metadata_storage_type="memory",
+        default_agent={
+            "model_provider": "openai",
+            "model_name": "gpt-4o-mini",
+            "allowed_tools": None,
+            "allowed_skills": ["alpha", "beta"],
+            "model_params": {"max_output_tokens": 128},
+        },
+    )
+    registry = AgentRegistry(config)
+    await registry.initialize()
+    try:
+        shared = build_registry_default_agent_record(config.default_agent)
+        runtime = build_default_agent_record(config.default_agent)
+        by_id = await registry.get_agent(config.default_agent.id)
+        by_name = await registry.get_agent_by_name(config.default_agent.name)
+    finally:
+        await registry.close()
+
+    exclude_timestamps = {"created_at", "updated_at"}
+    shared_payload = shared.model_dump(exclude=exclude_timestamps)
+    assert runtime.model_dump(exclude=exclude_timestamps) == shared_payload
+    assert by_id is not None
+    assert by_name is not None
+    assert by_id.model_dump(exclude=exclude_timestamps) == shared_payload
+    assert by_name.model_dump(exclude=exclude_timestamps) == shared_payload
 
 
 def test_console_tool_catalog_parses_builtin_and_agent_refs() -> None:

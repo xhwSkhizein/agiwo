@@ -11,14 +11,17 @@ from agiwo.llm import create_model_from_dict
 from agiwo.llm.base import Model
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import AgentState
-from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
 from agiwo.tool.manager import get_global_tool_manager
 from agiwo.tool.reference import AgentToolReference
 
 from server.config import ConsoleConfig, DefaultAgentConfig
 from server.models.agent_config import AgentOptionsInput, ModelParamsInput
-from server.services.agent_registry import AgentConfigRecord, AgentRegistry
+from server.services.agent_registry import (
+    AgentConfigRecord,
+    AgentRegistry,
+    build_default_agent_record as _build_default_agent_record,
+)
 from server.services.storage_wiring import (
     build_citation_store_config,
     build_run_step_storage_config,
@@ -59,29 +62,7 @@ def agent_options_input_to_agent_options(
 
 
 def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecord:
-    allowed_skills = get_global_skill_manager().expand_allowed_skills(
-        template.allowed_skills
-    )
-    # Expand default tools using ToolManager
-    tool_manager = get_global_tool_manager()
-    default_tools = tool_manager.list_default_tool_names()
-    allowed_tools = (
-        default_tools
-        if template.allowed_tools is None
-        else list(template.allowed_tools)
-    )
-    return AgentConfigRecord(
-        id=template.id,
-        name=template.name,
-        description=template.description,
-        model_provider=template.model_provider,
-        model_name=template.model_name,
-        system_prompt=template.system_prompt,
-        allowed_tools=allowed_tools,
-        allowed_skills=allowed_skills,
-        options=AgentOptionsInput.model_validate({}).model_dump(exclude_none=True),
-        model_params=dict(template.model_params),
-    )
+    return _build_default_agent_record(template)
 
 
 def build_model(config: AgentConfigRecord) -> Model:

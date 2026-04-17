@@ -81,6 +81,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                     depth INTEGER DEFAULT 0,
                     wake_count INTEGER DEFAULT 0,
                     rollback_count INTEGER DEFAULT 0,
+                    no_progress INTEGER DEFAULT 0,
                     agent_config_id TEXT,
                     explain TEXT,
                     created_at TEXT NOT NULL,
@@ -159,6 +160,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             depth=row.get("depth", 0) or 0,
             wake_count=row.get("wake_count", 0) or 0,
             rollback_count=row.get("rollback_count", 0) or 0,
+            no_progress=bool(row.get("no_progress", 0)),
             explain=row.get("explain"),
             last_run_result=last_run_result,
             created_at=datetime.fromisoformat(row["created_at"]),
@@ -216,8 +218,8 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                  last_run_id, last_run_termination_reason, last_run_summary, last_run_error,
                  last_run_completed_at,
                  signal_propagated, is_persistent, depth, wake_count, rollback_count,
-                 agent_config_id, explain, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 no_progress, agent_config_id, explain, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 state.id,
@@ -239,6 +241,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 state.depth,
                 state.wake_count,
                 state.rollback_count,
+                1 if state.no_progress else 0,
                 state.agent_config_id,
                 state.explain,
                 state.created_at.isoformat(),
