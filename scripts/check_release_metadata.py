@@ -95,7 +95,9 @@ def _parse_toml_value(value: str, pyproject_path: Path) -> object:
         try:
             parsed = ast.literal_eval(normalized)
         except (SyntaxError, ValueError) as exc:
-            raise SystemExit(f"Unsupported TOML array value in {pyproject_path}") from exc
+            raise SystemExit(
+                f"Unsupported TOML array value in {pyproject_path}"
+            ) from exc
         if not isinstance(parsed, list):
             raise SystemExit(f"Expected TOML array value in {pyproject_path}")
         return parsed
@@ -103,7 +105,9 @@ def _parse_toml_value(value: str, pyproject_path: Path) -> object:
         try:
             parsed = ast.literal_eval(normalized)
         except (SyntaxError, ValueError) as exc:
-            raise SystemExit(f"Unsupported TOML string value in {pyproject_path}") from exc
+            raise SystemExit(
+                f"Unsupported TOML string value in {pyproject_path}"
+            ) from exc
         if not isinstance(parsed, str):
             raise SystemExit(f"Expected TOML string value in {pyproject_path}")
         return parsed
