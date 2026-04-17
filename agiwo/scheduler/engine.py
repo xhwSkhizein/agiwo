@@ -742,12 +742,11 @@ class Scheduler:
         )
         runtime_agent._inject_system_tools(list(self._scheduling_tools))
 
-        previous_runtime = self._rt.agents.get(state_id)
         self._rt.agents[state_id] = runtime_agent
         self._rt.canonical_agents[state_id] = canonical_agent
-        if previous_runtime is not None and previous_runtime is not runtime_agent:
+        if cached_runtime is not None and cached_runtime is not runtime_agent:
             try:
-                await previous_runtime.close()
+                await cached_runtime.close()
             except Exception:  # noqa: BLE001
                 logger.exception(
                     "scheduler_root_runtime_agent_close_failed",

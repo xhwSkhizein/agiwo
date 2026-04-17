@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- Scheduler upgrade note: `PendingEvent.USER_HINT` payloads are now stored as `{"user_input": UserMessage.to_storage_value(...)}` instead of the legacy plain-text shape.
+
+### Upgrade Notes
+- Scheduler SQLite users must recreate `scheduler.db` before upgrading to builds that add `PendingEvent.urgent` and the structured `PendingEvent.USER_HINT` payload. Existing `pending_events` tables created by older versions do not have the new `urgent` column, so the first scheduler `save_event()` write will fail with `no column named urgent`. Delete `scheduler.db`, or back it up and recreate it, before starting the upgraded build.
+
 ### Added
 - Comprehensive English documentation (`docs/`)
 - MIT License

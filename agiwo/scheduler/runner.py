@@ -412,7 +412,7 @@ class SchedulerRunner:
         if current_state is None:
             return
 
-        if await self._maybe_preserve_or_finalize_aborted_terminal(current_state):
+        if await self._finalize_if_aborted_terminal(current_state):
             return
 
         text = output.response
@@ -598,11 +598,11 @@ class SchedulerRunner:
                 failed[child_id] = f"Not finished: status={child.status.value}"
         return succeeded, failed
 
-    async def _maybe_preserve_or_finalize_aborted_terminal(
+    async def _finalize_if_aborted_terminal(
         self,
         state: AgentState,
     ) -> bool:
-        """Short-circuit when a state is already terminal due to abort.
+        """Finalize terminal aborted states before further result handling.
 
         Returns ``True`` when the caller should stop further result handling.
 

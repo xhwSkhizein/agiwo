@@ -289,3 +289,31 @@ def test_build_events_message_preserves_multimodal_and_channel_context() -> None
     assert any(p.type == ContentType.FILE for p in merged.content)
     assert merged.context is not None
     assert merged.context.source == "feishu"
+
+
+def test_build_events_message_skips_empty_user_hint_header() -> None:
+    events = (
+        PendingEvent(
+            id="hint-empty",
+            target_agent_id="root",
+            session_id="sess",
+            event_type=SchedulerEventType.USER_HINT,
+            payload={},
+            created_at=datetime.now(timezone.utc),
+        ),
+        PendingEvent(
+            id="child-1",
+            target_agent_id="root",
+            session_id="sess",
+            event_type=SchedulerEventType.CHILD_COMPLETED,
+            payload={"result": "done", "child_agent_id": "worker-1"},
+            created_at=datetime.now(timezone.utc),
+            source_agent_id="worker-1",
+        ),
+    )
+
+    merged = build_events_message(events)
+
+    text = merged.extract_text()
+    assert "### User Hint - Agent: unknown" not in text
+    assert "### Child Completed - Agent: worker-1" in text

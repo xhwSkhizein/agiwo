@@ -142,8 +142,9 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
         child_id = event.payload.get(
             "child_agent_id", event.source_agent_id or "unknown"
         )
-        lines.append(f"### {event_label} - Agent: {child_id}")
+        header = f"### {event_label} - Agent: {child_id}"
         if event.event_type == SchedulerEventType.CHILD_SLEEP_RESULT:
+            lines.append(header)
             lines.extend(
                 build_child_result_detail_lines(
                     result=event.payload.get("result", ""),
@@ -153,6 +154,7 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
                 )
             )
         elif event.event_type == SchedulerEventType.CHILD_COMPLETED:
+            lines.append(header)
             lines.extend(
                 build_child_result_detail_lines(
                     result=event.payload.get("result", ""),
@@ -160,6 +162,7 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
                 )
             )
         elif event.event_type == SchedulerEventType.CHILD_FAILED:
+            lines.append(header)
             lines.extend(
                 build_child_result_detail_lines(
                     failure_reason=event.payload.get("reason", "Unknown failure")
@@ -168,6 +171,7 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
         elif event.event_type == SchedulerEventType.USER_HINT:
             hint_message = _decode_user_hint_message(event)
             if hint_message is not None:
+                lines.append(header)
                 for part in hint_message.content:
                     if part.type == ContentType.TEXT:
                         if part.text and part.text.strip():
@@ -176,7 +180,13 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
                         extra_parts.append(part)
                 if channel_context is None and hint_message.context is not None:
                     channel_context = hint_message.context
-        lines.append("")
+                lines.append("")
+        else:
+            lines.append(header)
+            lines.append("")
+            continue
+        if event.event_type != SchedulerEventType.USER_HINT:
+            lines.append("")
     lines.append(
         "Please review these notifications and take appropriate action "
         "(e.g., summarize results for the user, cancel stuck agents, etc.)."

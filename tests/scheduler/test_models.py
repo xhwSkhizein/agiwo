@@ -294,7 +294,8 @@ class TestMappingProxyDeepcopy:
         """The scheduler.models import must not mutate ``copy._deepcopy_dispatch``."""
         # Importing models already triggered any side effects; the dispatch
         # table should not carry a scheduler-specific handler anymore.
-        assert MappingProxyType not in copy._deepcopy_dispatch
+        dispatch = getattr(copy, "_deepcopy_dispatch", {})
+        assert MappingProxyType not in dispatch
 
 
 class TestSchedulerConfig:
