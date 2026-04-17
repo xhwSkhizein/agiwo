@@ -1,4 +1,5 @@
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -11,7 +12,7 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parent.parent
 TIMEOUT_SECONDS = 300
 HEALTH_TIMEOUT_SECONDS = 120
-HOST_PORT = 18422
+CONTAINER_PORT = 8422
 
 
 def run(cmd: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -56,6 +57,12 @@ def wait_for_http(url: str, *, timeout_seconds: float) -> None:
     raise SystemExit(f"Timed out waiting for {url}: {last_error}")
 
 
+def reserve_host_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 def fix_volume_ownership(
     docker: str,
     image: str,
@@ -91,6 +98,7 @@ def main() -> int:
 
     image = f"agiwo-console-smoke:{uuid4().hex[:8]}"
     container = f"agiwo-console-smoke-{uuid4().hex[:8]}"
+    host_port = reserve_host_port()
 
     tmp_path = Path(tempfile.mkdtemp(prefix="agiwo-console-smoke-"))
     data_dir = tmp_path / "data"
@@ -111,7 +119,7 @@ def main() -> int:
                 "--name",
                 container,
                 "-p",
-                f"{HOST_PORT}:8422",
+                f"{host_port}:{CONTAINER_PORT}",
                 "-v",
                 f"{data_dir}:/data",
                 "-v",
@@ -122,11 +130,11 @@ def main() -> int:
         )
 
         wait_for_http(
-            f"http://127.0.0.1:{HOST_PORT}/api/health",
+            f"http://127.0.0.1:{host_port}/api/health",
             timeout_seconds=HEALTH_TIMEOUT_SECONDS,
         )
         wait_for_http(
-            f"http://127.0.0.1:{HOST_PORT}/",
+            f"http://127.0.0.1:{host_port}/",
             timeout_seconds=HEALTH_TIMEOUT_SECONDS,
         )
 
@@ -135,13 +143,17 @@ def main() -> int:
 
         run([docker, "exec", container, "test", "-d", "/mnt/host/workspace"])
     finally:
-        subprocess.run(
+        logs = subprocess.run(
             [docker, "logs", container],
             cwd=ROOT,
             text=True,
             capture_output=True,
             check=False,
         )
+        if logs.stdout:
+            print(logs.stdout, file=sys.stderr, end="")
+        if logs.stderr:
+            print(logs.stderr, file=sys.stderr, end="")
         subprocess.run([docker, "rm", "-f", container], check=False)
         fix_volume_ownership(
             docker,

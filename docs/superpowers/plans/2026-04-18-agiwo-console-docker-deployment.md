@@ -16,9 +16,9 @@
   - Add the `container` command group and keep `serve` behavior unchanged.
 - Create: `console/server/docker_runtime.py`
   - Centralize Docker CLI argument normalization, preflight checks, command construction, and lifecycle helpers.
-- Create: `console/server/tests/test_cli.py`
+- Create: `console/tests/test_cli.py`
   - Add unit coverage for CLI parsing and Docker command dispatch.
-- Create: `console/server/tests/test_docker_runtime.py`
+- Create: `console/tests/test_docker_runtime.py`
   - Add focused tests for mount validation, alias validation, network-mode handling, and health-check behavior.
 - Create: `console/Dockerfile`
   - Build the official single-image Console runtime with backend, frontend, and runtime tools.
@@ -50,10 +50,10 @@
 **Files:**
 - Modify: `console/server/cli.py`
 - Create: `console/server/docker_runtime.py`
-- Create: `console/server/tests/test_cli.py`
-- Create: `console/server/tests/test_docker_runtime.py`
-- Test: `console/server/tests/test_cli.py`
-- Test: `console/server/tests/test_docker_runtime.py`
+- Create: `console/tests/test_cli.py`
+- Create: `console/tests/test_docker_runtime.py`
+- Test: `console/tests/test_cli.py`
+- Test: `console/tests/test_docker_runtime.py`
 
 - [ ] **Step 1: Capture the current CLI behavior with thin regression coverage before expanding the command surface**
 
@@ -159,13 +159,13 @@ Run:
 
 ```bash
 cd console
-uv run pytest server/tests/test_cli.py server/tests/test_docker_runtime.py -v
+uv run pytest tests/test_cli.py tests/test_docker_runtime.py -v
 ```
 
 Then commit:
 
 ```bash
-git add console/server/cli.py console/server/docker_runtime.py console/server/tests/test_cli.py console/server/tests/test_docker_runtime.py
+git add console/server/cli.py console/server/docker_runtime.py console/tests/test_cli.py console/tests/test_docker_runtime.py
 git commit -m "feat: add console docker lifecycle cli"
 ```
 
@@ -366,7 +366,7 @@ Run:
 
 ```bash
 uv run python scripts/lint.py ci
-cd console && uv run pytest server/tests/test_cli.py server/tests/test_docker_runtime.py -v
+cd console && uv run pytest tests/test_cli.py tests/test_docker_runtime.py -v
 cd console/web && npm run lint && npm test && npm run build
 ```
 

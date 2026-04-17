@@ -9,6 +9,7 @@ from server.docker_runtime import (
     DockerRuntimeError,
     build_docker_run_command,
     container_up,
+    ensure_supported_network_mode,
     parse_mount_spec,
     parse_mounts,
     resolve_healthcheck_url,
@@ -49,6 +50,17 @@ def test_parse_mounts_rejects_duplicate_aliases(tmp_path: Path) -> None:
                 f"{source}:shared",
             ]
         )
+
+
+def test_parse_mount_spec_rejects_relative_aliases(tmp_path: Path) -> None:
+    source = tmp_path / "workspace"
+    source.mkdir()
+
+    with pytest.raises(DockerRuntimeError, match="relative path aliases"):
+        parse_mount_spec(f"{source}:.")
+
+    with pytest.raises(DockerRuntimeError, match="relative path aliases"):
+        parse_mount_spec(f"{source}:..")
 
 
 def test_build_docker_run_command_includes_defaults_and_mounts(tmp_path: Path) -> None:
@@ -119,6 +131,16 @@ def test_resolve_healthcheck_url_uses_host_port() -> None:
     )
 
 
+def test_resolve_healthcheck_url_rejects_publish_without_host_port() -> None:
+    with pytest.raises(DockerRuntimeError, match="expected HOST:CONTAINER"):
+        resolve_healthcheck_url("8422", "bridge")
+
+
+def test_ensure_supported_network_mode_rejects_unknown_value() -> None:
+    with pytest.raises(DockerRuntimeError, match="unsupported network mode"):
+        ensure_supported_network_mode("weird")
+
+
 def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for_health(
     tmp_path: Path,
 ) -> None:
@@ -172,6 +194,47 @@ def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for
         "unless-stopped",
         "-p",
     ]
+
+
+def test_container_up_pulls_before_replacing_existing_container_when_requested(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    calls: list[list[str]] = []
+
+    def runner(cmd, capture_output=False, text=False, check=False):
+        calls.append(list(cmd))
+        if cmd[1:] == ["info"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+        if cmd[1:4] == ["container", "inspect", "console"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="{}", stderr="")
+        if cmd[1:3] == ["pull", "example:latest"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[1:4] == ["rm", "-f", "console"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        if cmd[1] == "run":
+            return subprocess.CompletedProcess(cmd, 0, stdout="cid", stderr="")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    exit_code = container_up(
+        ContainerUpOptions(
+            name="console",
+            image="example:latest",
+            data_dir=data_dir,
+            replace=True,
+            pull=True,
+            health_timeout_seconds=1.0,
+        ),
+        docker_which=lambda _name: "/usr/bin/docker",
+        runner=runner,
+        sleep=lambda _seconds: None,
+        monotonic=iter([0.0, 0.1]).__next__,
+        opener=lambda _url, timeout: _FakeResponse(200),
+    )
+
+    assert exit_code == 0
+    assert calls[2] == ["/usr/bin/docker", "pull", "example:latest"]
+    assert calls[3] == ["/usr/bin/docker", "rm", "-f", "console"]
 
 
 def test_container_up_rejects_host_network_on_non_linux(

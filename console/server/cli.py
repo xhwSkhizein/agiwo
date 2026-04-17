@@ -1,4 +1,5 @@
 import argparse
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -99,7 +100,7 @@ def _run_container_command(
                 return 0
             result = handler()
     except DockerRuntimeError as exc:
-        print(str(exc), flush=True)
+        print(str(exc), file=sys.stderr, flush=True)
         return 1
     return result
 

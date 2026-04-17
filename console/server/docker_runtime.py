@@ -65,7 +65,7 @@ def resolve_docker_binary(
     docker_which: Callable[[str], str | None] = shutil.which,
 ) -> str:
     docker_bin = docker_which("docker")
-    if not docker_bin:
+    if docker_bin is None:
         raise DockerRuntimeError("docker executable not found in PATH")
     return docker_bin
 
@@ -82,6 +82,11 @@ def ensure_docker_access(
 
 
 def ensure_supported_network_mode(network_mode: str) -> None:
+    allowed_modes = {"bridge", "host", "none"}
+    if network_mode not in allowed_modes:
+        raise DockerRuntimeError(
+            f"unsupported network mode {network_mode!r}; expected one of {sorted(allowed_modes)}"
+        )
     if network_mode != "host":
         return
     if sys.platform != "linux":
@@ -103,6 +108,10 @@ def parse_mount_spec(spec: str) -> DockerMount:
     source_text, sep, alias = spec.rpartition(":")
     if not sep or not source_text or not alias:
         raise DockerRuntimeError(f"invalid mount {spec!r}; expected <source>:<alias>")
+    if alias in {".", ".."}:
+        raise DockerRuntimeError(
+            f"invalid mount alias {alias!r}; relative path aliases are not allowed"
+        )
     if not _ALIAS_PATTERN.fullmatch(alias):
         raise DockerRuntimeError(
             f"invalid mount alias {alias!r}; expected pattern {_ALIAS_PATTERN.pattern}"
@@ -151,12 +160,28 @@ def _tail_logs(
 def resolve_healthcheck_url(publish: str, network_mode: str) -> str:
     if network_mode == "host":
         return "http://127.0.0.1:8422/api/health"
+    if ":" not in publish:
+        raise DockerRuntimeError(
+            f"invalid publish value {publish!r}; expected HOST:CONTAINER"
+        )
     host_port = publish.split(":", maxsplit=1)[0]
     if not host_port.isdigit():
         raise DockerRuntimeError(
             f"invalid publish value {publish!r}; expected HOST:CONTAINER"
         )
     return f"http://127.0.0.1:{host_port}/api/health"
+
+
+def _pull_image(
+    *,
+    docker_bin: str,
+    image: str,
+    runner: RunCommand = subprocess.run,
+) -> None:
+    pull = _run_capture([docker_bin, "pull", image], runner=runner)
+    if pull.returncode != 0:
+        detail = (pull.stderr or pull.stdout or "").strip() or "docker pull failed"
+        raise DockerRuntimeError(detail)
 
 
 def wait_for_health(
@@ -250,6 +275,12 @@ def container_up(
             raise DockerRuntimeError(
                 f"container {normalized.name!r} already exists; use --replace to recreate it"
             )
+        if normalized.pull:
+            _pull_image(
+                docker_bin=docker_bin,
+                image=normalized.image,
+                runner=runner,
+            )
         replace = _run_capture(
             [docker_bin, "rm", "-f", normalized.name],
             runner=runner,
@@ -260,11 +291,12 @@ def container_up(
             ).strip() or "docker rm failed"
             raise DockerRuntimeError(detail)
 
-    if normalized.pull:
-        pull = _run_capture([docker_bin, "pull", normalized.image], runner=runner)
-        if pull.returncode != 0:
-            detail = (pull.stderr or pull.stdout or "").strip() or "docker pull failed"
-            raise DockerRuntimeError(detail)
+    if normalized.pull and not normalized.replace:
+        _pull_image(
+            docker_bin=docker_bin,
+            image=normalized.image,
+            runner=runner,
+        )
 
     command = build_docker_run_command(normalized, mounts=mounts)
     command[0] = docker_bin

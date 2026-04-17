@@ -4,7 +4,6 @@ set -euo pipefail
 export AGIWO_ROOT_PATH="${AGIWO_ROOT_PATH:-/data/root}"
 export AGIWO_CONSOLE_HOST="${AGIWO_CONSOLE_HOST:-127.0.0.1}"
 export AGIWO_CONSOLE_PORT="${AGIWO_CONSOLE_PORT:-18080}"
-export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-}"
 
 if [[ ! -d /data ]]; then
   echo "/data mount is required" >&2

@@ -31,6 +31,9 @@ RUN apt-get update \
 
 RUN pip install --no-cache-dir yt-dlp
 
+RUN groupadd --system agiwo \
+    && useradd --system --gid agiwo --create-home --home-dir /home/agiwo agiwo
+
 COPY pyproject.toml README.md ./
 COPY agiwo ./agiwo
 RUN pip install --no-cache-dir .
@@ -39,7 +42,8 @@ COPY console/pyproject.toml ./console/pyproject.toml
 COPY console/server ./console/server
 RUN pip install --no-cache-dir ./console
 
-RUN mkdir -p /opt/agiwo-console/web /data /var/log/nginx
+RUN mkdir -p /opt/agiwo-console/web /data /var/log/nginx /tmp/nginx \
+    && chown -R agiwo:agiwo /opt/agiwo-console/web /data /var/log/nginx /tmp/nginx /home/agiwo
 
 COPY --from=web-builder /build/console/web/.next /opt/agiwo-console/web/.next
 COPY --from=web-builder /build/console/web/node_modules /opt/agiwo-console/web/node_modules
@@ -51,9 +55,12 @@ COPY --from=web-builder /build/console/web/next.config.ts /opt/agiwo-console/web
 COPY console/docker/entrypoint.sh /usr/local/bin/agiwo-console-entrypoint.sh
 COPY console/docker/healthcheck.sh /usr/local/bin/agiwo-console-healthcheck.sh
 COPY console/docker/nginx.conf /etc/nginx/nginx.conf
-RUN chmod +x /usr/local/bin/agiwo-console-entrypoint.sh /usr/local/bin/agiwo-console-healthcheck.sh
+RUN chmod +x /usr/local/bin/agiwo-console-entrypoint.sh /usr/local/bin/agiwo-console-healthcheck.sh \
+    && chown -R agiwo:agiwo /opt/agiwo-console/web /usr/local/bin/agiwo-console-entrypoint.sh /usr/local/bin/agiwo-console-healthcheck.sh
 
 EXPOSE 8422
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=6 CMD ["/usr/local/bin/agiwo-console-healthcheck.sh"]
+
+USER agiwo
 
 ENTRYPOINT ["/usr/local/bin/agiwo-console-entrypoint.sh"]

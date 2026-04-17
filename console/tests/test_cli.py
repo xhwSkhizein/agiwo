@@ -112,4 +112,4 @@ def test_cli_container_runtime_error_returns_failure(capsys) -> None:
 
     captured = capsys.readouterr()
     assert exit_code == 1
-    assert "boom" in captured.out
+    assert "boom" in captured.err
