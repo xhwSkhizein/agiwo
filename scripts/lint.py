@@ -25,6 +25,20 @@ def _run_ruff(paths: list[Path]) -> None:
     run_command(command)
 
 
+def _run_ruff_format_check() -> None:
+    command = [
+        "ruff",
+        "format",
+        "--check",
+        "agiwo/",
+        "console/server/",
+        "tests/",
+        "console/tests/",
+        "scripts/",
+    ]
+    run_command(command)
+
+
 def _run_repo_guard(paths: list[Path]) -> None:
     command = [
         sys.executable,
@@ -48,6 +62,30 @@ def _run_bundle(paths: list[Path]) -> None:
     _run_import_contracts()
 
 
+def _run_ci_lint() -> None:
+    require_commands("ruff", "lint-imports")
+    run_command(
+        [
+            "ruff",
+            "check",
+            "--ignore",
+            "C901",
+            "--ignore",
+            "PLR0911",
+            "--ignore",
+            "PLR0912",
+            "agiwo/",
+            "console/server/",
+            "tests/",
+            "console/tests/",
+            "scripts/",
+        ]
+    )
+    _run_ruff_format_check()
+    _run_import_contracts()
+    run_command([sys.executable, str(ROOT / "scripts/repo_guard.py")])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the repository lint workflow.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -55,6 +93,10 @@ def main() -> None:
     subparsers.add_parser(
         "changed",
         help="Lint the current Git working tree plus global import contracts.",
+    )
+    subparsers.add_parser(
+        "ci",
+        help="Run the CI-equivalent lightweight lint gate.",
     )
 
     files_parser = subparsers.add_parser(
@@ -72,6 +114,10 @@ def main() -> None:
 
     if args.command == "changed":
         _run_bundle(collect_changed_paths())
+        return
+
+    if args.command == "ci":
+        _run_ci_lint()
         return
 
     if args.command == "files":

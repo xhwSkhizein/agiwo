@@ -2,9 +2,11 @@ from pathlib import Path
 
 import pytest
 
+import scripts.check_release_metadata as release_metadata
 from scripts.check_release_metadata import (
     apply_release_metadata,
     expected_console_dependency,
+    load_project,
     validate_release_metadata,
 )
 
@@ -38,6 +40,30 @@ def test_expected_console_dependency_uses_major_minor_release_line() -> None:
     assert expected_console_dependency("0.1.0") == "agiwo ~= 0.1.0"
     assert expected_console_dependency("0.1.7") == "agiwo ~= 0.1.0"
     assert expected_console_dependency("1.4.2") == "agiwo ~= 1.4.0"
+
+
+def test_load_project_supports_python310_fallback_parser(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        "[project]\n"
+        "name = 'agiwo'\n"
+        "version = '0.1.0'\n"
+        "dependencies = [\n"
+        "    'agiwo ~= 0.1.0',\n"
+        "]\n",
+        encoding="utf-8",
+    )
+
+    original_tomllib = release_metadata.tomllib
+    release_metadata.tomllib = None
+    try:
+        project = load_project(pyproject)
+    finally:
+        release_metadata.tomllib = original_tomllib
+
+    assert project["name"] == "agiwo"
+    assert project["version"] == "0.1.0"
+    assert project["dependencies"] == ["agiwo ~= 0.1.0"]
 
 
 def test_validate_release_metadata_accepts_current_release_surface() -> None:

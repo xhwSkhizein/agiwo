@@ -23,10 +23,15 @@ def command_exists(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-def run_command(command: list[str], *, env: dict[str, str] | None = None) -> None:
+def run_command(
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    cwd: Path | None = None,
+) -> None:
     printable = [str(part) for part in command]
     print(f"$ {shlex.join(printable)}")
-    completed = subprocess.run(printable, cwd=ROOT, env=env)
+    completed = subprocess.run(printable, cwd=cwd or ROOT, env=env)
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
 

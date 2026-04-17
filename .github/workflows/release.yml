@@ -43,13 +43,13 @@ jobs:
           version: latest
 
       - name: Set up Python
-        run: uv python install 3.11
-
-      - name: Apply release metadata from tag
-        run: uv run python scripts/check_release_metadata.py --apply "${{ needs.prepare.outputs.release_version }}"
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: uv sync
+
+      - name: Apply release metadata from tag
+        run: uv run python scripts/check_release_metadata.py --apply "${{ needs.prepare.outputs.release_version }}"
 
       - name: Build SDK package
         run: uv build
@@ -97,13 +97,13 @@ jobs:
           version: latest
 
       - name: Set up Python
-        run: uv python install 3.11
-
-      - name: Apply release metadata from tag
-        run: uv run python scripts/check_release_metadata.py --apply "${{ needs.prepare.outputs.release_version }}"
+        run: uv python install 3.10
 
       - name: Install SDK dependencies
         run: uv sync
+
+      - name: Apply release metadata from tag
+        run: uv run python scripts/check_release_metadata.py --apply "${{ needs.prepare.outputs.release_version }}"
 
       - name: Install Console dependencies
         run: (cd console && uv sync)

@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This guide will help you get starte
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.10+
 - [uv](https://docs.astral.sh/uv/) package manager
 
 ### Setup
@@ -15,6 +15,7 @@ Thank you for your interest in contributing! This guide will help you get starte
 git clone https://github.com/xhwSkhizein/agiwo.git
 cd agiwo
 uv sync
+uv run python scripts/install_git_hooks.py
 ```
 
 ### Console Frontend
@@ -33,7 +34,7 @@ npm install
 uv run pytest tests/ -v
 
 # Console backend tests
-(cd console && uv run pytest tests/ -v)
+uv run python scripts/check.py console-tests
 
 # Console frontend checks
 (cd console/web && npm run lint)
@@ -50,11 +51,14 @@ uv run pytest tests/agent/test_agent_tool.py -v
 
 ### Linting
 
-After making code changes, run the low-noise linter:
+After making code changes, use the low-noise lint loop while iterating:
 
 ```bash
 # Only changed files
 uv run python scripts/lint.py changed
+
+# CI-equivalent lightweight gate
+uv run python scripts/lint.py ci
 
 # Specific files
 uv run python scripts/lint.py files path/to/file.py
@@ -63,11 +67,12 @@ uv run python scripts/lint.py files path/to/file.py
 uv run python scripts/lint.py imports
 ```
 
-The lint pipeline runs: **ruff** + **repo_guard.py** + **import-linter**.
+The lightweight lint gate runs: **ruff** + **ruff format --check** + **repo_guard.py** + **import-linter**.
+The push gate runs that lint bundle plus SDK tests and Console backend tests.
 
 ### Code Style
 
-- Python 3.11+ with full type annotations on public APIs
+- Python 3.10+ with full type annotations on public APIs
 - Async logic stays explicit — don't hide `await` in hard-to-trace helpers
 - Prefer `is not None` for sentinel checks; use truthy checks only when semantics are clear
 - No dead compatibility layers — delete old paths unless explicitly requested
@@ -103,22 +108,22 @@ See [AGENTS.md](./AGENTS.md) for detailed architecture documentation.
 
 ### Branch Naming
 
-- `feat/` — New features
-- `fix/` — Bug fixes
+- `feature/` — New features
+- `bugfix/` — Bug fixes
 - `refactor/` — Code restructuring
+- `release/` — Release branches
 - `docs/` — Documentation
-- `chore/` — Maintenance (deps, CI, tooling)
-- `test/` — Test additions/improvements
 
 ### Pull Request Process
 
 1. Create a feature branch from `main`
 2. Make your changes with clear, focused commits
-3. Run `uv run python scripts/lint.py changed` before committing
-4. Ensure tests pass: `uv run pytest tests/ -v` and `(cd console && uv run pytest tests/ -v)`
+3. Run `uv run python scripts/lint.py ci` before committing
+4. Run the affected tests proactively. For Console backend changes, use `uv run python scripts/check.py console-tests`
 5. If you changed release-facing behavior, also run `(cd console/web && npm run lint && npm test && npm run build)` and `uv run python scripts/smoke_release_install.py dist/agiwo-0.1.0-py3-none-any.whl` after `uv build`
-6. Update documentation if you changed public APIs
-7. Open a PR with a clear description of what and why
+6. Before pushing, let the installed `pre-push` hook run `uv run python scripts/check.py pre-push`
+7. Update documentation if you changed public APIs or developer workflow
+8. Open a PR with a clear description of what and why
 
 ### Commit Messages
 

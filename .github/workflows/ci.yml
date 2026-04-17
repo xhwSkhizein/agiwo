@@ -22,7 +22,7 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: uv sync
@@ -52,7 +52,7 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: uv sync
@@ -72,13 +72,13 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: cd console && uv sync
 
       - name: Run tests
-        run: cd console && uv run pytest tests/ -v --tb=short
+        run: cd console && AGIWO_ROOT_PATH="$PWD/.agiwo" uv run pytest tests/ -v --tb=short
 
   test-web:
     name: Test Web
@@ -117,7 +117,7 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: uv sync
@@ -140,7 +140,7 @@ jobs:
           version: "latest"
 
       - name: Set up Python
-        run: uv python install 3.11
+        run: uv python install 3.10
 
       - name: Install dependencies
         run: cd console && uv sync

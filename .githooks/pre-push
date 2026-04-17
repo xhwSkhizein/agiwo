@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
 while read local_ref local_sha remote_ref remote_sha; do
     [[ -z "$remote_ref" ]] && continue
@@ -50,43 +51,11 @@ while read local_ref local_sha remote_ref remote_sha; do
     fi
 done
 
-# Run lint checks
-echo "🔍 Running Ruff check..."
-if ! uv run ruff check --ignore C901 --ignore PLR0911 --ignore PLR0912 agiwo/ console/server/ tests/ console/tests/ scripts/; then
-    echo "❌ Ruff check failed. Please fix the code style issues before pushing."
-    exit 1
-fi
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
 
-echo "🔍 Running Ruff format check..."
-if ! uv run ruff format --check agiwo/ console/server/ tests/ console/tests/ scripts/; then
-    echo "❌ Ruff format check failed. Please run 'uv run ruff format' to fix formatting."
-    exit 1
-fi
-
-echo "🔍 Running import linter..."
-if ! uv run python scripts/lint.py imports; then
-    echo "❌ Import linter failed. Please fix the import issues before pushing."
-    exit 1
-fi
-
-echo "🔍 Running repo guard..."
-if ! uv run python scripts/repo_guard.py; then
-    echo "❌ Repo guard failed. Please fix the issues before pushing."
-    exit 1
-fi
-
-# Run tests
-echo "🚦 Running SDK tests..."
-if ! uv run pytest tests/ -x; then
-    echo "❌ SDK tests failed. Please fix the tests before pushing."
-    exit 1
-fi
-
-echo "🚦 Running Console tests..."
-if ! (cd console && uv run pytest tests/ -x); then
-    echo "❌ Console tests failed. Please fix the tests before pushing."
-    exit 1
-fi
+echo "[pre-push] running full local push gate"
+uv run python scripts/check.py pre-push
 
 echo "✅ All checks passed!"
 exit 0

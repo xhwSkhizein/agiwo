@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
   <a href="https://github.com/xhwSkhizein/agiwo/actions/workflows/ci.yml">
     <img src="https://github.com/xhwSkhizein/agiwo/actions/workflows/ci.yml/badge.svg" alt="CI">
@@ -64,6 +64,7 @@ For development from source:
 git clone https://github.com/xhwSkhizein/agiwo.git
 cd agiwo
 uv sync
+uv run python scripts/install_git_hooks.py
 ```
 
 For SDK usage, export provider credentials in your shell or place them in a local `.env`. Set only the credentials for the providers you actually use.
@@ -312,12 +313,25 @@ Install dependencies once:
 
 ```bash
 uv sync
+uv run python scripts/install_git_hooks.py
 ```
 
-Low-noise lint is the default workflow after code changes:
+Low-noise lint is the default workflow while you are iterating:
 
 ```bash
 uv run python scripts/lint.py changed
+```
+
+The commit gate uses the CI-equivalent lightweight lint command:
+
+```bash
+uv run python scripts/lint.py ci
+```
+
+The push gate runs the full local verification workflow:
+
+```bash
+uv run python scripts/check.py pre-push
 ```
 
 If the worktree is already dirty, lint only the files you touched:
@@ -330,7 +344,7 @@ Run tests:
 
 ```bash
 uv run pytest tests/ -v
-(cd console && uv run pytest tests/ -v)
+uv run python scripts/check.py console-tests
 ```
 
 ## Current Status
@@ -343,4 +357,4 @@ Areas that still change:
 - Scheduler orchestration edge cases and operator-facing controls
 - Trace query APIs and visualization
 
-If you are changing the architecture, update both [AGENTS.md](AGENTS.md) and this README so the repo-level guidance stays aligned with the code.
+If you are changing the architecture or developer workflow, update both [AGENTS.md](AGENTS.md) and this README so the repo-level guidance stays aligned with the code.
