@@ -1,4 +1,8 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8422";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") ?? "";
+
+function apiUrl(path: string): string {
+  return `${API_BASE}${path}`;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -13,7 +17,7 @@ export class ApiError extends Error {
 }
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(apiUrl(path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -601,7 +605,7 @@ export function updateAgent(agentId: string, data: AgentConfigCreate) {
 }
 
 export async function deleteAgent(agentId: string) {
-  const res = await fetch(`${API_BASE}/api/agents/${agentId}`, { method: "DELETE" });
+  const res = await fetch(apiUrl(`/api/agents/${agentId}`), { method: "DELETE" });
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 }
 
@@ -767,14 +771,14 @@ export function forkSession(sessionId: string, contextSummary: string) {
 }
 
 export async function deleteSession(sessionId: string) {
-  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, { method: "DELETE" });
+  const res = await fetch(apiUrl(`/api/sessions/${sessionId}`), { method: "DELETE" });
   if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
 }
 
 // ── Session Input Stream ───────────────────────────────────────────────
 
 export function sessionInputStreamUrl(sessionId: string) {
-  return `${API_BASE}/api/sessions/${sessionId}/input`;
+  return apiUrl(`/api/sessions/${sessionId}/input`);
 }
 
 export function parseStreamEventPayload(data: string): StreamEventPayload | null {
