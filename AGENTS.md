@@ -168,12 +168,17 @@
 
 ## Lint & Guardrails
 
-- Python 代码改动后默认执行：`uv run python scripts/lint.py changed`
-- 提交前必须跑一遍与 CI 对齐的 lint：
-  1. `uv run ruff check --ignore C901 --ignore PLR0911 --ignore PLR0912 agiwo/ console/server/ tests/ console/tests/ scripts/`
-  2. `uv run ruff format --check agiwo/ console/server/ tests/ console/tests/ scripts/`
-  3. `uv run python scripts/lint.py imports`
-  4. `uv run python scripts/repo_guard.py`
+- Python 代码改动后，Agent 必须主动运行与改动范围匹配的检查；不要把 `pre-commit` 当作主要反馈回路。
+- 开发中的低噪音快速检查继续使用：`uv run python scripts/lint.py changed`
+- 与 CI Lint job 对齐的轻量本地门禁统一使用：`uv run python scripts/lint.py ci`
+- 安装仓库内 git hooks：`uv run python scripts/install_git_hooks.py`
+- `pre-commit` 会自动运行 `uv run python scripts/lint.py ci`，本地未通过时禁止提交。
+- `scripts/lint.py changed` 不包含 `ruff format --check`，只能用于开发中的快速回路，不能视为 CI lint 全通过。
+- Required checks by change type:
+  - 只改 Python 代码：至少运行 `uv run python scripts/lint.py ci`，并运行受影响测试。
+  - 改 `pyproject.toml`、workflow、打包、发布脚本：除上面外，还要跑构建与 smoke install。
+  - 改 Console 后端：除上面外，还要跑 `cd console && AGIWO_ROOT_PATH="$(pwd)/.agiwo" uv run pytest tests/ -v --tb=short`
+  - 改前端：运行 `cd console/web && npm run lint && npm test && npm run build`
 - 不要写 schema migration；数据模型变更时直接让旧数据失败并通知用户清理。
 
 ## Build & Test Commands
@@ -183,30 +188,31 @@
 uv sync
 (cd console && uv sync)
 
-# 标准检查
+# 安装仓库内 git hooks
+uv run python scripts/install_git_hooks.py
+
+# 开发中的低噪音快速检查
 uv run python scripts/lint.py changed
 
-# 提交前 lint 四步
-uv run ruff check --ignore C901 --ignore PLR0911 --ignore PLR0912 agiwo/ console/server/ tests/ console/tests/ scripts/
-uv run ruff format --check agiwo/ console/server/ tests/ console/tests/ scripts/
-uv run python scripts/lint.py imports
-uv run python scripts/repo_guard.py
+# 提交前轻量门禁（与 CI Lint job 对齐）
+uv run python scripts/lint.py ci
 
 # SDK 测试
 uv run pytest tests/ -v
 
 # Console 后端测试
-(cd console && uv run pytest tests/ -v)
+(cd console && AGIWO_ROOT_PATH="$(pwd)/.agiwo" uv run pytest tests/ -v --tb=short)
 
 # Console 前端检查
 (cd console/web && npm run lint)
 (cd console/web && npm test)
 (cd console/web && npm run build)
 
-# release 前构建与安装验证
+# 打包 / workflow / 发布脚本改动后追加
 uv build
 uv run python scripts/smoke_release_install.py dist/agiwo-0.1.0-py3-none-any.whl
 (cd console && uv build)
+uv run python scripts/smoke_release_install.py dist/agiwo-0.1.0-py3-none-any.whl console/dist/agiwo_console-0.1.0-py3-none-any.whl
 ```
 
 

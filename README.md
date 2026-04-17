@@ -64,6 +64,7 @@ For development from source:
 git clone https://github.com/xhwSkhizein/agiwo.git
 cd agiwo
 uv sync
+uv run python scripts/install_git_hooks.py
 ```
 
 For SDK usage, export provider credentials in your shell or place them in a local `.env`. Set only the credentials for the providers you actually use.
@@ -312,12 +313,19 @@ Install dependencies once:
 
 ```bash
 uv sync
+uv run python scripts/install_git_hooks.py
 ```
 
-Low-noise lint is the default workflow after code changes:
+Low-noise lint is the default workflow while you are iterating:
 
 ```bash
 uv run python scripts/lint.py changed
+```
+
+The commit gate uses the CI-equivalent lightweight lint command:
+
+```bash
+uv run python scripts/lint.py ci
 ```
 
 If the worktree is already dirty, lint only the files you touched:
