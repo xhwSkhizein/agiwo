@@ -1,13 +1,29 @@
 """Shared formatting helpers for scheduler-facing child-agent text."""
 
-from agiwo.agent import UserInput, UserMessage
-from agiwo.agent.prompt import system_notice
+from agiwo.agent import (
+    ChannelContext,
+    ContentPart,
+    ContentType,
+    UserInput,
+    UserMessage,
+)
 from agiwo.scheduler.models import (
     PendingEvent,
     SchedulerEventType,
     WakeCondition,
     WakeType,
 )
+
+
+def _system_notice(content: str) -> str:
+    """Render a ``<system-notice>`` tag.
+
+    Local mirror of ``agiwo.agent.prompt.system_notice`` so the scheduler
+    layer does not reach into internal agent execution modules (enforced by
+    ``repo_guard AGW003``).
+    """
+    return f"<system-notice>{content}</system-notice>"
+
 
 SHUTDOWN_SUMMARY_TASK = (
     "System shutdown requested. Please produce a final summary "
@@ -110,9 +126,17 @@ def build_timeout_message(
     )
 
 
-def build_events_message(events: tuple[PendingEvent, ...]) -> str:
-    """Build the user-facing message for pending event notifications."""
+def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
+    """Build the user-facing message for pending event notifications.
+
+    Returns a ``UserMessage`` so that attachments and ``ChannelContext``
+    carried by USER_HINT events survive into the next run.  Child-agent
+    events are rendered into the narrative text block; USER_HINT events
+    contribute both text and non-text ``ContentPart`` entries.
+    """
     lines = [f"You have {len(events)} new notification(s):\n"]
+    extra_parts: list[ContentPart] = []
+    channel_context: ChannelContext | None = None
     for event in events:
         event_label = event.event_type.value.replace("_", " ").title()
         child_id = event.payload.get(
@@ -142,15 +166,36 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> str:
                 )
             )
         elif event.event_type == SchedulerEventType.USER_HINT:
-            hint = event.payload.get("hint", "")
-            if hint:
-                lines.append(f"User hint: {hint}")
+            hint_message = _decode_user_hint_message(event)
+            if hint_message is not None:
+                for part in hint_message.content:
+                    if part.type == ContentType.TEXT:
+                        if part.text and part.text.strip():
+                            lines.append(f"User hint: {part.text.strip()}")
+                    else:
+                        extra_parts.append(part)
+                if channel_context is None and hint_message.context is not None:
+                    channel_context = hint_message.context
         lines.append("")
     lines.append(
         "Please review these notifications and take appropriate action "
         "(e.g., summarize results for the user, cancel stuck agents, etc.)."
     )
-    return "\n".join(lines)
+    text_body = "\n".join(lines)
+    parts: list[ContentPart] = [ContentPart(type=ContentType.TEXT, text=text_body)]
+    parts.extend(extra_parts)
+    return UserMessage(content=parts, context=channel_context)
+
+
+def _decode_user_hint_message(event: PendingEvent) -> UserMessage | None:
+    stored = event.payload.get("user_input")
+    if stored is None:
+        return None
+    decoded = UserMessage.from_storage_value(stored)
+    if decoded is None:
+        return None
+    message = UserMessage.from_value(decoded)
+    return message if message.has_content() else None
 
 
 def summarize_text(text: str | None, limit: int) -> str | None:
@@ -162,7 +207,7 @@ def summarize_text(text: str | None, limit: int) -> str | None:
     return text[:limit] + "..."
 
 
-_FORK_NOTICE = system_notice(
+_FORK_NOTICE = _system_notice(
     "You are a forked child agent. Your conversation history has been "
     "inherited from the parent agent. Do NOT use spawn_agent — it is "
     "unavailable to you. Complete the following task directly."

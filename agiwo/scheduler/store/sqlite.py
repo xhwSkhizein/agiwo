@@ -99,7 +99,8 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                     event_type TEXT NOT NULL,
                     payload_json TEXT NOT NULL DEFAULT '{}',
                     source_agent_id TEXT,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    urgent INTEGER NOT NULL DEFAULT 0
                 )
                 """,
                 "CREATE INDEX IF NOT EXISTS idx_pending_events_target ON pending_events(target_agent_id, session_id)",
@@ -176,6 +177,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             payload=json.loads(row["payload_json"]),
             source_agent_id=row.get("source_agent_id"),
             created_at=datetime.fromisoformat(row["created_at"]),
+            urgent=bool(row.get("urgent", 0)),
         )
 
     def _wake_condition_columns(self) -> list[str]:
@@ -320,8 +322,9 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         await conn.execute(
             """
             INSERT OR REPLACE INTO pending_events
-                (id, target_agent_id, session_id, event_type, payload_json, source_agent_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, target_agent_id, session_id, event_type, payload_json,
+                 source_agent_id, created_at, urgent)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.id,
@@ -331,6 +334,7 @@ class SQLiteAgentStateStorage(AgentStateStorage):
                 json.dumps(thaw_value(event.payload)),
                 event.source_agent_id,
                 event.created_at.isoformat(),
+                1 if event.urgent else 0,
             ),
         )
         await conn.commit()

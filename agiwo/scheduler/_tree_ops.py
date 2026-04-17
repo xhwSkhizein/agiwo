@@ -1,11 +1,10 @@
 """Subtree cancel/shutdown logic extracted from Scheduler."""
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
+from agiwo.agent import TerminationReason
 from agiwo.scheduler.formatting import SHUTDOWN_SUMMARY_TASK
-from agiwo.scheduler.models import AgentState, AgentStateStatus
+from agiwo.scheduler.models import AgentState, AgentStateStatus, SchedulerRunResult
 from agiwo.scheduler.stream import finish_stream_channel
 from agiwo.utils.abort_signal import AbortSignal
 
@@ -13,7 +12,7 @@ if TYPE_CHECKING:
     from agiwo.scheduler.engine import Scheduler
 
 
-async def cancel_subtree(sched: Scheduler, state_id: str, reason: str) -> None:
+async def cancel_subtree(sched: "Scheduler", state_id: str, reason: str) -> None:
     abort_runtime_state(sched, state_id, reason)
     for child in await active_children(sched, state_id):
         await cancel_subtree(sched, child.id, reason)
@@ -21,12 +20,19 @@ async def cancel_subtree(sched: Scheduler, state_id: str, reason: str) -> None:
     state = await sched._store.get_state(state_id)
     if state is None:
         return
-    await sched._save_state(state.with_failed(reason))
+    cancelled_result = SchedulerRunResult(
+        run_id=None,
+        termination_reason=TerminationReason.CANCELLED,
+        error=reason,
+    )
+    await sched._save_state(
+        state.with_failed(reason).with_updates(last_run_result=cancelled_result)
+    )
     if state.is_root:
         await finish_stream_channel(sched._rt.stream_channels, state.id)
 
 
-async def shutdown_subtree(sched: Scheduler, state_id: str) -> None:
+async def shutdown_subtree(sched: "Scheduler", state_id: str) -> None:
     for child in await active_children(sched, state_id):
         await shutdown_subtree(sched, child.id)
 
@@ -42,12 +48,12 @@ async def shutdown_subtree(sched: Scheduler, state_id: str) -> None:
     await shutdown_passive_state(sched, state)
 
 
-async def active_children(sched: Scheduler, state_id: str) -> list[AgentState]:
+async def active_children(sched: "Scheduler", state_id: str) -> list[AgentState]:
     children = await sched._store.list_states(parent_id=state_id, limit=1000)
     return [child for child in children if child.is_active()]
 
 
-def abort_runtime_state(sched: Scheduler, state_id: str, reason: str) -> None:
+def abort_runtime_state(sched: "Scheduler", state_id: str, reason: str) -> None:
     signal = sched._rt.abort_signals.get(state_id)
     if signal is None:
         signal = AbortSignal()
@@ -60,15 +66,15 @@ def abort_runtime_state(sched: Scheduler, state_id: str, reason: str) -> None:
         handle.cancel(reason)
 
 
-async def shutdown_running_state(sched: Scheduler, state: AgentState) -> None:
+async def shutdown_running_state(sched: "Scheduler", state: AgentState) -> None:
     if state.is_root and state.is_persistent:
         sched._rt.shutdown_requested.add(state.id)
         await sched._save_state(state.with_queued(pending_input=SHUTDOWN_SUMMARY_TASK))
         return
-    await sched._save_state(state.with_failed("Shutdown before completion"))
+    await _save_shutdown_failed(sched, state)
 
 
-async def shutdown_passive_state(sched: Scheduler, state: AgentState) -> None:
+async def shutdown_passive_state(sched: "Scheduler", state: AgentState) -> None:
     if state.is_root and state.status in (
         AgentStateStatus.WAITING,
         AgentStateStatus.IDLE,
@@ -81,6 +87,18 @@ async def shutdown_passive_state(sched: Scheduler, state: AgentState) -> None:
         AgentStateStatus.PENDING,
         AgentStateStatus.QUEUED,
     ):
-        await sched._save_state(state.with_failed("Shutdown before completion"))
+        await _save_shutdown_failed(sched, state)
         if state.is_root:
             await finish_stream_channel(sched._rt.stream_channels, state.id)
+
+
+async def _save_shutdown_failed(sched: "Scheduler", state: AgentState) -> None:
+    reason = "Shutdown before completion"
+    shutdown_result = SchedulerRunResult(
+        run_id=None,
+        termination_reason=TerminationReason.CANCELLED,
+        error=reason,
+    )
+    await sched._save_state(
+        state.with_failed(reason).with_updates(last_run_result=shutdown_result)
+    )

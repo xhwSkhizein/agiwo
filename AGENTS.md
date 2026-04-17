@@ -107,16 +107,21 @@
 ### Scheduler
 
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
-- Scheduler runtime tools（`SpawnAgentTool`、`SleepAndWaitTool` 等）通过 `Agent(system_tools=...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
+- Scheduler runtime tools（`SpawnAgentTool`、`SleepAndWaitTool` 等）通过 `Agent._inject_system_tools(...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
 - 子 Agent 的 system_tools 由 `SchedulerRunner` 从父 Agent 的 `system_tools` 派生；非 fork 模式排除 `spawn_agent`，fork 模式继承全部（gate 检查仍阻止实际 spawn）。
 - 当前公开编排接口包括：`run`、`submit`、`enqueue_input`、`route_root_input`、`stream`、`wait_for`、`steer`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`。
-- `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 `SchedulerEngine`。
-- `SchedulerEngine` 是唯一编排 owner；`SchedulerRunner` 只负责单次执行；`TaskGuard` 是 spawn/wake 的唯一护栏入口。
+- `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 engine 层（facade 直接委托给 `_tick`、`_stream`、`_tree_ops` 等同包 helper）。
+- `SchedulerRunner` 只负责单次 dispatch action；`TaskGuard` 是 spawn/wake 的唯一护栏入口。
 - scheduler 状态现在显式区分 `WAITING`、`IDLE`、`QUEUED`；不要再把待命/排队语义塞回一个泛化 `SLEEPING`。
 - 当前唤醒路径包括 `WAITSET`、`TIMER`、`PERIODIC`、`PENDING_EVENTS`。
 - scheduler state storage 当前支持 memory/sqlite/mongodb，由 `Scheduler` 自己创建和持有。
 - `Scheduler` 的外部流式协议直接复用 `AgentStreamItem`；不要在 SDK core 再维护第二套 live-output protocol。
 - `route_root_input` 对所有非 RUNNING 路径（submitted / enqueued / steered+WAITING / steered+QUEUED）都返回带 stream 的 `RouteResult`；只有 steered+RUNNING 不带 stream（原 stream subscriber 仍在消费）。下游不需要为 steered 场景单独维护 deferred reply 补丁。
+- **Root runtime 严格复用**：`_ensure_root_runtime_agent` 以"canonical Agent 身份"为键缓存 scheduler-managed runtime agent；`submit` / `enqueue_input(agent=same)` 不再每次 clone，persistent 会话下 `run_step_storage` / `trace_storage` / workspace 贯穿所有轮次。只有 `rebind_agent` 或传入新 canonical agent 才会 close 旧 runtime 并重建。
+- **非 persistent root 自动收口**：`_cleanup_after_run` 对非 persistent 且进入 terminal 的 root 立即 `pop + await close`；persistent root 与 child 仍按原语义。`Scheduler.stop()` 在关闭前会批量 close 所有残留 runtime agent。
+- **Cancel/Shutdown 写终态结果**：`cancel_subtree` / `shutdown_subtree` 写 `with_failed(...)` 时一并写入 `last_run_result=SchedulerRunResult(termination_reason=CANCELLED, ...)`；`wait_for()` 依赖该字段，能够在 cancel 完成那一刻直接返回 `RunOutput(error, termination_reason=CANCELLED)` 而非等到 timeout。runner 只在终态未写 `last_run_result` 时兜底补一条。
+- **Urgent steer bypass**：`PendingEvent.urgent` 标志位让 `plan_tick` 在 WAITING 分支跳过 `event_debounce_*` 限制；`Scheduler.steer(..., urgent=True)` 据此令 WAITING root 立即 WAKE_EVENTS。非 urgent 事件继续遵循 debounce。
+- **结构化 `UserInput` 贯通**：`Scheduler.steer()` 不再 `extract_text()`；`PendingEvent.USER_HINT payload` 统一写 `{"user_input": UserMessage.to_storage_value(...)}`；`build_mailbox_input` / `build_events_message` 返回 `UserMessage`，保留 `ContentPart`（图片/文件等）与 `ChannelContext`（Feishu 等 channel metadata）。
 
 ### Context Optimization
 

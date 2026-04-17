@@ -129,6 +129,19 @@ class Scheduler:
                     task.cancel()
                 await asyncio.gather(*pending, return_exceptions=True)
 
+        remaining_agents = list(self._rt.agents.values())
+        self._rt.agents.clear()
+        self._rt.canonical_agents.clear()
+        self._rt.execution_handles.clear()
+        if remaining_agents:
+            results = await asyncio.gather(
+                *[agent.close() for agent in remaining_agents],
+                return_exceptions=True,
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    logger.error("scheduler_stop_agent_close_failed", error=str(result))
+
         await self._store.close()
         logger.info("scheduler_stopped")
 
@@ -199,18 +212,17 @@ class Scheduler:
         persistent: bool = False,
         agent_config_id: str | None = None,
     ) -> str:
-        prepared_agent = await self._prepare_root_agent(agent, agent.id)
-        existing = await self._store.get_state(prepared_agent.id)
+        existing = await self._store.get_state(agent.id)
         if existing is not None and existing.status in ACTIVE_AGENT_STATUSES:
             raise RuntimeError(
-                f"Agent '{prepared_agent.id}' is already active (status={existing.status.value}). "
+                f"Agent '{agent.id}' is already active (status={existing.status.value}). "
                 f"Cannot submit concurrently. Use a different agent_id or enqueue_input()."
             )
 
-        self._rt.agents[prepared_agent.id] = prepared_agent
+        runtime_agent = await self._ensure_root_runtime_agent(agent, agent.id)
         resolved_session_id = session_id or str(uuid4())
         state = AgentState(
-            id=prepared_agent.id,
+            id=runtime_agent.id,
             session_id=resolved_session_id,
             status=AgentStateStatus.RUNNING,
             task=user_input,
@@ -253,8 +265,7 @@ class Scheduler:
                 f"Cannot enqueue input (expected IDLE or FAILED)."
             )
         if agent is not None:
-            prepared = await self._prepare_root_agent(agent, state_id)
-            await self._rebind_registered_agent(state_id, prepared)
+            await self._ensure_root_runtime_agent(agent, state_id)
 
         await self._save_state(state.with_queued(pending_input=user_input))
         self.nudge()
@@ -585,8 +596,8 @@ class Scheduler:
         *,
         urgent: bool = False,
     ) -> bool:
-        message = UserMessage.from_value(user_input).extract_text()
-        if not message:
+        message = UserMessage.from_value(user_input)
+        if not message.has_content():
             return False
 
         state = await self._store.get_state(state_id)
@@ -604,13 +615,12 @@ class Scheduler:
             target_agent_id=state_id,
             session_id=state.session_id,
             event_type=SchedulerEventType.USER_HINT,
-            payload={"hint": message},
+            payload={"user_input": UserMessage.to_storage_value(message)},
             created_at=datetime.now(timezone.utc),
+            urgent=urgent,
         )
         await self._store.save_event(event)
         self.nudge()
-        if urgent and state.status == AgentStateStatus.WAITING:
-            self.nudge()
         return True
 
     async def shutdown(self, state_id: str) -> bool:
@@ -630,8 +640,7 @@ class Scheduler:
         ):
             return False
 
-        prepared = await self._prepare_root_agent(agent, state_id)
-        await self._rebind_registered_agent(state_id, prepared)
+        await self._ensure_root_runtime_agent(agent, state_id)
         return True
 
     async def tick(self) -> None:
@@ -705,25 +714,46 @@ class Scheduler:
                 if not waiters:
                     self._rt.waiters.pop(state_id, None)
 
-    async def _prepare_root_agent(self, agent: Agent, state_id: str) -> Agent:
-        clone = Agent(
-            agent.config,
-            id=state_id,
-            model=agent.model,
-            tools=list(agent.extra_tools) or None,
-            hooks=agent.hooks,
-        )
-        clone._inject_system_tools(list(self._scheduling_tools))
-        return clone
+    async def _ensure_root_runtime_agent(
+        self,
+        canonical_agent: Agent,
+        state_id: str,
+    ) -> Agent:
+        """Ensure a scheduler-managed runtime agent exists for ``state_id``.
 
-    async def _rebind_registered_agent(self, state_id: str, agent: Agent) -> None:
-        previous = self._rt.agents.get(state_id)
-        self._rt.agents[state_id] = agent
-        if previous is not None and previous is not agent:
+        **Identity rule (strict reuse):** if the cached canonical agent for
+        ``state_id`` is the *same Python object* as the caller-supplied one,
+        we reuse the existing runtime agent (preserving its ``run_step_storage``
+        / ``trace_storage`` / workspace state across turns).  Otherwise we
+        build a new runtime agent (clone + inject scheduler system tools),
+        close the previous runtime agent, and record the new canonical.
+        """
+        cached_canonical = self._rt.canonical_agents.get(state_id)
+        cached_runtime = self._rt.agents.get(state_id)
+        if cached_canonical is canonical_agent and cached_runtime is not None:
+            return cached_runtime
+
+        runtime_agent = Agent(
+            canonical_agent.config,
+            id=state_id,
+            model=canonical_agent.model,
+            tools=list(canonical_agent.extra_tools) or None,
+            hooks=canonical_agent.hooks,
+        )
+        runtime_agent._inject_system_tools(list(self._scheduling_tools))
+
+        previous_runtime = self._rt.agents.get(state_id)
+        self._rt.agents[state_id] = runtime_agent
+        self._rt.canonical_agents[state_id] = canonical_agent
+        if previous_runtime is not None and previous_runtime is not runtime_agent:
             try:
-                await previous.close()
+                await previous_runtime.close()
             except Exception:  # noqa: BLE001
-                logger.exception("scheduler_rebind_close_failed", state_id=state_id)
+                logger.exception(
+                    "scheduler_root_runtime_agent_close_failed",
+                    state_id=state_id,
+                )
+        return runtime_agent
 
     async def _enqueue_and_return_state_id(
         self,

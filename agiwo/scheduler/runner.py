@@ -412,7 +412,7 @@ class SchedulerRunner:
         if current_state is None:
             return
 
-        if self._should_preserve_terminal_abort(current_state):
+        if await self._maybe_preserve_or_finalize_aborted_terminal(current_state):
             return
 
         text = output.response
@@ -516,21 +516,34 @@ class SchedulerRunner:
 
     async def _cleanup_after_run(self, state: AgentState) -> None:
         self._ctx.rt.dispatched.discard(state.id)
+        refreshed = await self._ctx.store.get_state(state.id)
+
         if state.is_root:
-            refreshed = await self._ctx.store.get_state(state.id)
             if self._should_finish_root_stream_channel(state.id, refreshed):
                 await self._finish_stream_channel(state.id)
+            if not state.is_persistent and (
+                refreshed is None
+                or refreshed.status
+                in (AgentStateStatus.COMPLETED, AgentStateStatus.FAILED)
+            ):
+                await self._pop_and_close_agent(state.id)
             return
 
-        refreshed = await self._ctx.store.get_state(state.id)
         if refreshed is None or refreshed.status in (
             AgentStateStatus.COMPLETED,
             AgentStateStatus.FAILED,
         ):
-            agent = self._ctx.rt.agents.pop(state.id, None)
-            self._ctx.rt.execution_handles.pop(state.id, None)
-            if agent is not None:
+            await self._pop_and_close_agent(state.id)
+
+    async def _pop_and_close_agent(self, state_id: str) -> None:
+        agent = self._ctx.rt.agents.pop(state_id, None)
+        self._ctx.rt.canonical_agents.pop(state_id, None)
+        self._ctx.rt.execution_handles.pop(state_id, None)
+        if agent is not None:
+            try:
                 await agent.close()
+            except Exception:  # noqa: BLE001
+                logger.exception("scheduler_agent_close_failed", state_id=state_id)
 
     async def _finish_stream_channel(self, state_id: str) -> None:
         channel = self._ctx.rt.stream_channels.get(state_id)
@@ -585,13 +598,40 @@ class SchedulerRunner:
                 failed[child_id] = f"Not finished: status={child.status.value}"
         return succeeded, failed
 
-    def _should_preserve_terminal_abort(self, state: AgentState) -> bool:
+    async def _maybe_preserve_or_finalize_aborted_terminal(
+        self,
+        state: AgentState,
+    ) -> bool:
+        """Short-circuit when a state is already terminal due to abort.
+
+        Returns ``True`` when the caller should stop further result handling.
+
+        - If the state is already terminal and aborted, preserve whatever
+          ``last_run_result`` was written by the cancel/shutdown path.
+        - As a defensive fallback, if the terminal+aborted state has no
+          ``last_run_result`` yet, write a ``CANCELLED`` record so that
+          ``wait_for()`` returns promptly instead of waiting on timeout.
+        """
         abort_signal = self._ctx.rt.abort_signals.get(state.id)
-        return (
+        if not (
             state.is_terminal()
             and abort_signal is not None
             and abort_signal.is_aborted()
-        )
+        ):
+            return False
+
+        if state.last_run_result is None:
+            reason = abort_signal.reason or "Cancelled"
+            await self._save_state(
+                state.with_updates(
+                    last_run_result=self._build_last_run_result(
+                        termination_reason=TerminationReason.CANCELLED,
+                        run_id=None,
+                        error=reason,
+                    )
+                )
+            )
+        return True
 
     async def _handle_shutdown_requested(
         self,
