@@ -257,6 +257,7 @@ agiwo-console container up \
 The managed container exposes one default public entrypoint at `http://localhost:8422`.
 All default persistence is rooted under the mounted data directory. Host directories are not visible to the Agent runtime unless they are passed with `--mount`.
 Each `--mount <host-path>:<alias>` appears inside the container as `/mnt/host/<alias>`, so the examples above are available to agents as `/mnt/host/projects` and `/mnt/host/media`.
+The managed CLI path starts the container with the invoking host UID/GID so `/data` and explicit mounts remain writable without falling back to root inside the container.
 
 ### Start The Web UI
 

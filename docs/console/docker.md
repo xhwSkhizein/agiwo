@@ -28,6 +28,7 @@ agiwo-console container up \
 `--data-dir` is the single persistent host directory for the managed container.
 
 The container maps it to `/data` and roots default runtime state under `/data/root`.
+When launched through `agiwo-console container up`, the container runs with the invoking host UID/GID so `/data` stays writable without switching back to root.
 
 That includes:
 

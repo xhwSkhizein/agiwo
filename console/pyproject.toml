@@ -37,6 +37,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["server"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"Dockerfile" = "server/_assets/docker/Dockerfile"
+"docker" = "server/_assets/docker"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",

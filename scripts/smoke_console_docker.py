@@ -118,6 +118,8 @@ def main() -> int:
                 "-d",
                 "--name",
                 container,
+                "--user",
+                f"{getuid()}:{getgid()}",
                 "-p",
                 f"{host_port}:{CONTAINER_PORT}",
                 "-v",
