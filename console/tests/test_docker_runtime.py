@@ -80,9 +80,10 @@ def test_build_docker_run_command_includes_defaults_and_mounts(tmp_path: Path) -
             publish="9000:8422",
         ),
         mounts=mounts,
+        container_user="1000:1000",
     )
 
-    assert command[:8] == [
+    assert command[:10] == [
         "docker",
         "run",
         "-d",
@@ -90,9 +91,13 @@ def test_build_docker_run_command_includes_defaults_and_mounts(tmp_path: Path) -
         "console",
         "--restart",
         "unless-stopped",
+        "--user",
+        "1000:1000",
         "-p",
     ]
     assert "9000:8422" in command
+    assert "--user" in command
+    assert "1000:1000" in command
     assert f"{data_dir}:/data" in command
     assert f"{mount_source.resolve()}:/mnt/host/project" in command
     assert "AGIWO_ROOT_PATH=/data/root" in command
@@ -142,7 +147,7 @@ def test_ensure_supported_network_mode_rejects_unknown_value() -> None:
 
 
 def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for_health(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     data_dir = tmp_path / "data"
     mount_source = tmp_path / "workspace"
@@ -169,6 +174,10 @@ def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for
         replace=True,
         health_timeout_seconds=1.0,
     )
+    monkeypatch.setattr(
+        "server.docker_runtime.resolve_container_user",
+        lambda: "1000:1000",
+    )
 
     exit_code = container_up(
         options,
@@ -184,7 +193,7 @@ def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for
     assert calls[0] == ["/usr/bin/docker", "info"]
     assert calls[1] == ["/usr/bin/docker", "container", "inspect", "console"]
     assert calls[2] == ["/usr/bin/docker", "rm", "-f", "console"]
-    assert calls[3][:8] == [
+    assert calls[3][:11] == [
         "/usr/bin/docker",
         "run",
         "-d",
@@ -192,12 +201,15 @@ def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for
         "console",
         "--restart",
         "unless-stopped",
+        "--user",
+        "1000:1000",
         "-p",
+        "8422:8422",
     ]
 
 
 def test_container_up_pulls_before_replacing_existing_container_when_requested(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     data_dir = tmp_path / "data"
     calls: list[list[str]] = []
@@ -215,6 +227,11 @@ def test_container_up_pulls_before_replacing_existing_container_when_requested(
         if cmd[1] == "run":
             return subprocess.CompletedProcess(cmd, 0, stdout="cid", stderr="")
         raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(
+        "server.docker_runtime.resolve_container_user",
+        lambda: "1000:1000",
+    )
 
     exit_code = container_up(
         ContainerUpOptions(

@@ -153,6 +153,7 @@
 
 - `console/server/models/view.py` 与 `console/server/response_serialization.py` 只属于 API/SSE 边界。
 - 共享的 Console 数据模型统一放 `console/server/models/`。
+- `agiwo-console` 现在有两条稳定启动面：`serve`（宿主机模式）和 `container ...`（Docker 托管模式）。Docker 模式对外只暴露一个公开端口 `8422`，默认持久化根在容器内 `/data/root`，宿主机目录只有通过显式 `--mount <source>:<alias>` 才会映射到 `/mnt/host/<alias>`。
 - `Session.id` 直接作为 root persistent scheduler state id 使用。
 - Console web 与 Feishu channel 统一走 `scheduler.route_root_input(...)`。
 - `build_agent` 必须传入稳定 `id`，使用 `id=id or config.id` 确保上下文延续。
@@ -217,6 +218,9 @@ uv run python scripts/check.py pre-push
 (cd console/web && npm run lint)
 (cd console/web && npm test)
 (cd console/web && npm run build)
+
+# Console Docker smoke
+uv run python scripts/smoke_console_docker.py
 
 # 打包 / workflow / 发布脚本改动后追加
 uv build

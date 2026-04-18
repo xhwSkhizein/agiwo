@@ -95,6 +95,14 @@ def ensure_supported_network_mode(network_mode: str) -> None:
         )
 
 
+def resolve_container_user() -> str | None:
+    getuid = getattr(os, "getuid", None)
+    getgid = getattr(os, "getgid", None)
+    if getuid is None or getgid is None:
+        return None
+    return f"{getuid()}:{getgid()}"
+
+
 def ensure_data_dir(data_dir: Path) -> Path:
     data_dir.mkdir(parents=True, exist_ok=True)
     if not data_dir.is_dir():
@@ -215,6 +223,7 @@ def build_docker_run_command(
     options: ContainerUpOptions,
     *,
     mounts: Sequence[DockerMount],
+    container_user: str | None = None,
 ) -> list[str]:
     command = [
         "docker",
@@ -225,6 +234,8 @@ def build_docker_run_command(
         "--restart",
         "unless-stopped",
     ]
+    if container_user is not None:
+        command.extend(["--user", container_user])
     if options.network_mode == "host":
         command.extend(["--network", "host"])
     else:
@@ -298,7 +309,11 @@ def container_up(
             runner=runner,
         )
 
-    command = build_docker_run_command(normalized, mounts=mounts)
+    command = build_docker_run_command(
+        normalized,
+        mounts=mounts,
+        container_user=resolve_container_user(),
+    )
     command[0] = docker_bin
     run = _run_capture(command, runner=runner)
     if run.returncode != 0:

@@ -30,8 +30,8 @@
   - Provide a stable in-container health probe.
 - Modify: `console/web/src/lib/api.ts`
   - Switch the frontend API base strategy from an absolute localhost default to same-origin-first behavior.
-- Modify: `console/web/next.config.ts`
-  - Add any runtime-facing configuration needed to keep the production container path stable.
+- No change required: `console/web/next.config.ts`
+  - The same-origin deployment path was completed in the frontend API helper without additional Next.js runtime config.
 - Modify: `console/pyproject.toml`
   - Ensure the package includes Docker runtime assets in the built artifact if needed by the CLI-managed flow.
 - Modify: `README.md`
@@ -55,14 +55,14 @@
 - Test: `console/tests/test_cli.py`
 - Test: `console/tests/test_docker_runtime.py`
 
-- [ ] **Step 1: Capture the current CLI behavior with thin regression coverage before expanding the command surface**
+- [x] **Step 1: Capture the current CLI behavior with thin regression coverage before expanding the command surface**
 
 Add tests that prove:
 
 - `agiwo-console serve` still dispatches to `uvicorn.run`
 - `--host`, `--port`, `--env-file`, and `--reload` still pass through unchanged
 
-- [ ] **Step 2: Introduce a dedicated Docker runtime module instead of embedding container logic directly in `cli.py`**
+- [x] **Step 2: Introduce a dedicated Docker runtime module instead of embedding container logic directly in `cli.py`**
 
 Create a small module, for example `console/server/docker_runtime.py`, that owns:
 
@@ -76,7 +76,7 @@ Create a small module, for example `console/server/docker_runtime.py`, that owns
 
 This keeps `cli.py` as a command parser and dispatch layer rather than a process-orchestration file.
 
-- [ ] **Step 3: Add the `container` command group in `console/server/cli.py`**
+- [x] **Step 3: Add the `container` command group in `console/server/cli.py`**
 
 Recommended subcommands:
 
@@ -99,7 +99,7 @@ Recommended `container up` flags:
 - `--pull`
 - `--replace`
 
-- [ ] **Step 4: Define and test strict preflight validation rules**
+- [x] **Step 4: Define and test strict preflight validation rules**
 
 Enforce these behaviors:
 
@@ -111,7 +111,7 @@ Enforce these behaviors:
 - `--network-mode=host` fails on unsupported platforms
 - existing container name fails unless `--replace` is set
 
-- [ ] **Step 5: Define the managed `docker run` contract**
+- [x] **Step 5: Define the managed `docker run` contract**
 
 The runtime helper should translate the supported flags into a controlled `docker run` invocation with defaults equivalent to:
 
@@ -131,7 +131,7 @@ Each explicit mount should map to:
 -v <source>:/mnt/host/<alias>
 ```
 
-- [ ] **Step 6: Require health-based startup completion**
+- [x] **Step 6: Require health-based startup completion**
 
 `container up` should not return success just because `docker run` returned zero. It should poll `GET /api/health` on the public endpoint and only succeed once the container is actually serving traffic.
 
@@ -142,7 +142,7 @@ On failure:
 - include recent container logs or a targeted log tail
 - leave the failed container intact for debugging
 
-- [ ] **Step 7: Add CLI unit tests for success and failure paths**
+- [x] **Step 7: Add CLI unit tests for success and failure paths**
 
 Cover at least:
 
@@ -153,7 +153,7 @@ Cover at least:
 - health-check timeout handling
 - unsupported host-network selection
 
-- [ ] **Step 8: Run the focused backend test slice and commit**
+- [x] **Step 8: Run the focused backend test slice and commit**
 
 Run:
 
@@ -179,7 +179,7 @@ git commit -m "feat: add console docker lifecycle cli"
 - Modify: `console/pyproject.toml`
 - Test: Docker image build and runtime smoke
 
-- [ ] **Step 1: Add a multi-stage Dockerfile for the full Console deployment unit**
+- [x] **Step 1: Add a multi-stage Dockerfile for the full Console deployment unit**
 
 The Dockerfile should:
 
@@ -197,7 +197,7 @@ The Dockerfile should:
   - `ffmpeg`
   - `yt-dlp`
 
-- [ ] **Step 2: Add a fixed container entrypoint**
+- [x] **Step 2: Add a fixed container entrypoint**
 
 `console/docker/entrypoint.sh` should:
 
@@ -207,7 +207,7 @@ The Dockerfile should:
 - start the backend, Web UI, and reverse proxy
 - terminate the container if any required subprocess exits unexpectedly
 
-- [ ] **Step 3: Add the reverse-proxy contract**
+- [x] **Step 3: Add the reverse-proxy contract**
 
 Use a lightweight reverse proxy configuration so that:
 
@@ -218,15 +218,15 @@ Use a lightweight reverse proxy configuration so that:
 
 The container should expose one public port, `8422`, and no separate documented frontend port.
 
-- [ ] **Step 4: Add a stable healthcheck**
+- [x] **Step 4: Add a stable healthcheck**
 
 The image should include a healthcheck script that probes the same in-container public entrypoint the CLI depends on. Keep the health semantics aligned with `container up`.
 
-- [ ] **Step 5: Ensure packaging includes any runtime assets the CLI depends on**
+- [x] **Step 5: Ensure packaging includes any runtime assets the CLI depends on**
 
 If the Console wheel needs to ship Docker templates or runtime assets for the CLI-managed path, update `console/pyproject.toml` build configuration so those files are included in the package.
 
-- [ ] **Step 6: Add a reproducible local smoke command**
+- [x] **Step 6: Add a reproducible local smoke command**
 
 Verify the image can be built and run locally with a temporary data directory and that:
 
@@ -234,7 +234,7 @@ Verify the image can be built and run locally with a temporary data directory an
 - the root browser route responds on the same port
 - `/data/root` is created
 
-- [ ] **Step 7: Commit the Docker runtime artifact**
+- [x] **Step 7: Commit the Docker runtime artifact**
 
 ```bash
 git add console/Dockerfile console/docker/entrypoint.sh console/docker/nginx.conf console/docker/healthcheck.sh console/pyproject.toml
@@ -245,10 +245,10 @@ git commit -m "feat: add official console docker image"
 
 **Files:**
 - Modify: `console/web/src/lib/api.ts`
-- Modify: `console/web/next.config.ts`
+- No change required: `console/web/next.config.ts`
 - Test: `console/web` lint, test, and build
 
-- [ ] **Step 1: Remove the hard-coded absolute localhost default from the frontend API layer**
+- [x] **Step 1: Remove the hard-coded absolute localhost default from the frontend API layer**
 
 The current API helper defaults to `http://localhost:8422`. Replace that with same-origin-first behavior so the production container path works correctly behind the reverse proxy.
 
@@ -257,7 +257,7 @@ Preferred behavior:
 - when `NEXT_PUBLIC_API_URL` is provided, use it
 - otherwise, use a relative API base such as `""` and fetch `/api/...` from the current origin
 
-- [ ] **Step 2: Review streaming and browser-only usage to ensure the new API base is safe**
+- [x] **Step 2: Review streaming and browser-only usage to ensure the new API base is safe**
 
 Confirm that:
 
@@ -265,11 +265,11 @@ Confirm that:
 - SSE/chat streaming calls still resolve correctly from the browser
 - the change does not break local frontend development with `NEXT_PUBLIC_API_URL=http://localhost:8422`
 
-- [ ] **Step 3: Add or update frontend tests if needed**
+- [x] **Step 3: Add or update frontend tests if needed**
 
 Add targeted coverage if the API helper behavior is currently untested and the same-origin switch could regress client behavior.
 
-- [ ] **Step 4: Run the frontend verification path**
+- [x] **Step 4: Run the frontend verification path**
 
 Run:
 
@@ -280,10 +280,10 @@ npm test
 npm run build
 ```
 
-- [ ] **Step 5: Commit the frontend deployment adjustment**
+- [x] **Step 5: Commit the frontend deployment adjustment**
 
 ```bash
-git add console/web/src/lib/api.ts console/web/next.config.ts
+git add console/web/src/lib/api.ts console/web/src/lib/api.test.ts
 git commit -m "fix: support same-origin console api in docker mode"
 ```
 
@@ -295,7 +295,7 @@ git commit -m "fix: support same-origin console api in docker mode"
 - Create: `docs/console/docker.md`
 - Modify: `AGENTS.md`
 
-- [ ] **Step 1: Update the root README to introduce the supported Docker path**
+- [x] **Step 1: Update the root README to introduce the supported Docker path**
 
 Document:
 
@@ -305,7 +305,7 @@ Document:
 - the unified data-root model
 - explicit host mounts for agent-visible directories
 
-- [ ] **Step 2: Expand `docs/console/overview.md` with the two startup modes**
+- [x] **Step 2: Expand `docs/console/overview.md` with the two startup modes**
 
 Clarify:
 
@@ -314,7 +314,7 @@ Clarify:
 - why host directories are not visible by default
 - why `host` networking is advanced-only
 
-- [ ] **Step 3: Add a dedicated Docker guide**
+- [x] **Step 3: Add a dedicated Docker guide**
 
 Create `docs/console/docker.md` with:
 
@@ -325,11 +325,11 @@ Create `docs/console/docker.md` with:
 - environment variable guidance
 - troubleshooting for image pull failures, health-check failures, and mount mistakes
 
-- [ ] **Step 4: Update AGENTS.md only if stable startup or deployment guidance materially changes**
+- [x] **Step 4: Update AGENTS.md only if stable startup or deployment guidance materially changes**
 
 Keep AGENTS at the directory/API boundary level. Only add Docker-related notes if they are truly stable repository rules rather than implementation details.
 
-- [ ] **Step 5: Commit the documentation pass**
+- [x] **Step 5: Commit the documentation pass**
 
 ```bash
 git add README.md docs/console/overview.md docs/console/docker.md AGENTS.md
@@ -342,11 +342,11 @@ git commit -m "docs: add console docker deployment guide"
 - Modify: `.github/workflows/ci.yml`
 - Test: CI-equivalent local checks where feasible
 
-- [ ] **Step 1: Add Docker image build validation to CI**
+- [x] **Step 1: Add Docker image build validation to CI**
 
 At minimum, CI should prove the official image builds successfully.
 
-- [ ] **Step 2: Add a lightweight runtime smoke path**
+- [x] **Step 2: Add a lightweight runtime smoke path**
 
 The smoke path should:
 
@@ -356,11 +356,11 @@ The smoke path should:
 4. verify the root route is reachable on the same port
 5. verify the container exits cleanly on teardown
 
-- [ ] **Step 3: Keep the coverage bounded**
+- [x] **Step 3: Keep the coverage bounded**
 
 Do not make CI responsible for validating every optional runtime tool in an expensive end-to-end job. Keep the smoke path focused on the public deployment contract, and reserve deeper tool-presence checks for a smaller dedicated build-validation step if needed.
 
-- [ ] **Step 4: Run the repository checks that match the touched surface**
+- [x] **Step 4: Run the repository checks that match the touched surface**
 
 Run:
 
@@ -372,7 +372,7 @@ cd console/web && npm run lint && npm test && npm run build
 
 If the Docker smoke path is scriptable locally, run that too before finalizing.
 
-- [ ] **Step 5: Commit the CI coverage**
+- [x] **Step 5: Commit the CI coverage**
 
 ```bash
 git add .github/workflows/ci.yml
@@ -381,11 +381,11 @@ git commit -m "ci: validate console docker deployment path"
 
 ## Final Verification Checklist
 
-- [ ] `agiwo-console serve` still works as before
-- [ ] `agiwo-console container up` starts the managed container and waits for health
-- [ ] backend and frontend are reachable through the same public origin
-- [ ] Agent persistence defaults under `/data/root`
-- [ ] explicit mounts appear under `/mnt/host/<alias>`
-- [ ] undeclared host directories remain inaccessible
-- [ ] frontend API calls work with same-origin deployment
-- [ ] docs match the supported command surface
+- [x] `agiwo-console serve` still works as before
+- [x] `agiwo-console container up` starts the managed container and waits for health
+- [x] backend and frontend are reachable through the same public origin
+- [x] Agent persistence defaults under `/data/root`
+- [x] explicit mounts appear under `/mnt/host/<alias>`
+- [x] undeclared host directories remain inaccessible
+- [x] frontend API calls work with same-origin deployment
+- [x] docs match the supported command surface

@@ -10,7 +10,9 @@ FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    NEXT_TELEMETRY_DISABLED=1
+    NEXT_TELEMETRY_DISABLED=1 \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    HOME=/tmp/agiwo-home
 
 WORKDIR /opt/agiwo
 
@@ -42,8 +44,10 @@ COPY console/pyproject.toml ./console/pyproject.toml
 COPY console/server ./console/server
 RUN pip install --no-cache-dir ./console
 
-RUN mkdir -p /opt/agiwo-console/web /data /var/log/nginx /tmp/nginx \
-    && chown -R agiwo:agiwo /opt/agiwo-console/web /data /var/log/nginx /tmp/nginx /home/agiwo
+RUN mkdir -p /opt/agiwo-console/web /data /var/log/nginx /tmp/nginx /tmp/agiwo-home \
+    && chown -R agiwo:agiwo /opt/agiwo-console/web /data /var/log/nginx /tmp/nginx /tmp/agiwo-home /home/agiwo \
+    && chmod 1777 /tmp/nginx /tmp/agiwo-home \
+    && chmod 0777 /var/log/nginx
 
 COPY --from=web-builder /build/console/web/.next /opt/agiwo-console/web/.next
 COPY --from=web-builder /build/console/web/node_modules /opt/agiwo-console/web/node_modules
