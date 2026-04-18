@@ -13,6 +13,7 @@ from server.docker_runtime import (
     parse_mount_spec,
     parse_mounts,
     resolve_healthcheck_url,
+    resolve_container_user,
     wait_for_health,
 )
 
@@ -105,6 +106,15 @@ def test_build_docker_run_command_includes_defaults_and_mounts(tmp_path: Path) -
     assert command[-1] == "example:latest"
 
 
+def test_resolve_container_user_uses_host_uid_gid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("server.docker_runtime.os.getuid", lambda: 123)
+    monkeypatch.setattr("server.docker_runtime.os.getgid", lambda: 456)
+
+    assert resolve_container_user() == "123:456"
+
+
 def test_wait_for_health_retries_until_success() -> None:
     attempts = {"count": 0}
 
@@ -147,7 +157,8 @@ def test_ensure_supported_network_mode_rejects_unknown_value() -> None:
 
 
 def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for_health(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_dir = tmp_path / "data"
     mount_source = tmp_path / "workspace"
@@ -209,7 +220,8 @@ def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for
 
 
 def test_container_up_pulls_before_replacing_existing_container_when_requested(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_dir = tmp_path / "data"
     calls: list[list[str]] = []

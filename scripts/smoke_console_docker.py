@@ -4,8 +4,11 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Mapping
+from os import environ as os_environ
 from os import getgid, getuid
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 from uuid import uuid4
 
@@ -13,6 +16,42 @@ ROOT = Path(__file__).resolve().parent.parent
 TIMEOUT_SECONDS = 300
 HEALTH_TIMEOUT_SECONDS = 120
 CONTAINER_PORT = 8422
+LOOPBACK_PROXY_HOSTS = {"127.0.0.1", "::1", "localhost"}
+PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+
+
+def _proxy_hostname(value: str) -> str | None:
+    parsed = urlsplit(value if "://" in value else f"//{value}")
+    if parsed.hostname is not None:
+        return parsed.hostname.lower()
+    return None
+
+
+def build_docker_env(
+    base_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    env = dict(os_environ if base_env is None else base_env)
+    for key in PROXY_ENV_KEYS:
+        value = env.get(key)
+        if value is None:
+            continue
+        if _proxy_hostname(value) in LOOPBACK_PROXY_HOSTS:
+            env.pop(key, None)
+    return env
+
+
+def docker_proxy_clear_build_args() -> list[str]:
+    args: list[str] = []
+    for key in PROXY_ENV_KEYS:
+        args.extend(["--build-arg", f"{key}="])
+    return args
 
 
 def run(cmd: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -24,6 +63,7 @@ def run(cmd: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProce
             timeout=TIMEOUT_SECONDS,
             text=True,
             capture_output=True,
+            env=build_docker_env(),
         )
     except subprocess.CalledProcessError as exc:
         if exc.stdout:
@@ -63,34 +103,6 @@ def reserve_host_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def fix_volume_ownership(
-    docker: str,
-    image: str,
-    *,
-    data_dir: Path,
-    workspace_dir: Path,
-) -> None:
-    subprocess.run(
-        [
-            docker,
-            "run",
-            "--rm",
-            "-v",
-            f"{data_dir}:/data",
-            "-v",
-            f"{workspace_dir}:/mnt/host/workspace",
-            "--entrypoint",
-            "sh",
-            image,
-            "-c",
-            f"chown -R {getuid()}:{getgid()} /data /mnt/host/workspace",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-
 def main() -> int:
     docker = shutil.which("docker")
     if docker is None:
@@ -108,7 +120,16 @@ def main() -> int:
 
     try:
         run(
-            [docker, "build", "-f", "console/Dockerfile", "-t", image, "."],
+            [
+                docker,
+                "build",
+                *docker_proxy_clear_build_args(),
+                "-f",
+                "console/Dockerfile",
+                "-t",
+                image,
+                ".",
+            ],
             cwd=ROOT,
         )
         run(
@@ -151,19 +172,22 @@ def main() -> int:
             text=True,
             capture_output=True,
             check=False,
+            env=build_docker_env(),
         )
         if logs.stdout:
             print(logs.stdout, file=sys.stderr, end="")
         if logs.stderr:
             print(logs.stderr, file=sys.stderr, end="")
-        subprocess.run([docker, "rm", "-f", container], check=False)
-        fix_volume_ownership(
-            docker,
-            image,
-            data_dir=data_dir,
-            workspace_dir=workspace_dir,
+        subprocess.run(
+            [docker, "rm", "-f", container],
+            check=False,
+            env=build_docker_env(),
         )
-        subprocess.run([docker, "rmi", image], check=False)
+        subprocess.run(
+            [docker, "rmi", image],
+            check=False,
+            env=build_docker_env(),
+        )
         shutil.rmtree(tmp_path, ignore_errors=False)
 
     print("console docker smoke ok")
