@@ -95,6 +95,42 @@ class BedrockAnthropicModel(Model):
         return self._client
 
     @retry_async(exceptions=(BedrockRetryableError,))
+    async def _invoke_stream(
+        self,
+        *,
+        anthropic_messages: list[dict],
+        anthropic_tools: list[dict] | None,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        try:
+            client = self._get_client()
+            return await asyncio.to_thread(
+                client.invoke_model_with_response_stream,
+                modelId=self.id,
+                body=json.dumps(body),
+            )
+        except ClientError as e:
+            error_code = e.response["Error"]["Code"] if hasattr(e, "response") else None
+            logger.error(
+                "bedrock_request_failed",
+                model=self.id,
+                error=str(e),
+                error_code=error_code,
+                exc_info=True,
+            )
+            if error_code in BEDROCK_RETRYABLE_ERROR_CODES:
+                raise BedrockRetryableError(str(e)) from e
+            raise
+        except Exception as e:
+            logger.error(
+                "bedrock_request_failed",
+                model=self.id,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            raise
+
     async def arun_stream(  # noqa: C901
         self,
         messages: list[dict],
@@ -134,61 +170,37 @@ class BedrockAnthropicModel(Model):
             tools_count=len(anthropic_tools) if anthropic_tools else 0,
         )
 
-        try:
-            client = self._get_client()
-            response = await asyncio.to_thread(
-                client.invoke_model_with_response_stream,
-                modelId=self.id,
-                body=json.dumps(body),
+        response = await self._invoke_stream(
+            anthropic_messages=anthropic_messages,
+            anthropic_tools=anthropic_tools,
+            body=body,
+        )
+
+        translator = AnthropicStreamTranslator(include_reasoning=False)
+
+        sync_queue: _queue.SimpleQueue[dict | None] = _queue.SimpleQueue()
+
+        def _read_stream() -> None:
+            try:
+                for event in response["body"]:
+                    sync_queue.put(json.loads(event["chunk"]["bytes"].decode()))
+            finally:
+                sync_queue.put(None)
+
+        loop = asyncio.get_running_loop()
+        reader_task = loop.run_in_executor(None, _read_stream)
+
+        while True:
+            chunk_data = await loop.run_in_executor(None, sync_queue.get)
+            if chunk_data is None:
+                break
+            stream_chunk = translator.process(
+                normalize_bedrock_anthropic_event(chunk_data)
             )
+            if stream_chunk is not None:
+                yield stream_chunk
 
-            translator = AnthropicStreamTranslator(include_reasoning=False)
-
-            sync_queue: _queue.SimpleQueue[dict | None] = _queue.SimpleQueue()
-
-            def _read_stream() -> None:
-                try:
-                    for event in response["body"]:
-                        sync_queue.put(json.loads(event["chunk"]["bytes"].decode()))
-                finally:
-                    sync_queue.put(None)
-
-            loop = asyncio.get_running_loop()
-            reader_task = loop.run_in_executor(None, _read_stream)
-
-            while True:
-                chunk_data = await loop.run_in_executor(None, sync_queue.get)
-                if chunk_data is None:
-                    break
-                stream_chunk = translator.process(
-                    normalize_bedrock_anthropic_event(chunk_data)
-                )
-                if stream_chunk is not None:
-                    yield stream_chunk
-
-            await reader_task
-
-        except ClientError as e:
-            error_code = e.response["Error"]["Code"] if hasattr(e, "response") else None
-            logger.error(
-                "bedrock_request_failed",
-                model=self.id,
-                error=str(e),
-                error_code=error_code,
-                exc_info=True,
-            )
-            if error_code in BEDROCK_RETRYABLE_ERROR_CODES:
-                raise BedrockRetryableError(str(e)) from e
-            raise
-        except Exception as e:
-            logger.error(
-                "bedrock_request_failed",
-                model=self.id,
-                error=str(e),
-                error_type=type(e).__name__,
-                exc_info=True,
-            )
-            raise
+        await reader_task
 
 
 __all__ = ["BedrockAnthropicModel"]

@@ -1,7 +1,9 @@
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from tenacity import wait_none
 
 from agiwo.llm.openai_response import OpenAIResponsesModel
 from agiwo.llm.openai_response_converter import (
@@ -375,3 +377,73 @@ async def test_parse_sse_stream_handles_failed_event() -> None:
             chunk = model._event_to_chunk(event, tool_calls_state)
             if chunk is not None:
                 pass
+
+
+@pytest.mark.asyncio
+async def test_openai_responses_model_retries_stream_opening(monkeypatch) -> None:
+    model = OpenAIResponsesModel(
+        id="gpt-4.1-mini",
+        name="gpt-4.1-mini",
+        api_key="test-key",
+        base_url="https://example.test/v1",
+    )
+    model._open_stream.retry.wait = wait_none()
+
+    attempts = {"stream_calls": 0}
+
+    class _StreamContext:
+        def __init__(self, enter_fn):
+            self._enter_fn = enter_fn
+
+        async def __aenter__(self):
+            return self._enter_fn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    class _MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        def stream(self, method, url, json, headers):
+            del method, url, json, headers
+            attempts["stream_calls"] += 1
+            if attempts["stream_calls"] == 1:
+
+                def _raise_connect_error():
+                    raise httpx.ConnectError("temporary")
+
+                return _StreamContext(_raise_connect_error)
+
+            return _StreamContext(
+                lambda: _MockHTTPXResponse(
+                    [
+                        _event("response.output_text.delta", delta="Recovered"),
+                        _event(
+                            "response.completed",
+                            response={
+                                "usage": None,
+                                "output": [{"type": "message"}],
+                                "incomplete_details": None,
+                            },
+                        ),
+                    ]
+                )
+            )
+
+    monkeypatch.setattr("agiwo.llm.openai_response.httpx.AsyncClient", _MockAsyncClient)
+
+    messages = [{"role": "user", "content": "Hello"}]
+    chunks = []
+    async for chunk in model.arun_stream(messages):
+        chunks.append(chunk)
+
+    assert chunks[0].content == "Recovered"
+    assert chunks[-1].finish_reason == "stop"
+    assert attempts["stream_calls"] == 2

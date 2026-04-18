@@ -95,6 +95,37 @@ class OpenAIModel(Model):
         )
 
     @retry_async(exceptions=OPENAI_RETRYABLE)
+    async def _create_stream(
+        self,
+        *,
+        actual_model: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+        params: dict[str, object],
+    ) -> AsyncIterator[object]:
+        try:
+            return await self.client.chat.completions.create(**params)
+        except Exception as e:
+            # Extract status code for better error classification (e.g., OpenRouter 429)
+            status_code = None
+            if hasattr(e, "status_code") and e.status_code is not None:
+                status_code = e.status_code
+            elif hasattr(e, "response") and hasattr(e.response, "status_code"):
+                status_code = e.response.status_code
+
+            error_msg = str(e)
+            logger.error(
+                "llm_request_failed",
+                model=actual_model,
+                error=error_msg,
+                error_type=type(e).__name__,
+                status_code=status_code,
+                messages_count=len(messages),
+                tools_count=len(tools) if tools else 0,
+                exc_info=True,
+            )
+            raise
+
     async def arun_stream(  # noqa: C901
         self,
         messages: list[dict],
@@ -138,28 +169,12 @@ class OpenAIModel(Model):
             detail=params,
         )
 
-        try:
-            stream = await self.client.chat.completions.create(**params)
-        except Exception as e:
-            # Extract status code for better error classification (e.g., OpenRouter 429)
-            status_code = None
-            if hasattr(e, "status_code") and e.status_code is not None:
-                status_code = e.status_code
-            elif hasattr(e, "response") and hasattr(e.response, "status_code"):
-                status_code = e.response.status_code
-
-            error_msg = str(e)
-            logger.error(
-                "llm_request_failed",
-                model=actual_model,
-                error=error_msg,
-                error_type=type(e).__name__,
-                status_code=status_code,
-                messages_count=len(messages),
-                tools_count=len(tools) if tools else 0,
-                exc_info=True,
-            )
-            raise
+        stream = await self._create_stream(
+            actual_model=actual_model,
+            messages=messages,
+            tools=tools,
+            params=params,
+        )
 
         chunk_count = 0
         logger.info("openai_stream_started", model=actual_model)

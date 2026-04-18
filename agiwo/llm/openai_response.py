@@ -1,3 +1,4 @@
+from contextlib import AsyncExitStack
 from typing import AsyncIterator
 import json
 import httpx
@@ -285,6 +286,36 @@ class OpenAIResponsesModel(Model):
                 current_data = line[len("data:") :].strip()
 
     @retry_async(exceptions=OPENAI_RETRYABLE)
+    async def _open_stream(
+        self,
+        *,
+        url: str,
+        params: dict[str, object],
+        headers: dict[str, str],
+    ) -> tuple[AsyncExitStack, httpx.Response]:
+        # Keep both client and streaming response contexts open for the caller.
+        stack = AsyncExitStack()
+        try:
+            limits = httpx.Limits(max_keepalive_connections=100, max_connections=100)
+            timeout = httpx.Timeout(120.0, connect=30.0)
+            client = await stack.enter_async_context(
+                httpx.AsyncClient(timeout=timeout, limits=limits)
+            )
+            response = await stack.enter_async_context(
+                client.stream("POST", url, json=params, headers=headers)
+            )
+            if response.status_code != 200:
+                error_text = await response.aread()
+                raise httpx.HTTPStatusError(
+                    f"Request failed with status {response.status_code}: {error_text.decode()}",
+                    request=response.request,
+                    response=response,
+                )
+            return stack, response
+        except Exception:
+            await stack.aclose()
+            raise
+
     async def arun_stream(
         self,
         messages: list[dict],
@@ -321,36 +352,28 @@ class OpenAIResponsesModel(Model):
         tool_calls_state: ToolCallState = {}
         logger.info("openai_responses_stream_started", model=actual_model)
 
-        # Configure httpx with larger limits and timeout for big requests
-        limits = httpx.Limits(max_keepalive_connections=100, max_connections=100)
-        timeout = httpx.Timeout(120.0, connect=30.0)
-
-        async with httpx.AsyncClient(timeout=timeout, limits=limits) as client:
-            async with client.stream(
-                "POST", url, json=params, headers=headers
-            ) as response:
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    raise httpx.HTTPStatusError(
-                        f"Request failed with status {response.status_code}: {error_text.decode()}",
-                        request=response.request,
-                        response=response,
-                    )
-
-                async for event in self._parse_sse_stream(response):
-                    stream_chunk = self._event_to_chunk(event, tool_calls_state)
-                    if stream_chunk is None:
-                        continue
-                    if (
-                        stream_chunk.content is None
-                        and stream_chunk.reasoning_content is None
-                        and stream_chunk.tool_calls is None
-                        and stream_chunk.usage is None
-                        and stream_chunk.finish_reason is None
-                    ):
-                        continue
-                    chunk_count += 1
-                    yield stream_chunk
+        stack, response = await self._open_stream(
+            url=url,
+            params=params,
+            headers=headers,
+        )
+        try:
+            async for event in self._parse_sse_stream(response):
+                stream_chunk = self._event_to_chunk(event, tool_calls_state)
+                if stream_chunk is None:
+                    continue
+                if (
+                    stream_chunk.content is None
+                    and stream_chunk.reasoning_content is None
+                    and stream_chunk.tool_calls is None
+                    and stream_chunk.usage is None
+                    and stream_chunk.finish_reason is None
+                ):
+                    continue
+                chunk_count += 1
+                yield stream_chunk
+        finally:
+            await stack.aclose()
 
         if chunk_count == 0:
             raise RuntimeError(

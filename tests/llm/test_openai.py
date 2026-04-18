@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from tenacity import wait_none
 from agiwo.llm.openai import OpenAIModel
 
 
@@ -70,6 +71,50 @@ async def test_openai_model_arun_stream_basic(mock_get_settings, mock_openai_cli
     assert len(chunks) == 1
     assert chunks[0].content == "Hello"
     mock_openai_client.chat.completions.create.assert_called_once()
+
+
+@pytest.mark.asyncio
+@patch("agiwo.llm.openai.get_settings")
+async def test_openai_model_arun_stream_retries_stream_creation(
+    mock_get_settings, mock_openai_client
+):
+    mock_settings = mock_get_settings.return_value
+    mock_settings.openai_api_key = None
+    model = OpenAIModel(
+        id="gpt-4",
+        name="gpt-4",
+        api_key="test-key",
+    )
+    model.client = mock_openai_client
+    model._create_stream.retry.wait = wait_none()
+
+    mock_chunk = MagicMock()
+    mock_chunk.usage = None
+    mock_chunk.choices = [
+        MagicMock(
+            delta=MagicMock(content="Recovered", tool_calls=None),
+            finish_reason="stop",
+        )
+    ]
+
+    class _MockStream:
+        def __aiter__(self):
+            return self._iterate()
+
+        async def _iterate(self):
+            yield mock_chunk
+
+    mock_openai_client.chat.completions.create = AsyncMock(
+        side_effect=[ConnectionError("temporary"), _MockStream()]
+    )
+
+    messages = [{"role": "user", "content": "Hello"}]
+    chunks = []
+    async for chunk in model.arun_stream(messages):
+        chunks.append(chunk)
+
+    assert [chunk.content for chunk in chunks] == ["Recovered"]
+    assert mock_openai_client.chat.completions.create.await_count == 2
 
 
 @pytest.mark.asyncio

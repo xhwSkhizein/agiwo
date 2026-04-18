@@ -95,6 +95,28 @@ class AnthropicModel(Model):
         )
 
     @retry_async(exceptions=ANTHROPIC_RETRYABLE)
+    async def _create_stream(
+        self,
+        *,
+        actual_model: str,
+        anthropic_messages: list[dict],
+        anthropic_tools: list[dict] | None,
+        params: dict[str, Any],
+    ) -> AsyncIterator[object]:
+        try:
+            return await self.client.messages.create(**params)
+        except Exception as e:
+            logger.error(
+                "llm_request_failed",
+                model=actual_model,
+                error=str(e),
+                error_type=type(e).__name__,
+                messages_count=len(anthropic_messages),
+                tools_count=len(anthropic_tools) if anthropic_tools else 0,
+                exc_info=True,
+            )
+            raise
+
     async def arun_stream(
         self,
         messages: list[dict],
@@ -141,19 +163,12 @@ class AnthropicModel(Model):
             detail=params,
         )
 
-        try:
-            stream = await self.client.messages.create(**params)
-        except Exception as e:
-            logger.error(
-                "llm_request_failed",
-                model=actual_model,
-                error=str(e),
-                error_type=type(e).__name__,
-                messages_count=len(anthropic_messages),
-                tools_count=len(anthropic_tools) if anthropic_tools else 0,
-                exc_info=True,
-            )
-            raise
+        stream = await self._create_stream(
+            actual_model=actual_model,
+            anthropic_messages=anthropic_messages,
+            anthropic_tools=anthropic_tools,
+            params=params,
+        )
 
         translator = AnthropicStreamTranslator(include_reasoning=True)
 
