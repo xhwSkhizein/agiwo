@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 
@@ -15,6 +16,15 @@ DEFAULT_IMAGE = "agiwo-console:latest"
 DEFAULT_PUBLISH = "8422:8422"
 DEFAULT_HEALTH_TIMEOUT_SECONDS = 30.0
 _ALIAS_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
+_LOOPBACK_PROXY_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
 
 
 class DockerRuntimeError(RuntimeError):
@@ -101,6 +111,27 @@ def resolve_container_user() -> str | None:
     if getuid is None or getgid is None:
         return None
     return f"{getuid()}:{getgid()}"
+
+
+def _proxy_hostname(value: str) -> str | None:
+    parsed = urlsplit(value if "://" in value else f"//{value}")
+    if parsed.hostname is not None:
+        return parsed.hostname.lower()
+    return None
+
+
+def build_loopback_proxy_env_overrides(
+    base_env: dict[str, str] | None = None,
+) -> tuple[str, ...]:
+    env = os.environ if base_env is None else base_env
+    overrides: list[str] = []
+    for key in _PROXY_ENV_KEYS:
+        value = env.get(key)
+        if value is None:
+            continue
+        if _proxy_hostname(value) in _LOOPBACK_PROXY_HOSTS:
+            overrides.append(f"{key}=")
+    return tuple(overrides)
 
 
 def ensure_data_dir(data_dir: Path) -> Path:
@@ -246,6 +277,8 @@ def build_docker_run_command(
     if options.env_file:
         command.extend(["--env-file", options.env_file])
     command.extend(["-e", "AGIWO_ROOT_PATH=/data/root"])
+    for item in build_loopback_proxy_env_overrides():
+        command.extend(["-e", item])
     for item in options.env:
         command.extend(["-e", item])
     command.append(options.image)

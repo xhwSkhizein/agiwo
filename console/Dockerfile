@@ -74,6 +74,7 @@ EOF
 
 COPY README.md ./
 COPY agiwo ./agiwo
+COPY templates ./templates
 RUN --mount=type=cache,target=/root/.cache/pip PIP_CACHE_DIR=/root/.cache/pip pip install --no-deps --no-build-isolation .
 
 COPY console/pyproject.toml ./console/pyproject.toml
