@@ -26,6 +26,7 @@ PROXY_ENV_KEYS = (
     "https_proxy",
     "all_proxy",
 )
+REQUIRED_TEMPLATE_FILES = ("IDENTITY.md", "SOUL.md", "USER.md")
 
 
 def _proxy_hostname(value: str) -> str | None:
@@ -84,6 +85,19 @@ def run(
             file=sys.stderr,
         )
         raise SystemExit(1) from exc
+
+
+def build_installed_templates_check_code() -> str:
+    required_templates = ", ".join(repr(name) for name in REQUIRED_TEMPLATE_FILES)
+    return (
+        "from pathlib import Path; "
+        "import agiwo; "
+        "templates_dir = Path(agiwo.__file__).resolve().parent.parent / 'templates'; "
+        "assert templates_dir.is_dir(), templates_dir; "
+        f"required = ({required_templates},); "
+        "missing = [name for name in required if not (templates_dir / name).is_file()]; "
+        "assert not missing, missing"
+    )
 
 
 def wait_for_http(url: str, *, timeout_seconds: float) -> None:
@@ -220,6 +234,16 @@ def main() -> int:
             raise SystemExit("Expected data root to be created under mounted /data")
 
         run([docker, "exec", container, "test", "-d", "/mnt/host/workspace"])
+        run(
+            [
+                docker,
+                "exec",
+                container,
+                "python",
+                "-c",
+                build_installed_templates_check_code(),
+            ]
+        )
     finally:
         logs = subprocess.run(
             [docker, "logs", container],

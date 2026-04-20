@@ -7,6 +7,7 @@ import pytest
 from server.docker_runtime import (
     ContainerUpOptions,
     DockerRuntimeError,
+    build_loopback_proxy_env_overrides,
     build_docker_run_command,
     container_up,
     ensure_supported_network_mode,
@@ -104,6 +105,44 @@ def test_build_docker_run_command_includes_defaults_and_mounts(tmp_path: Path) -
     assert "AGIWO_ROOT_PATH=/data/root" in command
     assert "OPENAI_API_KEY=test" in command
     assert command[-1] == "example:latest"
+
+
+def test_build_loopback_proxy_env_overrides_blanks_local_proxy_values() -> None:
+    overrides = build_loopback_proxy_env_overrides(
+        {
+            "HTTP_PROXY": "http://127.0.0.1:7890",
+            "HTTPS_PROXY": "https://localhost:8443",
+            "ALL_PROXY": "socks5://[::1]:1080",
+            "NO_PROXY": "example.com",
+        }
+    )
+
+    assert overrides == (
+        "HTTP_PROXY=",
+        "HTTPS_PROXY=",
+        "ALL_PROXY=",
+    )
+
+
+def test_build_docker_run_command_blanks_loopback_proxy_env_before_explicit_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "data"
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("HTTPS_PROXY", "https://proxy.internal:8443")
+
+    command = build_docker_run_command(
+        ContainerUpOptions(
+            data_dir=data_dir,
+            env=("OPENAI_API_KEY=test",),
+        ),
+        mounts=(),
+    )
+
+    assert "HTTP_PROXY=" in command
+    assert "HTTPS_PROXY=" not in command
+    assert command.index("HTTP_PROXY=") < command.index("OPENAI_API_KEY=test")
 
 
 def test_resolve_container_user_uses_host_uid_gid(

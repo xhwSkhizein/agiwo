@@ -23,6 +23,23 @@ agiwo-console container up \
   --env-file .env
 ```
 
+## From a Cloned Repository
+
+If you are deploying from this source repository instead of an installed
+`agiwo-console` package, use the repo shortcut script:
+
+```bash
+scripts/deploy_console.sh \
+  --env-file .env \
+  --data-dir "$HOME/agiwo-data"
+```
+
+The script builds the current `console/Dockerfile` image and then starts the managed
+container through `uv run --project console agiwo-console container up`.
+
+It forwards common container options such as `--mount`, `--env`, `--env-name`,
+`--publish`, and `--network-mode`.
+
 ## Data Root
 
 `--data-dir` is the single persistent host directory for the managed container.
@@ -63,6 +80,15 @@ agiwo-console container status
 agiwo-console container logs
 agiwo-console container restart
 agiwo-console container down
+```
+
+For a source-repo deployment, use the existing CLI for follow-up operations:
+
+```bash
+uv run --project console agiwo-console container status
+uv run --project console agiwo-console container logs
+uv run --project console agiwo-console container restart
+uv run --project console agiwo-console container down
 ```
 
 ## Notes

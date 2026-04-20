@@ -43,6 +43,18 @@ def test_docker_proxy_clear_build_args_blank_all_supported_proxy_variables() -> 
     assert "https_proxy=" in build_args
 
 
+def test_build_installed_templates_check_code_checks_required_templates() -> None:
+    smoke_code = smoke_console_docker.build_installed_templates_check_code()
+
+    assert (
+        "templates_dir = Path(agiwo.__file__).resolve().parent.parent / 'templates'"
+        in smoke_code
+    )
+    assert "required = ('IDENTITY.md', 'SOUL.md', 'USER.md',);" in smoke_code
+    assert "assert templates_dir.is_dir()" in smoke_code
+    assert "assert not missing, missing" in smoke_code
+
+
 def test_fix_volume_ownership_surfaces_docker_failure(
     monkeypatch,
     tmp_path,

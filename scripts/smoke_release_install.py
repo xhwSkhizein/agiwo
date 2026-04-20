@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 TIMEOUT_SECONDS = 300
+_REQUIRED_TEMPLATE_FILES = ("IDENTITY.md", "SOUL.md", "USER.md")
 
 
 def run(cmd: list[str]) -> None:
@@ -23,6 +24,27 @@ def resolve_cli_path(venv_path: Path, name: str) -> Path:
     if sys.platform == "win32":
         return venv_path / "Scripts" / f"{name}.exe"
     return venv_path / "bin" / name
+
+
+def build_sdk_smoke_code() -> str:
+    required_templates = ", ".join(repr(name) for name in _REQUIRED_TEMPLATE_FILES)
+    return (
+        "from pathlib import Path; "
+        "import agiwo; "
+        "from agiwo.llm import OpenAIModel; "
+        "from agiwo.tool.manager import ToolManager; "
+        "model = OpenAIModel(name='gpt-5.4', api_key='test-key'); "
+        "assert model.id == 'gpt-5.4'; "
+        "assert model.name == 'gpt-5.4'; "
+        "defaults = set(ToolManager().list_default_tool_names()); "
+        "assert {'bash', 'bash_process', 'web_search', 'web_reader', 'memory_retrieval'} <= defaults; "
+        "templates_dir = Path(agiwo.__file__).resolve().parent.parent / 'templates'; "
+        "assert templates_dir.is_dir(), templates_dir; "
+        f"required = ({required_templates},); "
+        "missing = [name for name in required if not (templates_dir / name).is_file()]; "
+        "assert not missing, missing; "
+        "print('release smoke ok')"
+    )
 
 
 def main() -> int:
@@ -66,16 +88,7 @@ def main() -> int:
             [
                 str(python_path),
                 "-c",
-                (
-                    "from agiwo.llm import OpenAIModel; "
-                    "from agiwo.tool.manager import ToolManager; "
-                    "model = OpenAIModel(name='gpt-5.4', api_key='test-key'); "
-                    "assert model.id == 'gpt-5.4'; "
-                    "assert model.name == 'gpt-5.4'; "
-                    "defaults = set(ToolManager().list_default_tool_names()); "
-                    "assert {'bash', 'bash_process', 'web_search', 'web_reader', 'memory_retrieval'} <= defaults; "
-                    "print('release smoke ok')"
-                ),
+                build_sdk_smoke_code(),
             ]
         )
 
