@@ -84,6 +84,6 @@ tool = MemoryRetrievalTool(
 
 For the complete design documentation (originally in Chinese):
 
-- [Components](./memory/components.md) — Core component details
-- [Data Flow](./memory/data-flow.md) — Retrieval flow and edge cases
-- [Overview](./memory/overview.md) — Architecture overview and comparison with alternatives
+- [Components](../memory/components.md) — Core component details
+- [Data Flow](../memory/data-flow.md) — Retrieval flow and edge cases
+- [Overview](../memory/overview.md) — Architecture overview and comparison with alternatives

@@ -20,10 +20,10 @@ console/server/
 │   ├── runtime/              # agent factory / runtime cache / session runtime
 │   ├── tool_catalog/         # tool reference / catalog / runtime builder
 │   ├── agent_registry/       # Agent 配置持久化
+│   ├── session_store/        # Console session store
 │   ├── storage_wiring.py     # 存储配置构建
 │   └── metrics.py            # run/session/state 聚合
 └── channels/
-    ├── session/              # 渠道批处理（SessionManager）
     └── feishu/               # Feishu 适配层
 ```
 
@@ -44,8 +44,8 @@ console/server/
 
 ### Web Chat
 
-1. `routers/chat.py` 校验 Agent 配置并构建 Agent。
-2. `SessionRuntimeService` 统一调用 `scheduler.route_root_input(...)`。
+1. `routers/agents.py` 创建会话，`routers/sessions.py` 接收 session 输入。
+2. `SessionRuntimeService` 统一调用 scheduler 路由接口。
 3. `response_serialization.py` 负责把 `AgentStreamItem` 转成 SSE payload。
 
 ### Feishu

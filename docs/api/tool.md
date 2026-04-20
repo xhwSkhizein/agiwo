@@ -1,5 +1,19 @@
 # Tool API Reference
 
+## Public Exports
+
+`agiwo.tool` currently exports:
+
+- `BaseTool`
+- `ToolDefinition`
+- `ToolResult`
+- `ToolContext`
+- `ToolReference`
+- `BuiltinToolReference`
+- `AgentToolReference`
+- `InvalidToolReferenceError`
+- `parse_tool_reference(...)`
+
 ## `BaseTool`
 
 Abstract base class for all tools.
@@ -9,6 +23,7 @@ class BaseTool(ABC):
     cacheable: bool = False
     timeout_seconds: int = 30
     concurrency_safe: bool = True
+    is_stateless: bool = False
 
     @property
     @abstractmethod
@@ -23,6 +38,12 @@ class BaseTool(ABC):
     @abstractmethod
     def get_parameters(self) -> dict[str, Any]: ...
 
+    async def gate(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+    ) -> ToolGateDecision: ...
+
     @abstractmethod
     async def execute(
         self,
@@ -31,35 +52,54 @@ class BaseTool(ABC):
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult: ...
 
+    def build_context(
+        self,
+        run_context: RunContextLike,
+        *,
+        tool_call_id: str = "",
+    ) -> ToolContext: ...
+
     def get_definition(self) -> ToolDefinition: ...
     def to_openai_schema(self) -> dict[str, object]: ...
 ```
 
-### What to Implement
+### What To Implement
 
-| Member | Type | Description |
-|--------|------|-------------|
-| `name` | `str` (class attr or property) | Tool identifier (must be unique per agent) |
-| `description` | `str` (class attr or property) | Description shown to the LLM |
-| `get_parameters()` | `dict` | JSON Schema for parameters |
-| `execute()` | `ToolResult` | Execute the tool |
+| Member | Description |
+|--------|-------------|
+| `name` | Tool identifier, unique per agent |
+| `description` | Description shown to the model |
+| `get_parameters()` | JSON Schema for tool parameters |
+| `execute()` | Main tool behavior |
 
-### Class Attributes
+### Common Attributes
 
 | Attribute | Default | Description |
 |-----------|---------|-------------|
 | `cacheable` | `False` | Enable session-scoped result caching |
-| `timeout_seconds` | `30` | Execution timeout |
+| `timeout_seconds` | `30` | Per-tool execution timeout |
 | `concurrency_safe` | `True` | Can run in parallel with other tools |
+| `is_stateless` | `False` | Tool instance can be reused safely across calls |
 
-### Additional Methods
+### Optional Preflight
 
-| Method | Description |
-|--------|-------------|
-| `gate(parameters, context) -> ToolGateDecision` | Preflight safety check before execution |
-| `build_context(run_context, tool_call_id) -> ToolContext` | Builds `ToolContext` from agent run context |
+`gate(...)` runs before execution and returns a `ToolGateDecision`. Override it for lightweight permission or policy checks.
 
----
+## `ToolGateDecision`
+
+Defined in `agiwo.tool.base` and used by `BaseTool.gate(...)`.
+
+```python
+@dataclass(frozen=True)
+class ToolGateDecision:
+    action: Literal["allow", "deny"]
+    reason: str = ""
+```
+
+Helpers:
+
+- `ToolGateDecision.allow(...)`
+- `ToolGateDecision.deny(...)`
 
 ## `ToolResult`
 
@@ -69,80 +109,25 @@ class ToolResult:
     tool_name: str
     tool_call_id: str
     input_args: dict[str, Any]
-    content: str                          # Text for LLM
-    output: Any                           # Raw structured output
+    content: str
+    output: Any
     start_time: float
     end_time: float
     duration: float
-    content_for_user: str | None = None   # Display text for UI
+    content_for_user: str | None = None
     error: str | None = None
     is_success: bool = True
+    termination_reason: TerminationReason | None = None
 ```
 
-### Factory Methods
+Factory methods:
 
-#### `ToolResult.success()`
+- `ToolResult.success(...)`
+- `ToolResult.failed(...)`
+- `ToolResult.aborted(...)`
+- `ToolResult.denied(...)`
 
-```python
-@classmethod
-def success(
-    cls,
-    tool_name: str,
-    content: str,
-    tool_call_id: str = "",
-    input_args: dict[str, Any] | None = None,
-    start_time: float | None = None,
-    output: Any = None,
-    content_for_user: str | None = None,
-) -> ToolResult
-```
-
-#### `ToolResult.failed()`
-
-```python
-@classmethod
-def failed(
-    cls,
-    tool_name: str,
-    error: str,
-    tool_call_id: str = "",
-    input_args: dict[str, Any] | None = None,
-    start_time: float | None = None,
-    content: str | None = None,
-    output: Any = None,
-) -> ToolResult
-```
-
-#### `ToolResult.aborted()`
-
-```python
-@classmethod
-def aborted(
-    cls,
-    tool_name: str,
-    tool_call_id: str = "",
-    input_args: dict[str, Any] | None = None,
-    start_time: float | None = None,
-) -> ToolResult
-```
-
-#### `ToolResult.denied()`
-
-```python
-@classmethod
-def denied(
-    cls,
-    tool_name: str,
-    reason: str,
-    tool_call_id: str = "",
-    input_args: dict[str, Any] | None = None,
-    start_time: float | None = None,
-    content: str | None = None,
-    output: Any = None,
-) -> ToolResult
-```
-
----
+Use these instead of constructing `ToolResult` directly in production code.
 
 ## `ToolDefinition`
 
@@ -157,7 +142,7 @@ class ToolDefinition:
     cacheable: bool = False
 ```
 
----
+This is the LLM-facing registration shape generated by `BaseTool.get_definition()`.
 
 ## `ToolContext`
 
@@ -175,13 +160,19 @@ class ToolContext:
     tool_call_id: str = ""
 ```
 
----
+Plain tools should depend only on `ToolContext`, not on agent-internal runtime types.
 
-## `AbortSignal`
+## Tool References
+
+The public tool-reference helpers are useful when you need to parse or validate allowlist entries:
 
 ```python
-class AbortSignal:
-    def is_aborted(self) -> bool: ...
+from agiwo.tool import parse_tool_reference
+
+ref = parse_tool_reference("agent:researcher")
 ```
 
-Pass to long-running tools and check periodically for cancellation.
+Reference types:
+
+- builtin tool names such as `bash`
+- agent references such as `agent:<id>`

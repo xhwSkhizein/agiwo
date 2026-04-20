@@ -1,0 +1,60 @@
+---
+title: Agent
+description: Understand the canonical Agent runtime surface and when to use run, run_stream, or start.
+---
+
+# Agent
+
+`Agent` is the canonical runtime entry point in Agiwo. It owns one model, one config object, and one assembled tool surface.
+
+## Public execution primitives
+
+- `run(...)` for one-shot request and response
+- `run_stream(...)` for streaming consumption
+- `start(...)` for an explicit execution handle
+
+All three use the same underlying runtime pipeline.
+
+## Construction
+
+```python
+from agiwo.agent import Agent, AgentConfig
+from agiwo.llm import OpenAIModel
+
+agent = Agent(
+    AgentConfig(
+        name="assistant",
+        description="Helpful SDK assistant",
+        system_prompt="Answer concisely and use tools when needed.",
+    ),
+    model=OpenAIModel(name="gpt-5.4"),
+)
+```
+
+## Important config semantics
+
+- `allowed_tools=None` means builtin functional tools plus all extra functional tools
+- `allowed_tools=[]` means no functional tools
+- `allowed_skills=None` means all discovered skills remain eligible
+- `allowed_skills=[]` disables skills
+
+`allowed_skills` must already be expanded to explicit skill names before entering runtime.
+
+## Stable identity
+
+Pass a stable `id` when the same logical agent is reconstructed across requests, especially in Console-backed or persistent scheduler flows. That keeps history and runtime state aligned.
+
+## Tool assembly
+
+An agent can expose:
+
+- builtin functional tools
+- extra tools passed through `tools=[...]`
+- skills, when enabled
+- scheduler runtime tools, when running under `Scheduler`
+
+The scheduler tools are system-owned and are not manually registered.
+
+## Lifecycle
+
+Agents hold live model and storage resources. Call `await agent.close()` when you create agents directly and no longer need them.

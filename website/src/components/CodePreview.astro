@@ -12,10 +12,10 @@ async def main() -> None:
             description="A helpful assistant",
             system_prompt="You are a concise assistant.",
         ),
-        model=OpenAIModel(id="gpt-4o-mini"),
+        model=OpenAIModel(name="gpt-5.4"),
     )
 
-    result = await agent.run("What is 2 + 2?")
+    result = await agent.run("Summarize why runtime control matters for AI agents.")
     print(result.response)
 
     await agent.close()
@@ -28,9 +28,11 @@ asyncio.run(main())
 <section class="code-preview">
   <div class="section-heading">
     <p class="eyebrow">Quick example</p>
-    <h2>Start with a minimal Python agent.</h2>
+    <h2>Start with a minimal Python agent, then grow into orchestration.</h2>
     <p>
-      The public site should immediately show that Agiwo is practical, not just conceptual.
+      The same runtime surface supports one-shot execution, streaming output,
+      tools, and scheduler-managed workflows. Start small without painting
+      yourself into a corner.
     </p>
   </div>
   <pre><code>{code}</code></pre>

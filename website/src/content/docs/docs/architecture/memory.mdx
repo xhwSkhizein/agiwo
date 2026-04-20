@@ -1,0 +1,39 @@
+---
+title: Memory System
+description: Understand how Agiwo indexes and retrieves MEMORY files with hybrid retrieval.
+---
+
+# Memory System
+
+Agiwo's memory system provides hybrid retrieval over `MEMORY/` files using BM25 plus vector similarity.
+
+## Design goals
+
+- zero external vector database requirement
+- per-agent workspace isolation
+- passive indexing during retrieval
+- graceful fallback when embeddings are unavailable
+
+## Retrieval flow
+
+```text
+Agent
+  -> memory_retrieval tool
+    -> WorkspaceMemoryService.search()
+      -> sync files
+      -> chunk and index
+      -> vector search
+      -> BM25 search
+      -> merge and rank
+```
+
+## Practical implications
+
+- agents can write memory directly into workspace files
+- the retrieval layer stays close to the runtime and workspace model
+- embeddings are helpful but not mandatory
+- the result set is optimized for agent consumption rather than for building a standalone memory product
+
+## Why this fits the harness model
+
+Memory is not a separate hidden system. It is part of the runtime story: observable, workspace-oriented, and compatible with persistence, traces, and context optimization.

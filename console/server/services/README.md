@@ -9,13 +9,17 @@ services/
 ├── runtime/
 │   ├── agent_factory.py       # build_agent / rehydrate / resume
 │   ├── agent_runtime_cache.py # runtime Agent 缓存
+│   ├── scheduler_tree_view_service.py
 │   ├── session_runtime_service.py
-│   └── session_service.py
+│   ├── session_service.py
+│   └── session_view_service.py
 ├── tool_catalog/
 │   ├── tool_references.py
 │   ├── tool_catalog.py
 │   └── tool_builder.py
 ├── agent_registry/
+├── session_store/
+├── runtime_config.py
 ├── storage_wiring.py
 └── metrics.py
 ```

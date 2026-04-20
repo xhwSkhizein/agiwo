@@ -1,0 +1,89 @@
+---
+title: First Agent
+description: Build and run a minimal Agiwo agent, then extend it into streaming and tools.
+---
+
+# First Agent
+
+## Minimal example
+
+```python
+import asyncio
+
+from agiwo.agent import Agent, AgentConfig
+from agiwo.llm import OpenAIModel
+
+
+async def main() -> None:
+    agent = Agent(
+        AgentConfig(
+            name="assistant",
+            description="Helpful SDK assistant",
+            system_prompt="Answer concisely and use tools only when needed.",
+        ),
+        model=OpenAIModel(name="gpt-5.4"),
+    )
+
+    result = await agent.run("What makes a runtime harness useful for AI agents?")
+    print(result.response)
+
+    await agent.close()
+
+
+asyncio.run(main())
+```
+
+Run it with:
+
+```bash
+uv run python hello.py
+```
+
+## Stream the response
+
+```python
+async for event in agent.run_stream("Explain recursion in one sentence."):
+    if event.type == "step_delta" and event.delta.content:
+        print(event.delta.content, end="", flush=True)
+```
+
+If you need full control over waiting or cancellation, use `start()` and then consume `handle.stream()`.
+
+## Add tools
+
+Builtin tools are available by default, including `bash`, `bash_process`, `web_search`, `web_reader`, and `memory_retrieval`.
+
+You can also register your own `BaseTool` implementations:
+
+```python
+agent = Agent(
+    AgentConfig(
+        name="math-assistant",
+        description="Uses tools for arithmetic",
+        system_prompt="Use the calculator tool for arithmetic.",
+    ),
+    model=OpenAIModel(name="gpt-5.4"),
+    tools=[CalculatorTool()],
+)
+```
+
+## When to move beyond a single agent
+
+Stay with `Agent.run()` and `run_stream()` when:
+
+- a single run is enough
+- you do not need persistent runtime state
+- you do not need child-agent orchestration
+
+Move to the scheduler when you need:
+
+- long-lived roots
+- waiting and wake conditions
+- multi-agent coordination
+- explicit steering or cancellation
+
+## Next steps
+
+- [Streaming Guide](/docs/guides/streaming/)
+- [Custom Tools Guide](/docs/guides/custom-tools/)
+- [Multi-Agent Guide](/docs/guides/multi-agent/)

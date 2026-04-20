@@ -1,0 +1,54 @@
+---
+title: Skills
+description: Understand file-based skills, discovery, prompt-time visibility, and allowlisting.
+---
+
+# Skills
+
+Skills are file-based instruction bundles that an agent can discover and activate when they are useful.
+
+## Skill structure
+
+```text
+my_skill/
+├── SKILL.md
+├── scripts/
+├── references/
+└── assets/
+```
+
+`SKILL.md` is required and provides the discovery metadata plus the main instruction body.
+
+## Discovery model
+
+Skills are discovered from SDK-level `settings.skills_dirs`, not from per-agent skill directories.
+
+Agent-level access is controlled with `allowed_skills`:
+
+- `None` means all discovered skills remain eligible
+- `[]` disables skills
+- explicit lists must already be expanded to concrete skill names before entering runtime
+
+## Prompt-time behavior
+
+Agiwo does not dump the full discovered skill catalog into every prompt.
+
+Instead:
+
+1. `AGIWO_DEFAULT_PROMPT_SKILLS` controls the small subset rendered into the prompt
+2. that subset is still filtered by `allowed_skills`
+3. the `skill` tool handles search and activation at runtime
+
+## Runtime flow
+
+The normal runtime sequence is:
+
+1. the model decides a skill might help
+2. it calls the `skill` tool with `mode="search"`
+3. if a skill is recommended, it calls the tool again with `mode="activate"`
+4. the full `SKILL.md` body is loaded only for that chosen skill
+
+## Related references
+
+- [Runtime Harness](/docs/concepts/runtime-harness/)
+- [Configuration](/docs/reference/configuration/)

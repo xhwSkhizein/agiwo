@@ -1,0 +1,61 @@
+---
+title: Installation
+description: Install Agiwo, choose SDK or Console packages, and configure provider credentials.
+---
+
+# Installation
+
+## Requirements
+
+- Python 3.10+
+- [`uv`](https://docs.astral.sh/uv/) recommended for local development, or `pip`
+
+## Install the SDK
+
+```bash
+pip install agiwo
+```
+
+From source:
+
+```bash
+git clone https://github.com/xhwSkhizein/agiwo.git
+cd agiwo
+uv sync
+```
+
+## Install the Console
+
+The Console is a separate package and remains optional.
+
+```bash
+pip install agiwo-console
+```
+
+## Configure model credentials
+
+Set only the credentials for the providers you plan to use.
+
+```bash
+export OPENAI_API_KEY=...
+export ANTHROPIC_API_KEY=...
+export DEEPSEEK_API_KEY=...
+```
+
+You can also place them in a local `.env` file for development workflows.
+
+## Configuration namespaces
+
+| Prefix | Purpose |
+| --- | --- |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY` | Provider credentials |
+| `AGIWO_*` | SDK-level runtime settings |
+| `AGIWO_CONSOLE_*` | Console deployment and runtime settings |
+
+For compatible providers, use the model factory and provide `base_url` plus `api_key_env_name`.
+
+## Next steps
+
+- [Getting Started](/docs/getting-started/)
+- [First Agent](/docs/first-agent/)
+- [Configuration Reference](/docs/reference/configuration/)

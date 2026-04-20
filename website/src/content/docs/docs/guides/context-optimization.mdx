@@ -1,0 +1,45 @@
+---
+title: Context Optimization
+description: Reduce context bloat with rollback for empty turns and retrospect for verbose tool results.
+---
+
+# Context Optimization
+
+Long-running agents, especially scheduler-managed ones, accumulate context quickly. Agiwo provides two separate semantic optimization mechanisms in addition to token-window compaction:
+
+- context rollback
+- tool-result retrospect
+
+## Context rollback
+
+Rollback is designed for scheduler wakeups that discover no real progress.
+
+Typical case:
+
+- a root wakes on a periodic timer
+- child work is still running
+- the root only confirms there is no new information
+- the root goes back to waiting
+
+Instead of keeping that empty turn in context, the agent can call `sleep_and_wait(..., no_progress=True)`. The runtime removes the no-progress steps and returns the agent to `WAITING`.
+
+## Tool-result retrospect
+
+Retrospect handles the opposite problem: large tool results that add little long-term value.
+
+The flow is:
+
+1. the runtime detects a large or accumulated tool-result footprint
+2. a system notice nudges the agent to call `retrospect_tool_result`
+3. original tool output is offloaded
+4. the context keeps a condensed summary instead of the full payload
+
+The original step content is preserved in storage. Condensed forms are recorded in `condensed_content` and become the preferred representation when history is reloaded.
+
+## Why it matters
+
+These mechanisms are part of the self-improvement story:
+
+- less context is wasted on empty loops
+- exploratory dead ends can be summarized rather than repeated in full
+- long-lived agents stay more focused without losing execution history

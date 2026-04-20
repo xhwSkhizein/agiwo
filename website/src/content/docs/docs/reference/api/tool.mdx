@@ -1,0 +1,79 @@
+---
+title: Tool API
+description: Reference for BaseTool, ToolResult, ToolContext, and tool reference helpers.
+---
+
+# Tool API
+
+## Public exports
+
+`agiwo.tool` exports:
+
+- `BaseTool`
+- `ToolDefinition`
+- `ToolResult`
+- `ToolContext`
+- `ToolReference`
+- `BuiltinToolReference`
+- `AgentToolReference`
+- `InvalidToolReferenceError`
+- `parse_tool_reference(...)`
+
+## `BaseTool`
+
+Core contract:
+
+```python
+class BaseTool(ABC):
+    cacheable: bool = False
+    timeout_seconds: int = 30
+    concurrency_safe: bool = True
+    is_stateless: bool = False
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def description(self) -> str: ...
+
+    def get_parameters(self) -> dict[str, Any]: ...
+
+    async def execute(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> ToolResult: ...
+```
+
+## `ToolResult`
+
+Use the factory methods:
+
+- `ToolResult.success(...)`
+- `ToolResult.failed(...)`
+- `ToolResult.aborted(...)`
+- `ToolResult.denied(...)`
+
+Important fields include `content`, `content_for_user`, `output`, `error`, and `duration`.
+
+## `ToolContext`
+
+`ToolContext` carries runtime metadata such as:
+
+- `session_id`
+- `agent_id`
+- `agent_name`
+- `user_id`
+- `depth`
+- `tool_call_id`
+
+Plain tools should rely on this instead of internal agent runtime types.
+
+## Tool references
+
+Use `parse_tool_reference(...)` when you need to validate allowlist entries such as:
+
+- `bash`
+- `web_search`
+- `agent:researcher`

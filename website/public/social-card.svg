@@ -10,10 +10,13 @@
   <circle cx="190" cy="540" r="240" fill="#f59e0b" fill-opacity="0.10" />
   <rect x="46" y="46" width="1108" height="538" rx="28" fill="url(#panel)" stroke="#334155" stroke-width="2" />
   <text x="96" y="214" fill="#f8fafc" font-size="76" font-family="Georgia, 'Iowan Old Style', serif">Agiwo</text>
-  <text x="96" y="304" fill="#dbeafe" font-size="42" font-family="'Trebuchet MS', 'Gill Sans', sans-serif">
-    Open-source Python AI agent framework and control plane
+  <text x="96" y="294" fill="#dbeafe" font-size="42" font-family="'Trebuchet MS', 'Gill Sans', sans-serif">
+    Runtime harness for orchestrated agents
   </text>
-  <text x="96" y="390" fill="#93c5fd" font-size="28" font-family="'Trebuchet MS', 'Gill Sans', sans-serif">
-    Streaming • tool use • orchestration • tracing • persistence
+  <text x="96" y="346" fill="#dbeafe" font-size="42" font-family="'Trebuchet MS', 'Gill Sans', sans-serif">
+    Built for self-improving systems
+  </text>
+  <text x="96" y="418" fill="#93c5fd" font-size="28" font-family="'Trebuchet MS', 'Gill Sans', sans-serif">
+    Tools • scheduler • traces • persistence • Console
   </text>
 </svg>

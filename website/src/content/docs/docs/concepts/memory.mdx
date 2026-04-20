@@ -1,0 +1,30 @@
+---
+title: Memory
+description: Understand Agiwo's hybrid MEMORY retrieval system and why it fits the runtime harness model.
+---
+
+# Memory
+
+Agiwo's memory system provides hybrid retrieval over `MEMORY/` files rather than forcing a separate always-on memory service.
+
+## Design goals
+
+- zero external vector database requirement
+- per-agent workspace isolation
+- passive indexing during retrieval
+- graceful fallback when embeddings are unavailable
+
+## How it works
+
+When the agent calls `memory_retrieval(...)`, the runtime:
+
+1. scans `MEMORY/` for changed files
+2. chunks and indexes new content
+3. runs hybrid retrieval with BM25 plus vector similarity
+4. returns the best matches with file and line references
+
+## Why it matters
+
+Memory is part of the self-improvement story because the runtime can keep reusable knowledge close to the workspace without hiding it inside opaque provider-specific memory layers.
+
+For the deeper implementation view, see [Architecture: Memory System](/docs/architecture/memory/).

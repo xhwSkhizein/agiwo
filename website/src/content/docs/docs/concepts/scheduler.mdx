@@ -1,0 +1,54 @@
+---
+title: Scheduler
+description: Understand when to use the Scheduler and how it manages persistent roots and child agents.
+---
+
+# Scheduler
+
+`Scheduler` is the orchestration layer above `Agent`. It does not replace the agent runtime. It manages when and how roots and children are run.
+
+## Use the scheduler when you need
+
+- persistent roots across multiple turns
+- child agents
+- waiting and wake conditions
+- steer, cancel, or shutdown controls
+- a long-lived runtime story the Console can inspect
+
+If you only need one run, prefer `Agent.run()` or `Agent.run_stream()`.
+
+## Core responsibilities
+
+- root and child lifecycle management
+- persistent input routing
+- sleep and wake semantics
+- streaming and wait-for results
+- runtime control tools for scheduler-managed agents
+
+## Mental model
+
+You can think of the scheduler as two layers:
+
+- persistence: state snapshots and pending events
+- execution: decide what should run, then dispatch one action at a time
+
+## Important states
+
+| State | Meaning |
+| --- | --- |
+| `RUNNING` | Currently executing an agent cycle |
+| `WAITING` | Waiting for a wake condition |
+| `IDLE` | Persistent root finished the current round and is ready |
+| `QUEUED` | Persistent root has another input queued |
+| `COMPLETED` | One-shot root finished |
+| `FAILED` | The state failed or was terminated |
+
+## Root input routing
+
+The high-level integration API is `route_root_input(...)`. It decides whether the right action is:
+
+- submit a new root
+- enqueue input for the next round
+- steer a currently active root
+
+That is why Console and channel integrations do not need to reimplement root lifecycle logic.

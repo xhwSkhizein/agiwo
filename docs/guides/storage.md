@@ -14,10 +14,10 @@ Agiwo separates storage into two independent concerns: run/step persistence and 
 Records every agent execution with full step details:
 
 ```python
-from agiwo.agent import Agent, AgentConfig, AgentOptions, RunStepStorageConfig
+from agiwo.agent import RunStepStorageConfig
 from agiwo.agent.storage.factory import create_run_step_storage
 
-# SQLite backend (default)
+# SQLite backend
 storage = create_run_step_storage(
     RunStepStorageConfig(storage_type="sqlite", config={"db_path": "runs.db"})
 )
@@ -34,14 +34,14 @@ storage = create_run_step_storage(RunStepStorageConfig(storage_type="memory"))
 
 ## Session Storage
 
-The SDK does not provide a standalone `SessionStorage` abstraction. Session state management is handled by the console server via `SessionManager` in `console/server/channels/session/manager.py`, or by the SDK's in-memory runtime state during agent execution.
+The SDK does not expose a standalone session storage abstraction. Session lifecycle for the Console is owned by `console/server/services/session_store/` plus the runtime services under `console/server/services/runtime/`.
 
 ## Trace Storage
 
 Collects distributed traces for debugging and monitoring:
 
 ```python
-from agiwo.agent import Agent, AgentConfig, AgentOptions, TraceStorageConfig
+from agiwo.agent import TraceStorageConfig
 from agiwo.observability import create_trace_storage
 
 # SQLite
@@ -53,18 +53,28 @@ trace_storage = create_trace_storage(
 trace_storage = create_trace_storage(TraceStorageConfig(storage_type="memory"))
 ```
 
-Pass trace configuration through `AgentConfig.options`:
+Pass storage configuration through `AgentOptions.storage`:
 
 ```python
+from agiwo.agent import (
+    Agent,
+    AgentConfig,
+    AgentOptions,
+    AgentStorageOptions,
+    TraceStorageConfig,
+)
+
 agent = Agent(
     AgentConfig(
         name="assistant",
         description="...",
         system_prompt="...",
         options=AgentOptions(
-            trace_storage=TraceStorageConfig(
-                storage_type="sqlite",
-                config={"db_path": "traces.db"},
+            storage=AgentStorageOptions(
+                trace_storage=TraceStorageConfig(
+                    storage_type="sqlite",
+                    config={"db_path": "traces.db"},
+                )
             )
         ),
     ),
@@ -103,12 +113,17 @@ traces = await trace_storage.query_traces(
 |---------|----------|-------------|
 | `memory` | Testing, ephemeral workloads | No (lost on restart) |
 | `sqlite` | Single-node deployments, development | Yes |
+| `mongodb` | External persistent deployment | Yes |
 
 ## Configuration
 
 Storage constructors are config-driven:
 
 ```python
+from agiwo.agent import RunStepStorageConfig, TraceStorageConfig
+from agiwo.agent.storage.factory import create_run_step_storage
+from agiwo.observability import create_trace_storage
+
 run_step_storage = create_run_step_storage(
     RunStepStorageConfig(
         storage_type="sqlite",
@@ -132,6 +147,8 @@ trace_storage = create_trace_storage(
 When `input_price`, `output_price`, and `cache_hit_price` are set on the Model, the SDK automatically tracks costs:
 
 ```python
+from agiwo.llm import OpenAIModel
+
 model = OpenAIModel(
     name="gpt-5.4",
     input_price=0.005,     # per 1K tokens

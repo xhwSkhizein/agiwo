@@ -1,0 +1,59 @@
+---
+title: Tool
+description: Understand functional tools, system tools, and the stable BaseTool contract.
+---
+
+# Tool
+
+Tools let agents interact with the outside world instead of only producing text.
+
+## Two tool categories
+
+### Functional tools
+
+These are the tools controlled by `allowed_tools`:
+
+- builtin tools such as `bash`, `web_search`, and `web_reader`
+- custom `BaseTool` implementations
+- nested agents exposed through `Agent.as_tool()`
+
+### System tools
+
+These are runtime-owned tools and are not filtered by `allowed_tools`:
+
+- `SkillTool`
+- scheduler runtime tools such as `spawn_agent` and `sleep_and_wait`
+
+## Stable contract
+
+Public tools implement `BaseTool` with:
+
+- `name`
+- `description`
+- `get_parameters()`
+- `execute(...)`
+
+Plain tools should depend on `ToolContext`, not on agent-internal runtime types.
+
+## Result semantics
+
+Use:
+
+- `ToolResult.success(...)`
+- `ToolResult.failed(...)`
+- `ToolResult.aborted(...)`
+- `ToolResult.denied(...)`
+
+This keeps tool outcomes explicit for the runtime and for the model's next step.
+
+## Builtin tools
+
+The builtin surface currently includes:
+
+- `bash`
+- `bash_process`
+- `web_search`
+- `web_reader`
+- `memory_retrieval`
+
+You can treat them as defaults and layer your own tools alongside them.

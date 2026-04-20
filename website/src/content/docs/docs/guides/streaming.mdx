@@ -1,0 +1,53 @@
+---
+title: Streaming
+description: Use Agiwo's shared streaming pipeline across Agent and Scheduler execution.
+---
+
+# Streaming
+
+Agiwo is streaming-first. `run()`, `run_stream()`, `start()`, and scheduler streaming all use the same underlying runtime pipeline.
+
+## Use `run_stream()` for the simple path
+
+```python
+async for event in agent.run_stream("Explain recursion in one sentence."):
+    if event.type == "step_delta" and event.delta.content:
+        print(event.delta.content, end="", flush=True)
+```
+
+## Use `start()` when you need control
+
+```python
+handle = agent.start("Write a three-line release note.")
+
+async for event in handle.stream():
+    if event.type == "step_delta" and event.delta.content:
+        print(event.delta.content, end="", flush=True)
+
+result = await handle.wait()
+```
+
+This is the right path when you need explicit waiting or cancellation.
+
+## Stream from the scheduler
+
+```python
+from agiwo.scheduler import Scheduler
+
+async with Scheduler() as scheduler:
+    async for event in scheduler.stream("Research topic X", agent=agent):
+        if event.type == "step_delta" and event.delta.content:
+            print(event.delta.content, end="", flush=True)
+```
+
+## Event shapes
+
+`AgentStreamItem` can represent:
+
+- `run_started`
+- `step_delta`
+- `step_completed`
+- `run_completed`
+- `run_failed`
+
+This means you can build one streaming consumer that works across direct agent runs and scheduler-managed runs.
