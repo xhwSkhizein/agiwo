@@ -113,7 +113,6 @@ traces = await trace_storage.query_traces(
 |---------|----------|-------------|
 | `memory` | Testing, ephemeral workloads | No (lost on restart) |
 | `sqlite` | Single-node deployments, development | Yes |
-| `mongodb` | External persistent deployment | Yes |
 
 ## Configuration
 
@@ -133,10 +132,9 @@ run_step_storage = create_run_step_storage(
 
 trace_storage = create_trace_storage(
     TraceStorageConfig(
-        storage_type="mongodb",
+        storage_type="sqlite",
         config={
-            "mongo_uri": "mongodb://localhost:27017",
-            "db_name": "agiwo",
+            "db_path": "./data/traces.db",
         },
     )
 )

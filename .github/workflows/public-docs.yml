@@ -15,6 +15,19 @@ on:
       - "docs/guides/**"
       - "docs/getting-started.md"
       - "docs/public-site-deploy.md"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "website/**"
+      - ".github/workflows/public-docs.yml"
+      - "scripts/generate_repo_overview.py"
+      - "README.md"
+      - "AGENTS.md"
+      - "docs/architecture/**"
+      - "docs/guides/**"
+      - "docs/getting-started.md"
+      - "docs/public-site-deploy.md"
   workflow_dispatch:
 
 permissions:
@@ -43,6 +56,8 @@ jobs:
         run: npm --prefix website ci
       - name: Check repo overview freshness
         run: python scripts/generate_repo_overview.py --check
+      - name: Verify sidebar routes
+        run: npm --prefix website run verify-sidebar-routes
       - name: Build site
         run: npm --prefix website run build
       - name: Configure Pages

@@ -212,3 +212,10 @@ Compatible endpoint notes:
 
 - `openai-compatible` and `anthropic-compatible` require an explicit `base_url`
 - they also require `api_key_env_name` to resolve credentials at runtime
+
+### Compatible endpoint requirements
+
+| Provider | Required fields | Where to supply them |
+| --- | --- | --- |
+| `openai-compatible` | `base_url`, `api_key_env_name` | In `params` when calling `create_model_from_dict(...)`, or on `ModelSpec` when calling `create_model(...)` |
+| `anthropic-compatible` | `base_url`, `api_key_env_name` | In `params` when calling `create_model_from_dict(...)`, or on `ModelSpec` when calling `create_model(...)` |

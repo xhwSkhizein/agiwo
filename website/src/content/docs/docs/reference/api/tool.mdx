@@ -46,6 +46,12 @@ class BaseTool(ABC):
     ) -> ToolResult: ...
 ```
 
+## `ToolDefinition`
+
+`ToolDefinition` is the LLM-facing metadata and parameter schema used when Agiwo registers a tool for model consumption.
+
+It is the structured definition produced from a `BaseTool` and is what lets the runtime expose tool name, description, parameter schema, timeout, and concurrency metadata in a registration-friendly shape.
+
 ## `ToolResult`
 
 Use the factory methods:

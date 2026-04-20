@@ -31,7 +31,7 @@ List supported model providers plus capability hints such as whether `base_url` 
 
 ### `GET /api/agents/tools/available`
 
-List available functional tools that can be assigned to agents, including builtin tools and `agent:<id>` references.
+List available functional tools that can be assigned to agents, including built-in tools and `agent:<id>` references.
 
 ### `GET /api/agents/skills/available`
 

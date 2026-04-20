@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Refresh top-level documentation entrypoints
+## Task 1: Refresh top-level documentation entrypoints
 
 **Files:**
 - Modify: `README.md`

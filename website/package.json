@@ -7,7 +7,8 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "check": "astro check"
+    "check": "astro check",
+    "verify-sidebar-routes": "node ./scripts/verifySidebarRoutes.mjs"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
