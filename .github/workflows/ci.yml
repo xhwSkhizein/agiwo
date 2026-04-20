@@ -112,15 +112,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: docker/setup-buildx-action@v4
         with:
-          version: "latest"
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
-      - name: Set up Python
-        run: uv python install 3.10
+      - name: Build Console Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: console/Dockerfile
+          load: true
+          tags: agiwo-console-smoke:ci
+          cache-from: type=gha,scope=console-docker
+          cache-to: type=gha,mode=max,scope=console-docker
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Smoke test Console Docker deployment
-        run: uv run python scripts/smoke_console_docker.py
+        env:
+          AGIWO_CONSOLE_DOCKER_IMAGE: agiwo-console-smoke:ci
+        run: python scripts/smoke_console_docker.py
 
   package-sdk:
     name: Package SDK
