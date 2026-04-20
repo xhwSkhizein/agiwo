@@ -1,0 +1,36 @@
+.git
+.venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.DS_Store
+.env
+.env.*
+!.env.example
+# Keep npm credentials out of Docker contexts. For private registries,
+# pass npmrc content with BuildKit secrets instead of committing it.
+**/.npmrc
+**/.npmrc.*
+
+console/.venv
+console/.agiwo
+console/.env
+console/.env.*
+!console/.env.example.full
+console/dist
+console/web/.next
+console/web/node_modules
+console/web/coverage
+console/web/.env*
+
+dist
+build
+htmlcov
+trash
+
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.DS_Store

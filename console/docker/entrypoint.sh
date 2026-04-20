@@ -37,7 +37,7 @@ backend_pid=$!
 
 (
   cd /opt/agiwo-console/web
-  npm run start -- --hostname 127.0.0.1 --port 13000
+  HOSTNAME=127.0.0.1 PORT=13000 node server.js
 ) &
 web_pid=$!
 

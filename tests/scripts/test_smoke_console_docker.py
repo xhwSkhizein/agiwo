@@ -1,3 +1,5 @@
+import subprocess
+
 import scripts.smoke_console_docker as smoke_console_docker
 
 
@@ -39,3 +41,31 @@ def test_docker_proxy_clear_build_args_blank_all_supported_proxy_variables() -> 
     assert "http_proxy=" in build_args
     assert "HTTPS_PROXY=" in build_args
     assert "https_proxy=" in build_args
+
+
+def test_fix_volume_ownership_surfaces_docker_failure(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    def fake_run(*args, **kwargs) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args[0],
+            returncode=42,
+            stdout="docker stdout\n",
+            stderr="docker stderr\n",
+        )
+
+    monkeypatch.setattr(smoke_console_docker.subprocess, "run", fake_run)
+
+    smoke_console_docker.fix_volume_ownership(
+        "docker",
+        "image",
+        data_dir=tmp_path / "data",
+        workspace_dir=tmp_path / "workspace",
+    )
+
+    captured = capsys.readouterr()
+    assert "docker exited with 42" in captured.err
+    assert "docker stdout" in captured.err
+    assert "docker stderr" in captured.err

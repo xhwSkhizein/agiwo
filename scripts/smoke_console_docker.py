@@ -1,3 +1,4 @@
+import os
 import shutil
 import socket
 import subprocess
@@ -13,7 +14,7 @@ from urllib.request import urlopen
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent.parent
-TIMEOUT_SECONDS = 300
+TIMEOUT_SECONDS = int(os.environ.get("AGIWO_CONSOLE_DOCKER_TIMEOUT_SECONDS", "900"))
 HEALTH_TIMEOUT_SECONDS = 120
 CONTAINER_PORT = 8422
 LOOPBACK_PROXY_HOSTS = {"127.0.0.1", "::1", "localhost"}
@@ -54,7 +55,12 @@ def docker_proxy_clear_build_args() -> list[str]:
     return args
 
 
-def run(cmd: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def run(
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             cmd,
@@ -63,7 +69,7 @@ def run(cmd: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProce
             timeout=TIMEOUT_SECONDS,
             text=True,
             capture_output=True,
-            env=build_docker_env(),
+            env=build_docker_env(env),
         )
     except subprocess.CalledProcessError as exc:
         if exc.stdout:
@@ -103,12 +109,57 @@ def reserve_host_port() -> int:
         return int(sock.getsockname()[1])
 
 
+def fix_volume_ownership(
+    docker: str,
+    image: str,
+    *,
+    data_dir: Path,
+    workspace_dir: Path,
+) -> None:
+    result = subprocess.run(
+        [
+            docker,
+            "run",
+            "--rm",
+            "-v",
+            f"{data_dir}:/data",
+            "-v",
+            f"{workspace_dir}:/mnt/host/workspace",
+            "--user",
+            "root",
+            "--entrypoint",
+            "sh",
+            image,
+            "-c",
+            f"chown -R {getuid()}:{getgid()} /data /mnt/host/workspace",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=build_docker_env(),
+    )
+    if result.returncode == 0:
+        return
+
+    print(
+        "Failed to restore smoke test volume ownership: "
+        f"docker exited with {result.returncode}",
+        file=sys.stderr,
+    )
+    if result.stdout:
+        print(result.stdout, file=sys.stderr, end="")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
+
+
 def main() -> int:
     docker = shutil.which("docker")
     if docker is None:
         raise SystemExit("docker executable not found in PATH")
 
-    image = f"agiwo-console-smoke:{uuid4().hex[:8]}"
+    configured_image = os.environ.get("AGIWO_CONSOLE_DOCKER_IMAGE", "").strip()
+    image = configured_image or f"agiwo-console-smoke:{uuid4().hex[:8]}"
+    build_image = configured_image == ""
     container = f"agiwo-console-smoke-{uuid4().hex[:8]}"
     host_port = reserve_host_port()
 
@@ -119,19 +170,23 @@ def main() -> int:
     workspace_dir.mkdir()
 
     try:
-        run(
-            [
-                docker,
-                "build",
-                *docker_proxy_clear_build_args(),
-                "-f",
-                "console/Dockerfile",
-                "-t",
-                image,
-                ".",
-            ],
-            cwd=ROOT,
-        )
+        if build_image:
+            build_env = {**os.environ, "DOCKER_BUILDKIT": "1"}
+            run(
+                [
+                    docker,
+                    "build",
+                    "--progress=plain",
+                    *docker_proxy_clear_build_args(),
+                    "-f",
+                    "console/Dockerfile",
+                    "-t",
+                    image,
+                    ".",
+                ],
+                cwd=ROOT,
+                env=build_env,
+            )
         run(
             [
                 docker,
@@ -183,11 +238,18 @@ def main() -> int:
             check=False,
             env=build_docker_env(),
         )
-        subprocess.run(
-            [docker, "rmi", image],
-            check=False,
-            env=build_docker_env(),
+        fix_volume_ownership(
+            docker,
+            image,
+            data_dir=data_dir,
+            workspace_dir=workspace_dir,
         )
+        if build_image:
+            subprocess.run(
+                [docker, "rmi", image],
+                check=False,
+                env=build_docker_env(),
+            )
         shutil.rmtree(tmp_path, ignore_errors=False)
 
     print("console docker smoke ok")
