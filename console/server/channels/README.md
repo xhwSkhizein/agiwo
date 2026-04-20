@@ -15,12 +15,10 @@
 channels/
 ├── exceptions.py         # 渠道异常
 ├── utils.py              # 文本切分、stream 文本提取、关闭辅助
-├── session/
-│   └── manager.py        # 批处理与 debounce
 └── feishu/
     ├── commands/         # Feishu 命令系统
-    ├── store/            # 渠道 metadata store
     ├── connection.py     # 长连接适配
+    ├── dedup_store.py    # event 去重
     ├── inbound_handler.py
     ├── message_parser.py
     ├── message_builder.py
@@ -36,6 +34,6 @@ channels/
 - `AgentRuntimeCache`
   位于 `services/runtime/`，负责 runtime Agent 缓存与配置指纹刷新。
 - `SessionRuntimeService`
-  位于 `services/runtime/`，负责统一调用 `scheduler.route_root_input(...)`。
+  位于 `services/runtime/`，负责统一调用 scheduler 路由接口并处理 stream / ack 语义。
 
 Feishu service 只持有这些服务并消费它们，不再在 `channels/` 内自己实现一套执行状态机。

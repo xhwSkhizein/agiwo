@@ -10,8 +10,14 @@ Health check endpoint.
 
 **Response:**
 ```json
-{"status": "ok"}
+{"status": "ok", "service": "agiwo-console"}
 ```
+
+## Overview
+
+### `GET /api/overview`
+
+Dashboard aggregates for sessions, agents, traces, tokens, and scheduler status.
 
 ## Agents
 
@@ -19,23 +25,17 @@ Health check endpoint.
 
 List all configured agents.
 
-**Response:**
-```json
-[
-  {
-    "id": "agent-abc123",
-    "name": "assistant",
-    "description": "A helpful assistant",
-    "model_provider": "openai",
-    "model_name": "gpt-4o",
-    "created_at": "2026-03-17T10:00:00Z"
-  }
-]
-```
+### `GET /api/agents/capabilities`
+
+List supported model providers plus capability hints such as whether `base_url` or `api_key_env_name` is required.
 
 ### `GET /api/agents/tools/available`
 
-List all available built-in tools that can be assigned to agents.
+List available functional tools that can be assigned to agents, including built-in tools and `agent:<id>` references.
+
+### `GET /api/agents/skills/available`
+
+List globally discovered skills.
 
 ### `POST /api/agents`
 
@@ -48,8 +48,17 @@ Create a new agent configuration.
   "description": "Research specialist",
   "system_prompt": "You are thorough and cite sources.",
   "model_provider": "openai",
-  "model_name": "gpt-4o",
-  "temperature": 0.7
+  "model_name": "gpt-5.4",
+  "allowed_tools": ["bash", "web_search"],
+  "allowed_skills": ["brainstorming"],
+  "options": {
+    "max_steps": 60,
+    "run_timeout": 900
+  },
+  "model_params": {
+    "temperature": 0.7,
+    "max_output_tokens": 4096
+  }
 }
 ```
 
@@ -59,81 +68,122 @@ Get a specific agent configuration.
 
 ### `PUT /api/agents/{agent_id}`
 
-Update an agent configuration (full replace).
+Replace an existing agent configuration.
 
 ### `DELETE /api/agents/{agent_id}`
 
 Delete an agent configuration.
 
-## Chat
+### `GET /api/agents/{agent_id}/sessions`
 
-### `POST /api/chat/{agent_id}`
+List sessions whose base agent is `agent_id`.
 
-Send a message to an agent and receive a streaming response via SSE.
+### `POST /api/agents/{agent_id}/sessions`
+
+Create a standalone session for an agent.
+
+**Response:**
+```json
+{
+  "session_id": "session-123",
+  "source_session_id": null
+}
+```
+
+## Sessions
+
+### `GET /api/sessions`
+
+List sessions with lightweight summary fields.
+
+### `GET /api/sessions/{session_id}`
+
+Get session detail, including current base agent binding and latest summary fields.
+
+### `POST /api/sessions/{session_id}/input`
+
+Send new user input into a session and receive SSE events.
 
 **Request:**
 ```json
 {
-  "message": "What is the capital of France?",
-  "session_id": "optional-session-id"
+  "message": "What changed between the two implementations?"
 }
 ```
 
-**Response (SSE stream):**
+**Response:**
+
+SSE messages use the event type as the SSE `event` field, and `AgentStreamItem.to_dict()` as the JSON payload:
+
+```text
+event: run_started
+data: {"type":"run_started", ...}
+
+event: step_delta
+data: {"type":"step_delta","delta":{"content":"The first approach ..."}}
+
+event: run_completed
+data: {"type":"run_completed","response":"...","termination_reason":"completed"}
 ```
-data: {"delta": {"content": "The"}, "type": "content"}
-data: {"delta": {"content": " capital"}, "type": "content"}
-data: {"delta": {"content": " is"}, "type": "content"}
-data: {"delta": {"content": " Paris."}, "type": "content"}
-data: {"type": "done"}
+
+If the session is already attached to a running root and no direct stream is available, the endpoint emits a `scheduler_ack` event instead.
+
+### `POST /api/sessions/{session_id}/cancel`
+
+Cancel the active scheduler root bound to the session.
+
+### `POST /api/sessions/{session_id}/fork`
+
+Fork a session into a new session ID.
+
+**Request:**
+```json
+{
+  "context_summary": "Keep the current research context, but branch into pricing analysis."
+}
 ```
 
-### `POST /api/chat/{agent_id}/cancel`
+### `DELETE /api/sessions/{session_id}`
 
-Cancel a running SSE chat for a specific agent.
+Delete a stored session.
 
-## Chat Sessions
+### `GET /api/sessions/{session_id}/summary`
 
-Chat-level session management (tied to a specific agent).
+Fetch the aggregated summary view for one session.
 
-### `GET /api/chat/{agent_id}/sessions`
+### `GET /api/sessions/{session_id}/steps`
 
-List sessions for a specific agent.
-
-### `POST /api/chat/{agent_id}/sessions/create`
-
-Create a new session for an agent.
-
-### `POST /api/chat/{agent_id}/sessions/switch`
-
-Switch the current session for an agent.
-
-### `POST /api/chat/{agent_id}/sessions/{session_id}/fork`
-
-Fork an existing session to create a new branch.
+Fetch session steps. Supports `start_seq`, `end_seq`, `run_id`, `agent_id`, `limit`, and `order`.
 
 ## Scheduler
 
 ### `GET /api/scheduler/states`
 
-List all scheduler agent states.
+List scheduler states. Supports `status`, `limit`, and `offset`.
 
 **Response:**
 ```json
-[
-  {
-    "id": "agent-abc123",
-    "status": "running",
-    "task": "Research topic X",
-    "parent_id": null,
-    "agent_config_id": "config-1",
-    "is_persistent": true,
-    "depth": 0,
-    "wake_count": 1,
-    "created_at": "2026-03-17T10:00:00Z",
-    "updated_at": "2026-03-17T10:05:00Z"
-  }
-]
+{
+  "items": [
+    {
+      "id": "agent-abc123",
+      "root_state_id": "agent-abc123",
+      "status": "running",
+      "task": "Research topic X",
+      "parent_id": null,
+      "agent_config_id": "config-1",
+      "is_persistent": true,
+      "depth": 0,
+      "wake_count": 1,
+      "created_at": "2026-03-17T10:00:00Z",
+      "updated_at": "2026-03-17T10:05:00Z"
+    }
+  ],
+  "limit": 50,
+  "offset": 0,
+  "has_more": false,
+  "total": null
+}
 ```
 
 ### `GET /api/scheduler/states/{state_id}`
@@ -143,6 +193,10 @@ Get details for a specific scheduler state.
 ### `GET /api/scheduler/states/{state_id}/children`
 
 List direct child states.
+
+### `GET /api/scheduler/states/{state_id}/tree`
+
+Get the scheduler tree rooted at `state_id`.
 
 ### `GET /api/scheduler/states/{state_id}/pending-events`
 
@@ -154,7 +208,7 @@ Get aggregate counts for `pending/running/waiting/idle/queued/completed/failed`.
 
 ### `POST /api/scheduler/states/create`
 
-Submit a new task to the scheduler.
+Create and submit a new persistent root from an existing agent config.
 
 ### `POST /api/scheduler/states/{state_id}/cancel`
 
@@ -162,18 +216,19 @@ Cancel a running scheduler agent.
 
 ### `POST /api/scheduler/states/{state_id}/steer`
 
-Send steering input to a running agent.
+Send steering input to a scheduler state.
 
 **Request:**
 ```json
 {
-  "message": "Focus on cost analysis instead"
+  "message": "Focus on cost analysis instead",
+  "urgent": false
 }
 ```
 
 ### `POST /api/scheduler/states/{state_id}/resume`
 
-Resume a persistent (parked) agent.
+Resume a persistent root with a new message.
 
 ## Runs
 
@@ -181,11 +236,12 @@ Resume a persistent (parked) agent.
 
 List runs with optional filtering.
 
-**Query parameters:**
-- `user_id` — Filter by user ID
-- `session_id` — Filter by session ID
-- `limit` — Max results (default: 20, max: 200)
-- `offset` — Pagination offset (default: 0)
+Supported query parameters:
+
+- `user_id`
+- `session_id`
+- `limit`
+- `offset`
 
 ### `GET /api/runs/{run_id}`
 
@@ -197,48 +253,31 @@ Get a single run by ID.
 
 List execution traces.
 
-**Query parameters:**
-- `limit` — Max results (default: 50)
-- `agent_id` — Filter by agent
+Supported query parameters:
 
-**Response:**
-```json
-[
-  {
-    "trace_id": "trace-123",
-    "agent_id": "agent-abc123",
-    "run_id": "run-456",
-    "status": "completed",
-    "started_at": "2026-03-17T10:00:00Z",
-    "duration_ms": 5420,
-    "total_tokens": 1523,
-    "steps": 3
-  }
-]
-```
+- `agent_id`
+- `session_id`
+- `user_id`
+- `status`
+- `limit`
+- `offset`
 
 ### `GET /api/traces/{trace_id}`
 
-Get detailed trace information including all steps, tool calls, and LLM interactions.
+Get detailed trace information including the full span tree.
 
-## Sessions
+## Runtime Config
 
-### `GET /api/sessions`
+### `GET /api/config/runtime`
 
-List sessions by aggregating runs (with pagination).
+Inspect the process-local runtime config snapshot used by the Console.
 
-**Query parameters:**
-- `limit` — Max results (default: 20, max: 200)
-- `offset` — Pagination offset (default: 0)
+### `PUT /api/config/runtime`
 
-### `GET /api/sessions/{session_id}/summary`
+Replace editable runtime config overrides for the current process.
 
-Get full aggregated metrics for a specific session.
+## Feishu
 
-### `GET /api/sessions/{session_id}/steps`
+### `GET /api/channels/feishu/status`
 
-Get all steps for a session.
-
-**Query parameters:**
-- `agent_id` — Filter by agent ID
-- `limit` — Max results (default: 1000, max: 5000)
+Inspect Feishu long-connection status when the channel is enabled.

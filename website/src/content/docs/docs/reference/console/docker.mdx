@@ -1,0 +1,53 @@
+---
+title: Console Docker
+description: Deploy Agiwo Console as a managed single-container stack with explicit host mounts.
+---
+
+# Console Docker
+
+`agiwo-console container up` starts a managed single-container deployment for the Console.
+
+## What the container includes
+
+- FastAPI backend
+- web UI
+- agent runtime
+- Bash execution and related runtime tools
+
+The default public entrypoint is `http://localhost:8422`.
+
+## Quick start
+
+```bash
+pip install agiwo-console
+cat > .env <<'EOF'
+OPENAI_API_KEY=...
+EOF
+agiwo-console container up \
+  --data-dir "$HOME/agiwo-data" \
+  --env-file .env
+```
+
+## Data root
+
+`--data-dir` is the single persistent host directory. Inside the container, runtime state is rooted under `/data/root`.
+
+## Host mounts
+
+Host directories are invisible by default. Expose them explicitly:
+
+```bash
+agiwo-console container up \
+  --data-dir "$HOME/agiwo-data" \
+  --env-file .env \
+  --mount "$HOME/projects:projects"
+```
+
+Inside the container that path appears at `/mnt/host/projects`.
+
+## Lifecycle commands
+
+- `agiwo-console container status`
+- `agiwo-console container logs`
+- `agiwo-console container restart`
+- `agiwo-console container down`

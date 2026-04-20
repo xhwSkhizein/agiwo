@@ -1,29 +1,29 @@
 ---
 title: Custom Tools
-description: Build custom tools on top of Agiwo's stable tool interfaces.
+description: Build custom tools with stable contracts, structured results, and predictable runtime behavior.
 ---
 
 # Custom Tools
 
-This guide covers how to build tools with advanced features like caching, authorization, structured output, and cancellation.
+Custom tools are the main way to connect Agiwo agents to external systems, internal services, or focused computation.
 
-## Basic Tool
+## Implement the stable contract
 
 ```python
 from agiwo.tool import BaseTool, ToolContext, ToolResult
 
 
-class GreetTool(BaseTool):
-    name = "greet"
-    description = "Greet a person by name"
+class WeatherTool(BaseTool):
+    name = "get_weather"
+    description = "Get the current weather for a city"
 
     def get_parameters(self) -> dict:
         return {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "Person's name"},
+                "city": {"type": "string", "description": "Target city name"},
             },
-            "required": ["name"],
+            "required": ["city"],
         }
 
     async def execute(
@@ -32,45 +32,27 @@ class GreetTool(BaseTool):
         context: ToolContext,
         abort_signal=None,
     ) -> ToolResult:
-        name = parameters["name"]
+        city = parameters["city"]
         return ToolResult.success(
             tool_name=self.name,
-            content=f"Hello, {name}!",
-            content_for_user=f"Greeted {name}",
+            content=f"{city}: sunny, 25C",
+            content_for_user=f"Weather in {city}: sunny, 25C",
+            output={"city": city, "temp_c": 25, "condition": "sunny"},
         )
 ```
 
-## Handling Errors
+## Design guidelines
 
-Use `ToolResult.failed()` for expected errors:
+- keep `content` short and useful for the model's next reasoning step
+- use `output` for structured machine-readable data
+- use `content_for_user` only when a UI-friendly rendering helps
+- return `ToolResult.success()`, `failed()`, `aborted()`, or `denied()` instead of constructing results directly
 
-```python
-async def execute(self, parameters, context, abort_signal) -> ToolResult:
-    try:
-        result = await self._do_work(parameters)
-        return ToolResult.success(tool_name=self.name, content=result)
-    except ExternalAPIError as error:
-        return ToolResult.failed(
-            tool_name=self.name,
-            error=f"API error: {error}",
-        )
-```
+## Runtime controls
 
-## Structured Output
+### Caching
 
-Pass structured data via the `output` field:
-
-```python
-return ToolResult.success(
-    tool_name=self.name,
-    content=f"Found {len(results)} results",
-    output={"results": results, "count": len(results)},
-)
-```
-
-## Caching
-
-Enable session-scoped caching for expensive operations:
+Set `cacheable = True` when identical arguments within one session should reuse the same result.
 
 ```python
 class EmbeddingTool(BaseTool):
@@ -78,49 +60,36 @@ class EmbeddingTool(BaseTool):
     timeout_seconds = 60
 ```
 
-## Abort Signals
+### Timeout
 
-Check `abort_signal` in long-running tools:
+Override `timeout_seconds` if the default 30 seconds is too short.
 
-```python
-async def execute(self, parameters, context, abort_signal) -> ToolResult:
-    for item in large_dataset:
-        if abort_signal and abort_signal.is_aborted():
-            return ToolResult.aborted(tool_name=self.name)
-        await process(item)
-    return ToolResult.success(tool_name=self.name, content="Done")
-```
+### Concurrency
 
-## Concurrency Safety
+Leave `concurrency_safe = True` for read-only or stateless work. Set it to `False` when the tool mutates shared state or depends on strict ordering.
 
-- `True` means the tool can run concurrently with other tools.
-- `False` means the tool must run alone because it mutates shared state or depends on ordering.
+## Context and permissions
 
-## ToolContext
+`ToolContext` gives you runtime metadata such as `session_id`, `agent_id`, `agent_name`, `depth`, and custom metadata. Keep plain tools dependent on `ToolContext`, not on agent-internal runtime objects.
 
-`ToolContext` provides runtime information such as `agent_name` and `session_id`.
+If you need policy checks, override `gate(...)` for a lightweight preflight and deny execution before the main tool logic runs.
 
-## Denial Pattern
-
-For permission gating:
-
-```python
-async def execute(self, parameters, context, abort_signal) -> ToolResult:
-    if not self._check_permission(parameters, context):
-        return ToolResult.denied(
-            tool_name=self.name,
-            reason="Requires admin access",
-        )
-```
-
-## Registering Tools
-
-Pass tools when creating an agent:
+## Register tools
 
 ```python
 agent = Agent(
-    AgentConfig(name="assistant", description="...", system_prompt="..."),
+    AgentConfig(
+        name="assistant",
+        description="Helpful assistant",
+        system_prompt="Use tools only when they materially help.",
+    ),
     model=model,
-    tools=[GreetTool(), WeatherTool(), CalculatorTool()],
+    tools=[WeatherTool()],
 )
 ```
+
+## When to use `Agent.as_tool()`
+
+Use a custom `BaseTool` when the operation is a direct external action or function call.
+
+Use `Agent.as_tool()` when the delegated work needs its own prompt, tool set, and reasoning loop.

@@ -1,14 +1,17 @@
 ---
 import ArchitectureSnapshot from "../components/ArchitectureSnapshot.astro";
 import CodePreview from "../components/CodePreview.astro";
+import FinalCTA from "../components/FinalCTA.astro";
 import FAQList from "../components/FAQList.astro";
 import FeatureGrid from "../components/FeatureGrid.astro";
 import Hero from "../components/Hero.astro";
+import PathChooser from "../components/PathChooser.astro";
+import WhyAgiwo from "../components/WhyAgiwo.astro";
 import MarketingLayout from "../layouts/MarketingLayout.astro";
 
-const title = "Agiwo: Open-source Python AI Agent Framework and Control Plane";
+const title = "Agiwo: Runtime Harness for Orchestrated, Self-Improving Agents";
 const description =
-  "Build streaming, tool-using, orchestrated LLM agents in Python with Agiwo. Explore docs for scheduling, tracing, persistence, and multi-agent execution.";
+  "Build orchestrated, tool-using, traceable AI systems in Python with Agiwo. Explore the runtime harness, scheduler orchestration, persistence, Console, and public docs.";
 const structuredData = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
@@ -25,16 +28,19 @@ const structuredData = {
 <MarketingLayout title={title} description={description}>
   <main class="home-page">
     <Hero />
-    <FeatureGrid />
+    <WhyAgiwo />
     <CodePreview />
+    <PathChooser />
     <ArchitectureSnapshot />
+    <FeatureGrid />
     <section class="comparison-entry">
       <div class="section-heading">
         <p class="eyebrow">Comparison</p>
-        <h2>Compare Agiwo with other agent frameworks.</h2>
+        <h2>Evaluate Agiwo against graph-first, provider-first, and chat-first stacks.</h2>
         <p>
-          Use a problem-oriented comparison instead of evaluating each project in isolation.
-          The first comparison page focuses on orchestration, runtime boundaries, and observability.
+          The comparison guide focuses on runtime ownership, orchestration semantics,
+          observability, and how much control you keep as systems become persistent,
+          multi-agent, and operator-facing.
         </p>
         <a
           class="button button--secondary"
@@ -45,6 +51,7 @@ const structuredData = {
       </div>
     </section>
     <FAQList />
+    <FinalCTA />
   </main>
   <script is:inline type="application/ld+json" set:html={JSON.stringify(structuredData)} />
 </MarketingLayout>

@@ -1,0 +1,85 @@
+---
+title: Model API
+description: Reference for Agiwo model exports, provider classes, and model factory construction.
+---
+
+# Model API
+
+## Public exports
+
+`agiwo.llm` exports:
+
+- `LLMConfig`
+- `Model`
+- `StreamChunk`
+- `ModelSpec`
+- `ModelProvider`
+- `create_model(...)`
+- `create_model_from_dict(...)`
+- `OpenAIModel`
+- `OpenAIResponsesModel`
+- `AnthropicModel`
+- `BedrockAnthropicModel`
+- `DeepseekModel`
+- `NvidiaModel`
+
+## `Model`
+
+The shared base class for all providers.
+
+```python
+class Model(ABC):
+    config: LLMConfig
+
+    async def arun_stream(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+    ) -> AsyncIterator[StreamChunk]: ...
+
+    async def close(self) -> None: ...
+```
+
+## `StreamChunk`
+
+Each provider yields normalized streaming deltas:
+
+| Field | Purpose |
+| --- | --- |
+| `content` | Text delta |
+| `reasoning_content` | Reasoning delta when supported |
+| `tool_calls` | Tool call delta |
+| `usage` | Token usage |
+| `finish_reason` | Provider finish reason |
+
+## Typical construction
+
+```python
+from agiwo.llm import OpenAIModel
+
+model = OpenAIModel(name="gpt-5.4")
+```
+
+```python
+from agiwo.llm import create_model_from_dict
+
+model = create_model_from_dict(
+    provider="openai-compatible",
+    model_name="custom-model",
+    params={
+        "base_url": "https://api.example.com/v1",
+        "api_key_env_name": "MY_API_KEY",
+    },
+)
+```
+
+## Supported provider strings
+
+- `openai`
+- `openai-response`
+- `openai-compatible`
+- `deepseek`
+- `anthropic`
+- `anthropic-compatible`
+- `nvidia`
+- `bedrock-anthropic`

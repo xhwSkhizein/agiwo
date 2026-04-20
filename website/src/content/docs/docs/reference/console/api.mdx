@@ -1,0 +1,60 @@
+---
+title: Console API
+description: Reference for the main REST and SSE endpoints exposed by Agiwo Console.
+---
+
+# Console API
+
+Default local base URL: `http://localhost:8422`
+
+Replace the host and port with your own deployment-specific values when the Console runs in Docker, behind a proxy, or on a non-local environment.
+
+## Key endpoint groups
+
+### Health and overview
+
+- `GET /api/health`
+- `GET /api/overview`
+
+### Agents
+
+- `GET /api/agents`
+- `GET /api/agents/capabilities`
+- `GET /api/agents/tools/available`
+- `GET /api/agents/skills/available`
+- `POST /api/agents`
+- `GET /api/agents/{agent_id}`
+- `PUT /api/agents/{agent_id}`
+- `DELETE /api/agents/{agent_id}`
+
+### Sessions
+
+- `GET /api/sessions`
+- `GET /api/sessions/{session_id}`
+- `POST /api/sessions/{session_id}/input`
+- `POST /api/sessions/{session_id}/cancel`
+- `POST /api/sessions/{session_id}/fork`
+- `DELETE /api/sessions/{session_id}`
+
+### Scheduler
+
+- `GET /api/scheduler/states`
+- `GET /api/scheduler/states/{state_id}`
+- `GET /api/scheduler/states/{state_id}/children`
+- `GET /api/scheduler/states/{state_id}/tree`
+- `GET /api/scheduler/states/{state_id}/pending-events`
+- `GET /api/scheduler/stats`
+- `POST /api/scheduler/states/create`
+- `POST /api/scheduler/states/{state_id}/cancel`
+- `POST /api/scheduler/states/{state_id}/steer`
+- `POST /api/scheduler/states/{state_id}/resume`
+
+### Runs and traces
+
+- `GET /api/runs`
+- `GET /api/runs/{run_id}`
+- `GET /api/traces`
+
+## Streaming input
+
+`POST /api/sessions/{session_id}/input` returns SSE events built from `AgentStreamItem`. That gives integrations one runtime event format across direct agent runs and scheduler-mediated session flows.

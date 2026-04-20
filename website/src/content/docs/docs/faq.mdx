@@ -1,17 +1,21 @@
 ---
 title: FAQ
-description: Common questions about Agiwo's runtime model, orchestration, and observability.
+description: Common questions about Agiwo's runtime harness, orchestration model, and Console control plane.
 ---
 
 # FAQ
 
 ## What is Agiwo?
 
-Agiwo is an open-source Python AI agent framework and control plane for streaming execution, tool use, orchestration, tracing, and persistence.
+Agiwo is a Python runtime harness for orchestrated, tool-using, traceable, and increasingly self-improving agent systems. The SDK is the execution core; the Console is an optional self-hosted control plane.
+
+## What does "runtime harness" mean?
+
+It means Agiwo treats execution control, orchestration, persistence, traces, memory, skills, and operator visibility as first-class runtime concerns rather than incidental details behind prompts.
 
 ## How is Agiwo different from LangGraph?
 
-Agiwo emphasizes explicit runtime boundaries between agent execution, tools, scheduler orchestration, and console projections. It is designed around a canonical agent runtime instead of a graph-centric programming model.
+Agiwo is built around a canonical agent runtime plus scheduler orchestration. LangGraph is built around graph-native workflow authoring. If you want explicit runtime boundaries and a control-plane story, Agiwo is usually the better fit.
 
 ## Does Agiwo support multi-agent systems?
 
@@ -20,3 +24,11 @@ Yes. Agiwo supports both `Agent.as_tool()` composition and scheduler-managed chi
 ## Is the Console required?
 
 No. The SDK can be used on its own. The Console is a separate control plane.
+
+## Does Agiwo include persistence and traces?
+
+Yes. Run and step storage plus trace storage are first-class parts of the runtime model.
+
+## What does self-improving mean here?
+
+It means Agiwo is designed for feedback loops such as memory retrieval, skills, context rollback, tool-result retrospect, and operator-visible traces. It does not imply unconstrained autonomous code mutation.

@@ -1,13 +1,16 @@
 import { defineConfig } from "astro/config";
+import sitemap from "@astrojs/sitemap";
 import starlight from "@astrojs/starlight";
+import { docsSidebar } from "./src/config/docsSidebar.mjs";
 
 export default defineConfig({
   site: "https://docs.agiwo.o-ai.tech",
   integrations: [
+    sitemap(),
     starlight({
-      title: "Agiwo Docs",
+      title: "Agiwo",
       description:
-        "Open-source Python AI agent framework and control plane docs for streaming, tool use, orchestration, tracing, and persistence.",
+        "Agiwo is a runtime harness for orchestrated, self-improving agents in Python, with tools, scheduler orchestration, persistence, tracing, and a control plane.",
       disable404Route: true,
       social: [
         {
@@ -17,12 +20,7 @@ export default defineConfig({
         },
       ],
       customCss: ["./src/styles/site.css"],
-      sidebar: [
-        {
-          label: "Documentation",
-          autogenerate: { directory: "docs" },
-        },
-      ],
+      sidebar: docsSidebar,
     }),
   ],
 });

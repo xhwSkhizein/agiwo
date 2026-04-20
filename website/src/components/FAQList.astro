@@ -1,19 +1,29 @@
 ---
 const items = [
   {
-    question: "What is Agiwo?",
+    question: "What does runtime harness mean in Agiwo?",
     answer:
-      "Agiwo is an open-source Python AI agent framework and control plane focused on streaming execution, tool use, orchestration, tracing, and persistence.",
+      "It means Agiwo treats execution control, orchestration, observability, persistence, and operator visibility as first-class runtime concerns instead of implementation details hidden behind prompts.",
   },
   {
-    question: "Who is Agiwo for?",
+    question: "When should I choose Agiwo over graph-first or provider-first frameworks?",
     answer:
-      "It is for developers building production-grade LLM agents and multi-agent systems in Python.",
+      "Choose Agiwo when you want explicit runtime boundaries, persistent orchestration, tool contracts, and traceable execution rather than a graph DSL or a provider-specific orchestration story.",
   },
   {
-    question: "Does Agiwo support multi-agent orchestration?",
+    question: "Does Agiwo include a control plane?",
     answer:
-      "Yes. Agiwo supports both agent-as-tool composition and scheduler-driven orchestration for longer-lived workflows.",
+      "Yes. The self-hosted Console provides an operator-facing control plane for sessions, scheduler state, traces, agent configs, and Docker-managed deployment, while the SDK remains usable on its own.",
+  },
+  {
+    question: "How does Agiwo support self-improving agents?",
+    answer:
+      "Agiwo already provides the runtime pieces that make improvement loops practical: traces, persistent state, skills, memory retrieval, context rollback, and tool-result retrospect. Teams can layer evaluation and refinement policies on top of those runtime facts.",
+  },
+  {
+    question: "Can I start simple and add orchestration later?",
+    answer:
+      "Yes. You can start with a single Agent and the same model/tool APIs later extend into scheduler-managed roots, child agents, and Console-backed operations without switching frameworks.",
   },
 ];
 ---

@@ -16,6 +16,16 @@
   </a>
 </p>
 
+<p align="center">
+  <strong>Quick Links:</strong>
+  <a href="https://github.com/xhwSkhizein/agiwo">GitHub Repo</a> ·
+  <a href="https://docs.agiwo.o-ai.tech">Website</a> ·
+  <a href="https://docs.agiwo.o-ai.tech/docs/">Docs</a> ·
+  <a href="https://docs.agiwo.o-ai.tech/docs/getting-started/">Getting Started</a> ·
+  <a href="https://docs.agiwo.o-ai.tech/docs/compare/agiwo-vs-langgraph-openai-agents-autogen/">Comparison</a> ·
+  <a href="https://docs.agiwo.o-ai.tech/docs/repo-overview/">Repository Overview</a>
+</p>
+
 ## Public Docs
 
 - Website: `https://docs.agiwo.o-ai.tech`
@@ -225,8 +235,10 @@ The API server defaults to `http://localhost:8422`.
 Useful routes:
 
 - `GET /api/health`
+- `GET /api/overview`
 - `GET /api/agents`
-- `POST /api/chat/{agent_id}`
+- `POST /api/agents/{agent_id}/sessions`
+- `POST /api/sessions/{session_id}/input`
 - `GET /api/scheduler/states`
 - `GET /api/traces`
 
@@ -302,9 +314,10 @@ Recommended GitHub repository description:
 Recommended GitHub topics:
 
 `ai-agents`, `python`, `llm`, `agent-framework`, `multi-agent`, `tool-calling`, `observability`, `agent-orchestration`, `fastapi`
-- Agent config includes `allowed_skills: list[str] | None` to filter available skills (global skill discovery is configured via `AGIWO_SKILL_DIRS`)
+
+- Agent config includes `allowed_skills: list[str] | None` to filter available skills (global skill discovery is configured via `AGIWO_SKILLS_DIRS`)
 - Console agent config writes are full replace, not patch merge
-- Scheduler state storage is owned by the `Scheduler`; Console `StorageManager` manages run-step, trace, and citation storage only
+- Scheduler state storage is owned by the `Scheduler`; Console storage wiring separately assembles run-step, trace, session, and citation-related resources
 
 ## Architecture At A Glance
 
@@ -330,9 +343,9 @@ Recommended GitHub topics:
 ### Console
 
 - `console/server/routers/`: HTTP and SSE API boundary
-- `console/server/services/`: agent lifecycle (`agent_lifecycle.py`), registry (`agent_registry/`), storage wiring (`storage_wiring.py`), tool catalog, metrics, SSE services
+- `console/server/services/`: runtime services (`runtime/`), registry (`agent_registry/`), session store (`session_store/`), storage wiring (`storage_wiring.py`), tool catalog, metrics, runtime config
 - `console/server/models/`: shared Console data models (views, session, config)
-- `console/server/channels/`: channel runtime, session binding, Feishu integration
+- `console/server/channels/`: channel runtime adapters and Feishu integration
 - `console/server/config.py`: ConsoleConfig (pydantic-settings, env prefix: AGIWO_CONSOLE_)
 - `console/web/`: Next.js frontend
 

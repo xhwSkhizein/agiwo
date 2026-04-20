@@ -1,28 +1,33 @@
 <section class="architecture-snapshot">
   <div class="section-heading">
     <p class="eyebrow">Architecture</p>
-    <h2>Separate agent runtime, tools, scheduler, and control plane.</h2>
+    <h2>Keep runtime boundaries visible as the system grows.</h2>
     <p>
-      Agiwo keeps the runtime boundaries explicit so execution, orchestration, and
-      observability stay understandable as systems grow.
+      The harness story is not one abstraction. It is the combination of agent
+      execution, tool contracts, orchestration, observability, and operator-facing
+      control surfaces.
     </p>
   </div>
   <div class="architecture-grid">
     <article>
       <h3>Agent</h3>
-      <p>Owns prompts, execution, hooks, runtime context, and step lifecycle.</p>
+      <p>Owns prompts, execution, hooks, runtime context, and the canonical run loop.</p>
     </article>
     <article>
-      <h3>Tool</h3>
-      <p>Defines stable interfaces for builtin, custom, and nested-agent tools.</p>
+      <h3>Tool Surface</h3>
+      <p>Defines stable contracts for builtin tools, custom tools, skills, and nested-agent adapters.</p>
     </article>
     <article>
       <h3>Scheduler</h3>
-      <p>Coordinates root and child execution, waiting, routing, and wake conditions.</p>
+      <p>Coordinates persistent roots, child execution, wait states, wake conditions, and routing.</p>
+    </article>
+    <article>
+      <h3>Storage & Trace</h3>
+      <p>Persist runs, steps, and traces so runtime state can be inspected instead of inferred.</p>
     </article>
     <article>
       <h3>Console</h3>
-      <p>Projects runtime state and traces without becoming execution truth.</p>
+      <p>Projects runtime state, sessions, and traces without becoming execution truth.</p>
     </article>
   </div>
 </section>

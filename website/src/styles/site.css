@@ -69,20 +69,26 @@ h3 {
 }
 
 .hero,
+.why-agiwo,
 .feature-grid,
 .code-preview,
+.path-chooser,
 .architecture-snapshot,
 .comparison-entry,
-.faq-list {
+.faq-list,
+.final-cta {
   margin-top: 36px;
 }
 
 .hero__content,
+.pillar-card,
 .feature-card,
 .code-preview,
+.path-card,
 .architecture-grid article,
 .comparison-entry,
-.faq-item {
+.faq-item,
+.final-cta__content {
   border: 1px solid var(--panel-border);
   background: var(--panel);
   border-radius: 28px;
@@ -116,9 +122,12 @@ h3 {
 
 .hero__copy,
 .section-heading p,
+.pillar-card p,
 .feature-card p,
+.path-card p,
 .architecture-grid p,
-.faq-item p {
+.faq-item p,
+.final-cta p {
   color: var(--muted);
   line-height: 1.65;
 }
@@ -153,20 +162,27 @@ h3 {
 }
 
 .feature-grid,
-.architecture-grid {
+.architecture-grid,
+.pillar-grid,
+.path-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
 }
 
 .feature-card,
+.pillar-card,
 .architecture-grid article,
 .code-preview,
-.comparison-entry {
+.comparison-entry,
+.path-card,
+.final-cta__content {
   padding: 26px;
 }
 
 .feature-card h2,
+.pillar-card h3,
+.path-card h3,
 .architecture-grid h3 {
   margin-top: 0;
 }
@@ -195,8 +211,19 @@ h3 {
   font-weight: 700;
 }
 
+.path-card .button,
 .comparison-entry .button {
   margin-top: 8px;
+}
+
+.section-heading {
+  max-width: 720px;
+}
+
+.final-cta__content {
+  background:
+    radial-gradient(circle at top right, rgba(103, 232, 249, 0.16), transparent 32%),
+    linear-gradient(180deg, rgba(8, 21, 35, 0.94), rgba(6, 16, 29, 0.98));
 }
 
 .sl-markdown-content :is(h1, h2, h3, h4) {
@@ -299,14 +326,25 @@ h3 {
 
   .hero__content,
   .feature-card,
+  .pillar-card,
   .code-preview,
+  .path-card,
   .architecture-grid article,
   .comparison-entry,
-  .faq-item {
+  .faq-item,
+  .final-cta__content {
     border-radius: 22px;
   }
 
-  .hero__content {
+  .hero__content,
+  .feature-card,
+  .pillar-card,
+  .path-card,
+  .architecture-grid article,
+  .code-preview,
+  .comparison-entry,
+  .faq-item,
+  .final-cta__content {
     padding: 28px;
   }
 

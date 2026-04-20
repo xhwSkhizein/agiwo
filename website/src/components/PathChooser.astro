@@ -1,0 +1,42 @@
+---
+const paths = [
+  {
+    title: "Start your first agent",
+    body: "Install Agiwo, configure a provider, and run a minimal agent before you add tools or orchestration.",
+    href: "/docs/first-agent/",
+    cta: "Build the first agent",
+  },
+  {
+    title: "Build orchestration",
+    body: "Learn scheduler patterns, persistent roots, child agents, and runtime control for long-lived workflows.",
+    href: "/docs/guides/multi-agent/",
+    cta: "Explore multi-agent patterns",
+  },
+  {
+    title: "Operate with Console",
+    body: "Understand sessions, scheduler state, traces, and Docker deployment for self-hosted operator workflows.",
+    href: "/docs/reference/console/overview/",
+    cta: "See the control plane",
+  },
+];
+---
+
+<section class="path-chooser">
+  <div class="section-heading">
+    <p class="eyebrow">Choose your path</p>
+    <h2>Move from evaluation to implementation without guessing where to go next.</h2>
+    <p>
+      The docs are organized around the decisions external developers usually make:
+      first run, orchestration design, and operator-facing deployment.
+    </p>
+  </div>
+  <div class="path-grid">
+    {paths.map((path) => (
+      <article class="path-card">
+        <h3>{path.title}</h3>
+        <p>{path.body}</p>
+        <a class="button button--secondary" href={path.href}>{path.cta}</a>
+      </article>
+    ))}
+  </div>
+</section>

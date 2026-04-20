@@ -198,6 +198,7 @@ RuntimeState(
 
 Both Console and Feishu enter through session-first, scheduler-mediated flows:
 
-- Console SSE endpoint (`/api/chat/{agent_id}`) uses `scheduler.stream()` for streaming events
-- Feishu delegates to the session channel's `SessionContextService` which calls `scheduler.route_root_input()`
-- Session management APIs (create, switch, fork) use `SessionManager` in `console/server/channels/session/`
+- Console creates sessions through `POST /api/agents/{agent_id}/sessions`
+- Session input streams through `POST /api/sessions/{session_id}/input`
+- Feishu delegates through `SessionContextService` and `SessionRuntimeService`, which in turn call scheduler routing APIs
+- Session persistence and read models live under `console/server/services/session_store/` and `console/server/services/runtime/`

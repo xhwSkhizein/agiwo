@@ -5,11 +5,17 @@ interface Props {
   title: string;
   description: string;
   canonicalPath?: string;
+  socialImagePath?: string;
 }
 
-const { title, description, canonicalPath = "/" } = Astro.props;
+const {
+  title,
+  description,
+  canonicalPath = "/",
+  socialImagePath = "/social-card.svg",
+} = Astro.props;
 const canonicalUrl = new URL(canonicalPath, Astro.site);
-const socialImage = new URL("/social-card.svg", Astro.site);
+const socialImage = new URL(socialImagePath, Astro.site);
 ---
 
 <!doctype html>
@@ -22,6 +28,7 @@ const socialImage = new URL("/social-card.svg", Astro.site);
     <link rel="canonical" href={canonicalUrl.toString()} />
     <meta name="generator" content={Astro.generator} />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Agiwo" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonicalUrl.toString()} />

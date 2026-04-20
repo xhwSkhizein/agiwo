@@ -1,15 +1,28 @@
 ---
 title: Multi-Agent
-description: Compose agents with agent-as-tool patterns and scheduler-based orchestration.
+description: Compose agents with Agent.as_tool() or use the Scheduler for persistent orchestration.
 ---
 
-# Multi-Agent and Composition
+# Multi-Agent
 
-Agiwo supports composing agents in two ways: **agent-as-tool** for lightweight delegation, and the **scheduler** for persistent orchestration.
+Agiwo supports two public ways to compose agents: agent-as-tool composition and scheduler-managed orchestration.
 
-## Agent-as-Tool
+## Choose the right level
 
-Wrap an agent as a tool that another agent can call:
+### Use `Agent.as_tool()` when
+
+- one agent should delegate focused sub-work to another
+- the child can behave like a normal tool call
+- you do not need persistent child state between turns
+
+### Use `Scheduler` when
+
+- roots must stay alive across multiple inputs
+- agents need waiting and wake conditions
+- you need explicit steering, cancellation, or shutdown
+- the runtime should manage child lifecycles directly
+
+## Agent-as-tool
 
 ```python
 from agiwo.agent import Agent, AgentConfig
@@ -18,70 +31,73 @@ from agiwo.llm import OpenAIModel
 researcher = Agent(
     AgentConfig(
         name="researcher",
-        description="Researches topics thoroughly and returns summaries",
-        system_prompt="You are a research specialist. Be thorough and cite sources.",
+        description="Research specialist",
+        system_prompt="Research thoroughly and cite sources.",
     ),
-    model=OpenAIModel(id="gpt-4o", name="gpt-4o"),
+    model=OpenAIModel(name="gpt-5.4"),
 )
 
 orchestrator = Agent(
     AgentConfig(
         name="orchestrator",
-        description="Coordinates research tasks",
+        description="Delegates focused research",
         system_prompt="Delegate independent research tasks to the researcher tool.",
     ),
-    model=OpenAIModel(id="gpt-4o", name="gpt-4o"),
+    model=OpenAIModel(name="gpt-5.4"),
     tools=[researcher.as_tool()],
 )
-
-result = await orchestrator.run("Compare Python and Rust for systems programming")
 ```
 
-### How it works
+This is the simplest public composition path when the delegated unit should look like a functional tool.
 
-1. The orchestrator sees `researcher` as a regular tool.
-2. When called, the researcher agent runs its own execution loop.
-3. The researcher's final response returns as the tool result.
-4. The orchestrator continues reasoning with that output.
-
-## Scheduler Orchestration
-
-For long-running, persistent multi-agent setups, use the scheduler:
+## Scheduler-managed orchestration
 
 ```python
 from agiwo.scheduler import Scheduler
 
 async with Scheduler() as scheduler:
-    orchestrator_id = await scheduler.submit(
+    result = await scheduler.run(
         orchestrator,
-        "Coordinate the research pipeline",
-        persistent=True,
+        "Research two competing approaches and compare them.",
     )
-
-    await scheduler.wait_for(orchestrator_id)
-    await scheduler.enqueue_input(orchestrator_id, "Now analyze the cost implications")
+    print(result.response)
 ```
 
-### Scheduler Tools
+For longer-lived roots:
+
+```python
+state_id = await scheduler.submit(
+    orchestrator,
+    "Manage the research pipeline",
+    persistent=True,
+)
+
+await scheduler.wait_for(state_id)
+await scheduler.enqueue_input(state_id, "Now focus on pricing.")
+```
+
+## Scheduler runtime tools
 
 Agents running under the scheduler automatically get orchestration tools such as:
 
 - `spawn_agent`
+- `sleep_and_wait`
 - `query_spawned_agent`
 - `cancel_agent`
 - `list_agents`
-- `sleep_and_wait`
 
-## Patterns
+These are runtime-owned tools. You do not register them manually on the agent.
 
-### Pipeline
+## Common patterns
 
-Chain agents sequentially when each step depends on the last output.
+### Specialist delegation
 
-### Fan-out / Fan-in
+One orchestrator delegates bounded work to specialist agents via `Agent.as_tool()`.
 
-Spawn multiple agents in parallel, then synthesize their results.
+### Persistent supervisor
 
-### Supervisor Pattern
+One root stays alive and coordinates work over time through scheduler tools.
 
-Keep a persistent supervisor alive and let it create transient workers internally.
+### Fan-out and synthesis
+
+Multiple worker agents gather or analyze in parallel, then another run synthesizes the results.

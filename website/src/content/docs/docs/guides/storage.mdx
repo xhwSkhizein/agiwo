@@ -1,102 +1,89 @@
 ---
-title: Storage and Observability
-description: Persist runs, steps, and traces while keeping execution and projections separate.
+title: Storage
+description: Configure run persistence and trace collection for observability and operator workflows.
 ---
 
 # Storage and Observability
 
-Agiwo separates storage into two independent concerns: run and step persistence, and trace collection.
+Agiwo separates runtime storage into two independent concerns:
 
-## Storage Layers
+- run and step persistence
+- trace collection
 
-| Layer | Purpose | Interface |
-| --- | --- | --- |
-| Run and step storage | Persist agent run and step records | `RunStepStorage` |
-| Trace storage | Distributed traces for observability | `BaseTraceStorage` |
+## Run and step storage
 
-## Run and Step Storage
+Run-step storage records inputs, outputs, steps, token usage, and status transitions.
 
 ```python
 from agiwo.agent import RunStepStorageConfig
 from agiwo.agent.storage.factory import create_run_step_storage
 
 storage = create_run_step_storage(
-    RunStepStorageConfig(storage_type="sqlite", config={"db_path": "runs.db"})
+    RunStepStorageConfig(
+        storage_type="sqlite",
+        config={"db_path": "runs.db"},
+    )
 )
 ```
 
-### What gets stored
-
-- Run records: input, output, timestamps, token usage, status
-- Step records: LLM messages, tool calls, tool results, intermediate reasoning
-- Cost tracking: per-step and per-run token counts and estimated costs
-
-## Session Storage
-
-The SDK does not expose a standalone `SessionStorage` abstraction. Session state is handled by the console server or by in-memory runtime state during agent execution.
-
 ## Trace Storage
+
+Trace storage records span-style execution facts for debugging and observability.
 
 ```python
 from agiwo.agent import TraceStorageConfig
 from agiwo.observability import create_trace_storage
 
 trace_storage = create_trace_storage(
-    TraceStorageConfig(storage_type="sqlite", config={"db_path": "traces.db"})
+    TraceStorageConfig(
+        storage_type="sqlite",
+        config={"db_path": "traces.db"},
+    )
 )
 ```
 
-Pass trace configuration through `AgentOptions`:
+## Wire storage through `AgentOptions`
 
 ```python
-from agiwo.agent import Agent, AgentConfig, AgentOptions
+from agiwo.agent import (
+    AgentConfig,
+    AgentOptions,
+    AgentStorageOptions,
+    RunStepStorageConfig,
+    TraceStorageConfig,
+)
 
-agent = Agent(
-    AgentConfig(
-        name="assistant",
-        description="...",
-        system_prompt="...",
-        options=AgentOptions(
+config = AgentConfig(
+    name="assistant",
+    description="Helpful assistant",
+    system_prompt="Use tools only when useful.",
+    options=AgentOptions(
+        storage=AgentStorageOptions(
+            run_step_storage=RunStepStorageConfig(
+                storage_type="sqlite",
+                config={"db_path": "runs.db"},
+            ),
             trace_storage=TraceStorageConfig(
                 storage_type="sqlite",
                 config={"db_path": "traces.db"},
-            )
-        ),
+            ),
+        )
     ),
-    model=model,
 )
 ```
 
-### Trace Structure
+## Backend choices
 
-```text
-Trace
-|- Span: Agent execution
-|  |- Span: LLM call
-|  |- Span: Tool execution
-|  `- Span: Tool execution
-|- Span: LLM call
-`- Span: Child agent
-```
+| Backend | Best fit |
+| --- | --- |
+| `memory` | Tests, demos, ephemeral runs |
+| `sqlite` | Single-node development or self-hosted deployments |
 
-## Choosing Backends
+## What this enables
 
-| Backend | Use Case | Persistence |
-| --- | --- | --- |
-| `memory` | Testing, ephemeral workloads | No |
-| `sqlite` | Single-node deployments, development | Yes |
-| `mongodb` | Multi-process deployments | Yes |
+- inspect prior runs and steps
+- calculate token and cost metrics
+- query traces by agent, session, or time range
+- support Console views for sessions, scheduler state, and traces
 
-## Cost Tracking
-
-When price fields are set on the model, the SDK records cost alongside token counts:
-
-```python
-model = OpenAIModel(
-    id="gpt-4o",
-    name="gpt-4o",
-    input_price=0.005,
-    output_price=0.015,
-    cache_hit_price=0.001,
-)
-```
+The Console owns session storage and projections separately; the SDK itself does not expose a standalone session storage abstraction.

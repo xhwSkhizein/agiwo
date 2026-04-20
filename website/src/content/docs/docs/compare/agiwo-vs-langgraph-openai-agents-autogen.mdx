@@ -1,13 +1,13 @@
 ---
 title: Agiwo vs LangGraph vs OpenAI Agents SDK vs AutoGen
-description: Compare Agiwo with popular agent frameworks across runtime boundaries, orchestration, and observability.
+description: Compare Agiwo with popular agent frameworks across runtime ownership, orchestration, observability, and control plane design.
 ---
 
 # Agiwo vs LangGraph vs OpenAI Agents SDK vs AutoGen
 
 ## Who this comparison is for
 
-This page is for developers choosing a Python AI agent framework for production-style systems that need tool use, orchestration, and runtime visibility.
+This page is for developers choosing a Python AI agent framework for systems that need more than prompt orchestration: tool use, persistent execution, runtime visibility, and operator-facing control.
 
 ## Comparison focus
 
@@ -18,12 +18,22 @@ This comparison is not trying to declare a universal winner. It focuses on four 
 3. How easy is it to inspect runs, steps, and traces?
 4. How coupled is the framework to a specific provider or mental model?
 
+## Quick view
+
+| Project | Best fit | Main tradeoff |
+| --- | --- | --- |
+| **Agiwo** | Teams that want a runtime harness with explicit orchestration, persistence, and operator visibility | More runtime structure, less "magic" convenience |
+| **LangGraph** | Teams that want graph-native workflow authoring as the primary abstraction | Graph modeling becomes the center of the system |
+| **OpenAI Agents SDK** | Teams aligned closely with OpenAI-native platform workflows | Stronger provider coupling |
+| **AutoGen** | Teams whose main decomposition is agent-to-agent conversation patterns | Less emphasis on one explicit runtime harness story |
+
 ## Agiwo
 
-- Streaming-first runtime with one execution pipeline for `run()` and `run_stream()`
+- Runtime harness for orchestrated, self-improving agents
+- One execution pipeline shared by `run()`, `run_stream()`, `start()`, and scheduler flows
 - Explicit tool and scheduler boundaries
 - Built-in persistence and trace collection
-- Separate control plane instead of mixing UI concerns into the agent core
+- Separate Console control plane instead of mixing UI concerns into the agent core
 
 ## LangGraph
 
@@ -52,5 +62,6 @@ Choose Agiwo when you want a Python-first runtime with explicit separation betwe
 - scheduler orchestration
 - persistence
 - control-plane projections
+- context optimization and improvement loops
 
-That separation is the main design center of the project and the reason it maps well to long-running systems that need debugging and operational visibility.
+That separation is the main design center of the project and the reason it maps well to long-running systems that need debugging, operator visibility, and a path toward self-improving runtime behavior.

@@ -21,6 +21,12 @@ uv sync
 pip install agiwo
 ```
 
+The Console is a separate package:
+
+```bash
+pip install agiwo-console
+```
+
 ## Configuration
 
 Agiwo reads provider credentials from environment variables. Install once with `pip install agiwo`, then configure only the providers you plan to use. Create a `.env` file in your project root:
@@ -93,6 +99,18 @@ For real-time output, use `run_stream()`:
 async for event in agent.run_stream("Explain recursion in one sentence."):
     if event.type == "step_delta" and event.delta.content:
         print(event.delta.content, end="", flush=True)
+```
+
+If you need more control, use `start()`:
+
+```python
+handle = agent.start("List three uses for a calculator tool.")
+
+async for event in handle.stream():
+    if event.type == "step_delta" and event.delta.content:
+        print(event.delta.content, end="", flush=True)
+
+result = await handle.wait()
 ```
 
 ## Adding Tools
@@ -199,7 +217,8 @@ model = create_model_from_dict(
 
 ## Next Steps
 
-- [Core Concepts: Agent](../concepts/agent.md) — Understand the Agent execution model
-- [Custom Tools](../guides/custom-tools.md) — Build tools with caching, auth, and more
-- [Multi-Agent](../guides/multi-agent.md) — Compose agents with the scheduler
-- [Console](../console/overview.md) — Set up the web control plane
+- [Agent](./concepts/agent.md) — Understand the public Agent runtime surface
+- [Model](./concepts/model.md) — Choose and configure model providers
+- [Custom Tools](./guides/custom-tools.md) — Build tools with caching, gating, and structured output
+- [Multi-Agent](./guides/multi-agent.md) — Compose agents with `Agent.as_tool()` or `Scheduler`
+- [Console](./console/overview.md) — Set up the session-first control plane

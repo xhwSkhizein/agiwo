@@ -1,0 +1,40 @@
+---
+const pillars = [
+  {
+    title: "Runtime harness, not just prompts",
+    body: "Agiwo centers execution control, orchestration, observability, and optimization loops instead of treating the runtime as an afterthought.",
+  },
+  {
+    title: "Explicit orchestration",
+    body: "Agents, tools, scheduler, storage, and Console stay separate enough to inspect, debug, and evolve independently.",
+  },
+  {
+    title: "Built for persistent systems",
+    body: "The scheduler model handles persistent roots, child agents, waiting, wake conditions, and steering without inventing a second runtime.",
+  },
+  {
+    title: "Ready for improvement loops",
+    body: "Skills, memory, traces, context optimization, and operator visibility make iterative self-improvement practical instead of aspirational.",
+  },
+];
+---
+
+<section class="why-agiwo">
+  <div class="section-heading">
+    <p class="eyebrow">Why Agiwo</p>
+    <h2>Agiwo is for teams that need runtime truth, not just generation output.</h2>
+    <p>
+      The project is shaped around orchestrated and self-improving agent systems:
+      explicit boundaries, persistent state, traceable execution, and a clear path
+      from SDK usage to control-plane operations.
+    </p>
+  </div>
+  <div class="pillar-grid">
+    {pillars.map((pillar) => (
+      <article class="pillar-card">
+        <h3>{pillar.title}</h3>
+        <p>{pillar.body}</p>
+      </article>
+    ))}
+  </div>
+</section>

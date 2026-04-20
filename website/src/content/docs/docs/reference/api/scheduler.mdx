@@ -1,0 +1,70 @@
+---
+title: Scheduler API
+description: Reference for Scheduler lifecycle, orchestration methods, control methods, and state semantics.
+---
+
+# Scheduler API
+
+## Lifecycle
+
+```python
+async with Scheduler() as scheduler:
+    ...
+```
+
+or:
+
+```python
+scheduler = Scheduler()
+await scheduler.start()
+...
+await scheduler.stop()
+```
+
+## Core methods
+
+### `run(...)`
+
+Submit one root and wait for the final `RunOutput`.
+
+### `submit(...)`
+
+Create and start a root immediately, returning `state_id`.
+
+### `enqueue_input(...)`
+
+Queue the next input for a persistent root that is `IDLE` or `FAILED`.
+
+### `route_root_input(...)`
+
+High-level integration entry point used by Console and channels. It decides whether the correct action is submit, enqueue, or steer.
+
+### `stream(...)`
+
+Consume `AgentStreamItem` values for a root run.
+
+### `wait_for(...)`
+
+Wait until a state settles to `IDLE`, `COMPLETED`, or `FAILED`.
+
+## Control methods
+
+- `steer(...)`
+- `cancel(...)`
+- `shutdown(...)`
+- `rebind_agent(...)`
+
+## Query methods
+
+- `get_state(...)`
+- `list_states(...)`
+- `list_events(...)`
+- `get_stats(...)`
+
+## State storage backends
+
+`SchedulerConfig.state_storage.storage_type` supports:
+
+- `memory`
+- `sqlite`
+- `mongodb`

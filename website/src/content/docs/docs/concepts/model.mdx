@@ -1,0 +1,65 @@
+---
+title: Model
+description: Understand Agiwo's model abstraction, provider adapters, and factory-based construction.
+---
+
+# Model
+
+Models are the LLM backends that power agent reasoning. Agiwo keeps them behind one streaming-first abstraction.
+
+## Core contract
+
+Every provider implements:
+
+```python
+async def arun_stream(
+    self,
+    messages: list[dict],
+    tools: list[dict] | None = None,
+) -> AsyncIterator[StreamChunk]:
+    ...
+```
+
+`StreamChunk` is the normalized delta format that the rest of the runtime consumes.
+
+## Provider choices
+
+Public providers include:
+
+- `OpenAIModel`
+- `OpenAIResponsesModel`
+- `AnthropicModel`
+- `DeepseekModel`
+- `NvidiaModel`
+- `BedrockAnthropicModel`
+
+Compatible endpoints are supported through the model factory.
+
+## Recommended construction path
+
+Use the factory when the model comes from config or user input:
+
+```python
+from agiwo.llm import create_model_from_dict
+
+model = create_model_from_dict(
+    provider="openai-compatible",
+    model_name="my-model",
+    params={
+        "base_url": "https://api.example.com/v1",
+        "api_key_env_name": "MY_API_KEY",
+    },
+)
+```
+
+Use direct classes when the model is hard-coded in application code:
+
+```python
+from agiwo.llm import OpenAIModel
+
+model = OpenAIModel(name="gpt-5.4")
+```
+
+## Why the abstraction matters
+
+The rest of Agiwo depends on one normalized streaming interface instead of provider-specific response types. That is what makes agent execution, tool calling, scheduler orchestration, and tracing work across providers.

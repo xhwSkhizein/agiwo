@@ -1,0 +1,50 @@
+---
+title: Hooks
+description: Observe and extend Agiwo agent lifecycle events with AgentHooks.
+---
+
+# Hooks
+
+Hooks let you observe or extend lifecycle points in the agent runtime. They are optional async callbacks grouped in `AgentHooks`.
+
+## Typical hook surfaces
+
+- before and after a run
+- before and after a tool call
+- before and after an LLM call
+- after a step is committed
+- memory write and memory retrieve hooks
+- compaction failure handling
+
+## Example
+
+```python
+from agiwo.agent import Agent, AgentConfig, AgentHooks
+
+
+async def on_after_tool_call(tool_call_id, tool_name, parameters, result) -> None:
+    print(f"{tool_name} finished in {result.duration:.2f}s")
+
+
+hooks = AgentHooks(on_after_tool_call=on_after_tool_call)
+
+agent = Agent(
+    AgentConfig(
+        name="assistant",
+        description="Helpful assistant",
+        system_prompt="Answer concisely.",
+    ),
+    model=model,
+    hooks=hooks,
+)
+```
+
+## Good uses for hooks
+
+- logging and tracing
+- token and cost accounting
+- lightweight guardrails
+- memory integration
+- debugging run behavior
+
+Hook exceptions propagate by default, so treat hooks as production code rather than best-effort callbacks.

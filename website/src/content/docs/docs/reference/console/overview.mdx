@@ -1,0 +1,34 @@
+---
+title: Console Overview
+description: Understand Agiwo Console as a self-hosted control plane for sessions, traces, and scheduler operations.
+---
+
+# Console Overview
+
+The Console is Agiwo's self-hosted control plane. It combines a FastAPI backend with a web UI for operator-facing workflows.
+
+## What it does
+
+- manages agent configs
+- creates and routes sessions
+- projects scheduler state and traces
+- exposes REST and SSE APIs
+- supports Docker-managed deployment
+
+## Runtime model
+
+The Console is session-first:
+
+1. choose or create an agent config
+2. create a session for that agent
+3. send session input
+4. let the scheduler decide whether to submit, enqueue, or steer the root runtime
+
+This keeps the SDK as execution truth while the Console remains the operator-facing projection and control surface.
+
+## Positioning
+
+- self-hosted and operator-facing
+- useful for internal workflows
+- optional relative to the SDK
+- currently includes Feishu as the built-in channel integration

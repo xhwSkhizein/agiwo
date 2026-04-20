@@ -1,0 +1,39 @@
+---
+title: Configuration
+description: Understand Agiwo environment variables, provider credentials, and runtime configuration boundaries.
+---
+
+# Configuration
+
+## Configuration layers
+
+### Provider credentials
+
+Use provider-native environment variables such as:
+
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `DEEPSEEK_API_KEY`
+
+### SDK settings
+
+`AGIWO_*` is the SDK namespace for runtime settings such as skills discovery and memory behavior.
+
+### Console settings
+
+`AGIWO_CONSOLE_*` is the Console namespace for deployment and control-plane runtime settings.
+
+## Important boundaries
+
+- business modules should not scatter `os.getenv(...)`
+- SDK configuration lives under `agiwo/config/settings.py`
+- Console-specific deployment configuration lives under `console/server/config.py`
+- compatible provider endpoints require explicit `base_url` and `api_key_env_name`
+
+## Skills configuration
+
+Skills are discovered from SDK-level `skills_dirs`. Per-agent control should stay on `allowed_skills`, not on per-agent skill directories.
+
+## Runtime overrides
+
+The Console runtime configuration API changes in-process overrides only. Restarting the process returns behavior to environment-configured defaults.
