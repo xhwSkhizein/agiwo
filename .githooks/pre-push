@@ -20,9 +20,9 @@ while read local_ref local_sha remote_ref remote_sha; do
     fi
 
     # Check prefix
-    if ! [[ "$branch_name" =~ ^(feature/|refactor/|bugfix/|release/|docs/).+ ]]; then
+    if ! [[ "$branch_name" =~ ^(feature/|feat/|refactor/|bugfix/|fix/|release/|docs/).+ ]]; then
         echo "❌ Error: Branch name '$branch_name' doesn't follow naming convention!"
-        echo "💡 Branch name must start with one of: feature/, refactor/, bugfix/, release/, docs/."
+        echo "💡 Branch name must start with one of: feature/, feat/, refactor/, bugfix/, fix/, release/, docs/."
         exit 1
     fi
 
