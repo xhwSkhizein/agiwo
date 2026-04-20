@@ -116,7 +116,7 @@ def fix_volume_ownership(
     data_dir: Path,
     workspace_dir: Path,
 ) -> None:
-    subprocess.run(
+    result = subprocess.run(
         [
             docker,
             "run",
@@ -138,6 +138,18 @@ def fix_volume_ownership(
         text=True,
         env=build_docker_env(),
     )
+    if result.returncode == 0:
+        return
+
+    print(
+        "Failed to restore smoke test volume ownership: "
+        f"docker exited with {result.returncode}",
+        file=sys.stderr,
+    )
+    if result.stdout:
+        print(result.stdout, file=sys.stderr, end="")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
 
 
 def main() -> int:

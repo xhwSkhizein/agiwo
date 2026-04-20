@@ -7,6 +7,10 @@
 .env
 .env.*
 !.env.example
+# Keep npm credentials out of Docker contexts. For private registries,
+# pass npmrc content with BuildKit secrets instead of committing it.
+**/.npmrc
+**/.npmrc.*
 
 console/.venv
 console/.agiwo
