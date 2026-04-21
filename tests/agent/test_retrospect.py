@@ -203,6 +203,11 @@ class TestExecuteRetrospect:
         assert outcome.messages[0]["content"].startswith("[")
         assert "Retrospect:" in outcome.messages[1]["content"]
         assert "Plan A and B" in outcome.messages[1]["content"]
+        assert outcome.affected_sequences == [1, 2]
+        assert outcome.affected_step_ids == [step1.id, step2.id]
+        assert outcome.feedback == "Plan A and B both failed, need to try table Y."
+        assert outcome.replacement is not None
+        assert "Retrospect:" in outcome.replacement
 
         assert ledger.retrospect.pending_tokens == 0
         assert ledger.retrospect.pending_rounds == 0

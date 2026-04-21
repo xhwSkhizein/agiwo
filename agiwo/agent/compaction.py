@@ -14,6 +14,10 @@ import aiofiles
 
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.llm_caller import stream_assistant_step
+from agiwo.agent.models.stream import (
+    CompactionAppliedEvent,
+    MessagesRebuiltEvent,
+)
 from agiwo.agent.models.step import StepRecord
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.state_ops import (
@@ -21,6 +25,10 @@ from agiwo.agent.runtime.state_ops import (
     replace_messages,
 )
 from agiwo.agent.runtime.step_committer import commit_step
+from agiwo.agent.runtime.state_writer import (
+    build_compaction_applied_entry,
+    build_messages_rebuilt_entry,
+)
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator
 from agiwo.config.settings import get_settings
@@ -378,6 +386,36 @@ async def _compact(
     await state.session_runtime.save_compact_metadata(
         state.agent_id,
         metadata,
+    )
+    rebuilt_entry = build_messages_rebuilt_entry(
+        state,
+        sequence=await state.session_runtime.allocate_sequence(),
+        reason="compaction",
+        messages=state.snapshot_messages(),
+    )
+    compaction_entry = build_compaction_applied_entry(
+        state,
+        sequence=await state.session_runtime.allocate_sequence(),
+        metadata=metadata,
+    )
+    await state.session_runtime.append_run_log_entries(
+        [rebuilt_entry, compaction_entry]
+    )
+    await state.session_runtime.publish(
+        MessagesRebuiltEvent.from_context(
+            state,
+            reason="compaction",
+            message_count=len(state.snapshot_messages()),
+        )
+    )
+    await state.session_runtime.publish(
+        CompactionAppliedEvent.from_context(
+            state,
+            start_sequence=metadata.start_seq,
+            end_sequence=metadata.end_seq,
+            transcript_path=metadata.transcript_path,
+            summary=metadata.get_summary() or None,
+        )
     )
 
     return metadata

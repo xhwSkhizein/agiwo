@@ -2,8 +2,9 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from agiwo.agent import Agent, AgentConfig
+from agiwo.agent import Agent, AgentConfig, TerminationReason
 from agiwo.agent.models.log import RunLogEntryKind
+from agiwo.agent.models.stream import stream_items_from_entries
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -35,4 +36,18 @@ async def test_agent_run_writes_basic_run_log_entries() -> None:
     assert RunLogEntryKind.USER_STEP_COMMITTED in kinds
     assert RunLogEntryKind.LLM_CALL_STARTED in kinds
     assert RunLogEntryKind.LLM_CALL_COMPLETED in kinds
+    assert RunLogEntryKind.TERMINATION_DECIDED in kinds
     assert RunLogEntryKind.RUN_FINISHED in kinds
+    replayed = stream_items_from_entries(entries)
+    assert [
+        item.type
+        for item in replayed
+        if item.type in {"termination_decided", "run_completed"}
+    ] == [
+        "termination_decided",
+        "run_completed",
+    ]
+    termination_event = next(
+        item for item in replayed if item.type == "termination_decided"
+    )
+    assert termination_event.termination_reason == TerminationReason.COMPLETED

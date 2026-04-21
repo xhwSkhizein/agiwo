@@ -70,6 +70,8 @@ class SessionRuntime:
 
     async def append_run_log_entries(self, entries: list[RunLogEntry]) -> None:
         await self.run_log_storage.append_entries(entries)
+        if self.trace_runtime is not None:
+            await self.trace_runtime.on_run_log_entries(entries)
 
     async def list_run_log_entries(
         self,

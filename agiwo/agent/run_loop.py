@@ -51,14 +51,20 @@ from agiwo.agent.runtime.state_writer import (
     build_context_assembled_entry,
     build_llm_call_completed_entry,
     build_llm_call_started_entry,
+    build_messages_rebuilt_entry,
     build_run_failed_entry,
     build_run_finished_entry,
     build_run_started_entry,
+    build_retrospect_applied_entry,
+    build_termination_decided_entry,
 )
 from agiwo.agent.models.stream import (
+    MessagesRebuiltEvent,
+    RetrospectAppliedEvent,
     RunCompletedEvent,
     RunFailedEvent,
     RunStartedEvent,
+    TerminationDecidedEvent,
 )
 from agiwo.agent.termination.limits import (
     check_non_recoverable_limits,
@@ -230,6 +236,33 @@ class RunEngine:
             metadata={"run_start_seq": self.context.ledger.run_start_seq},
         )
 
+    async def _set_termination_reason(
+        self,
+        reason: TerminationReason,
+        *,
+        phase: str,
+        source: str,
+    ) -> None:
+        if self.context.ledger.termination_reason == reason:
+            return
+        set_termination_reason(self.context, reason)
+        entry = build_termination_decided_entry(
+            self.context,
+            sequence=await self.context.session_runtime.allocate_sequence(),
+            termination_reason=reason,
+            phase=phase,
+            source=source,
+        )
+        await self.context.session_runtime.append_run_log_entries([entry])
+        await self.context.session_runtime.publish(
+            TerminationDecidedEvent.from_context(
+                self.context,
+                termination_reason=reason,
+                phase=phase,
+                source=source,
+            )
+        )
+
     async def _prepare_run_context(
         self,
         user_input: UserInput,
@@ -348,14 +381,19 @@ class RunEngine:
                 if should_stop:
                     return
         except asyncio.CancelledError:
-            set_termination_reason(self.context, TerminationReason.CANCELLED)
+            await self._set_termination_reason(
+                TerminationReason.CANCELLED,
+                phase="run_loop",
+                source="cancelled_error",
+            )
             logger.info("agent_execution_cancelled", run_id=self.context.run_id)
         except Exception:
-            set_termination_reason(
-                self.context,
+            await self._set_termination_reason(
                 TerminationReason.ERROR_WITH_CONTEXT
                 if self.context.ledger.steps.assistant > 0
                 else TerminationReason.ERROR,
+                phase="run_loop",
+                source="exception",
             )
             logger.error(
                 "agent_execution_failed",
@@ -374,7 +412,11 @@ class RunEngine:
             self.context.ledger.steps.current,
         )
         if reason is not None:
-            set_termination_reason(self.context, reason)
+            await self._set_termination_reason(
+                reason,
+                phase="pre_llm",
+                source="non_recoverable_limit",
+            )
             return True
 
         result = await self._run_compaction_cycle()
@@ -415,8 +457,10 @@ class RunEngine:
                 failure_count=failure_count,
             )
             if failure_count >= 3:
-                set_termination_reason(
-                    self.context, TerminationReason.MAX_INPUT_TOKENS_PER_CALL
+                await self._set_termination_reason(
+                    TerminationReason.MAX_INPUT_TOKENS_PER_CALL,
+                    phase="compaction",
+                    source="compaction_failure_limit",
                 )
             return CompactionCycleResult(self.runtime.compact_start_seq, False)
 
@@ -434,8 +478,13 @@ class RunEngine:
             self.runtime.config.max_run_cost is not None
             and self.context.ledger.tokens.cost >= self.runtime.config.max_run_cost
         ):
-            set_termination_reason(self.context, TerminationReason.MAX_RUN_COST)
+            await self._set_termination_reason(
+                TerminationReason.MAX_RUN_COST,
+                phase="compaction",
+                source="max_run_cost_after_compaction",
+            )
             return CompactionCycleResult(new_start_seq, True)
+        return CompactionCycleResult(new_start_seq, False)
 
     async def _run_assistant_turn(self) -> tuple[StepRecord, LLMCallContext]:
         """Execute an assistant turn (LLM call)."""
@@ -497,11 +546,19 @@ class RunEngine:
             max_input_tokens_per_call=self.runtime.max_input_tokens_per_call,
         )
         if reason is not None:
-            set_termination_reason(self.context, reason)
+            await self._set_termination_reason(
+                reason,
+                phase="post_llm",
+                source="post_llm_limit",
+            )
             return True
 
         if not step.tool_calls:
-            set_termination_reason(self.context, TerminationReason.COMPLETED)
+            await self._set_termination_reason(
+                TerminationReason.COMPLETED,
+                phase="post_llm",
+                source="assistant_completed_without_tools",
+            )
             return True
 
         return await self._execute_tool_calls(tool_calls=step.tool_calls)
@@ -546,12 +603,50 @@ class RunEngine:
             await commit_step(self.context, tool_step)
 
             if not terminated and result.termination_reason is not None:
-                set_termination_reason(self.context, result.termination_reason)
+                await self._set_termination_reason(
+                    result.termination_reason,
+                    phase="tool_result",
+                    source=result.tool_name,
+                )
                 terminated = True
 
         outcome = await batch.finalize()
         if outcome.applied:
             replace_messages(self.context, outcome.messages)
+            rebuilt_entry = build_messages_rebuilt_entry(
+                self.context,
+                sequence=await self.context.session_runtime.allocate_sequence(),
+                reason="retrospect",
+                messages=self.context.snapshot_messages(),
+            )
+            retrospect_entry = build_retrospect_applied_entry(
+                self.context,
+                sequence=await self.context.session_runtime.allocate_sequence(),
+                affected_sequences=outcome.affected_sequences,
+                affected_step_ids=outcome.affected_step_ids,
+                feedback=outcome.feedback,
+                replacement=outcome.replacement,
+            )
+            await self.context.session_runtime.append_run_log_entries(
+                [rebuilt_entry, retrospect_entry]
+            )
+            await self.context.session_runtime.publish(
+                MessagesRebuiltEvent.from_context(
+                    self.context,
+                    reason="retrospect",
+                    message_count=len(self.context.snapshot_messages()),
+                )
+            )
+            await self.context.session_runtime.publish(
+                RetrospectAppliedEvent.from_context(
+                    self.context,
+                    affected_sequences=outcome.affected_sequences,
+                    affected_step_ids=outcome.affected_step_ids,
+                    feedback=outcome.feedback,
+                    replacement=outcome.replacement,
+                    trigger=None,
+                )
+            )
 
         return terminated or self.context.is_terminal
 

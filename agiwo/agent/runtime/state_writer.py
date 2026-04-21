@@ -4,18 +4,22 @@ from typing import Any
 
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
+    CompactionApplied,
     ContextAssembled,
     HookFailed,
     LLMCallCompleted,
     LLMCallStarted,
+    MessagesRebuilt,
+    RetrospectApplied,
     RunFailed,
     RunFinished,
     RunStarted,
+    TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
 )
 from agiwo.agent.models.input import UserInput
-from agiwo.agent.models.run import RunOutput
+from agiwo.agent.models.run import CompactMetadata, RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepRecord
 from agiwo.agent.runtime.context import RunContext
 
@@ -163,4 +167,81 @@ def build_hook_failed_entry(
         phase=phase,
         hook_name=hook_name,
         error=str(error),
+    )
+
+
+def build_messages_rebuilt_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    reason: str,
+    messages: list[dict[str, Any]],
+) -> MessagesRebuilt:
+    return MessagesRebuilt(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        reason=reason,
+        messages=messages,
+    )
+
+
+def build_compaction_applied_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    metadata: CompactMetadata,
+) -> CompactionApplied:
+    return CompactionApplied(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        start_sequence=metadata.start_seq,
+        end_sequence=metadata.end_seq,
+        transcript_path=metadata.transcript_path,
+        summary=metadata.get_summary() or None,
+    )
+
+
+def build_retrospect_applied_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    affected_sequences: list[int],
+    affected_step_ids: list[str],
+    feedback: str | None,
+    replacement: str | None,
+    trigger: str | None = None,
+) -> RetrospectApplied:
+    return RetrospectApplied(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        affected_sequences=affected_sequences,
+        affected_step_ids=affected_step_ids,
+        feedback=feedback,
+        replacement=replacement,
+        trigger=trigger,
+    )
+
+
+def build_termination_decided_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    termination_reason: TerminationReason,
+    phase: str,
+    source: str,
+) -> TerminationDecided:
+    return TerminationDecided(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        termination_reason=termination_reason,
+        phase=phase,
+        source=source,
     )

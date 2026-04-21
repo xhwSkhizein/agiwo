@@ -6,6 +6,7 @@ import pytest
 
 from agiwo.agent.compaction import build_compacted_messages, compact_if_needed
 from agiwo.agent.hooks import HookPhase, HookRegistry, observe
+from agiwo.agent.models.log import RunLogEntryKind
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
@@ -153,3 +154,15 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
 
     persisted = await step_storage.get_latest_compact_metadata("sess-1", "agent-1")
     assert persisted == metadata
+    entries = await session_runtime.list_run_log_entries(run_id="run-1")
+    kinds = [entry.kind for entry in entries]
+    assert RunLogEntryKind.MESSAGES_REBUILT in kinds
+    assert RunLogEntryKind.COMPACTION_APPLIED in kinds
+    assert [
+        item.type
+        for item in published
+        if item.type in {"messages_rebuilt", "compaction_applied"}
+    ] == [
+        "messages_rebuilt",
+        "compaction_applied",
+    ]

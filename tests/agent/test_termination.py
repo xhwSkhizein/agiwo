@@ -1,11 +1,28 @@
 import importlib
+from collections.abc import AsyncIterator
 
+import pytest
+
+from agiwo.agent import Agent, AgentConfig
+from agiwo.agent.models.log import RunLogEntryKind
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.step import LLMCallContext, StepMetrics, StepRecord
 from agiwo.agent import TerminationReason
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.llm.base import Model, StreamChunk
+
+
+class _FixedResponseModel(Model):
+    def __init__(self, response: str = "ok") -> None:
+        super().__init__(id="term-model", name="term-model", temperature=0.0)
+        self._response = response
+
+    async def arun_stream(self, messages, tools=None) -> AsyncIterator[StreamChunk]:
+        del messages, tools
+        yield StreamChunk(content=self._response)
+        yield StreamChunk(finish_reason="stop")
 
 
 def test_termination_modules_expose_prompt_and_summary_helpers() -> None:
@@ -96,3 +113,28 @@ def test_check_post_llm_limits_returns_max_input_reason() -> None:
     )
 
     assert reason == TerminationReason.MAX_INPUT_TOKENS_PER_CALL
+
+
+@pytest.mark.asyncio
+async def test_run_records_termination_decision_entry() -> None:
+    agent = Agent(
+        AgentConfig(
+            name="termination-test",
+            description="termination test",
+            options=AgentOptions(max_steps=0),
+        ),
+        model=_FixedResponseModel(),
+    )
+
+    result = await agent.run("hello", session_id="termination-session")
+
+    assert result.termination_reason == TerminationReason.MAX_STEPS
+    entries = await agent.run_step_storage.list_entries(
+        session_id="termination-session"
+    )
+    termination_entry = next(
+        entry for entry in entries if entry.kind is RunLogEntryKind.TERMINATION_DECIDED
+    )
+    assert termination_entry.termination_reason == TerminationReason.MAX_STEPS
+    assert termination_entry.phase == "pre_llm"
+    assert termination_entry.source == "non_recoverable_limit"

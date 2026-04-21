@@ -64,11 +64,16 @@ from agiwo.agent.models.step import (
 from agiwo.agent.models.stream import (
     AgentStreamItem,
     AgentStreamItemBase,
+    CompactionAppliedEvent,
+    MessagesRebuiltEvent,
+    RetrospectAppliedEvent,
     RunCompletedEvent,
     RunFailedEvent,
     RunStartedEvent,
     StepCompletedEvent,
     StepDeltaEvent,
+    TerminationDecidedEvent,
+    stream_items_from_entries,
 )
 
 __all__ = [
@@ -82,6 +87,7 @@ __all__ = [
     "AssistantStepCommitted",
     "ChannelContext",
     "CommittedStep",
+    "CompactionAppliedEvent",
     "CompactionApplied",
     "ContentPart",
     "ContentType",
@@ -91,6 +97,7 @@ __all__ = [
     "LLMCallCompleted",
     "LLMCallStarted",
     "MemoryRecord",
+    "MessagesRebuiltEvent",
     "MessagesRebuilt",
     "MessageContent",
     "MessageRole",
@@ -113,6 +120,7 @@ __all__ = [
     "RunStepStorageConfig",
     "RunView",
     "RetrospectApplied",
+    "RetrospectAppliedEvent",
     "StepCompletedEvent",
     "StepDelta",
     "StepDeltaEvent",
@@ -120,6 +128,7 @@ __all__ = [
     "StepRecord",
     "StepView",
     "TerminationDecided",
+    "TerminationDecidedEvent",
     "TerminationReason",
     "TraceStorageConfig",
     "ToolStepCommitted",
@@ -128,5 +137,6 @@ __all__ = [
     "UserMessage",
     "decision_support",
     "observe",
+    "stream_items_from_entries",
     "transform",
 ]

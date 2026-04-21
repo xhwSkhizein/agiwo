@@ -12,6 +12,12 @@ from agiwo.agent import (
     StepRecord,
     TerminationReason,
 )
+from agiwo.agent.models.log import (
+    CompactionApplied,
+    RetrospectApplied,
+    RunStarted,
+    TerminationDecided,
+)
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.observability.trace import SpanKind
 
@@ -125,3 +131,100 @@ async def test_collect_routes_assistant_and_tool_steps() -> None:
     assert tool_span.tool_details["input_args"] == {"query": "latest updates"}
     assert tool_span.tool_details["status"] == "completed"
     assert tool_span.tool_details["content_for_user"] == "Found matching documents"
+
+
+@pytest.mark.asyncio
+async def test_collector_records_runtime_run_log_entries() -> None:
+    collector = AgentTraceCollector()
+    collector.start(
+        trace_id="trace-2",
+        agent_id="agent-1",
+        session_id="session-1",
+        input_query="hello",
+    )
+    collector.on_run_started(
+        Run(
+            id="run-1",
+            agent_id="agent-1",
+            session_id="session-1",
+            user_input="hello",
+            status=RunStatus.RUNNING,
+        )
+    )
+
+    await collector.on_run_log_entries(
+        [
+            CompactionApplied(
+                sequence=3,
+                session_id="session-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                start_sequence=1,
+                end_sequence=2,
+                transcript_path="/tmp/transcript.jsonl",
+                summary="short summary",
+            ),
+            RetrospectApplied(
+                sequence=4,
+                session_id="session-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                affected_sequences=[2],
+                affected_step_ids=["step-2"],
+                feedback="switch plan",
+                replacement="[ToolResult offloaded to /tmp/x.txt]",
+            ),
+            TerminationDecided(
+                sequence=5,
+                session_id="session-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                termination_reason=TerminationReason.MAX_STEPS,
+                phase="pre_llm",
+                source="non_recoverable_limit",
+            ),
+        ]
+    )
+
+    trace = collector._trace
+    assert trace is not None
+    runtime_spans = [span for span in trace.spans if span.kind == SpanKind.RUNTIME]
+    assert [span.name for span in runtime_spans] == [
+        "compaction",
+        "retrospect",
+        "termination",
+    ]
+    assert runtime_spans[0].attributes["summary"] == "short summary"
+    assert runtime_spans[1].attributes["feedback"] == "switch plan"
+    assert runtime_spans[2].attributes["termination_reason"] == "max_steps"
+
+
+@pytest.mark.asyncio
+async def test_build_trace_from_run_log_entries() -> None:
+    collector = AgentTraceCollector()
+
+    trace = await collector.build_from_entries(
+        [
+            RunStarted(
+                sequence=1,
+                session_id="session-2",
+                run_id="run-2",
+                agent_id="agent-2",
+                user_input="hello",
+            ),
+            TerminationDecided(
+                sequence=2,
+                session_id="session-2",
+                run_id="run-2",
+                agent_id="agent-2",
+                termination_reason=TerminationReason.COMPLETED,
+                phase="post_llm",
+                source="assistant_completed_without_tools",
+            ),
+        ]
+    )
+
+    assert trace.agent_id == "agent-2"
+    runtime_spans = [span for span in trace.spans if span.kind == SpanKind.RUNTIME]
+    assert len(runtime_spans) == 1
+    assert runtime_spans[0].name == "termination"
