@@ -6,12 +6,35 @@ import asyncio
 import bisect
 from abc import ABC, abstractmethod
 
+from agiwo.agent.models.log import RunLogEntry
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.run import Run
 from agiwo.agent.models.step import StepRecord
 
 
-class RunStepStorage(ABC):
+class RunLogStorage(ABC):
+    """Replayable run-log storage interface."""
+
+    @abstractmethod
+    async def append_entries(self, entries: list[RunLogEntry]) -> None:
+        """Append run-log entries."""
+        ...
+
+    @abstractmethod
+    async def list_entries(
+        self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 1000,
+    ) -> list[RunLogEntry]:
+        """List run-log entries in ascending sequence order."""
+        ...
+
+
+class RunStepStorage(RunLogStorage, ABC):
     """
     Run and Step storage interface.
     Responsible for Run and Step persistence and queries.
@@ -229,6 +252,7 @@ class InMemoryRunStepStorage(RunStepStorage):
     def __init__(self) -> None:
         self.runs: dict[str, Run] = {}
         self.steps: dict[str, list[StepRecord]] = {}  # session_id -> list[StepRecord]
+        self.run_log_entries: dict[str, list[RunLogEntry]] = {}
         self._id_index: dict[
             str, dict[str, int]
         ] = {}  # session_id -> {step_id -> list_index}
@@ -239,6 +263,30 @@ class InMemoryRunStepStorage(RunStepStorage):
         self._sequence_locks: dict[str, asyncio.Lock] = {}  # session_id -> lock
         self._compact_history: dict[str, list[CompactMetadata]] = {}
         self._compact_lock = asyncio.Lock()
+
+    async def append_entries(self, entries: list[RunLogEntry]) -> None:
+        for entry in entries:
+            bucket = self.run_log_entries.setdefault(entry.session_id, [])
+            bucket.append(entry)
+            bucket.sort(key=lambda item: item.sequence)
+
+    async def list_entries(
+        self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 1000,
+    ) -> list[RunLogEntry]:
+        entries = list(self.run_log_entries.get(session_id, []))
+        if run_id is not None:
+            entries = [entry for entry in entries if entry.run_id == run_id]
+        if agent_id is not None:
+            entries = [entry for entry in entries if entry.agent_id == agent_id]
+        if after_sequence is not None:
+            entries = [entry for entry in entries if entry.sequence > after_sequence]
+        return entries[:limit]
 
     async def save_run(self, run: Run) -> None:
         self.runs[run.id] = run
@@ -464,4 +512,13 @@ class InMemoryRunStepStorage(RunStepStorage):
         return list(self._compact_history.get(key, []))
 
 
-__all__ = ["RunStepStorage", "InMemoryRunStepStorage"]
+class InMemoryRunLogStorage(InMemoryRunStepStorage):
+    """Dedicated run-log storage alias for new runtime components."""
+
+
+__all__ = [
+    "InMemoryRunLogStorage",
+    "InMemoryRunStepStorage",
+    "RunLogStorage",
+    "RunStepStorage",
+]

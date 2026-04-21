@@ -3,6 +3,7 @@
 from agiwo.agent.models.step import LLMCallContext, StepRecord
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.state_ops import track_step_state
+from agiwo.agent.runtime.state_writer import build_step_log_entry
 from agiwo.agent.models.stream import StepCompletedEvent
 
 
@@ -17,10 +18,10 @@ async def commit_step(
     if track_state:
         track_step_state(state, step, append_message=append_message)
     await state.session_runtime.run_step_storage.save_step(step)
+    await state.session_runtime.append_run_log_entries([build_step_log_entry(step)])
     if state.session_runtime.trace_runtime is not None:
         await state.session_runtime.trace_runtime.on_step(step, llm)
-    if state.hooks.on_step is not None:
-        await state.hooks.on_step(step)
+    await state.hooks.on_step(step, state)
     await state.session_runtime.publish(
         StepCompletedEvent.from_context(state, step=step),
     )

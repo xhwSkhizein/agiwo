@@ -16,7 +16,7 @@ from agiwo.agent.definition import (
     resolve_agent_definition,
     resolve_child_definition,
 )
-from agiwo.agent.hooks import AgentHooks
+from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.prompt import build_system_prompt
 from agiwo.agent.models.run import RunOutput
@@ -92,7 +92,7 @@ class Agent:
         *,
         model: Model,
         tools: list[BaseTool] | None = None,
-        hooks: AgentHooks | None = None,
+        hooks: HookRegistry | list[HookRegistration] | None = None,
         id: str | None = None,
     ) -> None:
         """Create an Agent.
@@ -169,11 +169,11 @@ class Agent:
         return self._model
 
     @property
-    def hooks(self) -> AgentHooks:
+    def hooks(self) -> HookRegistry:
         return self._hooks
 
     @hooks.setter
-    def hooks(self, hooks: AgentHooks | None) -> None:
+    def hooks(self, hooks: HookRegistry | list[HookRegistration] | None) -> None:
         self._hooks = build_agent_hooks(self._config, hooks)
 
     @property

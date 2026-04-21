@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.hooks import AgentHooks
+from agiwo.agent.hooks import HookRegistry
 from agiwo.agent.models.run import RunIdentity, RunLedger
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.llm.base import Model
@@ -20,7 +20,7 @@ class RunRuntime:
 
     session_runtime: SessionRuntime
     config: AgentOptions
-    hooks: AgentHooks
+    hooks: HookRegistry
     model: Model
     tools_map: dict[str, BaseTool]
     abort_signal: AbortSignal | None
@@ -78,7 +78,7 @@ class RunContext:
         # the run. Defaults let early readers (prompt assembly, trace setup)
         # operate safely if they fire before execute_run has injected them.
         self.config = AgentOptions()
-        self.hooks = AgentHooks()
+        self.hooks = HookRegistry()
 
     # Identity properties (backward-compatible)
     @property

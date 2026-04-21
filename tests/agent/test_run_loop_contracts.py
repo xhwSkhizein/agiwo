@@ -6,12 +6,12 @@ import pytest
 from agiwo.agent import (
     Agent,
     AgentConfig,
-    AgentHooks,
     AgentOptions,
     ContentPart,
     ContentType,
     UserMessage,
 )
+from agiwo.agent.hooks import HookPhase, HookRegistry, transform
 from agiwo.agent.prompt import apply_steering_messages
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
@@ -87,30 +87,38 @@ async def test_early_hooks_receive_initialized_context() -> None:
     observed: list[tuple[str, int, str, bool]] = []
     event = asyncio.Event()
 
-    async def before_run(user_input, context):
+    async def before_run(payload):
+        user_input = payload["user_input"]
+        context = payload["context"]
         del user_input
         observed.append(
             (
                 "before_run",
                 context.config.max_steps,
                 context.config.config_root,
-                context.hooks.on_memory_retrieve is not None,
+                context.hooks.has_phase(HookPhase.ASSEMBLE_CONTEXT),
             )
         )
-        return None
+        payload = dict(payload)
+        payload["before_run_result"] = None
+        return payload
 
-    async def memory_retrieve(user_input, context):
+    async def memory_retrieve(payload):
+        user_input = payload["user_input"]
+        context = payload["context"]
         del user_input
         observed.append(
             (
                 "memory_retrieve",
                 context.config.max_steps,
                 context.config.config_root,
-                context.hooks.on_before_run is not None,
+                context.hooks.has_phase(HookPhase.PREPARE),
             )
         )
         event.set()
-        return []
+        payload = dict(payload)
+        payload["memories"] = []
+        return payload
 
     agent = Agent(
         AgentConfig(
@@ -118,9 +126,15 @@ async def test_early_hooks_receive_initialized_context() -> None:
             options=AgentOptions(max_steps=7, config_root="/tmp/agiwo-root"),
         ),
         model=_FixedResponseModel(),
-        hooks=AgentHooks(
-            on_before_run=before_run,
-            on_memory_retrieve=memory_retrieve,
+        hooks=HookRegistry(
+            [
+                transform(HookPhase.PREPARE, "before_run", before_run),
+                transform(
+                    HookPhase.ASSEMBLE_CONTEXT,
+                    "memory_retrieve",
+                    memory_retrieve,
+                ),
+            ]
         ),
     )
 

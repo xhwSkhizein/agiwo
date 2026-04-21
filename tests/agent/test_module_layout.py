@@ -14,10 +14,10 @@ def test_transport_package_has_been_removed_from_sdk_layer() -> None:
     assert importlib.util.find_spec("agiwo.agent.transport") is None
 
 
-def test_hooks_module_exposes_agent_hooks_and_memory_defaults() -> None:
+def test_hooks_module_exposes_hook_registry_and_memory_defaults() -> None:
     hooks_module = importlib.import_module("agiwo.agent.hooks")
 
-    assert hasattr(hooks_module, "AgentHooks")
+    assert hasattr(hooks_module, "HookRegistry")
     assert hasattr(hooks_module, "DefaultMemoryHook")
 
 

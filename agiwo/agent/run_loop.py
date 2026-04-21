@@ -23,7 +23,7 @@ def increment_compaction_failure(context: RunContext) -> int:
 
 
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.hooks import AgentHooks
+from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.models.run import MemoryRecord
@@ -47,6 +47,14 @@ from agiwo.agent.runtime.state_ops import (
     set_termination_reason,
 )
 from agiwo.agent.runtime.step_committer import commit_step
+from agiwo.agent.runtime.state_writer import (
+    build_context_assembled_entry,
+    build_llm_call_completed_entry,
+    build_llm_call_started_entry,
+    build_run_failed_entry,
+    build_run_finished_entry,
+    build_run_started_entry,
+)
 from agiwo.agent.models.stream import (
     RunCompletedEvent,
     RunFailedEvent,
@@ -72,8 +80,8 @@ from agiwo.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-class RunLoopOrchestrator:
-    """Orchestrates the run loop execution with encapsulated state."""
+class RunEngine:
+    """RunEngine is the single-run execution owner."""
 
     def __init__(
         self,
@@ -129,6 +137,15 @@ class RunLoopOrchestrator:
                 run
             )
         await self.context.session_runtime.save_run(run)
+        await self.context.session_runtime.append_run_log_entries(
+            [
+                build_run_started_entry(
+                    self.context,
+                    sequence=await self.context.session_runtime.allocate_sequence(),
+                    user_input=run.user_input,
+                )
+            ]
+        )
         await self.context.session_runtime.publish(
             RunStartedEvent.from_context(self.context)
         )
@@ -156,6 +173,15 @@ class RunLoopOrchestrator:
                 result,
                 run_id=run.id,
             )
+        await self.context.session_runtime.append_run_log_entries(
+            [
+                build_run_finished_entry(
+                    self.context,
+                    sequence=await self.context.session_runtime.allocate_sequence(),
+                    result=result,
+                )
+            ]
+        )
         await self.context.session_runtime.publish(
             RunCompletedEvent.from_context(
                 self.context,
@@ -177,6 +203,15 @@ class RunLoopOrchestrator:
                 error,
                 run_id=run.id,
             )
+        await self.context.session_runtime.append_run_log_entries(
+            [
+                build_run_failed_entry(
+                    self.context,
+                    sequence=await self.context.session_runtime.allocate_sequence(),
+                    error=error,
+                )
+            ]
+        )
         await self.context.session_runtime.publish(
             RunFailedEvent.from_context(self.context, error=str(error)),
         )
@@ -215,13 +250,12 @@ class RunLoopOrchestrator:
         ] or None
 
         before_run_hook_result = None
-        if self.context.hooks.on_before_run is not None:
-            before_run_hook_result = await self.context.hooks.on_before_run(
-                user_input, self.context
-            )
+        before_run_hook_result = await self.context.hooks.before_run(
+            user_input, self.context
+        )
         memories: list[MemoryRecord] = []
-        if self.context.hooks.on_memory_retrieve is not None and user_input is not None:
-            memories = await self.context.hooks.on_memory_retrieve(
+        if user_input is not None:
+            memories = await self.context.hooks.memory_retrieve(
                 user_input, self.context
             )
 
@@ -256,6 +290,16 @@ class RunLoopOrchestrator:
                 channel_context=user_message.context,
             ),
         )
+        await self.context.session_runtime.append_run_log_entries(
+            [
+                build_context_assembled_entry(
+                    self.context,
+                    sequence=await self.context.session_runtime.allocate_sequence(),
+                    messages=self.context.snapshot_messages(),
+                    memory_count=len(memories),
+                )
+            ]
+        )
         set_tool_schemas(self.context, tool_schemas)
         record_compaction_metadata(self.context, last_compact)
 
@@ -280,10 +324,9 @@ class RunLoopOrchestrator:
             abort_signal=self.runtime.abort_signal,
         )
         result = self._build_output()
-        if self.context.hooks.on_after_run:
-            await self.context.hooks.on_after_run(result, self.context)
-        if self.context.hooks.on_memory_write and result.response is not None:
-            await self.context.hooks.on_memory_write(user_input, result, self.context)
+        await self.context.hooks.after_run(result, self.context)
+        if result.response is not None:
+            await self.context.hooks.memory_write(user_input, result, self.context)
         await self._complete_run(run, result)
         return result
 
@@ -362,10 +405,9 @@ class RunLoopOrchestrator:
         if result.failed:
             failure_count = increment_compaction_failure(self.context)
             err = result.error or ""
-            if self.context.hooks.on_compaction_failed:
-                await self.context.hooks.on_compaction_failed(
-                    self.context.run_id, err, failure_count
-                )
+            await self.context.hooks.compaction_failed(
+                self.context.run_id, err, failure_count, self.context
+            )
             logger.warning(
                 "compaction_failed",
                 run_id=self.context.run_id,
@@ -404,12 +446,22 @@ class RunLoopOrchestrator:
                 self.context.session_runtime.steering_queue,
             ),
         )
-        if self.context.hooks.on_before_llm_call:
-            modified = await self.context.hooks.on_before_llm_call(
-                self.context.snapshot_messages()
-            )
-            if modified is not None:
-                replace_messages(self.context, modified)
+        modified = await self.context.hooks.before_llm_call(
+            self.context.snapshot_messages(),
+            self.context,
+        )
+        if modified is not None:
+            replace_messages(self.context, modified)
+        await self.context.session_runtime.append_run_log_entries(
+            [
+                build_llm_call_started_entry(
+                    self.context,
+                    sequence=await self.context.session_runtime.allocate_sequence(),
+                    messages=self.context.snapshot_messages(),
+                    tools=self.context.copy_tool_schemas(),
+                )
+            ]
+        )
 
         step, llm_context = await stream_assistant_step(
             self.runtime.model,
@@ -417,9 +469,18 @@ class RunLoopOrchestrator:
             self.runtime.abort_signal,
         )
         await commit_step(self.context, step, llm=llm_context)
+        await self.context.session_runtime.append_run_log_entries(
+            [
+                build_llm_call_completed_entry(
+                    self.context,
+                    sequence=await self.context.session_runtime.allocate_sequence(),
+                    step=step,
+                    llm=llm_context,
+                )
+            ]
+        )
 
-        if self.context.hooks.on_after_llm_call:
-            await self.context.hooks.on_after_llm_call(step)
+        await self.context.hooks.after_llm_call(step, self.context)
         return step, llm_context
 
     async def _handle_assistant_turn_result(
@@ -462,13 +523,13 @@ class RunLoopOrchestrator:
         for result in tool_results:
             call_id = result.tool_call_id or ""
 
-            if self.context.hooks.on_after_tool_call:
-                await self.context.hooks.on_after_tool_call(
-                    call_id,
-                    result.tool_name,
-                    result.input_args or {},
-                    result,
-                )
+            await self.context.hooks.after_tool_call(
+                call_id,
+                result.tool_name,
+                result.input_args or {},
+                result,
+                self.context,
+            )
 
             content = batch.process_result(result)
 
@@ -503,14 +564,14 @@ async def execute_run(
     model: Model,
     tools: tuple[BaseTool, ...],
     options: AgentOptions | None = None,
-    hooks: AgentHooks | None = None,
+    hooks: HookRegistry | list[HookRegistration] | None = None,
     pending_tool_calls: list[dict] | None = None,
     abort_signal: AbortSignal | None = None,
     root_path: str | None = None,
 ) -> RunOutput:
     """Execute a single agent run — the core entry point."""
     options = options or AgentOptions()
-    hooks = hooks or AgentHooks()
+    hooks = hooks if isinstance(hooks, HookRegistry) else HookRegistry(hooks or [])
     context.config = options
     context.hooks = hooks
 
@@ -534,7 +595,7 @@ async def execute_run(
         compact_prompt=options.compact_prompt,
     )
 
-    orchestrator = RunLoopOrchestrator(context, runtime)
+    orchestrator = RunEngine(context, runtime)
     return await orchestrator.execute_run(
         user_input,
         system_prompt,
@@ -542,4 +603,7 @@ async def execute_run(
     )
 
 
-__all__ = ["execute_run", "RunLoopOrchestrator"]
+RunLoopOrchestrator = RunEngine
+
+
+__all__ = ["execute_run", "RunEngine", "RunLoopOrchestrator"]

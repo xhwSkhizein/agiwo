@@ -9,8 +9,14 @@ import pytest
 
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig
-from agiwo.agent import AgentHooks
-from agiwo.agent.hooks import DefaultMemoryHook, filter_relevant_memories
+from agiwo.agent.hooks import (
+    DefaultMemoryHook,
+    HookPhase,
+    HookRegistry,
+    filter_relevant_memories,
+    observe,
+    transform,
+)
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.llm.base import Model
 
@@ -93,50 +99,66 @@ class TestAgentAutoInjectMemoryHook:
             model=mock_model,
         )
 
-        assert agent.hooks.on_memory_retrieve is not None
+        assert agent.hooks.has_phase(HookPhase.ASSEMBLE_CONTEXT)
         assert agent.id.startswith("test-agent-")
 
     def test_agent_respects_custom_memory_hook(self):
         """Test that Agent respects user-provided memory hook."""
         mock_model = MagicMock(spec=Model)
-        custom_hook = AsyncMock(return_value=[])
+        custom_hook = AsyncMock(return_value={"memories": []})
 
-        hooks = AgentHooks(on_memory_retrieve=custom_hook)
+        hooks = HookRegistry(
+            [
+                transform(
+                    HookPhase.ASSEMBLE_CONTEXT,
+                    "custom_memory_retrieve",
+                    custom_hook,
+                )
+            ]
+        )
         agent = Agent(
             AgentConfig(name="test-agent", description="Test agent"),
             model=mock_model,
             hooks=hooks,
         )
 
-        assert agent.hooks.on_memory_retrieve is not None
+        assert agent.hooks.has_handler("custom_memory_retrieve")
 
     def test_agent_preserves_other_hooks_when_injecting(self):
         """Test that auto-inject preserves other user hooks."""
         mock_model = MagicMock(spec=Model)
         custom_step_hook = AsyncMock()
 
-        hooks = AgentHooks(on_step=custom_step_hook)
+        hooks = HookRegistry(
+            [
+                observe(
+                    HookPhase.AFTER_STEP_COMMIT,
+                    "custom_step_hook",
+                    custom_step_hook,
+                )
+            ]
+        )
         agent = Agent(
             AgentConfig(name="test-agent", description="Test agent"),
             model=mock_model,
             hooks=hooks,
         )
 
-        assert agent.hooks.on_step is not None
-        assert agent.hooks.on_memory_retrieve is not None
+        assert agent.hooks.has_handler("custom_step_hook")
+        assert agent.hooks.has_phase(HookPhase.ASSEMBLE_CONTEXT)
 
     def test_agent_empty_hooks_gets_memory_hook(self):
         """Test that empty hooks object gets memory hook injected."""
         mock_model = MagicMock(spec=Model)
 
-        hooks = AgentHooks()
+        hooks = HookRegistry()
         agent = Agent(
             AgentConfig(name="test-agent", description="Test agent"),
             model=mock_model,
             hooks=hooks,
         )
 
-        assert agent.hooks.on_memory_retrieve is not None
+        assert agent.hooks.has_phase(HookPhase.ASSEMBLE_CONTEXT)
 
 
 class TestMemoryHookIntegration:

@@ -5,8 +5,8 @@ Tests for Context Compact functionality.
 import pytest
 
 from agiwo.agent.compaction import build_compacted_messages, compact_if_needed
+from agiwo.agent.hooks import HookPhase, HookRegistry, observe
 from agiwo.agent.models.run import CompactMetadata
-from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
@@ -93,7 +93,8 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
 
     seen_steps = []
 
-    async def on_step(step):
+    async def on_step(payload):
+        step = payload["step"]
         seen_steps.append(step.name or step.role.value)
 
     state = RunContext(
@@ -106,7 +107,15 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
             {"role": "user", "content": "hello"},
         ],
     )
-    state.hooks = AgentHooks(on_step=on_step)
+    state.hooks = HookRegistry(
+        [
+            observe(
+                HookPhase.AFTER_STEP_COMMIT,
+                "capture_compaction_steps",
+                on_step,
+            )
+        ]
+    )
 
     result = await compact_if_needed(
         state=state,

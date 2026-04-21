@@ -3,11 +3,16 @@
 import asyncio
 from collections.abc import AsyncIterator
 
+from agiwo.agent.models.log import RunLogEntry
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.models.run import Run
 from agiwo.agent.models.step import StepRecord
-from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.storage.base import (
+    InMemoryRunLogStorage,
+    RunLogStorage,
+    RunStepStorage,
+)
 from agiwo.agent.models.stream import AgentStreamItem
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.utils.abort_signal import AbortSignal
@@ -32,12 +37,18 @@ class SessionRuntime:
         *,
         session_id: str,
         run_step_storage: RunStepStorage,
+        run_log_storage: RunLogStorage | None = None,
         trace_runtime: AgentTraceCollector | None = None,
         abort_signal: AbortSignal | None = None,
         steering_queue: asyncio.Queue[object] | None = None,
     ) -> None:
         self.session_id = session_id
         self.run_step_storage = run_step_storage
+        self.run_log_storage = run_log_storage or (
+            run_step_storage
+            if isinstance(run_step_storage, RunLogStorage)
+            else InMemoryRunLogStorage()
+        )
         self.trace_runtime = trace_runtime
         self.abort_signal = abort_signal or AbortSignal()
         self.steering_queue = steering_queue or asyncio.Queue()
@@ -56,6 +67,25 @@ class SessionRuntime:
 
     async def save_step(self, step: StepRecord) -> None:
         await self.run_step_storage.save_step(step)
+
+    async def append_run_log_entries(self, entries: list[RunLogEntry]) -> None:
+        await self.run_log_storage.append_entries(entries)
+
+    async def list_run_log_entries(
+        self,
+        *,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 1000,
+    ) -> list[RunLogEntry]:
+        return await self.run_log_storage.list_entries(
+            session_id=self.session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
 
     async def get_latest_compact_metadata(
         self, agent_id: str

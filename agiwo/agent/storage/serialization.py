@@ -1,4 +1,4 @@
-"""Shared Run/Step storage serialization helpers."""
+"""Shared Run/Step/RunLog storage serialization helpers."""
 
 from dataclasses import asdict, fields, is_dataclass
 from datetime import datetime
@@ -8,11 +8,45 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from agiwo.agent.models.input import UserMessage
+from agiwo.agent.models.log import (
+    AssistantStepCommitted,
+    CompactionApplied,
+    ContextAssembled,
+    HookFailed,
+    LLMCallCompleted,
+    LLMCallStarted,
+    MessagesRebuilt,
+    RetrospectApplied,
+    RunFailed,
+    RunFinished,
+    RunLogEntry,
+    RunLogEntryKind,
+    RunStarted,
+    TerminationDecided,
+    ToolStepCommitted,
+    UserStepCommitted,
+)
 from agiwo.agent.models.run import Run
 from agiwo.agent.models.step import StepRecord
 
 _RUN_FIELD_NAMES = {field.name for field in fields(Run)}
 _STEP_FIELD_NAMES = {field.name for field in fields(StepRecord)}
+_RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
+    RunLogEntryKind.RUN_STARTED: RunStarted,
+    RunLogEntryKind.RUN_FINISHED: RunFinished,
+    RunLogEntryKind.RUN_FAILED: RunFailed,
+    RunLogEntryKind.CONTEXT_ASSEMBLED: ContextAssembled,
+    RunLogEntryKind.MESSAGES_REBUILT: MessagesRebuilt,
+    RunLogEntryKind.LLM_CALL_STARTED: LLMCallStarted,
+    RunLogEntryKind.LLM_CALL_COMPLETED: LLMCallCompleted,
+    RunLogEntryKind.USER_STEP_COMMITTED: UserStepCommitted,
+    RunLogEntryKind.ASSISTANT_STEP_COMMITTED: AssistantStepCommitted,
+    RunLogEntryKind.TOOL_STEP_COMMITTED: ToolStepCommitted,
+    RunLogEntryKind.COMPACTION_APPLIED: CompactionApplied,
+    RunLogEntryKind.RETROSPECT_APPLIED: RetrospectApplied,
+    RunLogEntryKind.TERMINATION_DECIDED: TerminationDecided,
+    RunLogEntryKind.HOOK_FAILED: HookFailed,
+}
 _RUN_ADAPTER = TypeAdapter(Run)
 _STEP_ADAPTER = TypeAdapter(StepRecord)
 
@@ -102,9 +136,31 @@ def deserialize_step_from_storage(data: dict[str, Any]) -> StepRecord:
     return _STEP_ADAPTER.validate_python(step_data)
 
 
+def serialize_run_log_entry_for_storage(entry: RunLogEntry) -> dict[str, Any]:
+    data = _as_storage_dict(_normalize_storage_value(asdict(entry)))
+    data["kind"] = entry.kind.value
+    if "user_input" in data:
+        data["user_input"] = UserMessage.to_storage_value(data["user_input"])
+    return _as_storage_dict(_drop_none(data))
+
+
+def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
+    normalized = dict(data)
+    kind = RunLogEntryKind(normalized["kind"])
+    entry_type = _RUN_LOG_TYPES[kind]
+    if "user_input" in normalized:
+        normalized["user_input"] = UserMessage.from_storage_value(
+            normalized.get("user_input")
+        )
+    normalized.pop("kind", None)
+    return entry_type(**normalized)
+
+
 __all__ = [
+    "deserialize_run_log_entry_from_storage",
     "deserialize_run_from_storage",
     "deserialize_step_from_storage",
+    "serialize_run_log_entry_for_storage",
     "serialize_run_for_storage",
     "serialize_step_for_storage",
 ]

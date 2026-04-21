@@ -10,8 +10,8 @@ import pytest
 
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig, AgentOptions
-from agiwo.agent import AgentHooks
 from agiwo.agent import RunCompletedEvent, TerminationReason
+from agiwo.agent import HookPhase, HookRegistry, transform
 from agiwo.agent import ChannelContext, ContentPart, ContentType
 from agiwo.agent.models.step import MessageRole, StepRecord, UserMessage
 from agiwo.utils.abort_signal import AbortSignal
@@ -85,8 +85,10 @@ class _FakeEncoding:
         return [ord(char) for char in text]
 
 
-async def _noop_memory_retrieve(*_args, **_kwargs) -> list:
-    return []
+async def _noop_memory_retrieve(payload: dict[str, object]) -> dict[str, object]:
+    payload = dict(payload)
+    payload["memories"] = []
+    return payload
 
 
 @pytest.fixture(autouse=True)
@@ -106,6 +108,15 @@ def _make_agent(
     system_prompt: str = "",
     options: AgentOptions | None = None,
 ) -> Agent:
+    hooks = HookRegistry(
+        [
+            transform(
+                HookPhase.ASSEMBLE_CONTEXT,
+                "noop_memory_retrieve",
+                _noop_memory_retrieve,
+            )
+        ]
+    )
     return Agent(
         AgentConfig(
             name=name,
@@ -115,7 +126,7 @@ def _make_agent(
         ),
         model=model,
         tools=tools,
-        hooks=AgentHooks(on_memory_retrieve=_noop_memory_retrieve),
+        hooks=hooks,
         id=id,
     )
 

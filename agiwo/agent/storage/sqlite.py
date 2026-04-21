@@ -7,13 +7,16 @@ from datetime import datetime
 
 import aiosqlite
 
+from agiwo.agent.models.log import RunLogEntry
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.run import Run
 from agiwo.agent.models.step import StepRecord
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.serialization import (
+    deserialize_run_log_entry_from_storage,
     deserialize_run_from_storage,
     deserialize_step_from_storage,
+    serialize_run_log_entry_for_storage,
     serialize_run_for_storage,
     serialize_step_for_storage,
 )
@@ -112,6 +115,17 @@ class SQLiteRunStepStorage(RunStepStorage):
                     sequence INTEGER NOT NULL DEFAULT 0
                 )
                 """,
+                """
+                CREATE TABLE IF NOT EXISTS run_log_entries (
+                    session_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    run_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY (session_id, sequence)
+                )
+                """,
                 "CREATE INDEX IF NOT EXISTS idx_runs_agent_id ON runs(agent_id)",
                 "CREATE INDEX IF NOT EXISTS idx_runs_user_id ON runs(user_id)",
                 "CREATE INDEX IF NOT EXISTS idx_runs_session_id ON runs(session_id)",
@@ -120,6 +134,7 @@ class SQLiteRunStepStorage(RunStepStorage):
                 "CREATE INDEX IF NOT EXISTS idx_steps_session_run_seq ON steps(session_id, run_id, sequence)",
                 "CREATE INDEX IF NOT EXISTS idx_steps_session_tool_call_id ON steps(session_id, tool_call_id)",
                 "CREATE INDEX IF NOT EXISTS idx_steps_created_at ON steps(created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_run_log_session_run_seq ON run_log_entries(session_id, run_id, sequence)",
                 """
                 CREATE TABLE IF NOT EXISTS compact_metadata (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,6 +196,65 @@ class SQLiteRunStepStorage(RunStepStorage):
         if data.get("tool_calls"):
             data["tool_calls"] = self._loads(data["tool_calls"])
         return deserialize_step_from_storage(data)
+
+    def _deserialize_run_log_entry(self, row: aiosqlite.Row) -> RunLogEntry:
+        data = self._loads(dict(row)["payload"])
+        return deserialize_run_log_entry_from_storage(data)
+
+    async def append_entries(self, entries: list[RunLogEntry]) -> None:
+        conn = await self._ensure_connection()
+        rows = []
+        for entry in entries:
+            payload = serialize_run_log_entry_for_storage(entry)
+            rows.append(
+                (
+                    entry.session_id,
+                    entry.sequence,
+                    entry.run_id,
+                    entry.agent_id,
+                    entry.kind.value,
+                    json.dumps(payload, ensure_ascii=False, default=str),
+                )
+            )
+        await conn.executemany(
+            """
+            INSERT OR REPLACE INTO run_log_entries
+            (session_id, sequence, run_id, agent_id, kind, payload)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        await conn.commit()
+
+    async def list_entries(
+        self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 1000,
+    ) -> list[RunLogEntry]:
+        conn = await self._ensure_connection()
+        query = "SELECT payload FROM run_log_entries WHERE session_id = ?"
+        params: list[object] = [session_id]
+        if run_id is not None:
+            query += " AND run_id = ?"
+            params.append(run_id)
+        if agent_id is not None:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        if after_sequence is not None:
+            query += " AND sequence > ?"
+            params.append(after_sequence)
+        query += " ORDER BY sequence ASC LIMIT ?"
+        params.append(limit)
+
+        entries: list[RunLogEntry] = []
+        async with conn.execute(query, params) as cursor:
+            async for row in cursor:
+                entries.append(self._deserialize_run_log_entry(row))
+        return entries
 
     # --- Run Operations ---
 
