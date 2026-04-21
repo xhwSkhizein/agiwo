@@ -14,7 +14,7 @@ from server.models.session import (
     SessionDetailRecord,
     SessionSummaryRecord,
 )
-from server.services.metrics import summarize_runs_paginated
+from server.services.metrics import summarize_run_views_paginated
 
 
 class SessionViewService:
@@ -73,7 +73,7 @@ class SessionViewService:
         if session is None:
             return None
 
-        metrics = await summarize_runs_paginated(
+        metrics = await summarize_run_views_paginated(
             self._run_storage, session_id=session_id
         )
         last_run = await self._run_storage.get_latest_run_view(session_id)
@@ -100,7 +100,7 @@ class SessionViewService:
     async def _batch_fetch_summaries(
         self, session_ids: list[str]
     ) -> tuple[dict[str, int], dict[str, int], dict[str, RunView | None]]:
-        run_counts = await self._run_storage.batch_count_runs(session_ids)
+        run_counts = await self._run_storage.batch_count_run_views(session_ids)
         step_counts = await self._run_storage.batch_get_committed_step_counts(
             session_ids
         )

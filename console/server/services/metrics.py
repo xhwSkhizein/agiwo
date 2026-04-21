@@ -3,7 +3,8 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from agiwo.agent import Run, RunStatus
+from agiwo.agent import RunStatus
+from agiwo.agent.models.run import Run, RunView
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.trace import Trace
@@ -32,6 +33,24 @@ class TraceAggregateSummary:
 def add_run_to_summary(summary: RunMetricsSummary, run: Run) -> None:
     summary.run_count += 1
     if run.status == RunStatus.COMPLETED:
+        summary.completed_run_count += 1
+    metrics = run.metrics
+    if metrics is None:
+        return
+    summary.step_count += metrics.steps_count or 0
+    summary.tool_calls_count += metrics.tool_calls_count or 0
+    summary.input_tokens += metrics.input_tokens or 0
+    summary.output_tokens += metrics.output_tokens or 0
+    summary.total_tokens += metrics.total_tokens or 0
+    summary.cache_read_tokens += metrics.cache_read_tokens or 0
+    summary.cache_creation_tokens += metrics.cache_creation_tokens or 0
+    summary.duration_ms += metrics.duration_ms or 0.0
+    summary.token_cost += metrics.token_cost or 0.0
+
+
+def add_run_view_to_summary(summary: RunMetricsSummary, run: RunView) -> None:
+    summary.run_count += 1
+    if run.status == RunStatus.COMPLETED.value:
         summary.completed_run_count += 1
     metrics = run.metrics
     if metrics is None:
@@ -89,6 +108,48 @@ async def summarize_runs_paginated(
     ):
         for run in page:
             add_run_to_summary(summary, run)
+    return summary
+
+
+async def iter_run_views_paginated(
+    run_storage: RunStepStorage,
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    page_size: int = RUN_METRICS_PAGE_SIZE,
+) -> AsyncIterator[list[RunView]]:
+    offset = 0
+    while True:
+        page = await run_storage.list_run_views(
+            user_id=user_id,
+            session_id=session_id,
+            limit=page_size,
+            offset=offset,
+        )
+        if not page:
+            return
+        yield page
+        if len(page) < page_size:
+            return
+        offset += len(page)
+
+
+async def summarize_run_views_paginated(
+    run_storage: RunStepStorage,
+    *,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    page_size: int = RUN_METRICS_PAGE_SIZE,
+) -> RunMetricsSummary:
+    summary = RunMetricsSummary()
+    async for page in iter_run_views_paginated(
+        run_storage,
+        user_id=user_id,
+        session_id=session_id,
+        page_size=page_size,
+    ):
+        for run in page:
+            add_run_view_to_summary(summary, run)
     return summary
 
 

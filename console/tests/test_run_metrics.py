@@ -4,7 +4,11 @@ import pytest
 
 from agiwo.agent import RunStatus
 from server.models.metrics import RunMetricsSummary
-from server.services.metrics import summarize_runs_paginated, summarize_traces_paginated
+from server.services.metrics import (
+    summarize_run_views_paginated,
+    summarize_runs_paginated,
+    summarize_traces_paginated,
+)
 
 
 class FakeRunStorage:
@@ -12,6 +16,20 @@ class FakeRunStorage:
         self._runs = runs
 
     async def list_runs(
+        self,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ):
+        runs = self._runs
+        if user_id is not None:
+            runs = [run for run in runs if run.user_id == user_id]
+        if session_id is not None:
+            runs = [run for run in runs if run.session_id == session_id]
+        return runs[offset : offset + limit]
+
+    async def list_run_views(
         self,
         user_id: str | None = None,
         session_id: str | None = None,
@@ -145,6 +163,83 @@ async def test_summarize_runs_paginated_returns_empty_summary_for_missing_sessio
     summary = await summarize_runs_paginated(storage, session_id="missing", page_size=2)
 
     assert summary == RunMetricsSummary()
+
+
+@pytest.mark.asyncio
+async def test_summarize_run_views_paginated_aggregates_all_pages() -> None:
+    storage = FakeRunStorage(
+        [
+            SimpleNamespace(
+                session_id="sess-1",
+                agent_id="agent-a",
+                user_id="user-1",
+                status="completed",
+                metrics=SimpleNamespace(
+                    steps_count=1,
+                    tool_calls_count=1,
+                    duration_ms=10.0,
+                    input_tokens=10,
+                    output_tokens=5,
+                    total_tokens=15,
+                    cache_read_tokens=0,
+                    cache_creation_tokens=0,
+                    token_cost=0.1,
+                ),
+            ),
+            SimpleNamespace(
+                session_id="sess-1",
+                agent_id="agent-a",
+                user_id="user-1",
+                status="completed",
+                metrics=SimpleNamespace(
+                    steps_count=1,
+                    tool_calls_count=0,
+                    duration_ms=10.0,
+                    input_tokens=7,
+                    output_tokens=3,
+                    total_tokens=10,
+                    cache_read_tokens=0,
+                    cache_creation_tokens=0,
+                    token_cost=0.2,
+                ),
+            ),
+            SimpleNamespace(
+                session_id="sess-1",
+                agent_id="agent-b",
+                user_id="user-2",
+                status="running",
+                metrics=SimpleNamespace(
+                    steps_count=1,
+                    tool_calls_count=0,
+                    duration_ms=10.0,
+                    input_tokens=2,
+                    output_tokens=1,
+                    total_tokens=3,
+                    cache_read_tokens=0,
+                    cache_creation_tokens=0,
+                    token_cost=0.05,
+                ),
+            ),
+        ]
+    )
+
+    summary = await summarize_run_views_paginated(
+        storage,
+        session_id="sess-1",
+        page_size=2,
+    )
+
+    assert summary.run_count == 3
+    assert summary.completed_run_count == 2
+    assert summary.step_count == 3
+    assert summary.tool_calls_count == 1
+    assert summary.duration_ms == 30.0
+    assert summary.input_tokens == 19
+    assert summary.output_tokens == 9
+    assert summary.total_tokens == 28
+    assert summary.cache_read_tokens == 0
+    assert summary.cache_creation_tokens == 0
+    assert summary.token_cost == pytest.approx(0.35)
 
 
 @pytest.mark.asyncio

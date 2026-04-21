@@ -44,6 +44,8 @@ class RunLogEntry:
 @dataclass(frozen=True, kw_only=True)
 class RunStarted(RunLogEntry):
     user_input: UserInput | None = None
+    user_id: str | None = None
+    parent_run_id: str | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_STARTED)
 
 

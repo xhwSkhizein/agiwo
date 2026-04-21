@@ -48,7 +48,7 @@ async def list_runs(
 ) -> PageResponse[RunResponse]:
     """List all runs with optional filtering."""
     storage = runtime.run_step_storage
-    runs = await storage.list_runs(
+    runs = await storage.list_run_views(
         user_id=user_id,
         session_id=session_id,
         limit=limit + 1,
@@ -69,7 +69,7 @@ async def list_runs(
 async def get_run(run_id: str, runtime: ConsoleRuntimeDep) -> RunResponse:
     """Get a single run by ID."""
     storage = runtime.run_step_storage
-    run = await storage.get_run(run_id)
+    run = await storage.get_run_view(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run_response_from_sdk(run)

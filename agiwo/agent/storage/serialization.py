@@ -1,7 +1,7 @@
 """Shared Run/Step/RunLog storage serialization helpers."""
 
 from dataclasses import asdict, fields, is_dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -158,6 +158,24 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
     return entry_type(**normalized)
 
 
+def build_run_view_from_run(run: Run) -> RunView:
+    status = run.status.value if hasattr(run.status, "value") else str(run.status)
+    return RunView(
+        run_id=run.id,
+        session_id=run.session_id,
+        agent_id=run.agent_id,
+        status=status,
+        user_id=run.user_id,
+        response=run.response_content,
+        termination_reason=None,
+        metrics=run.metrics,
+        last_user_input=run.user_input,
+        created_at=run.created_at,
+        updated_at=run.updated_at,
+        parent_run_id=run.parent_run_id,
+    )
+
+
 def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
     if not entries:
         return None
@@ -214,13 +232,31 @@ def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
         session_id=started.session_id,
         agent_id=started.agent_id,
         status=status,
+        user_id=started.user_id,
         response=response,
         termination_reason=termination_reason,
         metrics=metrics,
         last_user_input=started.user_input,
         created_at=started.created_at,
         updated_at=updated_at,
+        parent_run_id=started.parent_run_id,
     )
+
+
+def build_run_views_from_entries(entries: list[RunLogEntry]) -> list[RunView]:
+    grouped: dict[str, list[RunLogEntry]] = {}
+    for entry in entries:
+        grouped.setdefault(entry.run_id, []).append(entry)
+    views = [
+        view
+        for view in (
+            build_run_view_from_entries(run_entries) for run_entries in grouped.values()
+        )
+        if view is not None
+    ]
+    earliest = datetime.min.replace(tzinfo=timezone.utc)
+    views.sort(key=lambda view: view.created_at or earliest, reverse=True)
+    return views
 
 
 def build_step_view_from_entry(entry: CommittedStep) -> StepView:
@@ -256,7 +292,9 @@ def build_step_views_from_entries(entries: list[RunLogEntry]) -> list[StepView]:
 
 
 __all__ = [
+    "build_run_view_from_run",
     "build_run_view_from_entries",
+    "build_run_views_from_entries",
     "build_step_view_from_entry",
     "build_step_views_from_entries",
     "deserialize_run_log_entry_from_storage",

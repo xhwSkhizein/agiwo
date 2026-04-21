@@ -36,6 +36,8 @@ def build_run_started_entry(
         run_id=state.run_id,
         agent_id=state.agent_id,
         user_input=user_input,
+        user_id=state.user_id,
+        parent_run_id=state.parent_run_id,
     )
 
 

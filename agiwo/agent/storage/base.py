@@ -15,7 +15,9 @@ from agiwo.agent.models.log import (
 from agiwo.agent.models.run import CompactMetadata, Run, RunView
 from agiwo.agent.models.step import StepRecord, StepView
 from agiwo.agent.storage.serialization import (
+    build_run_view_from_run,
     build_run_view_from_entries,
+    build_run_views_from_entries,
     build_step_views_from_entries,
 )
 
@@ -179,6 +181,10 @@ class RunStepStorage(RunLogStorage, ABC):
             result[sid] = await self.count_runs(sid)
         return result
 
+    async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
+        """Count replayable runs for multiple sessions in one call."""
+        return await self.batch_count_runs(session_ids)
+
     async def batch_get_step_counts(self, session_ids: list[str]) -> dict[str, int]:
         """Get step counts for multiple sessions in one call.
 
@@ -203,6 +209,28 @@ class RunStepStorage(RunLogStorage, ABC):
             runs = await self.list_runs(session_id=sid, limit=1)
             result[sid] = runs[0] if runs else None
         return result
+
+    async def get_run_view(self, run_id: str) -> RunView | None:
+        run = await self.get_run(run_id)
+        if run is None:
+            return None
+        return build_run_view_from_run(run)
+
+    async def list_run_views(
+        self,
+        *,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[RunView]:
+        runs = await self.list_runs(
+            user_id=user_id,
+            session_id=session_id,
+            limit=limit,
+            offset=offset,
+        )
+        return [build_run_view_from_run(run) for run in runs]
 
     async def get_latest_run_view(self, session_id: str) -> RunView | None:
         entries = await self.list_entries(session_id=session_id, limit=100_000)
@@ -367,6 +395,13 @@ class InMemoryRunStepStorage(RunStepStorage):
     async def get_run(self, run_id: str) -> Run | None:
         return self.runs.get(run_id)
 
+    async def get_run_view(self, run_id: str) -> RunView | None:
+        for entries in self.run_log_entries.values():
+            run_entries = [entry for entry in entries if entry.run_id == run_id]
+            if run_entries:
+                return build_run_view_from_entries(run_entries)
+        return await super().get_run_view(run_id)
+
     async def list_runs(
         self,
         user_id: str | None = None,
@@ -385,6 +420,33 @@ class InMemoryRunStepStorage(RunStepStorage):
         runs.sort(key=lambda r: r.created_at, reverse=True)
 
         return runs[offset : offset + limit]
+
+    async def list_run_views(
+        self,
+        *,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[RunView]:
+        entries: list[RunLogEntry] = []
+        session_ids = (
+            [session_id] if session_id is not None else list(self.run_log_entries)
+        )
+        for sid in session_ids:
+            entries.extend(self.run_log_entries.get(sid, []))
+        run_views = build_run_views_from_entries(entries)
+        if user_id is not None:
+            run_views = [view for view in run_views if view.user_id == user_id]
+        return run_views[offset : offset + limit]
+
+    async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
+        result: dict[str, int] = {sid: 0 for sid in session_ids}
+        for sid in session_ids:
+            result[sid] = len(
+                build_run_views_from_entries(self.run_log_entries.get(sid, []))
+            )
+        return result
 
     async def count_runs(self, session_id: str) -> int:
         return sum(1 for r in self.runs.values() if r.session_id == session_id)

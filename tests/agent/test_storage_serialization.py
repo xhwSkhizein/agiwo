@@ -308,6 +308,8 @@ def test_run_log_entry_storage_round_trip_restores_structured_user_input() -> No
         session_id="session-1",
         run_id="run-1",
         agent_id="agent-1",
+        user_id="user-1",
+        parent_run_id="parent-run-1",
         user_input=UserMessage(
             content=[ContentPart(type=ContentType.TEXT, text="hello")],
             context=ChannelContext(source="api"),
@@ -320,6 +322,8 @@ def test_run_log_entry_storage_round_trip_restores_structured_user_input() -> No
     assert isinstance(restored, RunStarted)
     assert isinstance(restored.user_input, UserMessage)
     assert restored.user_input.content[0].text == "hello"
+    assert restored.user_id == "user-1"
+    assert restored.parent_run_id == "parent-run-1"
 
 
 def test_build_run_and_step_views_from_run_log_entries() -> None:
@@ -329,6 +333,8 @@ def test_build_run_and_step_views_from_run_log_entries() -> None:
             session_id="session-1",
             run_id="run-1",
             agent_id="agent-1",
+            user_id="user-1",
+            parent_run_id="parent-run-1",
             user_input="hello",
         ),
         UserStepCommitted(
@@ -363,6 +369,8 @@ def test_build_run_and_step_views_from_run_log_entries() -> None:
     assert run_view.response == "world"
     assert run_view.last_user_input == "hello"
     assert run_view.status == "completed"
+    assert run_view.user_id == "user-1"
+    assert run_view.parent_run_id == "parent-run-1"
     assert len(step_views) == 1
     assert step_views[0].id == "run-1:2"
     assert step_views[0].content == "hello"

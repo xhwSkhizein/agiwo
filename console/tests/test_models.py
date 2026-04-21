@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agiwo.agent import UserInput
-from agiwo.agent.models.run import Run, RunMetrics, RunStatus
+from agiwo.agent.models.run import Run, RunMetrics, RunStatus, RunView
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepRecord
 from agiwo.scheduler.models import TimeUnit
 
@@ -414,6 +414,30 @@ class TestRunResponseFromSdk:
 
         assert response.metrics is not None
         assert response.metrics.duration_ms == 0.0
+
+    def test_from_sdk_converts_run_view_correctly(self):
+        now = datetime.now(timezone.utc)
+        run = RunView(
+            run_id="run-view-1",
+            agent_id="agent-1",
+            session_id="session-1",
+            user_id="user-1",
+            last_user_input="hello",
+            status="completed",
+            response="world",
+            metrics=RunMetrics(duration_ms=10.0, total_tokens=3),
+            created_at=now,
+            updated_at=now,
+            parent_run_id="parent-run-1",
+        )
+
+        response = run_response_from_sdk(run)
+
+        assert response.id == "run-view-1"
+        assert response.user_input == "hello"
+        assert response.response_content == "world"
+        assert response.parent_run_id == "parent-run-1"
+        assert response.created_at == now.isoformat()
 
 
 class TestToolReferenceLazyLoading:

@@ -3,16 +3,17 @@ SQLite implementation of RunStepStorage.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import aiosqlite
 
-from agiwo.agent.models.log import RunLogEntry
-from agiwo.agent.models.run import CompactMetadata
-from agiwo.agent.models.run import Run
-from agiwo.agent.models.step import StepRecord
+from agiwo.agent.models.log import RunLogEntry, RunLogEntryKind
+from agiwo.agent.models.run import CompactMetadata, Run, RunView
+from agiwo.agent.models.step import StepRecord, StepView
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.serialization import (
+    build_run_view_from_entries,
+    build_step_views_from_entries,
     deserialize_run_log_entry_from_storage,
     deserialize_run_from_storage,
     deserialize_step_from_storage,
@@ -256,6 +257,29 @@ class SQLiteRunStepStorage(RunStepStorage):
                 entries.append(self._deserialize_run_log_entry(row))
         return entries
 
+    async def _load_entries_for_run_ids(
+        self, run_ids: list[str]
+    ) -> dict[str, list[RunLogEntry]]:
+        if not run_ids:
+            return {}
+        conn = await self._ensure_connection()
+        placeholders = ",".join("?" for _ in run_ids)
+        entries_by_run_id: dict[str, list[RunLogEntry]] = {
+            run_id: [] for run_id in run_ids
+        }
+        async with conn.execute(
+            f"""
+            SELECT payload FROM run_log_entries
+            WHERE run_id IN ({placeholders})
+            ORDER BY session_id ASC, sequence ASC
+            """,
+            run_ids,
+        ) as cursor:
+            async for row in cursor:
+                entry = self._deserialize_run_log_entry(row)
+                entries_by_run_id.setdefault(entry.run_id, []).append(entry)
+        return entries_by_run_id
+
     # --- Run Operations ---
 
     async def save_run(self, run: Run) -> None:
@@ -280,6 +304,13 @@ class SQLiteRunStepStorage(RunStepStorage):
             if row:
                 return self._deserialize_run(row)
             return None
+
+    async def get_run_view(self, run_id: str) -> RunView | None:
+        entries_by_run_id = await self._load_entries_for_run_ids([run_id])
+        entries = entries_by_run_id.get(run_id, [])
+        if entries:
+            return build_run_view_from_entries(entries)
+        return await super().get_run_view(run_id)
 
     async def list_runs(
         self,
@@ -308,6 +339,57 @@ class SQLiteRunStepStorage(RunStepStorage):
             async for row in cursor:
                 runs.append(self._deserialize_run(row))
         return runs
+
+    async def list_run_views(
+        self,
+        *,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[RunView]:
+        conn = await self._ensure_connection()
+        query = "SELECT payload FROM run_log_entries WHERE kind = ?"
+        params: list[object] = [RunLogEntryKind.RUN_STARTED.value]
+        if session_id is not None:
+            query += " AND session_id = ?"
+            params.append(session_id)
+        query += " ORDER BY session_id ASC, sequence ASC"
+
+        started_entries: list[RunLogEntry] = []
+        async with conn.execute(query, params) as cursor:
+            async for row in cursor:
+                started_entries.append(self._deserialize_run_log_entry(row))
+
+        run_views = [
+            view
+            for view in (
+                build_run_view_from_entries([entry]) for entry in started_entries
+            )
+            if view is not None
+        ]
+        if user_id is not None:
+            run_views = [view for view in run_views if view.user_id == user_id]
+        earliest = datetime.min.replace(tzinfo=timezone.utc)
+        run_views.sort(
+            key=lambda view: view.created_at or earliest,
+            reverse=True,
+        )
+        selected = run_views[offset : offset + limit]
+        if not selected:
+            return []
+
+        entries_by_run_id = await self._load_entries_for_run_ids(
+            [view.run_id for view in selected]
+        )
+        return [
+            view
+            for view in (
+                build_run_view_from_entries(entries_by_run_id.get(run_view.run_id, []))
+                for run_view in selected
+            )
+            if view is not None
+        ]
 
     async def count_runs(self, session_id: str) -> int:
         conn = await self._ensure_connection()
@@ -441,6 +523,67 @@ class SQLiteRunStepStorage(RunStepStorage):
             row = await cursor.fetchone()
             return row[0] if row else 0
 
+    async def get_committed_step_count(self, session_id: str) -> int:
+        conn = await self._ensure_connection()
+        kinds = [
+            RunLogEntryKind.USER_STEP_COMMITTED.value,
+            RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
+            RunLogEntryKind.TOOL_STEP_COMMITTED.value,
+        ]
+        placeholders = ",".join("?" for _ in kinds)
+        async with conn.execute(
+            f"""
+            SELECT COUNT(*) FROM run_log_entries
+            WHERE session_id = ? AND kind IN ({placeholders})
+            """,
+            [session_id, *kinds],
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def list_step_views(
+        self,
+        *,
+        session_id: str,
+        start_seq: int | None = None,
+        end_seq: int | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        limit: int = 1000,
+    ) -> list[StepView]:
+        conn = await self._ensure_connection()
+        kinds = [
+            RunLogEntryKind.USER_STEP_COMMITTED.value,
+            RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
+            RunLogEntryKind.TOOL_STEP_COMMITTED.value,
+        ]
+        kind_placeholders = ",".join("?" for _ in kinds)
+        query = (
+            f"SELECT payload FROM run_log_entries WHERE session_id = ? "
+            f"AND kind IN ({kind_placeholders})"
+        )
+        params: list[object] = [session_id, *kinds]
+        if start_seq is not None:
+            query += " AND sequence >= ?"
+            params.append(start_seq)
+        if end_seq is not None:
+            query += " AND sequence <= ?"
+            params.append(end_seq)
+        if run_id is not None:
+            query += " AND run_id = ?"
+            params.append(run_id)
+        if agent_id is not None:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+        query += " ORDER BY sequence ASC LIMIT ?"
+        params.append(limit)
+
+        entries: list[RunLogEntry] = []
+        async with conn.execute(query, params) as cursor:
+            async for row in cursor:
+                entries.append(self._deserialize_run_log_entry(row))
+        return build_step_views_from_entries(entries)
+
     async def get_max_sequence(self, session_id: str) -> int:
         """Get the maximum sequence number in the session.
 
@@ -510,6 +653,24 @@ class SQLiteRunStepStorage(RunStepStorage):
                 result[row[0]] = row[1]
         return result
 
+    async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
+        if not session_ids:
+            return {}
+        conn = await self._ensure_connection()
+        placeholders = ",".join("?" for _ in session_ids)
+        result: dict[str, int] = {sid: 0 for sid in session_ids}
+        async with conn.execute(
+            f"""
+            SELECT session_id, COUNT(*) FROM run_log_entries
+            WHERE session_id IN ({placeholders}) AND kind = ?
+            GROUP BY session_id
+            """,
+            [*session_ids, RunLogEntryKind.RUN_STARTED.value],
+        ) as cursor:
+            async for row in cursor:
+                result[row[0]] = row[1]
+        return result
+
     async def batch_get_step_counts(self, session_ids: list[str]) -> dict[str, int]:
         if not session_ids:
             return {}
@@ -522,6 +683,33 @@ class SQLiteRunStepStorage(RunStepStorage):
         )
         result: dict[str, int] = {sid: 0 for sid in session_ids}
         async with conn.execute(query, session_ids) as cursor:
+            async for row in cursor:
+                result[row[0]] = row[1]
+        return result
+
+    async def batch_get_committed_step_counts(
+        self, session_ids: list[str]
+    ) -> dict[str, int]:
+        if not session_ids:
+            return {}
+        conn = await self._ensure_connection()
+        session_placeholders = ",".join("?" for _ in session_ids)
+        kinds = [
+            RunLogEntryKind.USER_STEP_COMMITTED.value,
+            RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
+            RunLogEntryKind.TOOL_STEP_COMMITTED.value,
+        ]
+        kind_placeholders = ",".join("?" for _ in kinds)
+        result: dict[str, int] = {sid: 0 for sid in session_ids}
+        async with conn.execute(
+            f"""
+            SELECT session_id, COUNT(*) FROM run_log_entries
+            WHERE session_id IN ({session_placeholders})
+              AND kind IN ({kind_placeholders})
+            GROUP BY session_id
+            """,
+            [*session_ids, *kinds],
+        ) as cursor:
             async for row in cursor:
                 result[row[0]] = row[1]
         return result
@@ -547,6 +735,32 @@ class SQLiteRunStepStorage(RunStepStorage):
             async for row in cursor:
                 run = self._deserialize_run(row)
                 result[run.session_id] = run
+        return result
+
+    async def get_latest_run_view(self, session_id: str) -> RunView | None:
+        conn = await self._ensure_connection()
+        async with conn.execute(
+            """
+            SELECT run_id FROM run_log_entries
+            WHERE session_id = ?
+            ORDER BY sequence DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return await self.get_run_view(row[0])
+
+    async def batch_get_latest_run_views(
+        self, session_ids: list[str]
+    ) -> dict[str, RunView | None]:
+        if not session_ids:
+            return {}
+        result: dict[str, RunView | None] = {}
+        for session_id in session_ids:
+            result[session_id] = await self.get_latest_run_view(session_id)
         return result
 
     async def get_step_by_tool_call_id(

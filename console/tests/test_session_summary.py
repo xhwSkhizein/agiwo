@@ -79,6 +79,7 @@ async def _append_run_view_entries(
     agent_id: str,
     user_input,
     response: str | None,
+    metrics: RunMetrics | None = None,
 ) -> None:
     await storage.append_entries(
         [
@@ -95,6 +96,7 @@ async def _append_run_view_entries(
                 run_id=run_id,
                 agent_id=agent_id,
                 response=response,
+                metrics=metrics.to_dict() if metrics is not None else None,
             ),
         ]
     )
@@ -154,7 +156,8 @@ async def test_get_session_detail_populates_metrics() -> None:
     store = FakeSessionStore([session])
     storage = InMemoryRunStepStorage()
 
-    await storage.save_run(_make_run("run-1", "sess-1", "agent-a", "hello", "world"))
+    run = _make_run("run-1", "sess-1", "agent-a", "hello", "world")
+    await storage.save_run(run)
     await _append_run_view_entries(
         storage,
         session_id="sess-1",
@@ -162,6 +165,7 @@ async def test_get_session_detail_populates_metrics() -> None:
         agent_id="agent-a",
         user_input="hello",
         response="world",
+        metrics=run.metrics,
     )
 
     service = SessionViewService(
