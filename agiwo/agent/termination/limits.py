@@ -65,11 +65,11 @@ def check_post_llm_limits(
 
     if (
         options.max_run_cost is not None
-        and state.ledger.token_cost >= options.max_run_cost
+        and state.ledger.tokens.cost >= options.max_run_cost
     ):
         logger.warning(
             "limit_hit_max_run_cost",
-            token_cost=state.ledger.token_cost,
+            token_cost=state.ledger.tokens.cost,
             max_run_cost=options.max_run_cost,
             run_id=state.run_id,
         )

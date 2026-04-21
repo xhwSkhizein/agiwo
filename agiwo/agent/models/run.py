@@ -66,6 +66,45 @@ class CompactMetadata:
 
 
 @dataclass
+class TokenStats:
+    """Token usage statistics."""
+
+    total: int = 0
+    input: int = 0
+    output: int = 0
+    cache_read: int = 0
+    cache_creation: int = 0
+    cost: float = 0.0
+
+
+@dataclass
+class StepStats:
+    """Step execution statistics."""
+
+    total: int = 0
+    tool_calls: int = 0
+    assistant: int = 0
+    current: int = 0
+
+
+@dataclass
+class CompactionState:
+    """Compaction state and metadata."""
+
+    last_metadata: CompactMetadata | None = None
+    failure_count: int = 0
+
+
+@dataclass
+class RetrospectState:
+    """Retrospect state."""
+
+    last_seq: int = 0
+    pending_tokens: int = 0
+    pending_rounds: int = 0
+
+
+@dataclass(frozen=True)
 class RunIdentity:
     run_id: str
     agent_id: str
@@ -79,26 +118,20 @@ class RunIdentity:
 
 @dataclass
 class RunLedger:
+    """Persistent run state - messages and aggregated statistics."""
+
     messages: list[dict[str, Any]] = field(default_factory=list)
     tool_schemas: list[dict[str, Any]] | None = None
     start_time: float = field(default_factory=time.time)
     termination_reason: TerminationReason | None = None
-    total_tokens: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-    token_cost: float = 0.0
-    steps_count: int = 0
-    tool_calls_count: int = 0
-    assistant_steps_count: int = 0
     response_content: str | None = None
-    last_compact_metadata: CompactMetadata | None = None
-    compaction_failure_count: int = 0
     run_start_seq: int = 0
-    last_retrospect_seq: int = 0
-    retrospect_pending_tokens: int = 0
-    retrospect_pending_rounds: int = 0
+
+    # Aggregated statistics
+    tokens: TokenStats = field(default_factory=TokenStats)
+    steps: StepStats = field(default_factory=StepStats)
+    compaction: CompactionState = field(default_factory=CompactionState)
+    retrospect: RetrospectState = field(default_factory=RetrospectState)
 
 
 @dataclass
@@ -124,14 +157,14 @@ class RunMetrics:
     def from_ledger(cls, ledger: "RunLedger", *, elapsed_ms: float) -> "RunMetrics":
         return cls(
             duration_ms=elapsed_ms,
-            total_tokens=ledger.total_tokens,
-            input_tokens=ledger.input_tokens,
-            output_tokens=ledger.output_tokens,
-            cache_read_tokens=ledger.cache_read_tokens,
-            cache_creation_tokens=ledger.cache_creation_tokens,
-            token_cost=ledger.token_cost,
-            steps_count=ledger.steps_count,
-            tool_calls_count=ledger.tool_calls_count,
+            total_tokens=ledger.tokens.total,
+            input_tokens=ledger.tokens.input,
+            output_tokens=ledger.tokens.output,
+            cache_read_tokens=ledger.tokens.cache_read,
+            cache_creation_tokens=ledger.tokens.cache_creation,
+            token_cost=ledger.tokens.cost,
+            steps_count=ledger.steps.total,
+            tool_calls_count=ledger.steps.tool_calls,
         )
 
     def to_dict(self) -> dict[str, Any]:

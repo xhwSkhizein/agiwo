@@ -126,7 +126,7 @@ def build_timeout_message(
     )
 
 
-def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
+def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:  # noqa: PLR0915
     """Build the user-facing message for pending event notifications.
 
     Returns a ``UserMessage`` so that attachments and ``ChannelContext``
@@ -139,35 +139,52 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
     channel_context: ChannelContext | None = None
     for event in events:
         event_label = event.event_type.value.replace("_", " ").title()
-        child_id = event.payload.get(
-            "child_agent_id", event.source_agent_id or "unknown"
-        )
+        child_id = event.source_agent_id or "unknown"
         header = f"### {event_label} - Agent: {child_id}"
         if event.event_type == SchedulerEventType.CHILD_SLEEP_RESULT:
-            lines.append(header)
-            lines.extend(
-                build_child_result_detail_lines(
-                    result=event.payload.get("result", ""),
-                    explain=event.payload.get("explain"),
-                    periodic=event.payload.get("periodic", False),
-                    result_as_block=True,
+            payload = event.get_payload_child_sleep_result()
+            if payload:
+                child_id = payload.child_agent_id
+                header = f"### {event_label} - Agent: {child_id}"
+                lines.append(header)
+                lines.extend(
+                    build_child_result_detail_lines(
+                        result=payload.result,
+                        explain=payload.explain,
+                        periodic=payload.periodic,
+                        result_as_block=True,
+                    )
                 )
-            )
+            else:
+                lines.append(header)
+                lines.append("(invalid payload)")
         elif event.event_type == SchedulerEventType.CHILD_COMPLETED:
-            lines.append(header)
-            lines.extend(
-                build_child_result_detail_lines(
-                    result=event.payload.get("result", ""),
-                    result_as_block=True,
+            payload = event.get_payload_child_completed()
+            if payload:
+                child_id = payload.child_agent_id
+                header = f"### {event_label} - Agent: {child_id}"
+                lines.append(header)
+                lines.extend(
+                    build_child_result_detail_lines(
+                        result=payload.result,
+                        result_as_block=True,
+                    )
                 )
-            )
+            else:
+                lines.append(header)
+                lines.append("(invalid payload)")
         elif event.event_type == SchedulerEventType.CHILD_FAILED:
-            lines.append(header)
-            lines.extend(
-                build_child_result_detail_lines(
-                    failure_reason=event.payload.get("reason", "Unknown failure")
+            payload = event.get_payload_child_failed()
+            if payload:
+                child_id = payload.child_agent_id
+                header = f"### {event_label} - Agent: {child_id}"
+                lines.append(header)
+                lines.extend(
+                    build_child_result_detail_lines(failure_reason=payload.reason)
                 )
-            )
+            else:
+                lines.append(header)
+                lines.append("(invalid payload)")
         elif event.event_type == SchedulerEventType.USER_HINT:
             lines.append(header)
             hint_message = _decode_user_hint_message(event)
@@ -200,9 +217,10 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:
 
 
 def _decode_user_hint_message(event: PendingEvent) -> UserMessage | None:
-    stored = event.payload.get("user_input")
-    if stored is None:
+    payload = event.get_payload_user_hint()
+    if payload is None:
         return None
+    stored = payload.user_input
     decoded = UserMessage.from_storage_value(stored)
     if decoded is None:
         return None

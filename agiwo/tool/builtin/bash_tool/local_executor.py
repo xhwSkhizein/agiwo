@@ -1,5 +1,5 @@
 """
-Local sandbox for bash tool
+Local executor for bash tool
 """
 
 import asyncio
@@ -22,7 +22,7 @@ from agiwo.tool.builtin.bash_tool.types import (
 from agiwo.utils.abort_signal import AbortSignal
 
 
-class LocalSandbox(Sandbox):
+class LocalExecutor(Sandbox):
     def __init__(
         self,
         workspace_dir: str | None = None,
@@ -39,6 +39,11 @@ class LocalSandbox(Sandbox):
         self.max_processes = max_processes
         logs_dir = self.workspace / ".bash_tool" / "logs"
         self._registry = ProcessRegistry(logs_dir)
+        # Serializes start_process so the `running < max_processes` check and
+        # the subsequent Popen form one atomic step. Without this, parallel
+        # bash(background=true) tool calls can both observe count<max and both
+        # spawn, turning max_processes into a soft budget rather than a cap.
+        self._start_lock = asyncio.Lock()
 
     async def _graceful_terminate_process(
         self, process: asyncio.subprocess.Process
@@ -174,7 +179,7 @@ class LocalSandbox(Sandbox):
             )
         except TimeoutError:
             raise
-        except Exception as exc:  # noqa: BLE001 - sandbox execution boundary
+        except Exception as exc:  # noqa: BLE001 - executor execution boundary
             return CommandResult(
                 stdout="",
                 stderr=f"Failed to execute command: {exc}",
@@ -214,7 +219,7 @@ class LocalSandbox(Sandbox):
                 start_new_session=True,
                 env=self._build_env(env),
             )
-        except Exception as exc:  # noqa: BLE001 - sandbox PTY start boundary
+        except Exception as exc:  # noqa: BLE001 - executor PTY start boundary
             os.close(master_fd)
             os.close(slave_fd)
             return CommandResult(
@@ -235,89 +240,85 @@ class LocalSandbox(Sandbox):
                 pass
 
         chunks: list[bytes] = []
-        start = asyncio.get_running_loop().time()
+        loop = asyncio.get_running_loop()
+        process_done = asyncio.Event()
+
+        def on_readable() -> None:
+            try:
+                chunk = os.read(master_fd, 4096)
+            except BlockingIOError:
+                return
+            except OSError as exc:
+                if exc.errno == errno.EIO:
+                    chunk = b""
+                else:
+                    loop.remove_reader(master_fd)
+                    process_done.set()
+                    raise
+            if not chunk:
+                loop.remove_reader(master_fd)
+                process_done.set()
+                return
+            chunks.append(chunk)
+
+        loop.add_reader(master_fd, on_readable)
+
+        waiters: set[asyncio.Task[object]] = {asyncio.create_task(process.wait())}
         abort_task: asyncio.Task[None] | None = None
         if abort_signal is not None:
             abort_task = asyncio.create_task(abort_signal.wait())
+            waiters.add(abort_task)
+        timeout_task: asyncio.Task[None] | None = None
+        if timeout is not None:
+            timeout_task = asyncio.create_task(asyncio.sleep(timeout))
+            waiters.add(timeout_task)
 
         try:
-            while True:
-                while True:
+            done, pending = await asyncio.wait(
+                waiters,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                try:
+                    await task
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    pass
+
+            if abort_signal is not None and abort_task in done:
+                await self._graceful_terminate_process(process)
+                for _ in range(3):
                     try:
                         chunk = os.read(master_fd, 4096)
-                    except BlockingIOError:
+                    except (BlockingIOError, OSError):
                         break
-                    except OSError as exc:
-                        if exc.errno == errno.EIO:
-                            chunk = b""
-                        else:
-                            raise
                     if not chunk:
                         break
                     chunks.append(chunk)
+                reason = abort_signal.reason or "Operation cancelled"
+                return CommandResult(
+                    stdout=b"".join(chunks).decode("utf-8", errors="replace"),
+                    stderr=reason,
+                    exit_code=1,
+                )
 
-                if process.returncode is not None:
-                    break
+            if timeout_task is not None and timeout_task in done:
+                process.kill()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                raise TimeoutError(
+                    f"Command timed out after {timeout} seconds: {command}"
+                )
 
-                if timeout is not None:
-                    elapsed = asyncio.get_running_loop().time() - start
-                    if elapsed >= timeout:
-                        if abort_task is not None and not abort_task.done():
-                            abort_task.cancel()
-                            try:
-                                await abort_task
-                            except asyncio.CancelledError:
-                                pass
-                        process.kill()
-                        try:
-                            await asyncio.wait_for(process.wait(), timeout=5.0)
-                        except asyncio.TimeoutError:
-                            pass
-                        raise TimeoutError(
-                            f"Command timed out after {timeout} seconds: {command}"
-                        )
-
-                if abort_task is not None:
-                    wait_proc = asyncio.create_task(
-                        asyncio.wait_for(process.wait(), timeout=0.05)
-                    )
-                    done_ap, _ = await asyncio.wait(
-                        {abort_task, wait_proc},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if abort_task in done_ap:
-                        wait_proc.cancel()
-                        try:
-                            await wait_proc
-                        except (asyncio.CancelledError, asyncio.TimeoutError):
-                            pass
-                        await self._graceful_terminate_process(process)
-                        for _ in range(3):
-                            try:
-                                chunk = os.read(master_fd, 4096)
-                            except (BlockingIOError, OSError):
-                                break
-                            if not chunk:
-                                break
-                            chunks.append(chunk)
-                        assert abort_signal is not None
-                        reason = abort_signal.reason or "Operation cancelled"
-                        return CommandResult(
-                            stdout=b"".join(chunks).decode("utf-8", errors="replace"),
-                            stderr=reason,
-                            exit_code=1,
-                        )
-                    try:
-                        await wait_proc
-                    except asyncio.TimeoutError:
-                        pass
-                else:
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=0.05)
-                    except asyncio.TimeoutError:
-                        pass
-
-            if abort_task is not None and not abort_task.done():
+            if (
+                abort_signal is not None
+                and abort_task is not None
+                and not abort_task.done()
+            ):
                 abort_task.cancel()
                 try:
                     await abort_task
@@ -334,13 +335,14 @@ class LocalSandbox(Sandbox):
                 chunks.append(chunk)
         except TimeoutError:
             raise
-        except Exception as exc:  # noqa: BLE001 - sandbox PTY read boundary
+        except Exception as exc:  # noqa: BLE001 - executor PTY read boundary
             return CommandResult(
                 stdout=b"".join(chunks).decode("utf-8", errors="replace"),
                 stderr=f"Failed to execute PTY command: {exc}",
                 exit_code=1,
             )
         finally:
+            loop.remove_reader(master_fd)
             try:
                 os.close(master_fd)
             except OSError:
@@ -381,34 +383,35 @@ class LocalSandbox(Sandbox):
         pty_cols: int = 120,
         pty_rows: int = 40,
     ) -> str:
-        running = await self.list_processes(state="running")
-        if len(running) >= self.max_processes:
-            sample = running[:5]
-            running_list = ", ".join([p.process_id for p in sample])
-            if len(running) > 5:
-                running_list += f" and {len(running) - 5} more"
-            raise RuntimeError(
-                f"Too many running processes (limit: {self.max_processes}). "
-                f"Stop one first. Currently running: {running_list}. "
-                "Use `bash_process` with `action=jobs` to inspect and "
-                "`action=stop` to terminate."
+        async with self._start_lock:
+            running = await self.list_processes(state="running")
+            if len(running) >= self.max_processes:
+                sample = running[:5]
+                running_list = ", ".join([p.process_id for p in sample])
+                if len(running) > 5:
+                    running_list += f" and {len(running) - 5} more"
+                raise RuntimeError(
+                    f"Too many running processes (limit: {self.max_processes}). "
+                    f"Stop one first. Currently running: {running_list}. "
+                    "Use `bash_process` with `action=jobs` to inspect and "
+                    "`action=stop` to terminate."
+                )
+
+            working_dir = str(self.workspace)
+            if cwd:
+                target = self._resolve_path(cwd)
+                target.mkdir(parents=True, exist_ok=True)
+                working_dir = str(target)
+
+            return self._registry.start_process(
+                command=command,
+                cwd=working_dir,
+                env=env,
+                agent_id=agent_id,
+                use_pty=use_pty,
+                pty_cols=pty_cols,
+                pty_rows=pty_rows,
             )
-
-        working_dir = str(self.workspace)
-        if cwd:
-            target = self._resolve_path(cwd)
-            target.mkdir(parents=True, exist_ok=True)
-            working_dir = str(target)
-
-        return self._registry.start_process(
-            command=command,
-            cwd=working_dir,
-            env=env,
-            agent_id=agent_id,
-            use_pty=use_pty,
-            pty_cols=pty_cols,
-            pty_rows=pty_rows,
-        )
 
     async def attach_process(self, process_id: str) -> ProcessInfo:
         return self._registry.attach_process(process_id)
@@ -468,3 +471,6 @@ class LocalSandbox(Sandbox):
     def __del__(self) -> None:
         if self._temp_dir:
             self._temp_dir.cleanup()
+
+
+__all__ = ["LocalExecutor"]

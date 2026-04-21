@@ -101,12 +101,12 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
         run_id="run-1",
         agent_id="agent-1",
         agent_name="agent",
-        hooks=AgentHooks(on_step=on_step),
         messages=[
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hello"},
         ],
     )
+    state.hooks = AgentHooks(on_step=on_step)
 
     result = await compact_if_needed(
         state=state,
@@ -140,7 +140,7 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
     assert "Understood" in msgs[2]["content"]
     assert msgs[3] == {"role": "user", "content": "hello"}
     assert all(message.get("name") != "compact_request" for message in msgs)
-    assert state.ledger.last_compact_metadata == metadata
+    assert state.ledger.compaction.last_metadata == metadata
 
     persisted = await step_storage.get_latest_compact_metadata("sess-1", "agent-1")
     assert persisted == metadata

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 from agiwo.tool.builtin.bash_tool import registry as registry_module
 from agiwo.tool.builtin.bash_tool.registry import ProcessRecord, ProcessRegistry
-from agiwo.tool.builtin.bash_tool.sandbox.local import LocalSandbox
+from agiwo.tool.builtin.bash_tool.local_executor import LocalExecutor
 from agiwo.tool.builtin.bash_tool.types import ProcessInfo
 
 
@@ -93,10 +93,10 @@ class TestProcessRegistrySafety:
         assert jobs[0].process_id == "job_a"
 
 
-class TestLocalSandboxProcessLimit:
+class TestLocalExecutorProcessLimit:
     @pytest.mark.asyncio
     async def test_start_process_checks_running_only(self, tmp_path):
-        sandbox = LocalSandbox(workspace_dir=str(tmp_path), max_processes=2)
+        sandbox = LocalExecutor(workspace_dir=str(tmp_path), max_processes=2)
         captured: dict[str, object] = {}
         sandbox.list_processes = AsyncMock(  # type: ignore[method-assign]
             return_value=[
@@ -121,7 +121,7 @@ class TestLocalSandboxProcessLimit:
 
     @pytest.mark.asyncio
     async def test_start_process_rejects_when_running_limit_reached(self, tmp_path):
-        sandbox = LocalSandbox(workspace_dir=str(tmp_path), max_processes=1)
+        sandbox = LocalExecutor(workspace_dir=str(tmp_path), max_processes=1)
         sandbox.list_processes = AsyncMock(  # type: ignore[method-assign]
             return_value=[
                 ProcessInfo(
@@ -137,7 +137,7 @@ class TestLocalSandboxProcessLimit:
 
     @pytest.mark.asyncio
     async def test_start_process_for_pty_passes_tty_size(self, tmp_path):
-        sandbox = LocalSandbox(workspace_dir=str(tmp_path), max_processes=2)
+        sandbox = LocalExecutor(workspace_dir=str(tmp_path), max_processes=2)
         captured: dict[str, object] = {}
         sandbox.list_processes = AsyncMock(return_value=[])  # type: ignore[method-assign]
         sandbox._registry.start_process = (  # type: ignore[method-assign]
@@ -159,7 +159,7 @@ class TestLocalSandboxProcessLimit:
 
     @pytest.mark.asyncio
     async def test_write_process_stdin_delegates_to_registry(self, tmp_path):
-        sandbox = LocalSandbox(workspace_dir=str(tmp_path))
+        sandbox = LocalExecutor(workspace_dir=str(tmp_path))
         called: dict[str, object] = {}
         sandbox._registry.write_process_stdin = (  # type: ignore[method-assign]
             lambda process_id, data: called.update(

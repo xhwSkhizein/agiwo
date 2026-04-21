@@ -6,6 +6,8 @@ import json
 from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
+from agiwo.scheduler.commands import RouteStreamMode
+
 from server.dependencies import (
     ConsoleRuntimeDep,
     get_session_context_service,
@@ -137,7 +139,7 @@ async def send_session_input(
         agent,
         session,
         body.message,
-        stream_mode="until_settled",
+        stream_mode=RouteStreamMode.UNTIL_SETTLED,
     )
 
     async def event_generator() -> AsyncIterator[dict[str, str]]:

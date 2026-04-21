@@ -1,31 +1,31 @@
-"""Shared sandbox helpers for bash tools."""
+"""Shared executor helpers for bash tools."""
 
 from pathlib import Path
 
 from agiwo.config.settings import settings
-from agiwo.tool.builtin.bash_tool.sandbox.local import LocalSandbox
+from agiwo.tool.builtin.bash_tool.local_executor import LocalExecutor
 
-_SHARED_LOCAL_SANDBOXES: dict[str, LocalSandbox] = {}
+_SHARED_LOCAL_EXECUTORS: dict[str, LocalExecutor] = {}
 
 
-def get_shared_local_sandbox(
+def get_shared_local_executor(
     *,
     workspace_dir: str | Path = settings.root_path,
     max_processes: int = 10,
-) -> LocalSandbox:
-    """Reuse one LocalSandbox per workspace so bash tools share job state."""
+) -> LocalExecutor:
+    """Reuse one LocalExecutor per workspace so bash tools share job state."""
     key = "__default__"
     if workspace_dir is not None:
         key = str(Path(workspace_dir).resolve())
 
-    sandbox = _SHARED_LOCAL_SANDBOXES.get(key)
-    if sandbox is None:
-        sandbox = LocalSandbox(
+    executor = _SHARED_LOCAL_EXECUTORS.get(key)
+    if executor is None:
+        executor = LocalExecutor(
             workspace_dir=workspace_dir,
             max_processes=max_processes,
         )
-        _SHARED_LOCAL_SANDBOXES[key] = sandbox
-    return sandbox
+        _SHARED_LOCAL_EXECUTORS[key] = executor
+    return executor
 
 
-__all__ = ["LocalSandbox", "get_shared_local_sandbox"]
+__all__ = ["LocalExecutor", "get_shared_local_executor"]

@@ -65,6 +65,14 @@ class SessionRuntime:
             self.session_id, agent_id
         )
 
+    async def save_compact_metadata(
+        self, agent_id: str, metadata: CompactMetadata
+    ) -> None:
+        """Save compact metadata for the given agent."""
+        await self.run_step_storage.save_compact_metadata(
+            self.session_id, agent_id, metadata
+        )
+
     def subscribe(self) -> AsyncIterator[AgentStreamItem]:
         queue: asyncio.Queue[AgentStreamItem | object] = asyncio.Queue(
             maxsize=self._MAX_SUBSCRIBER_QUEUE_SIZE

@@ -51,7 +51,7 @@ async def maybe_generate_termination_summary(
             model,
             state,
             abort_signal,
-            messages=state.copy_messages(),
+            messages=state.snapshot_messages(),
             use_state_tools=False,
         )
         step.name = "summary"

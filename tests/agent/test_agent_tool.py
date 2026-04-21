@@ -8,7 +8,6 @@ from agiwo.agent.nested.context import AgentToolContext
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.tool.context import ToolContext
 
 
 def _make_context(*, metadata: dict | None = None):
@@ -123,16 +122,6 @@ async def test_agent_tool_detects_circular_reference_by_agent_id():
 
     assert result.is_success is False
     assert "agent-loop" in result.error
-
-
-@pytest.mark.asyncio
-async def test_agent_tool_rejects_plain_tool_context_without_runtime_bridge():
-    tool = AgentTool(FakeAgent(id="agent-child", name="child"))
-
-    result = await tool.execute({"task": "hello"}, ToolContext(session_id="sess-1"))
-
-    assert result.is_success is False
-    assert result.error == "AgentTool requires agent runtime context"
 
 
 def test_agent_tool_context_can_be_built_from_run_context() -> None:

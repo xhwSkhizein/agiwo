@@ -23,20 +23,27 @@ async def main() -> None:
     )
 
     async with Scheduler() as scheduler:
-        # Simple run — submit and wait
+        # Simple run — route_root_input with stream_mode=RouteStreamMode.RUN_END
         print("=== Simple Run ===")
-        result = await scheduler.run(
-            agent,
+        result = await scheduler.route_root_input(
             "List 3 pros and 3 cons of microservices architecture.",
+            agent=agent,
+            stream_mode=RouteStreamMode.RUN_END,
         )
-        print(result.response)
+        # Consume stream to get result
+        async for item in result.stream:
+            if item.type == "run_output":
+                print(item.content.response)
+                break
 
         # Fire-and-forget with later steering
         print("\n=== Submit + Steer ===")
-        state_id = await scheduler.submit(
-            agent,
+        route_result = await scheduler.route_root_input(
             "Analyze the trade-offs of using PostgreSQL vs MongoDB.",
+            agent=agent,
+            stream_mode=RouteStreamMode.UNTIL_SETTLED,
         )
+        state_id = route_result.state_id
         print(f"Submitted: {state_id}")
 
         # Steer the running agent

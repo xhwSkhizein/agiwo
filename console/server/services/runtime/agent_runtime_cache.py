@@ -27,20 +27,27 @@ ConfigSnapshot = tuple[
     tuple[str, ...] | None,  # allowed_skills
     tuple[tuple[str, Any], ...],
     tuple[tuple[str, Any], ...],
+    str,  # updated_at
 ]
 
 
 def _config_snapshot(config: AgentConfigRecord) -> ConfigSnapshot:
+    dumped = config.model_dump(mode="json", exclude={"id", "created_at"})
     return (
-        config.name,
-        config.description,
-        config.model_provider,
-        config.model_name,
-        config.system_prompt,
-        tuple(config.allowed_tools) if config.allowed_tools is not None else None,
-        tuple(config.allowed_skills) if config.allowed_skills is not None else None,
-        tuple(sorted(config.options.items())),
-        tuple(sorted(config.model_params.items())),
+        dumped["name"],
+        dumped["description"],
+        dumped["model_provider"],
+        dumped["model_name"],
+        dumped["system_prompt"],
+        tuple(dumped["allowed_tools"]) if dumped["allowed_tools"] is not None else None,
+        tuple(dumped["allowed_skills"])
+        if dumped["allowed_skills"] is not None
+        else None,
+        tuple(sorted(dumped["options"].items())),
+        tuple(sorted(dumped["model_params"].items())),
+        dumped[
+            "updated_at"
+        ],  # model_dump(mode='json') already converts datetime to ISO string
     )
 
 

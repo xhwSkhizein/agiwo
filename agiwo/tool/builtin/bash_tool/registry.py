@@ -11,7 +11,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import IO, Any, Literal
+from typing import IO, Any, Literal, TextIO
 
 from .pty_utils import set_pty_size
 from .types import ProcessInfo, ProcessLogInfo, ProcessStatus
@@ -42,6 +42,10 @@ class ProcessRegistry:
         self.logs_dir = logs_dir
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self._registry_file = logs_dir / "registry.json"
+        # Protects all mutable dicts below plus the JSON-on-disk view. RLock
+        # allows nested acquisition by helpers that are called both directly
+        # and from already-locked sections.
+        self._lock = threading.RLock()
         self._processes: dict[str, ProcessRecord] = {}
         self._process_refs: dict[str, subprocess.Popen[Any]] = {}
         self._file_handles: dict[str, tuple[IO[str], IO[str]]] = {}
@@ -51,20 +55,44 @@ class ProcessRegistry:
 
     def _load_registry(self) -> None:
         """Load process registry from disk."""
-        if self._registry_file.exists():
+        if not self._registry_file.exists():
+            return
+        try:
+            data = json.loads(self._registry_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            with self._lock:
+                self._processes = {}
+            return
+        allowed_fields = ProcessRecord.__dataclass_fields__.keys()
+        with self._lock:
             try:
-                data = json.loads(self._registry_file.read_text())
-                allowed_fields = ProcessRecord.__dataclass_fields__.keys()
                 for proc_id, record in data.items():
                     filtered = {k: v for k, v in record.items() if k in allowed_fields}
                     self._processes[proc_id] = ProcessRecord(**filtered)
-            except (json.JSONDecodeError, TypeError):
+            except TypeError:
                 self._processes = {}
 
     def _save_registry(self) -> None:
-        """Save process registry to disk."""
+        """Save process registry to disk atomically (tmp + os.replace).
+
+        Caller must hold ``self._lock`` to avoid interleaving with concurrent
+        mutations.
+        """
         data = {proc_id: asdict(proc) for proc_id, proc in self._processes.items()}
-        self._registry_file.write_text(json.dumps(data, indent=2))
+        payload = json.dumps(data, indent=2)
+        tmp_path = self._registry_file.with_name(
+            self._registry_file.name + f".tmp.{os.getpid()}.{uuid.uuid4().hex}"
+        )
+        try:
+            tmp_path.write_text(payload)
+            os.replace(tmp_path, self._registry_file)
+        except OSError:
+            # Best-effort cleanup; never leave orphan tmp files on failure.
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     def start_process(
         self,
@@ -142,16 +170,17 @@ class ProcessRegistry:
             mode="pipe",
         )
 
-        self._processes[process_id] = record
-        self._process_refs[process_id] = process
-        self._file_handles[process_id] = (stdout_fp, stderr_fp)
-        self._save_registry()
+        with self._lock:
+            self._processes[process_id] = record
+            self._process_refs[process_id] = process
+            self._file_handles[process_id] = (stdout_fp, stderr_fp)
+            self._save_registry()
         return process_id
 
     @staticmethod
     def _cleanup_pty_resources(
-        stdout_fp: Any,
-        stderr_fp: Any,
+        stdout_fp: "TextIO | None",
+        stderr_fp: "TextIO | None",
         master_fd: int | None,
         slave_fd: int | None,
     ) -> None:
@@ -233,12 +262,13 @@ class ProcessRegistry:
             mode="pty",
         )
 
-        self._processes[process_id] = record
-        self._process_refs[process_id] = process
-        self._file_handles[process_id] = (stdout_fp, stderr_fp)
-        self._pty_master_fds[process_id] = master_fd
-        self._pty_reader_threads[process_id] = reader
-        self._save_registry()
+        with self._lock:
+            self._processes[process_id] = record
+            self._process_refs[process_id] = process
+            self._file_handles[process_id] = (stdout_fp, stderr_fp)
+            self._pty_master_fds[process_id] = master_fd
+            self._pty_reader_threads[process_id] = reader
+            self._save_registry()
         return process_id
 
     def attach_process(self, process_id: str) -> ProcessInfo:
@@ -253,20 +283,19 @@ class ProcessRegistry:
         Raises:
             KeyError: If process not found.
         """
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-
-        record = self._processes[process_id]
-        self._update_process_status(record)
-
-        return ProcessInfo(
-            process_id=record.process_id,
-            state=record.state,  # type: ignore[arg-type]
-            command=record.command,
-            mode=record.mode,
-            started_at=record.started_at,
-            exit_code=record.exit_code,
-        )
+        with self._lock:
+            if process_id not in self._processes:
+                raise KeyError(f"Process not found: {process_id}")
+            record = self._processes[process_id]
+            self._update_process_status(record)
+            return ProcessInfo(
+                process_id=record.process_id,
+                state=record.state,  # type: ignore[arg-type]
+                command=record.command,
+                mode=record.mode,
+                started_at=record.started_at,
+                exit_code=record.exit_code,
+            )
 
     def get_process_status(self, process_id: str) -> ProcessStatus:
         """Get status of a process.
@@ -280,18 +309,17 @@ class ProcessRegistry:
         Raises:
             KeyError: If process not found.
         """
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-
-        record = self._processes[process_id]
-        self._update_process_status(record)
-
-        return ProcessStatus(
-            state=record.state,  # type: ignore[arg-type]
-            mode=record.mode,
-            exit_code=record.exit_code,
-            started_at=record.started_at,
-        )
+        with self._lock:
+            if process_id not in self._processes:
+                raise KeyError(f"Process not found: {process_id}")
+            record = self._processes[process_id]
+            self._update_process_status(record)
+            return ProcessStatus(
+                state=record.state,  # type: ignore[arg-type]
+                mode=record.mode,
+                exit_code=record.exit_code,
+                started_at=record.started_at,
+            )
 
     def stop_process(
         self, process_id: str, signal_name: Literal["TERM", "KILL"]
@@ -305,24 +333,22 @@ class ProcessRegistry:
         Raises:
             KeyError: If process not found.
         """
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
+        with self._lock:
+            if process_id not in self._processes:
+                raise KeyError(f"Process not found: {process_id}")
+            record = self._processes[process_id]
+            self._update_process_status(record)
 
-        record = self._processes[process_id]
-        self._update_process_status(record)
+            if record.state != "running":
+                return
 
-        if record.state == "running":
             sig = signal.SIGTERM if signal_name == "TERM" else signal.SIGKILL
             process = self._process_refs.get(process_id)
 
-            # Prefer stopping through in-memory Popen handle. Only fall back to raw PID
-            # if it is still the same OS process we originally started.
+            # Prefer stopping through in-memory Popen handle. Only fall back to
+            # raw PID if it is still the same OS process we originally started.
             if process is None and not self._is_same_process(record):
-                record.state = "exited"
-                record.exit_code = -1
-                self._close_file_handles(process_id)
-                self._close_pty_handle(process_id)
-                self._save_registry()
+                self._finalize_exited(record, exit_code=-1)
                 return
 
             try:
@@ -330,35 +356,30 @@ class ProcessRegistry:
                     process.send_signal(sig)
                 else:
                     os.kill(record.pid, sig)
-                record.state = "exited"
-                record.exit_code = -1
-                self._close_file_handles(process_id)
-                self._close_pty_handle(process_id)
-                self._save_registry()
             except OSError:
-                record.state = "exited"
-                record.exit_code = -1
-                self._close_file_handles(process_id)
-                self._close_pty_handle(process_id)
-                self._save_registry()
+                pass
+            self._finalize_exited(record, exit_code=-1)
 
     def write_process_stdin(self, process_id: str, data: str) -> None:
         """Write stdin to a running PTY process."""
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
+        with self._lock:
+            if process_id not in self._processes:
+                raise KeyError(f"Process not found: {process_id}")
 
-        record = self._processes[process_id]
-        self._update_process_status(record)
-        if record.state != "running":
-            raise RuntimeError(f"Process is not running: {process_id}")
-        if record.mode != "pty":
-            raise RuntimeError(
-                f"Process does not support stdin writes (not PTY mode): {process_id}"
-            )
+            record = self._processes[process_id]
+            self._update_process_status(record)
+            if record.state != "running":
+                raise RuntimeError(f"Process is not running: {process_id}")
+            if record.mode != "pty":
+                raise RuntimeError(
+                    f"Process does not support stdin writes (not PTY mode): {process_id}"
+                )
 
-        master_fd = self._pty_master_fds.get(process_id)
-        if master_fd is None:
-            raise RuntimeError(f"PTY handle is not available: {process_id}")
+            master_fd = self._pty_master_fds.get(process_id)
+            if master_fd is None:
+                raise RuntimeError(f"PTY handle is not available: {process_id}")
+        # Release the lock before performing the blocking OS write so concurrent
+        # readers can continue inspecting registry state.
         os.write(master_fd, data.encode("utf-8"))
 
     def list_processes(
@@ -374,20 +395,21 @@ class ProcessRegistry:
             List of ProcessInfo objects.
         """
         results = []
-        for record in self._processes.values():
-            self._update_process_status(record)
+        with self._lock:
+            for record in self._processes.values():
+                self._update_process_status(record)
 
-            if state == "all" or record.state == state:
-                results.append(
-                    ProcessInfo(
-                        process_id=record.process_id,
-                        state=record.state,  # type: ignore[arg-type]
-                        command=record.command,
-                        mode=record.mode,
-                        started_at=record.started_at,
-                        exit_code=record.exit_code,
+                if state == "all" or record.state == state:
+                    results.append(
+                        ProcessInfo(
+                            process_id=record.process_id,
+                            state=record.state,  # type: ignore[arg-type]
+                            command=record.command,
+                            mode=record.mode,
+                            started_at=record.started_at,
+                            exit_code=record.exit_code,
+                        )
                     )
-                )
 
         return results
 
@@ -398,21 +420,22 @@ class ProcessRegistry:
     ) -> list[ProcessInfo]:
         """List processes associated with a specific agent_id."""
         results = []
-        for record in self._processes.values():
-            if record.agent_id != agent_id:
-                continue
-            self._update_process_status(record)
-            if state == "all" or record.state == state:
-                results.append(
-                    ProcessInfo(
-                        process_id=record.process_id,
-                        state=record.state,  # type: ignore[arg-type]
-                        command=record.command,
-                        mode=record.mode,
-                        started_at=record.started_at,
-                        exit_code=record.exit_code,
+        with self._lock:
+            for record in self._processes.values():
+                if record.agent_id != agent_id:
+                    continue
+                self._update_process_status(record)
+                if state == "all" or record.state == state:
+                    results.append(
+                        ProcessInfo(
+                            process_id=record.process_id,
+                            state=record.state,  # type: ignore[arg-type]
+                            command=record.command,
+                            mode=record.mode,
+                            started_at=record.started_at,
+                            exit_code=record.exit_code,
+                        )
                     )
-                )
         return results
 
     def get_process_logs_info(self, process_id: str) -> ProcessLogInfo:
@@ -427,47 +450,56 @@ class ProcessRegistry:
         Raises:
             KeyError: If process not found.
         """
-        if process_id not in self._processes:
-            raise KeyError(f"Process not found: {process_id}")
-
-        record = self._processes[process_id]
-        return ProcessLogInfo(
-            stdout_path=record.stdout_path,
-            stderr_path=record.stderr_path,
-            mode=record.mode,
-        )
+        with self._lock:
+            if process_id not in self._processes:
+                raise KeyError(f"Process not found: {process_id}")
+            record = self._processes[process_id]
+            return ProcessLogInfo(
+                stdout_path=record.stdout_path,
+                stderr_path=record.stderr_path,
+                mode=record.mode,
+            )
 
     def _update_process_status(self, record: ProcessRecord) -> None:
-        """Update process status by checking if still running."""
-        if record.state == "running":
-            process = self._process_refs.get(record.process_id)
+        """Update process status by checking if still running.
+
+        Caller must hold ``self._lock``.
+        """
+        if record.state != "running":
+            return
+
+        process = self._process_refs.get(record.process_id)
+        if process is not None:
+            ret = process.poll()
+            if ret is not None:
+                self._finalize_exited(record, exit_code=ret)
+                return
+
+        # Without an in-memory handle (e.g. after restart), guard against PID
+        # reuse before trusting the pid.
+        if not self._is_same_process(record):
+            exit_code = -1
             if process is not None:
-                # Check if process has finished
                 ret = process.poll()
                 if ret is not None:
-                    # Process finished, get exit code and close file handles
-                    record.state = "exited"
-                    record.exit_code = ret
-                    self._close_file_handles(record.process_id)
-                    self._close_pty_handle(record.process_id)
-                    self._save_registry()
-                    return
+                    exit_code = ret
+            self._finalize_exited(record, exit_code=exit_code)
 
-            # Without an in-memory handle (e.g. after restart), guard against PID
-            # reuse before trusting the pid.
-            if not self._is_same_process(record):
-                record.state = "exited"
-                if process is not None:
-                    ret = process.poll()
-                    record.exit_code = ret if ret is not None else -1
-                else:
-                    record.exit_code = -1
-                self._close_file_handles(record.process_id)
-                self._close_pty_handle(record.process_id)
-                self._save_registry()
+    def _finalize_exited(self, record: ProcessRecord, *, exit_code: int) -> None:
+        """Mark a record as exited and release its OS resources in a safe order.
+
+        Closing the PTY master first forces the reader thread to wake with EIO
+        and exit; joining the reader thread guarantees we do not close the sink
+        stdout fp while it is mid-write. Caller must hold ``self._lock``.
+        """
+        record.state = "exited"
+        record.exit_code = exit_code
+        self._close_pty_handle(record.process_id)
+        self._close_file_handles(record.process_id)
+        self._save_registry()
 
     def _close_file_handles(self, process_id: str) -> None:
-        """Close file handles for a process."""
+        """Close file handles for a process. Caller must hold ``self._lock``."""
         handles = self._file_handles.pop(process_id, None)
         if handles:
             for fp in handles:
@@ -477,13 +509,21 @@ class ProcessRegistry:
                     pass  # Ignore close errors
 
     def _close_pty_handle(self, process_id: str) -> None:
+        """Close the PTY master fd and wait for its reader thread to exit.
+
+        Must be called before ``_close_file_handles`` so the reader thread
+        cannot race with closing its sink stdout fp. Caller must hold
+        ``self._lock``.
+        """
         master_fd = self._pty_master_fds.pop(process_id, None)
         if master_fd is not None:
             try:
                 os.close(master_fd)
             except OSError:
                 pass
-        self._pty_reader_threads.pop(process_id, None)
+        reader = self._pty_reader_threads.pop(process_id, None)
+        if reader is not None and reader.is_alive():
+            reader.join(timeout=1.0)
 
     @staticmethod
     def _pty_reader_loop(master_fd: int, stdout_fp: IO[str]) -> None:

@@ -37,12 +37,14 @@ class SchedulerToolControl:
         rt: RuntimeState,
         save_state: Callable[[AgentState], Awaitable[None]],
         cancel_subtree: Callable[[str, str], Awaitable[None]],
+        state_list_page_size: int,
     ) -> None:
         self._store = store
         self._guard = guard
         self._rt = rt
         self._save_state = save_state
         self._cancel_subtree = cancel_subtree
+        self._state_list_page_size = state_list_page_size
 
     async def spawn_child(self, request: SpawnChildRequest) -> AgentState:
         parent_state = await self._store.get_state(request.parent_agent_id)
@@ -125,7 +127,7 @@ class SchedulerToolControl:
         return await self._store.list_states(
             parent_id=caller_id,
             session_id=session_id,
-            limit=1000,
+            limit=self._state_list_page_size,
         )
 
     async def inspect_child_processes(
@@ -240,7 +242,7 @@ class SchedulerToolControl:
         children = await self._store.list_states(
             parent_id=request.agent_id,
             session_id=request.session_id,
-            limit=1000,
+            limit=self._state_list_page_size,
         )
         return [child.id for child in children]
 

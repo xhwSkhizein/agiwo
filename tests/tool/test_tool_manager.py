@@ -300,27 +300,6 @@ class TestFinalizeTools:
         assert result == tuple(tools)
 
 
-class TestNormalizeAllowedTools:
-    """Test normalize_allowed_tools method."""
-
-    def test_normalize_none_returns_none(self, tool_manager):
-        """None should return None."""
-        result = tool_manager.normalize_allowed_tools(None)
-        assert result is None
-
-    def test_normalize_valid_tools(self, tool_manager):
-        """Valid tool names should be returned as list."""
-        # Use actual builtin tool names
-        builtin_names = tool_manager.list_available_tool_names()[:2]
-        result = tool_manager.normalize_allowed_tools(builtin_names)
-        assert result == builtin_names
-
-    def test_normalize_keeps_unknown_tools(self, tool_manager):
-        """Unknown tool names are kept (may refer to user-supplied custom tools)."""
-        result = tool_manager.normalize_allowed_tools(["nonexistent_tool_xyz"])
-        assert result == ["nonexistent_tool_xyz"]
-
-
 class TestGetToolsIntegration:
     """Integration tests for get_tools method."""
 

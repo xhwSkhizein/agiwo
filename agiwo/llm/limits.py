@@ -8,14 +8,14 @@ DEFAULT_MAX_OUTPUT_TOKENS = 4096
 
 
 def resolve_max_context_window(model: Model) -> int:
-    value = int(getattr(model, "max_context_window", DEFAULT_MAX_CONTEXT_WINDOW) or 0)
+    value = int(model.max_context_window or 0)
     if value < 1:
         return DEFAULT_MAX_CONTEXT_WINDOW
     return value
 
 
 def resolve_max_output_tokens(model: Model) -> int:
-    value = int(getattr(model, "max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS) or 0)
+    value = int(model.max_output_tokens or 0)
     if value < 1:
         return DEFAULT_MAX_OUTPUT_TOKENS
     return value

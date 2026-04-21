@@ -3,7 +3,7 @@
 import pytest
 
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.models.run import RunLedger
+from agiwo.agent.models.run import RetrospectState, RunLedger
 from agiwo.agent.models.step import MessageRole, StepRecord
 from agiwo.agent.retrospect.triggers import (
     RetrospectTrigger,
@@ -68,7 +68,7 @@ class TestCheckRetrospectTrigger:
             retrospect_round_interval=3,
             retrospect_accumulated_token_threshold=99999,
         )
-        ledger = RunLedger(retrospect_pending_rounds=3)
+        ledger = RunLedger(retrospect=RetrospectState(pending_rounds=3))
         assert (
             check_retrospect_trigger(config, ledger, "tiny", "bash")
             is RetrospectTrigger.ROUND_INTERVAL
@@ -81,7 +81,7 @@ class TestCheckRetrospectTrigger:
             retrospect_round_interval=99999,
             retrospect_accumulated_token_threshold=500,
         )
-        ledger = RunLedger(retrospect_pending_tokens=600)
+        ledger = RunLedger(retrospect=RetrospectState(pending_tokens=600))
         assert (
             check_retrospect_trigger(config, ledger, "tiny", "bash")
             is RetrospectTrigger.TOKEN_ACCUMULATED
@@ -92,12 +92,12 @@ class TestUpdateRetrospectTracking:
     def test_accumulates_tokens_and_rounds(self):
         ledger = RunLedger()
         update_retrospect_tracking(ledger, "a" * 400)  # ~100 tokens
-        assert ledger.retrospect_pending_tokens == 100
-        assert ledger.retrospect_pending_rounds == 1
+        assert ledger.retrospect.pending_tokens == 100
+        assert ledger.retrospect.pending_rounds == 1
 
         update_retrospect_tracking(ledger, "b" * 800)  # ~200 tokens
-        assert ledger.retrospect_pending_tokens == 300
-        assert ledger.retrospect_pending_rounds == 2
+        assert ledger.retrospect.pending_tokens == 300
+        assert ledger.retrospect.pending_rounds == 2
 
 
 class TestInjectSystemNotice:
@@ -178,7 +178,7 @@ class TestExecuteRetrospect:
                 "_sequence": 2,
             },
         ]
-        ledger = RunLedger(last_retrospect_seq=0)
+        ledger = RunLedger(retrospect=RetrospectState(last_seq=0))
         step_lookup = {
             "tc-1": {"id": step1.id, "sequence": 1},
             "tc-2": {"id": step2.id, "sequence": 2},
@@ -204,9 +204,9 @@ class TestExecuteRetrospect:
         assert "Retrospect:" in outcome.messages[1]["content"]
         assert "Plan A and B" in outcome.messages[1]["content"]
 
-        assert ledger.retrospect_pending_tokens == 0
-        assert ledger.retrospect_pending_rounds == 0
-        assert ledger.last_retrospect_seq == 2
+        assert ledger.retrospect.pending_tokens == 0
+        assert ledger.retrospect.pending_rounds == 0
+        assert ledger.retrospect.last_seq == 2
 
     @pytest.mark.asyncio
     async def test_original_messages_not_mutated(self, tmp_path):
@@ -222,7 +222,7 @@ class TestExecuteRetrospect:
                 "_sequence": 1,
             },
         ]
-        ledger = RunLedger(last_retrospect_seq=0)
+        ledger = RunLedger(retrospect=RetrospectState(last_seq=0))
         step_lookup = {"tc-1": {"id": "s1", "sequence": 1}}
 
         outcome = await execute_retrospect(
@@ -264,7 +264,7 @@ class TestExecuteRetrospect:
                 "_sequence": 5,
             },
         ]
-        ledger = RunLedger(last_retrospect_seq=0)
+        ledger = RunLedger(retrospect=RetrospectState(last_seq=0))
         step_lookup = {"tc-5": {"id": step.id, "sequence": 5}}
 
         await execute_retrospect(
@@ -303,7 +303,7 @@ class TestExecuteRetrospect:
             },
             {"role": "tool", "content": "ok", "tool_call_id": "tc-r", "_sequence": 3},
         ]
-        ledger = RunLedger(last_retrospect_seq=0)
+        ledger = RunLedger(retrospect=RetrospectState(last_seq=0))
         step_lookup = {"tc-1": {"id": "s1", "sequence": 1}}
 
         outcome = await execute_retrospect(
@@ -390,7 +390,7 @@ class TestRemoveRetrospectMultiCall:
             },
             {"role": "tool", "content": "ok", "tool_call_id": "tc-r", "_sequence": 4},
         ]
-        ledger = RunLedger(last_retrospect_seq=0)
+        ledger = RunLedger(retrospect=RetrospectState(last_seq=0))
         step_lookup = {"tc-1": {"id": "s1", "sequence": 1}}
 
         outcome = await execute_retrospect(

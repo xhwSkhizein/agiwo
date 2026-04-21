@@ -21,7 +21,6 @@ from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
     PendingEvent,
-    SchedulerEventType,
 )
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.stream import StreamChannelState
@@ -141,11 +140,10 @@ def _extract_hint_messages(
 ) -> list[UserMessage]:
     messages: list[UserMessage] = []
     for event in events:
-        if event.event_type != SchedulerEventType.USER_HINT:
+        payload = event.get_payload_user_hint()
+        if payload is None:
             continue
-        stored = event.payload.get("user_input")
-        if stored is None:
-            continue
+        stored = payload.user_input
         decoded = UserMessage.from_storage_value(stored)
         if decoded is None:
             continue
@@ -210,6 +208,8 @@ class RuntimeState:
     ``canonical_agents`` records the last canonical Agent *identity* mapped
     to each state_id so the scheduler can decide whether a ``submit`` /
     ``enqueue_input`` call should reuse the cached runtime agent or rebind.
+    ``state_locks`` holds per-state_id locks to prevent concurrent submit/enqueue
+    operations from racing on the same agent.
     """
 
     agents: dict[str, Agent] = field(default_factory=dict)
@@ -220,6 +220,7 @@ class RuntimeState:
     dispatched: set[str] = field(default_factory=set)
     active_tasks: set[asyncio.Task] = field(default_factory=set)
     stream_channels: dict[str, StreamChannelState] = field(default_factory=dict)
+    state_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     nudge: asyncio.Event = field(default_factory=asyncio.Event)
     shutdown_requested: set[str] = field(default_factory=set)
 

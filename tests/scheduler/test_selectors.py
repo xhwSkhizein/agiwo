@@ -59,7 +59,7 @@ def test_plan_tick_marks_ready_waiting_state() -> None:
         ),
     )
 
-    actions = plan_tick(engine, [ready, blocked], [], now=now)
+    actions = plan_tick(engine._ctx, [ready, blocked], [], now=now)
 
     assert [(action.state.id, action.reason) for action in actions] == [
         ("ready", DispatchReason.WAKE_READY)
@@ -78,7 +78,7 @@ def test_plan_tick_marks_timed_out_waiting_state() -> None:
         ),
     )
 
-    actions = plan_tick(engine, [timed_out], [], now=now)
+    actions = plan_tick(engine._ctx, [timed_out], [], now=now)
 
     assert [(action.state.id, action.reason) for action in actions] == [
         ("timed-out", DispatchReason.WAKE_TIMEOUT)
@@ -108,7 +108,7 @@ def test_plan_tick_debounces_pending_events_for_waiting_state() -> None:
         ),
     ]
 
-    actions = plan_tick(engine, [waiting], events, now=now)
+    actions = plan_tick(engine._ctx, [waiting], events, now=now)
 
     assert len(actions) == 1
     assert actions[0].reason == DispatchReason.WAKE_EVENTS
@@ -131,7 +131,7 @@ def test_plan_tick_non_urgent_single_event_waits_for_debounce() -> None:
         ),
     ]
 
-    actions = plan_tick(engine, [waiting], events, now=now)
+    actions = plan_tick(engine._ctx, [waiting], events, now=now)
 
     assert actions == []
 
@@ -153,7 +153,7 @@ def test_plan_tick_urgent_user_hint_bypasses_debounce_for_waiting_state() -> Non
         ),
     ]
 
-    actions = plan_tick(engine, [waiting], events, now=now)
+    actions = plan_tick(engine._ctx, [waiting], events, now=now)
 
     assert len(actions) == 1
     assert actions[0].reason == DispatchReason.WAKE_EVENTS
@@ -183,7 +183,9 @@ def test_plan_tick_starts_pending_child_and_queued_root() -> None:
         created_at=now,
     )
 
-    actions = plan_tick(engine, [pending_child, queued_root], [mailbox_event], now=now)
+    actions = plan_tick(
+        engine._ctx, [pending_child, queued_root], [mailbox_event], now=now
+    )
 
     assert [(action.state.id, action.reason) for action in actions] == [
         ("child-1", DispatchReason.CHILD_PENDING),

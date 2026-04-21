@@ -2,9 +2,9 @@
 
 import asyncio
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 
 from agiwo.scheduler.commands import DispatchAction, DispatchReason
+from agiwo.scheduler.engine_context import EngineContext
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -19,9 +19,6 @@ from agiwo.scheduler.runtime_state import (
     select_debounced_event_targets,
 )
 from agiwo.utils.logging import get_logger
-
-if TYPE_CHECKING:
-    from agiwo.scheduler.engine import Scheduler
 
 logger = get_logger(__name__)
 
@@ -60,25 +57,25 @@ def _ackable_wait_events(
     return tuple(ackable)
 
 
-async def tick(sched: "Scheduler") -> None:
-    await propagate_signals(sched)
+async def tick(ctx: EngineContext) -> None:
+    await propagate_signals(ctx)
     states = await list_all_states(
-        sched._store,
+        ctx.store,
         statuses=(
             AgentStateStatus.PENDING,
             AgentStateStatus.WAITING,
             AgentStateStatus.QUEUED,
         ),
     )
-    events = await sched._store.list_events()
+    events = await ctx.store.list_events()
     now = datetime.now(timezone.utc)
-    actions = plan_tick(sched, states, events, now=now)
+    actions = plan_tick(ctx, states, events, now=now)
     for action in actions:
-        await dispatch_action(sched, action)
+        await dispatch_action(ctx, action)
 
 
 def plan_tick(
-    sched: "Scheduler",
+    ctx: EngineContext,
     states: list[AgentState],
     events: list[PendingEvent],
     *,
@@ -101,8 +98,8 @@ def plan_tick(
     event_groups = group_events(events)
     debounced_targets = select_debounced_event_targets(
         events,
-        min_count=sched._config.event_debounce_min_count,
-        max_wait_seconds=sched._config.event_debounce_max_wait_seconds,
+        min_count=ctx.config.event_debounce_min_count,
+        max_wait_seconds=ctx.config.event_debounce_max_wait_seconds,
         now=now,
     )
 
@@ -168,9 +165,9 @@ def plan_tick(
     return actions
 
 
-async def dispatch_action(sched: "Scheduler", action: DispatchAction) -> None:
+async def dispatch_action(ctx: EngineContext, action: DispatchAction) -> None:
     state = action.state
-    if state.id in sched._rt.dispatched:
+    if state.id in ctx.rt.dispatched:
         return
 
     if action.reason in (
@@ -178,32 +175,32 @@ async def dispatch_action(sched: "Scheduler", action: DispatchAction) -> None:
         DispatchReason.WAKE_EVENTS,
         DispatchReason.WAKE_TIMEOUT,
     ):
-        rejection = await sched._guard.check_wake(state)
+        rejection = await ctx.guard.check_wake(state)
         if rejection is not None:
-            await sched._save_state(state.with_failed(f"Wake rejected: {rejection}"))
+            await ctx.save_state(state.with_failed(f"Wake rejected: {rejection}"))
             return
 
-    sched._rt.dispatched.add(state.id)
-    task = asyncio.create_task(sched._runner.run(action))
-    sched._track_active_task(task)
+    ctx.rt.dispatched.add(state.id)
+    task = asyncio.create_task(ctx.runner.run(action))
+    ctx.track_active_task(task)
 
 
-async def propagate_signals(sched: "Scheduler") -> None:
-    candidates = await sched._store.list_states(
+async def propagate_signals(ctx: EngineContext) -> None:
+    candidates = await ctx.store.list_states(
         statuses=(AgentStateStatus.COMPLETED, AgentStateStatus.FAILED),
         signal_propagated=False,
-        limit=1000,
+        limit=ctx.state_list_page_size,
     )
     for state in candidates:
         if not state.is_child or state.signal_propagated:
             continue
 
-        parent = await sched._store.get_state(state.parent_id or "")
+        parent = await ctx.store.get_state(state.parent_id or "")
         if parent is not None and parent.wake_condition is not None:
             completed_ids = list(parent.wake_condition.completed_ids)
             if state.id not in completed_ids:
                 completed_ids.append(state.id)
-                await sched._save_state(
+                await ctx.save_state(
                     parent.with_updates(
                         wake_condition=parent.wake_condition.with_completed_ids(
                             completed_ids
@@ -211,4 +208,4 @@ async def propagate_signals(sched: "Scheduler") -> None:
                     )
                 )
 
-        await sched._save_state(state.with_signal_propagated())
+        await ctx.save_state(state.with_signal_propagated())

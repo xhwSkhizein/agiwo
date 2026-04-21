@@ -23,7 +23,11 @@ CancelChildOutcome = Literal[
     "requires_force",
     "cancelled",
 ]
-RouteStreamMode = Literal["run_end", "until_settled"]
+
+
+class RouteStreamMode(str, Enum):
+    RUN_END = "run_end"
+    UNTIL_SETTLED = "until_settled"
 
 
 class DispatchReason(str, Enum):

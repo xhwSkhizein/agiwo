@@ -15,9 +15,16 @@ logger = get_logger(__name__)
 class TaskGuard:
     """Centralized limit checker — the single entry point for all scheduling limits."""
 
-    def __init__(self, limits: TaskLimits, store: AgentStateStorage) -> None:
+    def __init__(
+        self,
+        limits: TaskLimits,
+        store: AgentStateStorage,
+        *,
+        state_list_page_size: int = 1000,
+    ) -> None:
         self._limits = limits
         self._store = store
+        self._state_list_page_size = state_list_page_size
 
     @property
     def limits(self) -> TaskLimits:
@@ -41,7 +48,7 @@ class TaskGuard:
         children = await self._store.list_states(
             parent_id=parent_state.id,
             session_id=parent_state.session_id,
-            limit=1000,
+            limit=self._state_list_page_size,
         )
         active_children = [c for c in children if c.status in ACTIVE_AGENT_STATUSES]
         if len(active_children) >= self._limits.max_children_per_agent:

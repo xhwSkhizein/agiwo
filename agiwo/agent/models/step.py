@@ -211,6 +211,7 @@ class StepRecord:
         tool_calls: list[dict] | None = None,
         reasoning_content: str | None = None,
         metrics: StepMetrics | None = None,
+        name: str | None = None,
         **overrides: Any,
     ) -> "StepRecord":
         context_attrs = _build_step_context_attrs(ctx, overrides)
@@ -221,6 +222,7 @@ class StepRecord:
             reasoning_content=reasoning_content,
             tool_calls=tool_calls,
             metrics=metrics,
+            name=name,
             **context_attrs,
         )
 

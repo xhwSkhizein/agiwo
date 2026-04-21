@@ -38,7 +38,7 @@ class DefaultAgentConfig(BaseModel):
 
     @field_validator("allowed_tools", mode="before")
     @classmethod
-    def _normalize_allowed_tools(cls, value: object) -> list[str] | None:
+    def _parse_allowed_tools(cls, value: object) -> list[str] | None:
         if value is None:
             return None
         if isinstance(value, str):

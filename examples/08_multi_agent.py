@@ -44,9 +44,13 @@ async def main() -> None:
         print("=== Fan Out: Researching topics ===")
         state_ids = []
         for topic in topics:
-            state_id = await scheduler.submit(researcher, f"Research: {topic}")
-            state_ids.append(state_id)
-            print(f"  Submitted: {topic} → {state_id}")
+            route_result = await scheduler.route_root_input(
+                f"Research: {topic}",
+                agent=researcher,
+                stream_mode=RouteStreamMode.UNTIL_SETTLED,
+            )
+            state_ids.append(route_result.state_id)
+            print(f"  Submitted: {topic} → {route_result.state_id}")
 
         # Fan in: collect all results
         print("\n=== Fan In: Collecting results ===")
@@ -59,11 +63,16 @@ async def main() -> None:
         # Synthesize
         print("\n=== Synthesizing ===")
         combined = "\n\n".join(findings)
-        final = await scheduler.run(
-            synthesizer,
+        route_result = await scheduler.route_root_input(
             f"Compare and contrast these programming language approaches:\n\n{combined}",
+            agent=synthesizer,
+            stream_mode=RouteStreamMode.RUN_END,
         )
-        print(f"\n{final.response}")
+        # Consume stream to get result
+        async for item in route_result.stream:
+            if item.type == "run_output":
+                print(f"\n{item.content.response}")
+                break
 
     await researcher.close()
     await synthesizer.close()

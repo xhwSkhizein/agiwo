@@ -57,10 +57,10 @@ def check_retrospect_trigger(
 
     if token_estimate >= config.retrospect_token_threshold:
         return RetrospectTrigger.LARGE_RESULT
-    if ledger.retrospect_pending_rounds >= config.retrospect_round_interval:
+    if ledger.retrospect.pending_rounds >= config.retrospect_round_interval:
         return RetrospectTrigger.ROUND_INTERVAL
     if (
-        ledger.retrospect_pending_tokens
+        ledger.retrospect.pending_tokens
         >= config.retrospect_accumulated_token_threshold
     ):
         return RetrospectTrigger.TOKEN_ACCUMULATED
@@ -70,8 +70,8 @@ def check_retrospect_trigger(
 def update_retrospect_tracking(ledger: RunLedger, content: str) -> None:
     """Accumulate retrospect tracking counters after a tool result."""
     token_estimate = len(content) // 4
-    ledger.retrospect_pending_tokens += token_estimate
-    ledger.retrospect_pending_rounds += 1
+    ledger.retrospect.pending_tokens += token_estimate
+    ledger.retrospect.pending_rounds += 1
 
 
 def inject_system_notice(content: str, trigger: RetrospectTrigger) -> str:

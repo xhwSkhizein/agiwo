@@ -10,6 +10,7 @@ from agiwo.llm.config_policy import sanitize_model_params_data
 from agiwo.skill.allowlist import normalize_allowed_skills
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.manager import get_global_tool_manager
+from agiwo.tool.reference import AgentToolReference
 from server.models.agent_config import sanitize_agent_options_data
 
 
@@ -50,11 +51,16 @@ class AgentConfigRecord(BaseModel):
             )
         )
         if normalized.get("allowed_tools") is not None:
-            normalized["allowed_tools"] = (
-                get_global_tool_manager().normalize_allowed_tools(
-                    list(normalized["allowed_tools"])
-                )
+            # Validate agent: references before parsing
+            for name in normalized["allowed_tools"]:
+                if isinstance(name, str) and name.startswith("agent:"):
+                    agent_ref = AgentToolReference.parse(name)
+                    if agent_ref is None or not agent_ref.agent_id:
+                        raise ValueError("Empty agent id in agent: reference")
+            refs = get_global_tool_manager().parse_allowed_tools(
+                list(normalized["allowed_tools"])
             )
+            normalized["allowed_tools"] = [str(ref) for ref in refs] if refs else []
         return normalized
 
 

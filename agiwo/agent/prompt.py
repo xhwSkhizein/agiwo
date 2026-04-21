@@ -1,7 +1,6 @@
 """System prompt construction."""
 
 import asyncio
-import copy
 import locale
 import platform
 from datetime import datetime
@@ -207,11 +206,15 @@ def apply_steering_messages(
     messages: list[dict[str, Any]],
     steering_queue: asyncio.Queue[object] | None,
 ) -> list[dict[str, Any]]:
-    updated_messages = copy.deepcopy(messages)
-    if steering_queue is None or steering_queue.empty():
-        return updated_messages
+    """Append any pending steer inputs to ``messages`` and return it.
 
-    steering_messages: list[dict[str, Any]] = []
+    The caller owns ``messages`` (typically a fresh ``state.snapshot_messages()``
+    deep copy).  This function mutates and returns the same list so we avoid a
+    per-turn deep copy of the entire conversation history.
+    """
+    if steering_queue is None or steering_queue.empty():
+        return messages
+
     while not steering_queue.empty():
         try:
             queued_input = steering_queue.get_nowait()
@@ -225,18 +228,14 @@ def apply_steering_messages(
         )
         if not normalized.has_content():
             continue
-        steering_messages.append(
+        messages.append(
             {
                 "role": "user",
                 "content": normalized.to_message_content(),
             }
         )
 
-    if not steering_messages:
-        return updated_messages
-
-    updated_messages.extend(steering_messages)
-    return updated_messages
+    return messages
 
 
 async def build_system_prompt(

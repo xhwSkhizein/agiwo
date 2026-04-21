@@ -1,7 +1,6 @@
 """Definition-scoped assembly helpers for Agent."""
 
 from dataclasses import dataclass, replace as dataclass_replace
-from typing import TYPE_CHECKING
 
 from agiwo.agent.models.config import AgentConfig
 from agiwo.agent.hooks import AgentHooks, DefaultMemoryHook
@@ -10,9 +9,6 @@ from agiwo.skill.allowlist import validate_expanded_allowed_skills
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
 from agiwo.workspace import AgentWorkspace, build_agent_workspace
-
-if TYPE_CHECKING:
-    from agiwo.agent.agent import Agent
 
 
 def validate_child_subset(
@@ -91,7 +87,8 @@ def resolve_agent_definition(
 
 
 def _resolve_child_extra_tools(
-    agent: "Agent",
+    parent_extra_tools: tuple[BaseTool, ...],
+    parent_agent_id: str,
     *,
     extra_tools: list[BaseTool] | None,
     inherit_all_extra_tools: bool,
@@ -99,20 +96,27 @@ def _resolve_child_extra_tools(
     """Resolve which extra tools a child agent should inherit.
 
     Args:
-        agent: Parent agent
+        parent_extra_tools: Parent agent's extra tools
+        parent_agent_id: Parent agent's ID (for filtering self-referencing AgentTool)
         extra_tools: Additional tools provided by caller
         inherit_all_extra_tools: If True, inherit all parent's extra_tools;
-            otherwise filter out non-inheritable tools (e.g., spawn_agent, self-referencing AgentTool)
+            otherwise filter out non-inheritable tools (e.g., self-referencing AgentTool)
 
     Returns:
         Merged list of extra tools (parent's inheritable tools + caller's tools),
         with caller's tools taking precedence on name conflicts.
     """
-    parent_extra = (
-        list(agent.extra_tools)
-        if inherit_all_extra_tools
-        else agent._get_inheritable_extra_tools()
-    )
+    if inherit_all_extra_tools:
+        parent_extra = list(parent_extra_tools)
+    else:
+        parent_extra = [
+            t
+            for t in parent_extra_tools
+            if not (
+                hasattr(t, "is_inheritable_by")
+                and not t.is_inheritable_by(parent_agent_id)
+            )
+        ]
 
     # Merge with deduplication while preserving order (parent first, then caller)
     seen: set[str] = set()
@@ -132,7 +136,9 @@ def _resolve_child_extra_tools(
 
 
 def resolve_child_definition(
-    agent: "Agent",
+    parent_config: AgentConfig,
+    parent_extra_tools: tuple[BaseTool, ...],
+    parent_agent_id: str,
     *,
     instruction: str | None,
     system_prompt_override: str | None,
@@ -145,8 +151,21 @@ def resolve_child_definition(
 
     This function handles both configuration resolution and extra tools inheritance,
     providing a single source of truth for child agent assembly.
+
+    Args:
+        parent_config: Parent agent's configuration
+        parent_extra_tools: Parent agent's extra tools
+        parent_agent_id: Parent agent's ID (for filtering self-referencing AgentTool)
+        instruction: Optional instruction for the child agent
+        system_prompt_override: Optional system prompt override
+        child_allowed_skills: Optional list of allowed skills for child
+        child_allowed_tools: Optional list of allowed tools for child
+        extra_tools: Additional tools provided by caller
+        inherit_all_extra_tools: If True, inherit all parent's extra_tools
+
+    Returns:
+        ResolvedChildDefinition with child config and resolved extra tools
     """
-    parent_config = agent.config
 
     # --- allowed_tools ---
     if child_allowed_tools is None:
@@ -180,8 +199,8 @@ def resolve_child_definition(
     child_options.enable_termination_summary = True
 
     child_config = AgentConfig(
-        name=agent.name,
-        description=agent.description,
+        name=parent_config.name,
+        description=parent_config.description,
         system_prompt=compose_child_system_prompt(
             base_prompt=parent_config.system_prompt,
             system_prompt_override=system_prompt_override,
@@ -194,7 +213,8 @@ def resolve_child_definition(
 
     # Resolve extra tools inheritance
     resolved_extra_tools = _resolve_child_extra_tools(
-        agent,
+        parent_extra_tools,
+        parent_agent_id,
         extra_tools=extra_tools,
         inherit_all_extra_tools=inherit_all_extra_tools,
     )
