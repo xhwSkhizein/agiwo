@@ -6,7 +6,7 @@ Merges compaction/runtime.py + messages.py + parser.py + prompt.py + transcript.
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -376,17 +376,13 @@ async def _compact(
         message_count=len(messages_to_backup),
         transcript_path=transcript_path,
         analysis=analysis,
-        created_at=datetime.now(),
+        created_at=datetime.now(timezone.utc),
         compact_model=getattr(model, "name", "unknown"),
         compact_tokens=(step.metrics.total_tokens if step.metrics else 0),
     )
 
     replace_messages(state, compacted_messages)
     record_compaction_metadata(state, metadata)
-    await state.session_runtime.save_compact_metadata(
-        state.agent_id,
-        metadata,
-    )
     rebuilt_entry = build_messages_rebuilt_entry(
         state,
         sequence=await state.session_runtime.allocate_sequence(),

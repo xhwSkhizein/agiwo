@@ -12,7 +12,14 @@ from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from uuid import uuid4
 
-from agiwo.agent import Agent, AgentStreamItem, RunOutput, TerminationReason, UserInput
+from agiwo.agent import (
+    Agent,
+    AgentStreamItem,
+    RunOutput,
+    TerminationReason,
+    UserInput,
+    build_committed_step_entry,
+)
 from agiwo.scheduler.commands import DispatchAction, DispatchReason
 from agiwo.scheduler.formatting import (
     SHUTDOWN_SUMMARY_TASK,
@@ -175,28 +182,30 @@ class SchedulerRunner:
         parent_session_id = parent_state.resolve_runtime_session_id()
         child_session_id = state.resolve_runtime_session_id()
 
-        parent_steps = await parent.run_step_storage.get_steps(
+        parent_steps = await parent.run_step_storage.list_step_views(
             session_id=parent_session_id,
             agent_id=state.parent_id,
         )
         if not parent_steps:
             return
 
-        forked_steps = [
-            dataclasses.replace(
-                step,
-                id=str(uuid4()),
-                session_id=child_session_id,
-                agent_id=state.id,
+        forked_entries = [
+            build_committed_step_entry(
+                dataclasses.replace(
+                    step,
+                    id=str(uuid4()),
+                    session_id=child_session_id,
+                    agent_id=state.id,
+                )
             )
             for step in parent_steps
         ]
-        await child.run_step_storage.save_steps_batch(forked_steps)
+        await child.run_step_storage.append_entries(forked_entries)
         logger.info(
             "fork_steps_copied",
             parent_id=state.parent_id,
             child_id=state.id,
-            steps_count=len(forked_steps),
+            steps_count=len(forked_entries),
         )
 
     async def _build_wake_message(self, state: AgentState) -> UserInput:

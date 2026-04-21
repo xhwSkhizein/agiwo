@@ -17,10 +17,11 @@ from agiwo.agent.models.log import (
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
+    build_committed_step_entry,
 )
 from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import CompactMetadata, RunOutput, TerminationReason
-from agiwo.agent.models.step import LLMCallContext, StepRecord
+from agiwo.agent.models.step import LLMCallContext, StepRecord, StepView
 from agiwo.agent.runtime.context import RunContext
 
 
@@ -38,6 +39,7 @@ def build_run_started_entry(
         user_input=user_input,
         user_id=state.user_id,
         parent_run_id=state.parent_run_id,
+        depth=state.depth,
     )
 
 
@@ -128,29 +130,9 @@ def build_llm_call_completed_entry(
 
 
 def build_step_log_entry(
-    step: StepRecord,
+    step: StepRecord | StepView,
 ) -> UserStepCommitted | AssistantStepCommitted | ToolStepCommitted:
-    common = {
-        "sequence": step.sequence,
-        "session_id": step.session_id,
-        "run_id": step.run_id,
-        "agent_id": step.agent_id or "",
-        "role": step.role,
-        "content": step.content,
-        "content_for_user": step.content_for_user,
-        "reasoning_content": step.reasoning_content,
-        "user_input": step.user_input,
-        "tool_calls": step.tool_calls,
-        "tool_call_id": step.tool_call_id,
-        "name": step.name,
-        "metrics": step.metrics,
-        "condensed_content": step.condensed_content,
-    }
-    if step.is_user_step():
-        return UserStepCommitted(**common)
-    if step.is_assistant_step():
-        return AssistantStepCommitted(**common)
-    return ToolStepCommitted(**common, is_error=step.is_error)
+    return build_committed_step_entry(step)
 
 
 def build_hook_failed_entry(
@@ -202,8 +184,15 @@ def build_compaction_applied_entry(
         agent_id=state.agent_id,
         start_sequence=metadata.start_seq,
         end_sequence=metadata.end_seq,
+        before_token_estimate=metadata.before_token_estimate,
+        after_token_estimate=metadata.after_token_estimate,
+        message_count=metadata.message_count,
         transcript_path=metadata.transcript_path,
+        analysis=dict(metadata.analysis),
         summary=metadata.get_summary() or None,
+        compact_model=metadata.compact_model,
+        compact_tokens=metadata.compact_tokens,
+        created_at=metadata.created_at,
     )
 
 

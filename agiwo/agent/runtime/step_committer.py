@@ -17,7 +17,6 @@ async def commit_step(
 ) -> StepRecord:
     if track_state:
         track_step_state(state, step, append_message=append_message)
-    await state.session_runtime.run_step_storage.save_step(step)
     await state.session_runtime.append_run_log_entries([build_step_log_entry(step)])
     if state.session_runtime.trace_runtime is not None:
         await state.session_runtime.trace_runtime.on_step(step, llm)

@@ -5,7 +5,7 @@ import pytest
 from agiwo.agent import ContentPart, ContentType, UserMessage
 from agiwo.agent.models.log import RunFinished, RunStarted
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.models.run import Run, RunMetrics, RunStatus
+from agiwo.agent.models.run import RunMetrics
 from server.models.session import Session
 from server.services.runtime.session_view_service import SessionViewService
 
@@ -34,38 +34,6 @@ def _make_session(session_id: str, agent_id: str = "agent-a") -> Session:
         chat_context_scope_id=None,
         base_agent_id=agent_id,
         created_by="test",
-        created_at=now,
-        updated_at=now,
-    )
-
-
-def _make_run(
-    run_id: str,
-    session_id: str,
-    agent_id: str,
-    user_input,
-    response_content: str | None,
-) -> Run:
-    now = datetime.now(timezone.utc)
-    return Run(
-        id=run_id,
-        session_id=session_id,
-        agent_id=agent_id,
-        user_id=None,
-        user_input=user_input,
-        status=RunStatus.COMPLETED,
-        response_content=response_content,
-        metrics=RunMetrics(
-            steps_count=1,
-            tool_calls_count=0,
-            duration_ms=1.0,
-            input_tokens=10,
-            output_tokens=5,
-            total_tokens=15,
-            cache_read_tokens=0,
-            cache_creation_tokens=0,
-            token_cost=0.01,
-        ),
         created_at=now,
         updated_at=now,
     )
@@ -108,9 +76,6 @@ async def test_list_sessions_returns_summary_with_latest_run() -> None:
     store = FakeSessionStore([session])
     storage = InMemoryRunStepStorage()
 
-    await storage.save_run(
-        _make_run("run-1", "sess-1", "agent-a", "first input", "old-response")
-    )
     await _append_run_view_entries(
         storage,
         session_id="sess-1",
@@ -121,9 +86,6 @@ async def test_list_sessions_returns_summary_with_latest_run() -> None:
     )
     structured_input = UserMessage.serialize(
         [ContentPart(type=ContentType.TEXT, text="latest")]
-    )
-    await storage.save_run(
-        _make_run("run-2", "sess-1", "agent-a", structured_input, "new-response")
     )
     await _append_run_view_entries(
         storage,
@@ -156,8 +118,17 @@ async def test_get_session_detail_populates_metrics() -> None:
     store = FakeSessionStore([session])
     storage = InMemoryRunStepStorage()
 
-    run = _make_run("run-1", "sess-1", "agent-a", "hello", "world")
-    await storage.save_run(run)
+    metrics = RunMetrics(
+        steps_count=1,
+        tool_calls_count=0,
+        duration_ms=1.0,
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        cache_read_tokens=0,
+        cache_creation_tokens=0,
+        token_cost=0.01,
+    )
     await _append_run_view_entries(
         storage,
         session_id="sess-1",
@@ -165,7 +136,7 @@ async def test_get_session_detail_populates_metrics() -> None:
         agent_id="agent-a",
         user_input="hello",
         response="world",
-        metrics=run.metrics,
+        metrics=metrics,
     )
 
     service = SessionViewService(

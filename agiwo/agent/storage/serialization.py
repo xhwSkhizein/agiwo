@@ -261,7 +261,7 @@ def build_run_views_from_entries(entries: list[RunLogEntry]) -> list[RunView]:
 
 def build_step_view_from_entry(entry: CommittedStep) -> StepView:
     return StepView(
-        id=f"{entry.run_id}:{entry.sequence}",
+        id=entry.step_id,
         sequence=entry.sequence,
         session_id=entry.session_id,
         run_id=entry.run_id,
@@ -274,9 +274,36 @@ def build_step_view_from_entry(entry: CommittedStep) -> StepView:
         tool_calls=entry.tool_calls,
         tool_call_id=entry.tool_call_id,
         name=entry.name,
+        is_error=getattr(entry, "is_error", False),
         condensed_content=entry.condensed_content,
         metrics=entry.metrics,
         created_at=entry.created_at,
+        parent_run_id=entry.parent_run_id,
+        depth=entry.depth,
+    )
+
+
+def build_step_view_from_record(step: StepRecord) -> StepView:
+    return StepView(
+        id=step.id,
+        sequence=step.sequence,
+        session_id=step.session_id,
+        run_id=step.run_id,
+        agent_id=step.agent_id,
+        role=step.role,
+        content=step.content,
+        content_for_user=step.content_for_user,
+        reasoning_content=step.reasoning_content,
+        user_input=step.user_input,
+        tool_calls=step.tool_calls,
+        tool_call_id=step.tool_call_id,
+        name=step.name,
+        is_error=step.is_error,
+        condensed_content=step.condensed_content,
+        metrics=step.metrics,
+        created_at=step.created_at,
+        parent_run_id=step.parent_run_id,
+        depth=step.depth,
     )
 
 
@@ -291,10 +318,36 @@ def build_step_views_from_entries(entries: list[RunLogEntry]) -> list[StepView]:
     ]
 
 
+def build_step_record_from_view(step: StepView) -> StepRecord:
+    return StepRecord(
+        id=step.id or "",
+        session_id=step.session_id,
+        run_id=step.run_id,
+        sequence=step.sequence,
+        role=step.role,
+        agent_id=step.agent_id,
+        content=step.content,
+        content_for_user=step.content_for_user,
+        reasoning_content=step.reasoning_content,
+        user_input=step.user_input,
+        tool_calls=step.tool_calls,
+        tool_call_id=step.tool_call_id,
+        name=step.name,
+        is_error=step.is_error,
+        condensed_content=step.condensed_content,
+        metrics=step.metrics,
+        created_at=step.created_at or datetime.now(timezone.utc),
+        parent_run_id=step.parent_run_id,
+        depth=step.depth,
+    )
+
+
 __all__ = [
     "build_run_view_from_run",
     "build_run_view_from_entries",
     "build_run_views_from_entries",
+    "build_step_record_from_view",
+    "build_step_view_from_record",
     "build_step_view_from_entry",
     "build_step_views_from_entries",
     "deserialize_run_log_entry_from_storage",

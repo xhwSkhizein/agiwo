@@ -97,6 +97,7 @@ class StepView:
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     name: str | None = None
+    is_error: bool = False
     condensed_content: str | None = None
     metrics: StepMetrics | None = None
     created_at: datetime | None = None
@@ -108,6 +109,34 @@ class StepView:
         payload["user_input"] = _serialize_user_input_structured(self.user_input)
         payload["metrics"] = self.metrics.to_dict() if self.metrics else None
         return payload
+
+    def is_user_step(self) -> bool:
+        return self.role == MessageRole.USER
+
+    def is_assistant_step(self) -> bool:
+        return self.role == MessageRole.ASSISTANT
+
+    def is_tool_step(self) -> bool:
+        return self.role == MessageRole.TOOL
+
+    def to_message(self) -> dict[str, Any]:
+        msg: dict[str, Any] = {"role": self.role.value, "_sequence": self.sequence}
+        effective_content = (
+            self.condensed_content
+            if self.condensed_content is not None
+            else self.content
+        )
+        if effective_content is not None:
+            msg["content"] = effective_content
+        if self.reasoning_content is not None:
+            msg["reasoning_content"] = self.reasoning_content
+        if self.tool_calls is not None:
+            msg["tool_calls"] = self.tool_calls
+        if self.tool_call_id is not None:
+            msg["tool_call_id"] = self.tool_call_id
+        if self.name is not None:
+            msg["name"] = self.name
+        return msg
 
 
 @dataclass

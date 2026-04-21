@@ -9,8 +9,10 @@ from abc import ABC, abstractmethod
 from agiwo.agent.models.log import RunLogEntry
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
+    CompactionApplied,
     ToolStepCommitted,
     UserStepCommitted,
+    build_compact_metadata_from_entry,
 )
 from agiwo.agent.models.run import CompactMetadata, Run, RunView
 from agiwo.agent.models.step import StepRecord, StepView
@@ -18,6 +20,8 @@ from agiwo.agent.storage.serialization import (
     build_run_view_from_run,
     build_run_view_from_entries,
     build_run_views_from_entries,
+    build_step_record_from_view,
+    build_step_view_from_record,
     build_step_views_from_entries,
 )
 
@@ -183,7 +187,12 @@ class RunStepStorage(RunLogStorage, ABC):
 
     async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
         """Count replayable runs for multiple sessions in one call."""
-        return await self.batch_count_runs(session_ids)
+        result: dict[str, int] = {}
+        for session_id in session_ids:
+            result[session_id] = len(
+                await self.list_run_views(session_id=session_id, limit=100_000)
+            )
+        return result
 
     async def batch_get_step_counts(self, session_ids: list[str]) -> dict[str, int]:
         """Get step counts for multiple sessions in one call.
@@ -235,12 +244,14 @@ class RunStepStorage(RunLogStorage, ABC):
     async def get_latest_run_view(self, session_id: str) -> RunView | None:
         entries = await self.list_entries(session_id=session_id, limit=100_000)
         if not entries:
-            return None
+            runs = await self.list_run_views(session_id=session_id, limit=1)
+            return runs[0] if runs else None
         latest_by_run_id: dict[str, list[RunLogEntry]] = {}
         for entry in entries:
             latest_by_run_id.setdefault(entry.run_id, []).append(entry)
         if not latest_by_run_id:
-            return None
+            runs = await self.list_run_views(session_id=session_id, limit=1)
+            return runs[0] if runs else None
         latest_entries = max(
             latest_by_run_id.values(),
             key=lambda run_entries: run_entries[-1].sequence,
@@ -257,7 +268,7 @@ class RunStepStorage(RunLogStorage, ABC):
 
     async def get_committed_step_count(self, session_id: str) -> int:
         entries = await self.list_entries(session_id=session_id, limit=100_000)
-        return sum(
+        committed = sum(
             1
             for entry in entries
             if isinstance(
@@ -265,6 +276,9 @@ class RunStepStorage(RunLogStorage, ABC):
                 (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
             )
         )
+        if committed == 0:
+            return await self.get_step_count(session_id)
+        return committed
 
     async def batch_get_committed_step_counts(
         self, session_ids: list[str]
@@ -290,7 +304,27 @@ class RunStepStorage(RunLogStorage, ABC):
             agent_id=agent_id,
             limit=100_000,
         )
+        if not entries:
+            steps = await self.get_steps(
+                session_id,
+                start_seq=start_seq,
+                end_seq=end_seq,
+                run_id=run_id,
+                agent_id=agent_id,
+                limit=limit,
+            )
+            return [build_step_view_from_record(step) for step in steps]
         step_views = build_step_views_from_entries(entries)
+        if not step_views:
+            steps = await self.get_steps(
+                session_id,
+                start_seq=start_seq,
+                end_seq=end_seq,
+                run_id=run_id,
+                agent_id=agent_id,
+                limit=limit,
+            )
+            return [build_step_view_from_record(step) for step in steps]
         if start_seq is not None:
             step_views = [step for step in step_views if step.sequence >= start_seq]
         if end_seq is not None:
@@ -336,13 +370,31 @@ class RunStepStorage(RunLogStorage, ABC):
         self, session_id: str, agent_id: str
     ) -> CompactMetadata | None:
         """Get the most recent compact metadata."""
+        entries = await self.list_entries(
+            session_id=session_id,
+            agent_id=agent_id,
+            limit=100_000,
+        )
+        compact_entries = [
+            entry for entry in entries if isinstance(entry, CompactionApplied)
+        ]
+        if compact_entries:
+            return build_compact_metadata_from_entry(compact_entries[-1])
         return None
 
     async def get_compact_history(
         self, session_id: str, agent_id: str
     ) -> list[CompactMetadata]:
         """Get all compact metadata history (sorted by created_at ascending)."""
-        return []
+        entries = await self.list_entries(
+            session_id=session_id,
+            agent_id=agent_id,
+            limit=100_000,
+        )
+        compact_entries = [
+            entry for entry in entries if isinstance(entry, CompactionApplied)
+        ]
+        return [build_compact_metadata_from_entry(entry) for entry in compact_entries]
 
 
 class InMemoryRunStepStorage(RunStepStorage):
@@ -370,6 +422,15 @@ class InMemoryRunStepStorage(RunStepStorage):
             bucket = self.run_log_entries.setdefault(entry.session_id, [])
             bucket.append(entry)
             bucket.sort(key=lambda item: item.sequence)
+
+    def _has_committed_step_entries(self, session_id: str) -> bool:
+        return any(
+            isinstance(
+                entry,
+                (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
+            )
+            for entry in self.run_log_entries.get(session_id, [])
+        )
 
     async def list_entries(
         self,
@@ -435,6 +496,13 @@ class InMemoryRunStepStorage(RunStepStorage):
         )
         for sid in session_ids:
             entries.extend(self.run_log_entries.get(sid, []))
+        if not entries:
+            return await super().list_run_views(
+                user_id=user_id,
+                session_id=session_id,
+                limit=limit,
+                offset=offset,
+            )
         run_views = build_run_views_from_entries(entries)
         if user_id is not None:
             run_views = [view for view in run_views if view.user_id == user_id]
@@ -443,9 +511,8 @@ class InMemoryRunStepStorage(RunStepStorage):
     async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
         result: dict[str, int] = {sid: 0 for sid in session_ids}
         for sid in session_ids:
-            result[sid] = len(
-                build_run_views_from_entries(self.run_log_entries.get(sid, []))
-            )
+            count = len(build_run_views_from_entries(self.run_log_entries.get(sid, [])))
+            result[sid] = count if count > 0 else await self.count_runs(sid)
         return result
 
     async def count_runs(self, session_id: str) -> int:
@@ -550,6 +617,17 @@ class InMemoryRunStepStorage(RunStepStorage):
         agent_id: str | None = None,
         limit: int = 1000,
     ) -> list[StepRecord]:
+        if self._has_committed_step_entries(session_id):
+            step_views = await self.list_step_views(
+                session_id=session_id,
+                start_seq=start_seq,
+                end_seq=end_seq,
+                run_id=run_id,
+                agent_id=agent_id,
+                limit=limit,
+            )
+            return [build_step_record_from_view(step) for step in step_views]
+
         steps = self.steps.get(session_id, [])
 
         if start_seq is not None:
@@ -564,6 +642,9 @@ class InMemoryRunStepStorage(RunStepStorage):
         return steps[:limit]
 
     async def get_last_step(self, session_id: str) -> StepRecord | None:
+        if self._has_committed_step_entries(session_id):
+            steps = await self.get_steps(session_id, limit=1_000_000)
+            return steps[-1] if steps else None
         steps = self.steps.get(session_id, [])
         return steps[-1] if steps else None
 
@@ -586,6 +667,41 @@ class InMemoryRunStepStorage(RunStepStorage):
         step_id: str,
         condensed_content: str,
     ) -> bool:
+        bucket = self.run_log_entries.get(session_id, [])
+        for index, entry in enumerate(bucket):
+            if not isinstance(
+                entry,
+                (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
+            ):
+                continue
+            if entry.step_id != step_id:
+                continue
+            bucket[index] = type(entry)(
+                sequence=entry.sequence,
+                session_id=entry.session_id,
+                run_id=entry.run_id,
+                agent_id=entry.agent_id,
+                step_id=entry.step_id,
+                role=entry.role,
+                content=entry.content,
+                content_for_user=entry.content_for_user,
+                reasoning_content=entry.reasoning_content,
+                user_input=entry.user_input,
+                tool_calls=entry.tool_calls,
+                tool_call_id=entry.tool_call_id,
+                name=entry.name,
+                metrics=entry.metrics,
+                condensed_content=condensed_content,
+                parent_run_id=entry.parent_run_id,
+                depth=entry.depth,
+                created_at=entry.created_at,
+                **(
+                    {"is_error": entry.is_error}
+                    if isinstance(entry, ToolStepCommitted)
+                    else {}
+                ),
+            )
+            return True
         id_idx = self._id_index.get(session_id, {})
         idx = id_idx.get(step_id)
         if idx is None:
@@ -595,9 +711,14 @@ class InMemoryRunStepStorage(RunStepStorage):
         return True
 
     async def get_step_count(self, session_id: str) -> int:
+        if self._has_committed_step_entries(session_id):
+            return await self.get_committed_step_count(session_id)
         return len(self.steps.get(session_id, []))
 
     async def get_max_sequence(self, session_id: str) -> int:
+        if self.run_log_entries.get(session_id):
+            entries = self.run_log_entries.get(session_id, [])
+            return max((entry.sequence for entry in entries), default=0)
         steps = self.steps.get(session_id, [])
         if not steps:
             return 0
@@ -636,6 +757,9 @@ class InMemoryRunStepStorage(RunStepStorage):
     async def get_latest_compact_metadata(
         self, session_id: str, agent_id: str
     ) -> CompactMetadata | None:
+        metadata = await super().get_latest_compact_metadata(session_id, agent_id)
+        if metadata is not None:
+            return metadata
         key = self._compact_key(session_id, agent_id)
         history = self._compact_history.get(key, [])
         return history[-1] if history else None
@@ -643,6 +767,9 @@ class InMemoryRunStepStorage(RunStepStorage):
     async def get_compact_history(
         self, session_id: str, agent_id: str
     ) -> list[CompactMetadata]:
+        history = await super().get_compact_history(session_id, agent_id)
+        if history:
+            return history
         key = self._compact_key(session_id, agent_id)
         return list(self._compact_history.get(key, []))
 

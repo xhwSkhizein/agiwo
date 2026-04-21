@@ -27,6 +27,7 @@ from agiwo.agent.models.input import (
 )
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
+    build_committed_step_entry,
     CommittedStep,
     CompactionApplied,
     ContextAssembled,
@@ -85,6 +86,7 @@ __all__ = [
     "AgentStreamItem",
     "AgentStreamItemBase",
     "AssistantStepCommitted",
+    "build_committed_step_entry",
     "ChannelContext",
     "CommittedStep",
     "CompactionAppliedEvent",

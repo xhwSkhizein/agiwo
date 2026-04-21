@@ -6,7 +6,8 @@ from enum import Enum
 from typing import Any
 
 from agiwo.agent.models.input import MessageContent, UserInput
-from agiwo.agent.models.step import MessageRole, StepMetrics
+from agiwo.agent.models.run import CompactMetadata
+from agiwo.agent.models.step import MessageRole, StepMetrics, StepRecord, StepView
 from agiwo.config.termination import TerminationReason
 
 
@@ -46,6 +47,7 @@ class RunStarted(RunLogEntry):
     user_input: UserInput | None = None
     user_id: str | None = None
     parent_run_id: str | None = None
+    depth: int = 0
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_STARTED)
 
 
@@ -98,6 +100,7 @@ class LLMCallCompleted(RunLogEntry):
 
 @dataclass(frozen=True, kw_only=True)
 class CommittedStep(RunLogEntry):
+    step_id: str
     role: MessageRole
     content: MessageContent | None = None
     content_for_user: str | None = None
@@ -108,6 +111,8 @@ class CommittedStep(RunLogEntry):
     name: str | None = None
     metrics: StepMetrics | None = None
     condensed_content: str | None = None
+    parent_run_id: str | None = None
+    depth: int = 0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -136,8 +141,14 @@ class ToolStepCommitted(CommittedStep):
 class CompactionApplied(RunLogEntry):
     start_sequence: int
     end_sequence: int
+    before_token_estimate: int
+    after_token_estimate: int
+    message_count: int
     transcript_path: str
+    analysis: dict[str, Any] = field(default_factory=dict)
     summary: str | None = None
+    compact_model: str = ""
+    compact_tokens: int = 0
     kind: RunLogEntryKind = field(
         init=False, default=RunLogEntryKind.COMPACTION_APPLIED
     )
@@ -173,8 +184,55 @@ class HookFailed(RunLogEntry):
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.HOOK_FAILED)
 
 
+def build_committed_step_entry(step: StepRecord | StepView) -> CommittedStep:
+    common = {
+        "sequence": step.sequence,
+        "session_id": step.session_id,
+        "run_id": step.run_id,
+        "agent_id": step.agent_id or "",
+        "step_id": step.id,
+        "role": step.role,
+        "content": step.content,
+        "content_for_user": step.content_for_user,
+        "reasoning_content": step.reasoning_content,
+        "user_input": step.user_input,
+        "tool_calls": step.tool_calls,
+        "tool_call_id": step.tool_call_id,
+        "name": step.name,
+        "metrics": step.metrics,
+        "condensed_content": step.condensed_content,
+        "parent_run_id": step.parent_run_id,
+        "depth": step.depth,
+        "created_at": step.created_at,
+    }
+    if step.role == MessageRole.USER:
+        return UserStepCommitted(**common)
+    if step.role == MessageRole.ASSISTANT:
+        return AssistantStepCommitted(**common)
+    return ToolStepCommitted(**common, is_error=step.is_error)
+
+
+def build_compact_metadata_from_entry(entry: CompactionApplied) -> CompactMetadata:
+    return CompactMetadata(
+        session_id=entry.session_id,
+        agent_id=entry.agent_id,
+        start_seq=entry.start_sequence,
+        end_seq=entry.end_sequence,
+        before_token_estimate=entry.before_token_estimate,
+        after_token_estimate=entry.after_token_estimate,
+        message_count=entry.message_count,
+        transcript_path=entry.transcript_path,
+        analysis=dict(entry.analysis),
+        created_at=entry.created_at,
+        compact_model=entry.compact_model,
+        compact_tokens=entry.compact_tokens,
+    )
+
+
 __all__ = [
     "AssistantStepCommitted",
+    "build_compact_metadata_from_entry",
+    "build_committed_step_entry",
     "CommittedStep",
     "CompactionApplied",
     "ContextAssembled",

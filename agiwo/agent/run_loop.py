@@ -142,7 +142,6 @@ class RunEngine:
             run.trace_id = self.context.session_runtime.trace_runtime.on_run_started(
                 run
             )
-        await self.context.session_runtime.save_run(run)
         await self.context.session_runtime.append_run_log_entries(
             [
                 build_run_started_entry(
@@ -173,7 +172,6 @@ class RunEngine:
             run.metrics = result.metrics
             run.metrics.start_at = preserved_start_at
             run.metrics.end_at = preserved_end_at
-        await self.context.session_runtime.save_run(run)
         if self.context.session_runtime.trace_runtime is not None:
             await self.context.session_runtime.trace_runtime.on_run_completed(
                 result,
@@ -203,7 +201,6 @@ class RunEngine:
         now = datetime.now(timezone.utc)
         run.updated_at = now
         run.metrics.end_at = now.timestamp()
-        await self.context.session_runtime.save_run(run)
         if self.context.session_runtime.trace_runtime is not None:
             await self.context.session_runtime.trace_runtime.on_run_failed(
                 error,
@@ -299,19 +296,17 @@ class RunEngine:
             user_input=user_input,
         )
         self.context.ledger.run_start_seq = user_step.sequence
-        last_compact = await run_step_storage.get_latest_compact_metadata(
-            self.context.session_id,
-            self.context.agent_id,
+        last_compact = await self.context.session_runtime.get_latest_compact_metadata(
+            self.context.agent_id
         )
         compact_start_seq = last_compact.end_seq + 1 if last_compact is not None else 0
-        existing_steps = await run_step_storage.get_steps(
+        existing_steps = await run_step_storage.list_step_views(
             session_id=self.context.session_id,
             agent_id=self.context.agent_id,
             start_seq=compact_start_seq if compact_start_seq > 0 else None,
         )
-        if all(step.id != user_step.id for step in existing_steps):
-            existing_steps.append(user_step)
-            existing_steps.sort(key=lambda step: step.sequence)
+        existing_steps.append(user_step)
+        existing_steps.sort(key=lambda step: step.sequence)
         user_message = UserMessage.from_value(user_input)
         replace_messages(
             self.context,

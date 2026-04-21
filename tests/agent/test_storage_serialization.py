@@ -342,6 +342,7 @@ def test_build_run_and_step_views_from_run_log_entries() -> None:
             session_id="session-1",
             run_id="run-1",
             agent_id="agent-1",
+            step_id="step-2",
             role=MessageRole.USER,
             content="hello",
             user_input="hello",
@@ -372,5 +373,5 @@ def test_build_run_and_step_views_from_run_log_entries() -> None:
     assert run_view.user_id == "user-1"
     assert run_view.parent_run_id == "parent-run-1"
     assert len(step_views) == 1
-    assert step_views[0].id == "run-1:2"
+    assert step_views[0].id == "step-2"
     assert step_views[0].content == "hello"

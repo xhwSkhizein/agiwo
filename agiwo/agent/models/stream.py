@@ -209,6 +209,8 @@ def _step_from_entry(entry: CommittedStep) -> StepRecord:
         session_id=entry.session_id,
         run_id=entry.run_id,
         agent_id=entry.agent_id,
+        parent_run_id=entry.parent_run_id,
+        depth=entry.depth,
     )
     if isinstance(entry, UserStepCommitted):
         step = StepRecord.user(
@@ -239,6 +241,7 @@ def _step_from_entry(entry: CommittedStep) -> StepRecord:
             is_error=entry.is_error,
             metrics=entry.metrics,
         )
+    step.id = entry.step_id
     step.created_at = entry.created_at
     step.condensed_content = entry.condensed_content
     if isinstance(entry, UserStepCommitted) and entry.user_input is None:
@@ -258,31 +261,50 @@ def _run_metrics_from_dict(data: dict[str, Any] | None) -> RunMetrics | None:
 
 def stream_items_from_entries(entries: list[RunLogEntry]) -> list["AgentStreamItem"]:
     items: list[AgentStreamItem] = []
+    run_contexts: dict[str, dict[str, Any]] = {}
     for entry in entries:
         if isinstance(entry, RunStarted):
-            items.append(RunStartedEvent(**_base_kwargs_from_entry(entry)))
+            run_contexts[entry.run_id] = {
+                "parent_run_id": entry.parent_run_id,
+                "depth": entry.depth,
+            }
+            base_kwargs = _base_kwargs_from_entry(entry)
+            base_kwargs["parent_run_id"] = entry.parent_run_id
+            base_kwargs["depth"] = entry.depth
+            items.append(RunStartedEvent(**base_kwargs))
         elif isinstance(
             entry,
             (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
         ):
+            base_kwargs = _base_kwargs_from_entry(entry)
+            base_kwargs["parent_run_id"] = entry.parent_run_id
+            base_kwargs["depth"] = entry.depth
             items.append(
                 StepCompletedEvent(
-                    **_base_kwargs_from_entry(entry),
+                    **base_kwargs,
                     step=_step_from_entry(entry),
                 )
             )
         elif isinstance(entry, MessagesRebuilt):
+            base_kwargs = _base_kwargs_from_entry(entry)
+            context = run_contexts.get(entry.run_id)
+            if context is not None:
+                base_kwargs.update(context)
             items.append(
                 MessagesRebuiltEvent(
-                    **_base_kwargs_from_entry(entry),
+                    **base_kwargs,
                     reason=entry.reason,
                     message_count=len(entry.messages),
                 )
             )
         elif isinstance(entry, CompactionApplied):
+            base_kwargs = _base_kwargs_from_entry(entry)
+            context = run_contexts.get(entry.run_id)
+            if context is not None:
+                base_kwargs.update(context)
             items.append(
                 CompactionAppliedEvent(
-                    **_base_kwargs_from_entry(entry),
+                    **base_kwargs,
                     start_sequence=entry.start_sequence,
                     end_sequence=entry.end_sequence,
                     transcript_path=entry.transcript_path,
@@ -290,9 +312,13 @@ def stream_items_from_entries(entries: list[RunLogEntry]) -> list["AgentStreamIt
                 )
             )
         elif isinstance(entry, RetrospectApplied):
+            base_kwargs = _base_kwargs_from_entry(entry)
+            context = run_contexts.get(entry.run_id)
+            if context is not None:
+                base_kwargs.update(context)
             items.append(
                 RetrospectAppliedEvent(
-                    **_base_kwargs_from_entry(entry),
+                    **base_kwargs,
                     affected_sequences=list(entry.affected_sequences),
                     affected_step_ids=list(entry.affected_step_ids),
                     feedback=entry.feedback,
@@ -301,27 +327,39 @@ def stream_items_from_entries(entries: list[RunLogEntry]) -> list["AgentStreamIt
                 )
             )
         elif isinstance(entry, TerminationDecided):
+            base_kwargs = _base_kwargs_from_entry(entry)
+            context = run_contexts.get(entry.run_id)
+            if context is not None:
+                base_kwargs.update(context)
             items.append(
                 TerminationDecidedEvent(
-                    **_base_kwargs_from_entry(entry),
+                    **base_kwargs,
                     termination_reason=entry.termination_reason,
                     phase=entry.phase,
                     source=entry.source,
                 )
             )
         elif isinstance(entry, RunFinished):
+            base_kwargs = _base_kwargs_from_entry(entry)
+            context = run_contexts.get(entry.run_id)
+            if context is not None:
+                base_kwargs.update(context)
             items.append(
                 RunCompletedEvent(
-                    **_base_kwargs_from_entry(entry),
+                    **base_kwargs,
                     response=entry.response,
                     metrics=_run_metrics_from_dict(entry.metrics),
                     termination_reason=entry.termination_reason,
                 )
             )
         elif isinstance(entry, RunFailed):
+            base_kwargs = _base_kwargs_from_entry(entry)
+            context = run_contexts.get(entry.run_id)
+            if context is not None:
+                base_kwargs.update(context)
             items.append(
                 RunFailedEvent(
-                    **_base_kwargs_from_entry(entry),
+                    **base_kwargs,
                     error=entry.error,
                 )
             )

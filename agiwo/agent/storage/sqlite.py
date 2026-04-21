@@ -13,6 +13,8 @@ from agiwo.agent.models.step import StepRecord, StepView
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.agent.storage.serialization import (
     build_run_view_from_entries,
+    build_step_record_from_view,
+    build_step_view_from_record,
     build_step_views_from_entries,
     deserialize_run_log_entry_from_storage,
     deserialize_run_from_storage,
@@ -280,6 +282,25 @@ class SQLiteRunStepStorage(RunStepStorage):
                 entries_by_run_id.setdefault(entry.run_id, []).append(entry)
         return entries_by_run_id
 
+    async def _session_has_committed_step_entries(self, session_id: str) -> bool:
+        conn = await self._ensure_connection()
+        async with conn.execute(
+            """
+            SELECT 1 FROM run_log_entries
+            WHERE session_id = ?
+              AND kind IN (?, ?, ?)
+            LIMIT 1
+            """,
+            (
+                session_id,
+                RunLogEntryKind.USER_STEP_COMMITTED.value,
+                RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
+                RunLogEntryKind.TOOL_STEP_COMMITTED.value,
+            ),
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row is not None
+
     # --- Run Operations ---
 
     async def save_run(self, run: Run) -> None:
@@ -360,6 +381,13 @@ class SQLiteRunStepStorage(RunStepStorage):
         async with conn.execute(query, params) as cursor:
             async for row in cursor:
                 started_entries.append(self._deserialize_run_log_entry(row))
+        if not started_entries:
+            return await super().list_run_views(
+                user_id=user_id,
+                session_id=session_id,
+                limit=limit,
+                offset=offset,
+            )
 
         run_views = [
             view
@@ -452,6 +480,17 @@ class SQLiteRunStepStorage(RunStepStorage):
         limit: int = 1000,
     ) -> list[StepRecord]:
         """Get steps for a session with optional filtering."""
+        if await self._session_has_committed_step_entries(session_id):
+            step_views = await self.list_step_views(
+                session_id=session_id,
+                start_seq=start_seq,
+                end_seq=end_seq,
+                run_id=run_id,
+                agent_id=agent_id,
+                limit=limit,
+            )
+            return [build_step_record_from_view(step) for step in step_views]
+
         conn = await self._ensure_connection()
         query = "SELECT * FROM steps WHERE session_id = ?"
         params: list[str | int | None] = [session_id]
@@ -480,6 +519,10 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     async def get_last_step(self, session_id: str) -> StepRecord | None:
         """Get the last step of a session."""
+        if await self._session_has_committed_step_entries(session_id):
+            steps = await self.get_steps(session_id, limit=1_000_000)
+            return steps[-1] if steps else None
+
         conn = await self._ensure_connection()
         async with conn.execute(
             "SELECT * FROM steps WHERE session_id = ? ORDER BY sequence DESC LIMIT 1",
@@ -507,6 +550,40 @@ class SQLiteRunStepStorage(RunStepStorage):
         condensed_content: str,
     ) -> bool:
         conn = await self._ensure_connection()
+        kinds = [
+            RunLogEntryKind.USER_STEP_COMMITTED.value,
+            RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
+            RunLogEntryKind.TOOL_STEP_COMMITTED.value,
+        ]
+        placeholders = ",".join("?" for _ in kinds)
+        async with conn.execute(
+            f"""
+            SELECT sequence, payload FROM run_log_entries
+            WHERE session_id = ? AND kind IN ({placeholders})
+            ORDER BY sequence ASC
+            """,
+            [session_id, *kinds],
+        ) as cursor:
+            rows = await cursor.fetchall()
+        for row in rows:
+            payload = self._loads(row["payload"])
+            if payload.get("step_id") != step_id:
+                continue
+            payload["condensed_content"] = condensed_content
+            await conn.execute(
+                """
+                UPDATE run_log_entries
+                SET payload = ?
+                WHERE session_id = ? AND sequence = ?
+                """,
+                (
+                    json.dumps(payload, ensure_ascii=False, default=str),
+                    session_id,
+                    row["sequence"],
+                ),
+            )
+            await conn.commit()
+            return True
         cursor = await conn.execute(
             "UPDATE steps SET condensed_content = ? WHERE session_id = ? AND id = ?",
             (condensed_content, session_id, step_id),
@@ -516,6 +593,9 @@ class SQLiteRunStepStorage(RunStepStorage):
 
     async def get_step_count(self, session_id: str) -> int:
         """Get total number of steps for a session."""
+        if await self._session_has_committed_step_entries(session_id):
+            return await self.get_committed_step_count(session_id)
+
         conn = await self._ensure_connection()
         async with conn.execute(
             "SELECT COUNT(*) FROM steps WHERE session_id = ?", (session_id,)
@@ -551,6 +631,17 @@ class SQLiteRunStepStorage(RunStepStorage):
         agent_id: str | None = None,
         limit: int = 1000,
     ) -> list[StepView]:
+        if not await self._session_has_committed_step_entries(session_id):
+            steps = await self.get_steps(
+                session_id,
+                start_seq=start_seq,
+                end_seq=end_seq,
+                run_id=run_id,
+                agent_id=agent_id,
+                limit=limit,
+            )
+            return [build_step_view_from_record(step) for step in steps]
+
         conn = await self._ensure_connection()
         kinds = [
             RunLogEntryKind.USER_STEP_COMMITTED.value,
@@ -591,6 +682,14 @@ class SQLiteRunStepStorage(RunStepStorage):
             Maximum sequence number, or 0 if no steps exist
         """
         conn = await self._ensure_connection()
+        async with conn.execute(
+            "SELECT MAX(sequence) FROM run_log_entries WHERE session_id = ?",
+            (session_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row is not None and row[0] is not None:
+                return row[0]
+
         async with conn.execute(
             "SELECT MAX(sequence) FROM steps WHERE session_id = ?", (session_id,)
         ) as cursor:
@@ -669,6 +768,12 @@ class SQLiteRunStepStorage(RunStepStorage):
         ) as cursor:
             async for row in cursor:
                 result[row[0]] = row[1]
+        missing = [session_id for session_id, count in result.items() if count == 0]
+        if missing:
+            legacy_counts = await self.batch_count_runs(missing)
+            for session_id, count in legacy_counts.items():
+                if count > 0:
+                    result[session_id] = count
         return result
 
     async def batch_get_step_counts(self, session_ids: list[str]) -> dict[str, int]:
@@ -712,6 +817,12 @@ class SQLiteRunStepStorage(RunStepStorage):
         ) as cursor:
             async for row in cursor:
                 result[row[0]] = row[1]
+        missing = [session_id for session_id, count in result.items() if count == 0]
+        if missing:
+            legacy_counts = await self.batch_get_step_counts(missing)
+            for session_id, count in legacy_counts.items():
+                if count > 0:
+                    result[session_id] = count
         return result
 
     async def batch_get_latest_runs(
@@ -769,6 +880,13 @@ class SQLiteRunStepStorage(RunStepStorage):
         tool_call_id: str,
     ) -> StepRecord | None:
         """Get a Tool Step by tool_call_id."""
+        if await self._session_has_committed_step_entries(session_id):
+            steps = await self.get_steps(session_id)
+            for step in steps:
+                if step.tool_call_id == tool_call_id:
+                    return step
+            return None
+
         conn = await self._ensure_connection()
         async with conn.execute(
             "SELECT * FROM steps WHERE session_id = ? AND tool_call_id = ?",
@@ -813,6 +931,9 @@ class SQLiteRunStepStorage(RunStepStorage):
     async def get_latest_compact_metadata(
         self, session_id: str, agent_id: str
     ) -> CompactMetadata | None:
+        metadata = await super().get_latest_compact_metadata(session_id, agent_id)
+        if metadata is not None:
+            return metadata
         conn = await self._ensure_connection()
         async with conn.execute(
             """
@@ -830,6 +951,9 @@ class SQLiteRunStepStorage(RunStepStorage):
     async def get_compact_history(
         self, session_id: str, agent_id: str
     ) -> list[CompactMetadata]:
+        history = await super().get_compact_history(session_id, agent_id)
+        if history:
+            return history
         conn = await self._ensure_connection()
         async with conn.execute(
             """
