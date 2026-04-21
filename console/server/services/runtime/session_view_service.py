@@ -1,7 +1,7 @@
 """Console session read models assembled from storage and scheduler state."""
 
 from agiwo.agent.models.input import UserMessage
-from agiwo.agent.models.run import Run
+from agiwo.agent.models.run import RunView
 from agiwo.agent.storage.base import RunStepStorage
 from agiwo.scheduler.engine import Scheduler
 
@@ -76,13 +76,12 @@ class SessionViewService:
         metrics = await summarize_runs_paginated(
             self._run_storage, session_id=session_id
         )
-        latest_runs = await self._run_storage.list_runs(session_id=session_id, limit=1)
-        last_run = latest_runs[0] if latest_runs else None
+        last_run = await self._run_storage.get_latest_run_view(session_id)
         summary = self._assemble_summary(
             session,
             last_run=last_run,
             run_count=metrics.run_count,
-            step_count=metrics.step_count,
+            step_count=await self._run_storage.get_committed_step_count(session_id),
             root_state_status=await self._get_root_state_status(session_id),
             metrics=metrics,
         )
@@ -100,30 +99,32 @@ class SessionViewService:
 
     async def _batch_fetch_summaries(
         self, session_ids: list[str]
-    ) -> tuple[dict[str, int], dict[str, int], dict[str, Run | None]]:
+    ) -> tuple[dict[str, int], dict[str, int], dict[str, RunView | None]]:
         run_counts = await self._run_storage.batch_count_runs(session_ids)
-        step_counts = await self._run_storage.batch_get_step_counts(session_ids)
-        latest_runs = await self._run_storage.batch_get_latest_runs(session_ids)
+        step_counts = await self._run_storage.batch_get_committed_step_counts(
+            session_ids
+        )
+        latest_runs = await self._run_storage.batch_get_latest_run_views(session_ids)
         return run_counts, step_counts, latest_runs
 
     @staticmethod
     def _assemble_summary(
         session: Session,
         *,
-        last_run: Run | None,
+        last_run: RunView | None,
         run_count: int,
         step_count: int,
         root_state_status: str | None,
         metrics: RunMetricsSummary | None = None,
     ) -> SessionSummaryRecord:
         last_user_input = (
-            UserMessage.to_transport_payload(last_run.user_input)
+            UserMessage.to_transport_payload(last_run.last_user_input)
             if last_run is not None
             else None
         )
         last_response = (
-            last_run.response_content[:200]
-            if last_run is not None and last_run.response_content
+            last_run.response[:200]
+            if last_run is not None and last_run.response
             else None
         )
         return SessionSummaryRecord(

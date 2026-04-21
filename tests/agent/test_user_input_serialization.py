@@ -12,6 +12,7 @@ import tempfile
 import pytest
 
 from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
+from agiwo.agent.models.log import RunStarted
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
@@ -238,6 +239,32 @@ class TestSQLiteUserInputStorage:
                 }
             assert "user_input" in columns
             assert "content_for_user" in columns
+
+    @pytest.mark.asyncio
+    async def test_save_run_log_entry_with_user_message(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = SQLiteRunStepStorage(db_path=db_path)
+
+            entry = RunStarted(
+                sequence=1,
+                session_id="test-session",
+                run_id="test-run",
+                agent_id="test-agent",
+                user_input=UserMessage(
+                    content=[ContentPart(type=ContentType.TEXT, text="hello")],
+                    context=ChannelContext(source="api", metadata={"channel": "test"}),
+                ),
+            )
+
+            await storage.append_entries([entry])
+            loaded = await storage.list_entries(session_id="test-session")
+
+            assert len(loaded) == 1
+            assert isinstance(loaded[0], RunStarted)
+            assert isinstance(loaded[0].user_input, UserMessage)
+            assert loaded[0].user_input.context is not None
+            assert loaded[0].user_input.context.source == "api"
 
 
 if __name__ == "__main__":

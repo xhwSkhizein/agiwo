@@ -6,7 +6,8 @@ from typing import Any
 from agiwo.agent import AgentStreamItem, StepCompletedEvent
 
 from agiwo.agent.models import step
-from agiwo.agent.models.run import Run
+from agiwo.agent.models.run import Run, RunView
+from agiwo.agent.models.step import StepView
 from agiwo.observability.trace import Trace
 from agiwo.scheduler.models import (
     AgentState,
@@ -61,9 +62,9 @@ def step_metrics_response_from_sdk(metrics: step.StepMetrics) -> StepMetricsResp
     )
 
 
-def step_response_from_sdk(step: step.StepRecord) -> StepResponse:
+def step_response_from_sdk(step: step.StepRecord | StepView) -> StepResponse:
     return StepResponse(
-        id=step.id,
+        id=step.id or f"{step.run_id}:{step.sequence}",
         session_id=step.session_id,
         run_id=step.run_id,
         sequence=step.sequence,
@@ -84,31 +85,56 @@ def step_response_from_sdk(step: step.StepRecord) -> StepResponse:
     )
 
 
-def run_response_from_sdk(run: Run) -> RunResponse:
+def run_response_from_sdk(run: Run | RunView) -> RunResponse:
+    if isinstance(run, RunView):
+        status = run.status
+        response_content = run.response
+        user_input = run.last_user_input
+        created_at = run.created_at.isoformat() if run.created_at else None
+        updated_at = run.updated_at.isoformat() if run.updated_at else None
+        parent_run_id = run.parent_run_id
+        run_id = run.run_id
+        agent_id = run.agent_id
+        session_id = run.session_id
+        user_id = run.user_id
+        metrics = run.metrics
+    else:
+        status = run.status.value if hasattr(run.status, "value") else str(run.status)
+        response_content = run.response_content
+        user_input = run.user_input
+        created_at = run.created_at.isoformat() if run.created_at else None
+        updated_at = run.updated_at.isoformat() if run.updated_at else None
+        parent_run_id = run.parent_run_id
+        run_id = run.id
+        agent_id = run.agent_id
+        session_id = run.session_id
+        user_id = run.user_id
+        metrics = run.metrics
+
     return RunResponse(
-        id=run.id,
-        agent_id=run.agent_id,
-        session_id=run.session_id,
-        user_id=run.user_id,
-        user_input=run.user_input,
-        status=run.status.value if hasattr(run.status, "value") else str(run.status),
-        response_content=run.response_content,
+        id=run_id,
+        agent_id=agent_id,
+        session_id=session_id,
+        user_id=user_id,
+        user_input=user_input,
+        status=status,
+        response_content=response_content,
         metrics=RunMetricsResponse(
-            duration_ms=run.metrics.duration_ms,
-            input_tokens=run.metrics.input_tokens,
-            output_tokens=run.metrics.output_tokens,
-            total_tokens=run.metrics.total_tokens,
-            cache_read_tokens=run.metrics.cache_read_tokens,
-            cache_creation_tokens=run.metrics.cache_creation_tokens,
-            token_cost=run.metrics.token_cost,
-            steps_count=run.metrics.steps_count,
-            tool_calls_count=run.metrics.tool_calls_count,
+            duration_ms=metrics.duration_ms,
+            input_tokens=metrics.input_tokens,
+            output_tokens=metrics.output_tokens,
+            total_tokens=metrics.total_tokens,
+            cache_read_tokens=metrics.cache_read_tokens,
+            cache_creation_tokens=metrics.cache_creation_tokens,
+            token_cost=metrics.token_cost,
+            steps_count=metrics.steps_count,
+            tool_calls_count=metrics.tool_calls_count,
         )
-        if run.metrics
+        if metrics
         else None,
-        created_at=run.created_at.isoformat() if run.created_at else None,
-        updated_at=run.updated_at.isoformat() if run.updated_at else None,
-        parent_run_id=run.parent_run_id,
+        created_at=created_at,
+        updated_at=updated_at,
+        parent_run_id=parent_run_id,
     )
 
 

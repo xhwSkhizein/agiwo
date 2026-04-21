@@ -255,7 +255,7 @@ async def get_session_steps(
 ) -> PageResponse[StepResponse]:
     """Get all steps for a session."""
     storage = runtime.run_step_storage
-    raw_steps = await storage.get_steps(
+    raw_steps = await storage.list_step_views(
         session_id=session_id,
         start_seq=start_seq,
         end_seq=end_seq,
@@ -269,7 +269,7 @@ async def get_session_steps(
     page = raw_steps[:limit]
     total = None
     if start_seq is None and end_seq is None and run_id is None and agent_id is None:
-        total = await storage.get_step_count(session_id)
+        total = await storage.get_committed_step_count(session_id)
     return PageResponse(
         items=[step_response_from_sdk(s) for s in page],
         limit=limit,

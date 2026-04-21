@@ -2,13 +2,18 @@ from datetime import datetime
 
 from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
 from agiwo.agent import StepCompletedEvent
+from agiwo.agent.models.log import RunFinished, RunStarted, UserStepCommitted
 from agiwo.agent.models.step import StepRecord as InternalStepRecord
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.storage.serialization import (
+    build_run_view_from_entries,
+    build_step_views_from_entries,
+    deserialize_run_log_entry_from_storage,
     deserialize_run_from_storage,
     deserialize_step_from_storage,
+    serialize_run_log_entry_for_storage,
     serialize_run_for_storage,
     serialize_step_for_storage,
 )
@@ -295,3 +300,69 @@ def test_step_metrics_to_dict_tolerates_string_timestamps() -> None:
 
     assert payload["start_at"] == "2026-03-17T10:11:12+00:00"
     assert payload["end_at"] == "2026-03-17T10:11:13+00:00"
+
+
+def test_run_log_entry_storage_round_trip_restores_structured_user_input() -> None:
+    entry = RunStarted(
+        sequence=1,
+        session_id="session-1",
+        run_id="run-1",
+        agent_id="agent-1",
+        user_input=UserMessage(
+            content=[ContentPart(type=ContentType.TEXT, text="hello")],
+            context=ChannelContext(source="api"),
+        ),
+    )
+
+    payload = serialize_run_log_entry_for_storage(entry)
+    restored = deserialize_run_log_entry_from_storage(payload)
+
+    assert isinstance(restored, RunStarted)
+    assert isinstance(restored.user_input, UserMessage)
+    assert restored.user_input.content[0].text == "hello"
+
+
+def test_build_run_and_step_views_from_run_log_entries() -> None:
+    entries = [
+        RunStarted(
+            sequence=1,
+            session_id="session-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            user_input="hello",
+        ),
+        UserStepCommitted(
+            sequence=2,
+            session_id="session-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            role=MessageRole.USER,
+            content="hello",
+            user_input="hello",
+        ),
+        RunFinished(
+            sequence=3,
+            session_id="session-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            response="world",
+            termination_reason=TerminationReason.COMPLETED,
+            metrics=RunMetrics(
+                duration_ms=1.0,
+                total_tokens=3,
+                steps_count=1,
+            ).to_dict(),
+        ),
+    ]
+
+    run_view = build_run_view_from_entries(entries)
+    step_views = build_step_views_from_entries(entries)
+
+    assert run_view is not None
+    assert run_view.run_id == "run-1"
+    assert run_view.response == "world"
+    assert run_view.last_user_input == "hello"
+    assert run_view.status == "completed"
+    assert len(step_views) == 1
+    assert step_views[0].id == "run-1:2"
+    assert step_views[0].content == "hello"

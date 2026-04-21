@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from agiwo.agent import ContentPart, ContentType, UserMessage
+from agiwo.agent.models.log import RunFinished, RunStarted
 from agiwo.agent.storage.base import InMemoryRunStepStorage
 from agiwo.agent.models.run import Run, RunMetrics, RunStatus
 from server.models.session import Session
@@ -70,6 +71,35 @@ def _make_run(
     )
 
 
+async def _append_run_view_entries(
+    storage: InMemoryRunStepStorage,
+    *,
+    session_id: str,
+    run_id: str,
+    agent_id: str,
+    user_input,
+    response: str | None,
+) -> None:
+    await storage.append_entries(
+        [
+            RunStarted(
+                sequence=1 if run_id.endswith("1") else 2,
+                session_id=session_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                user_input=user_input,
+            ),
+            RunFinished(
+                sequence=100 if run_id.endswith("1") else 101,
+                session_id=session_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                response=response,
+            ),
+        ]
+    )
+
+
 @pytest.mark.asyncio
 async def test_list_sessions_returns_summary_with_latest_run() -> None:
     session = _make_session("sess-1")
@@ -79,11 +109,27 @@ async def test_list_sessions_returns_summary_with_latest_run() -> None:
     await storage.save_run(
         _make_run("run-1", "sess-1", "agent-a", "first input", "old-response")
     )
+    await _append_run_view_entries(
+        storage,
+        session_id="sess-1",
+        run_id="run-1",
+        agent_id="agent-a",
+        user_input="first input",
+        response="old-response",
+    )
     structured_input = UserMessage.serialize(
         [ContentPart(type=ContentType.TEXT, text="latest")]
     )
     await storage.save_run(
         _make_run("run-2", "sess-1", "agent-a", structured_input, "new-response")
+    )
+    await _append_run_view_entries(
+        storage,
+        session_id="sess-1",
+        run_id="run-2",
+        agent_id="agent-a",
+        user_input=structured_input,
+        response="new-response",
     )
 
     service = SessionViewService(
@@ -109,6 +155,14 @@ async def test_get_session_detail_populates_metrics() -> None:
     storage = InMemoryRunStepStorage()
 
     await storage.save_run(_make_run("run-1", "sess-1", "agent-a", "hello", "world"))
+    await _append_run_view_entries(
+        storage,
+        session_id="sess-1",
+        run_id="run-1",
+        agent_id="agent-a",
+        user_input="hello",
+        response="world",
+    )
 
     service = SessionViewService(
         run_storage=storage,

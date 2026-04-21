@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 from agiwo.agent.models.input import UserMessage
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
+    CommittedStep,
     CompactionApplied,
     ContextAssembled,
     HookFailed,
@@ -26,8 +27,8 @@ from agiwo.agent.models.log import (
     ToolStepCommitted,
     UserStepCommitted,
 )
-from agiwo.agent.models.run import Run
-from agiwo.agent.models.step import StepRecord
+from agiwo.agent.models.run import Run, RunMetrics, RunView
+from agiwo.agent.models.step import StepRecord, StepView
 
 _RUN_FIELD_NAMES = {field.name for field in fields(Run)}
 _STEP_FIELD_NAMES = {field.name for field in fields(StepRecord)}
@@ -139,8 +140,9 @@ def deserialize_step_from_storage(data: dict[str, Any]) -> StepRecord:
 def serialize_run_log_entry_for_storage(entry: RunLogEntry) -> dict[str, Any]:
     data = _as_storage_dict(_normalize_storage_value(asdict(entry)))
     data["kind"] = entry.kind.value
-    if "user_input" in data:
-        data["user_input"] = UserMessage.to_storage_value(data["user_input"])
+    user_input = getattr(entry, "user_input", None)
+    if user_input is not None:
+        data["user_input"] = UserMessage.to_storage_value(user_input)
     return _as_storage_dict(_drop_none(data))
 
 
@@ -156,7 +158,107 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
     return entry_type(**normalized)
 
 
+def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
+    if not entries:
+        return None
+
+    started = next(
+        (entry for entry in entries if isinstance(entry, RunStarted)),
+        None,
+    )
+    if started is None:
+        return None
+
+    finished = next(
+        (entry for entry in reversed(entries) if isinstance(entry, RunFinished)),
+        None,
+    )
+    failed = next(
+        (entry for entry in reversed(entries) if isinstance(entry, RunFailed)),
+        None,
+    )
+    last_assistant = next(
+        (
+            entry
+            for entry in reversed(entries)
+            if isinstance(entry, AssistantStepCommitted)
+        ),
+        None,
+    )
+
+    status = "running"
+    updated_at = entries[-1].created_at
+    response: str | None = None
+    termination_reason = None
+    metrics: RunMetrics | None = None
+
+    if finished is not None:
+        status = "completed"
+        response = finished.response
+        termination_reason = finished.termination_reason
+        metrics = RunMetrics(**finished.metrics) if finished.metrics else None
+        updated_at = finished.created_at
+    elif failed is not None:
+        status = "failed"
+        updated_at = failed.created_at
+
+    if (
+        response is None
+        and last_assistant is not None
+        and isinstance(last_assistant.content, str)
+    ):
+        response = last_assistant.content
+
+    return RunView(
+        run_id=started.run_id,
+        session_id=started.session_id,
+        agent_id=started.agent_id,
+        status=status,
+        response=response,
+        termination_reason=termination_reason,
+        metrics=metrics,
+        last_user_input=started.user_input,
+        created_at=started.created_at,
+        updated_at=updated_at,
+    )
+
+
+def build_step_view_from_entry(entry: CommittedStep) -> StepView:
+    return StepView(
+        id=f"{entry.run_id}:{entry.sequence}",
+        sequence=entry.sequence,
+        session_id=entry.session_id,
+        run_id=entry.run_id,
+        agent_id=entry.agent_id,
+        role=entry.role,
+        content=entry.content,
+        content_for_user=entry.content_for_user,
+        reasoning_content=entry.reasoning_content,
+        user_input=entry.user_input,
+        tool_calls=entry.tool_calls,
+        tool_call_id=entry.tool_call_id,
+        name=entry.name,
+        condensed_content=entry.condensed_content,
+        metrics=entry.metrics,
+        created_at=entry.created_at,
+    )
+
+
+def build_step_views_from_entries(entries: list[RunLogEntry]) -> list[StepView]:
+    return [
+        build_step_view_from_entry(entry)
+        for entry in entries
+        if isinstance(
+            entry,
+            (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
+        )
+    ]
+
+
 __all__ = [
+    "build_run_view_from_entries",
+    "build_step_view_from_entry",
+    "build_step_views_from_entries",
     "deserialize_run_log_entry_from_storage",
     "deserialize_run_from_storage",
     "deserialize_step_from_storage",

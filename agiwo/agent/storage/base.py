@@ -7,9 +7,17 @@ import bisect
 from abc import ABC, abstractmethod
 
 from agiwo.agent.models.log import RunLogEntry
-from agiwo.agent.models.run import CompactMetadata
-from agiwo.agent.models.run import Run
-from agiwo.agent.models.step import StepRecord
+from agiwo.agent.models.log import (
+    AssistantStepCommitted,
+    ToolStepCommitted,
+    UserStepCommitted,
+)
+from agiwo.agent.models.run import CompactMetadata, Run, RunView
+from agiwo.agent.models.step import StepRecord, StepView
+from agiwo.agent.storage.serialization import (
+    build_run_view_from_entries,
+    build_step_views_from_entries,
+)
 
 
 class RunLogStorage(ABC):
@@ -195,6 +203,71 @@ class RunStepStorage(RunLogStorage, ABC):
             runs = await self.list_runs(session_id=sid, limit=1)
             result[sid] = runs[0] if runs else None
         return result
+
+    async def get_latest_run_view(self, session_id: str) -> RunView | None:
+        entries = await self.list_entries(session_id=session_id, limit=100_000)
+        if not entries:
+            return None
+        latest_by_run_id: dict[str, list[RunLogEntry]] = {}
+        for entry in entries:
+            latest_by_run_id.setdefault(entry.run_id, []).append(entry)
+        if not latest_by_run_id:
+            return None
+        latest_entries = max(
+            latest_by_run_id.values(),
+            key=lambda run_entries: run_entries[-1].sequence,
+        )
+        return build_run_view_from_entries(latest_entries)
+
+    async def batch_get_latest_run_views(
+        self, session_ids: list[str]
+    ) -> dict[str, RunView | None]:
+        result: dict[str, RunView | None] = {}
+        for session_id in session_ids:
+            result[session_id] = await self.get_latest_run_view(session_id)
+        return result
+
+    async def get_committed_step_count(self, session_id: str) -> int:
+        entries = await self.list_entries(session_id=session_id, limit=100_000)
+        return sum(
+            1
+            for entry in entries
+            if isinstance(
+                entry,
+                (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
+            )
+        )
+
+    async def batch_get_committed_step_counts(
+        self, session_ids: list[str]
+    ) -> dict[str, int]:
+        result: dict[str, int] = {}
+        for session_id in session_ids:
+            result[session_id] = await self.get_committed_step_count(session_id)
+        return result
+
+    async def list_step_views(
+        self,
+        *,
+        session_id: str,
+        start_seq: int | None = None,
+        end_seq: int | None = None,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        limit: int = 1000,
+    ) -> list[StepView]:
+        entries = await self.list_entries(
+            session_id=session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            limit=100_000,
+        )
+        step_views = build_step_views_from_entries(entries)
+        if start_seq is not None:
+            step_views = [step for step in step_views if step.sequence >= start_seq]
+        if end_seq is not None:
+            step_views = [step for step in step_views if step.sequence <= end_seq]
+        return step_views[:limit]
 
     # --- Step Content Update (for retrospect) ---
 

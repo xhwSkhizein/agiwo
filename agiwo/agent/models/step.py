@@ -87,6 +87,7 @@ class StepView:
     sequence: int
     session_id: str
     run_id: str
+    id: str | None = None
     agent_id: str | None = None
     role: MessageRole = MessageRole.USER
     content: MessageContent | None = None
@@ -98,6 +99,7 @@ class StepView:
     name: str | None = None
     condensed_content: str | None = None
     metrics: StepMetrics | None = None
+    created_at: datetime | None = None
     parent_run_id: str | None = None
     depth: int = 0
 

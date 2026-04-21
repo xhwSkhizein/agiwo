@@ -208,10 +208,14 @@ class RunView:
     session_id: str
     agent_id: str
     status: str
+    user_id: str | None = None
     response: str | None = None
     termination_reason: TerminationReason | None = None
     metrics: RunMetrics | None = None
     last_user_input: UserInput | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    parent_run_id: str | None = None
 
 
 __all__ = [
