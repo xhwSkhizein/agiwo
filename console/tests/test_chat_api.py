@@ -13,6 +13,7 @@ from agiwo.agent import (
     StepDeltaEvent,
     TerminationReason,
 )
+from agiwo.scheduler.commands import RouteStreamMode
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
     AgentState,
@@ -189,7 +190,7 @@ async def test_session_input_streams_scheduler_events_and_uses_session_identity(
         session_id: str,
         persistent: bool,
         timeout: int | None,
-        stream_mode: str,
+        stream_mode: RouteStreamMode,
     ):
         assert agent is fake_agent
         assert message == "hello"
@@ -197,7 +198,7 @@ async def test_session_input_streams_scheduler_events_and_uses_session_identity(
         assert session_id == fake_agent.id
         assert persistent is True
         assert timeout == 600
-        assert stream_mode == "until_settled"
+        assert stream_mode == RouteStreamMode.UNTIL_SETTLED
         return type(
             "RouteResultStub",
             (),
@@ -320,7 +321,7 @@ async def test_session_input_continues_stream_after_root_sleeping(
         session_id: str,
         persistent: bool,
         timeout: int | None,
-        stream_mode: str,
+        stream_mode: RouteStreamMode,
     ):
         assert agent is fake_agent
         assert message == "hello"
@@ -328,7 +329,7 @@ async def test_session_input_continues_stream_after_root_sleeping(
         assert session_id == fake_agent.id
         assert persistent is True
         assert timeout == 600
-        assert stream_mode == "until_settled"
+        assert stream_mode == RouteStreamMode.UNTIL_SETTLED
         return type(
             "RouteResultStub",
             (),

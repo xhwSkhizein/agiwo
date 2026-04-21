@@ -7,7 +7,7 @@ from typing import Any
 from agiwo.tool.base import BaseTool, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.tool.process import AgentProcessRegistry
-from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
+from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_executor
 from agiwo.tool.builtin.bash_tool.parameter_parser import BashParameterParser
 from agiwo.tool.builtin.bash_tool.result_formatter import truncate_output
 from agiwo.tool.builtin.bash_tool.types import CommandResult, ProcessInfo, Sandbox
@@ -51,7 +51,7 @@ class BashProcessTool(BaseTool, AgentProcessRegistry):
 
     def __init__(self, config: BashProcessToolConfig | None = None) -> None:
         self.config = config or BashProcessToolConfig(
-            sandbox=get_shared_local_sandbox(),
+            sandbox=get_shared_local_executor(),
         )
         super().__init__()
 

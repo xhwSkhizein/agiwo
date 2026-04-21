@@ -209,7 +209,9 @@ async def test_create_child_agent_and_child_resolution_stay_in_sync() -> None:
     agent = _build_agent()
 
     resolved = resolve_child_definition(
-        agent,
+        parent_config=agent.config,
+        parent_extra_tools=agent.extra_tools,
+        parent_agent_id=agent.id,
         instruction="Handle only child work",
         system_prompt_override=None,
         child_allowed_tools=[],  # Empty list = no builtin tools

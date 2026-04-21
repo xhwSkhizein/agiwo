@@ -5,7 +5,7 @@ from unittest.mock import ANY, AsyncMock
 import pytest
 
 from agiwo.agent import RunCompletedEvent
-from agiwo.scheduler.commands import RouteResult
+from agiwo.scheduler.commands import RouteResult, RouteStreamMode
 
 from server.channels.batch_manager import ChannelBatchManager
 from server.config import ConsoleConfig
@@ -410,7 +410,7 @@ async def test_session_runtime_service_routes_with_session_id_as_root_state() ->
         session_id="sess-1",
         persistent=True,
         timeout=60,
-        stream_mode="until_settled",
+        stream_mode=RouteStreamMode.UNTIL_SETTLED,
     )
     assert store.sessions["sess-1"] is session
 

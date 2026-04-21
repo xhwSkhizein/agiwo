@@ -12,7 +12,7 @@ from agiwo.agent.runtime.state_ops import (
     track_step_state,
 )
 from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.types import (
+from agiwo.agent import (
     StepMetrics,
     StepRecord,
     TerminationReason,
@@ -51,16 +51,16 @@ def test_track_step_state_updates_counters_response_and_messages() -> None:
     track_step_state(state, step)
 
     ledger = state.ledger
-    assert ledger.steps_count == 1
-    assert ledger.assistant_steps_count == 1
-    assert ledger.tool_calls_count == 2
+    assert ledger.steps.total == 1
+    assert ledger.steps.assistant == 1
+    assert ledger.steps.tool_calls == 2
     assert ledger.response_content == "final answer"
-    assert ledger.token_cost == pytest.approx(1.5)
-    assert ledger.total_tokens == 10
-    assert ledger.input_tokens == 4
-    assert ledger.output_tokens == 6
-    assert ledger.cache_read_tokens == 2
-    assert ledger.cache_creation_tokens == 3
+    assert ledger.tokens.cost == pytest.approx(1.5)
+    assert ledger.tokens.total == 10
+    assert ledger.tokens.input == 4
+    assert ledger.tokens.output == 6
+    assert ledger.tokens.cache_read == 2
+    assert ledger.tokens.cache_creation == 3
     assert ledger.messages == [step.to_message()]
 
 
@@ -71,8 +71,8 @@ def test_track_step_state_skips_message_append_when_disabled() -> None:
     track_step_state(state, step, append_message=False)
 
     ledger = state.ledger
-    assert ledger.steps_count == 1
-    assert ledger.assistant_steps_count == 0
+    assert ledger.steps.total == 1
+    assert ledger.steps.assistant == 0
     assert ledger.messages == []
 
 
@@ -99,7 +99,7 @@ def test_runtime_state_ops_only_touch_mutable_ledger_state() -> None:
 
     ledger = state.ledger
     assert ledger.messages == [{"role": "assistant", "content": "summary"}]
-    assert ledger.last_compact_metadata is not None
+    assert ledger.compaction.last_metadata is not None
     assert ledger.termination_reason == TerminationReason.CANCELLED
     assert state.run_id == "run-1"
     assert state.session_id == "session-1"
@@ -130,6 +130,6 @@ def test_ledger_fields_not_exposed_directly_on_run_context() -> None:
         )
 
     replace_messages(state, [{"role": "assistant", "content": "summary"}])
-    snapshot = state.copy_messages()
+    snapshot = state.snapshot_messages()
     snapshot[0]["content"] = "mutated"
     assert state.ledger.messages == [{"role": "assistant", "content": "summary"}]

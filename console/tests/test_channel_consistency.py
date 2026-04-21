@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from agiwo.scheduler.commands import RouteStreamMode
 from server.models.session import ChannelChatContext, Session
 from server.services.runtime.session_runtime_service import SessionRuntimeService
 
@@ -97,4 +98,4 @@ async def test_executor_routes_all_channels_to_same_root_state_identity() -> Non
     for awaited in scheduler.route_root_input.await_args_list:
         assert awaited.kwargs["state_id"] == session.id
         assert awaited.kwargs["session_id"] == session.id
-        assert awaited.kwargs["stream_mode"] == "until_settled"
+        assert awaited.kwargs["stream_mode"] == RouteStreamMode.UNTIL_SETTLED

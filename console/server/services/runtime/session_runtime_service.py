@@ -36,7 +36,7 @@ class SessionRuntimeService:
         session: Session,
         user_input: UserInput,
         *,
-        stream_mode: RouteStreamMode = "until_settled",
+        stream_mode: RouteStreamMode = RouteStreamMode.UNTIL_SETTLED,
     ) -> RouteResult:
         result = await self._scheduler.route_root_input(
             user_input,

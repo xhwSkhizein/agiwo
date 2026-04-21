@@ -52,9 +52,9 @@ The project favors explicit runtime wiring over hidden global state. Agent execu
 
 ## Current Capabilities
 
-- Streaming-first agent execution through one runtime pipeline surfaced as `start()`, `run()`, and `run_stream()`
+- Streaming-first agent execution through one runtime pipeline surfaced as `start()`
 - Tool calling with builtin tools, custom `BaseTool` implementations, and agent-as-tool composition via `Agent.as_tool()`
-- Scheduler orchestration for roots and child agents, including `submit`, `route_root_input`, `stream`, `wait_for`, `steer`, and cancellation flows
+- Scheduler orchestration for roots and child agents, including `route_root_input` (unified entry point), `enqueue_input`, `wait_for`, `steer`, `cancel`, and `shutdown`
 - Run and step persistence plus trace collection with memory, SQLite, and MongoDB-backed storage options
 - Global skill discovery with per-agent allowlisting through explicit `allowed_skills`
 - Optional Console package for control-plane operations, trace inspection, session chat, and Feishu channel integration
@@ -104,10 +104,14 @@ async def main() -> None:
         model=OpenAIModel(name="gpt-5.4"),
     )
 
-    result = await agent.run("What is 2 + 2?")
+    # Start the agent and get the execution handle
+    handle = await agent.start("What is 2 + 2?")
+    result = await handle.wait_for_completion()
     print(result.response)
 
-    async for event in agent.run_stream("Give me a one-line summary of recursion."):
+    # For streaming output, use the handle's stream
+    handle = await agent.start("Give me a one-line summary of recursion.")
+    async for event in handle.stream():
         if event.type == "step_delta" and event.delta.content:
             print(event.delta.content, end="", flush=True)
 
@@ -198,14 +202,24 @@ async def main() -> None:
     )
 
     async with Scheduler() as scheduler:
-        result = await scheduler.run(agent, "Research two competing approaches and summarize them.")
-        print(result.response)
+        from agiwo.scheduler.commands import RouteStreamMode
+
+        route_result = await scheduler.route_root_input(
+            "Research two competing approaches and summarize them.",
+            agent=agent,
+            stream_mode=RouteStreamMode.RUN_END,
+        )
+        # Consume stream to get result
+        async for item in route_result.stream:
+            if item.type == "run_completed":
+                print(item.response)
+                break
 
 
 asyncio.run(main())
 ```
 
-For long-running roots, the scheduler API also supports `submit`, `enqueue_input`, `route_root_input`, `stream`, `wait_for`, `steer`, `cancel`, and `shutdown`.
+For long-running roots, the scheduler API also supports `enqueue_input`, `wait_for`, `steer`, `cancel`, and `shutdown`.
 
 ## Console
 

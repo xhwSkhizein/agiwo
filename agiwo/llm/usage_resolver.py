@@ -36,10 +36,8 @@ class TiktokenUsageEstimator:
     )
 
     def __init__(self, model: Model) -> None:
-        self._encoding = _resolve_encoding(
-            getattr(model, "id", "") or getattr(model, "name", "")
-        )
-        self._provider = str(getattr(model, "provider", "") or "")
+        self._encoding = _resolve_encoding(model.id or model.name)
+        self._provider = model.provider or ""
 
     def estimate_request(
         self,
@@ -102,9 +100,9 @@ class ModelUsageEstimator:
 
     def __init__(self, model: Model) -> None:
         self._estimator = TiktokenUsageEstimator(model)
-        self._cache_hit_price = float(getattr(model, "cache_hit_price", 0.0) or 0.0)
-        self._input_price = float(getattr(model, "input_price", 0.0) or 0.0)
-        self._output_price = float(getattr(model, "output_price", 0.0) or 0.0)
+        self._cache_hit_price = float(model.cache_hit_price or 0.0)
+        self._input_price = float(model.input_price or 0.0)
+        self._output_price = float(model.output_price or 0.0)
 
     def estimate_request(
         self,

@@ -5,6 +5,7 @@ from unittest.mock import ANY, AsyncMock
 
 import pytest
 
+from agiwo.scheduler.commands import RouteStreamMode
 from server.models.session import Session
 from server.services.runtime.session_runtime_service import SessionRuntimeService
 
@@ -47,7 +48,7 @@ async def test_execute_routes_to_session_root_state_on_first_dispatch() -> None:
         session_id="sess-1",
         persistent=True,
         timeout=60,
-        stream_mode="until_settled",
+        stream_mode=RouteStreamMode.UNTIL_SETTLED,
     )
 
 

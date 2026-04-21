@@ -7,7 +7,7 @@ configuration models.
 
 from collections.abc import Collection, Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from datetime import datetime, timezone
 from enum import Enum
 from types import MappingProxyType
@@ -18,6 +18,10 @@ from agiwo.skill.allowlist import (
     normalize_allowed_skills,
     validate_expanded_allowed_skills,
 )
+from agiwo.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 def _deepcopy_mapping_proxy(
@@ -97,6 +101,39 @@ class SchedulerEventType(str, Enum):
     CHILD_COMPLETED = "child_completed"
     CHILD_FAILED = "child_failed"
     USER_HINT = "user_hint"
+
+
+@dataclass(frozen=True)
+class UserHintPayload:
+    """Payload for USER_HINT events."""
+
+    user_input: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ChildCompletedPayload:
+    """Payload for CHILD_COMPLETED events."""
+
+    child_agent_id: str
+    result: str
+
+
+@dataclass(frozen=True)
+class ChildFailedPayload:
+    """Payload for CHILD_FAILED events."""
+
+    child_agent_id: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class ChildSleepResultPayload:
+    """Payload for CHILD_SLEEP_RESULT events."""
+
+    child_agent_id: str
+    result: str
+    explain: str | None = None
+    periodic: bool = False
 
 
 def to_seconds(value: float, unit: TimeUnit) -> float:
@@ -293,6 +330,44 @@ class AgentState:
             if isinstance(self.config_overrides, MappingProxyType)
             else _freeze_value(self.config_overrides),
         )
+        # Warn if new fields are added to AgentState but not handled in storage
+        expected_fields = {
+            "id",
+            "session_id",
+            "status",
+            "task",
+            "parent_id",
+            "pending_input",
+            "config_overrides",
+            "wake_condition",
+            "result_summary",
+            "signal_propagated",
+            "agent_config_id",
+            "is_persistent",
+            "depth",
+            "wake_count",
+            "rollback_count",
+            "no_progress",
+            "explain",
+            "last_run_result",
+            "created_at",
+            "updated_at",
+        }
+        actual_fields = set(self.__dataclass_fields__.keys())
+        missing = expected_fields - actual_fields
+        extra = actual_fields - expected_fields
+        if extra:
+            logger.warning(
+                "agent_state_extra_fields",
+                state_id=self.id,
+                extra_fields=sorted(extra),
+            )
+        if missing:
+            logger.warning(
+                "agent_state_missing_fields",
+                state_id=self.id,
+                missing_fields=sorted(missing),
+            )
 
     def __deepcopy__(self, memo: dict[int, object]) -> "AgentState":
         return _deepcopy_dataclass_with_frozen_mappings(self, memo)  # type: ignore[return-value]
@@ -446,6 +521,9 @@ class PendingEvent:
     ``urgent`` marks events that must bypass tick-level debounce (e.g. a
     user-initiated steer to a WAITING root). Non-urgent events continue to
     follow the normal ``event_debounce_*`` rules.
+
+    The ``payload`` field remains a frozen mapping for serialization compatibility.
+    Use the typed ``get_payload_*`` methods for type-safe access.
     """
 
     id: str
@@ -464,6 +542,164 @@ class PendingEvent:
             self.payload
             if isinstance(self.payload, MappingProxyType)
             else _freeze_value(self.payload),
+        )
+
+    def get_payload_user_hint(self) -> UserHintPayload | None:
+        """Get typed payload for USER_HINT events."""
+        if self.event_type != SchedulerEventType.USER_HINT:
+            return None
+        user_input = self.payload.get("user_input")
+        if user_input is None:
+            return None
+        return UserHintPayload(user_input=user_input)
+
+    def get_payload_child_completed(self) -> ChildCompletedPayload | None:
+        """Get typed payload for CHILD_COMPLETED events."""
+        if self.event_type != SchedulerEventType.CHILD_COMPLETED:
+            return None
+        child_agent_id = self.payload.get("child_agent_id")
+        result = self.payload.get("result")
+        if child_agent_id is None or result is None:
+            return None
+        return ChildCompletedPayload(
+            child_agent_id=child_agent_id,
+            result=result,
+        )
+
+    def get_payload_child_failed(self) -> ChildFailedPayload | None:
+        """Get typed payload for CHILD_FAILED events."""
+        if self.event_type != SchedulerEventType.CHILD_FAILED:
+            return None
+        child_agent_id = self.payload.get("child_agent_id")
+        reason = self.payload.get("reason")
+        if child_agent_id is None or reason is None:
+            return None
+        return ChildFailedPayload(
+            child_agent_id=child_agent_id,
+            reason=reason,
+        )
+
+    def get_payload_child_sleep_result(self) -> ChildSleepResultPayload | None:
+        """Get typed payload for CHILD_SLEEP_RESULT events."""
+        if self.event_type != SchedulerEventType.CHILD_SLEEP_RESULT:
+            return None
+        child_agent_id = self.payload.get("child_agent_id")
+        result = self.payload.get("result")
+        if child_agent_id is None or result is None:
+            return None
+        return ChildSleepResultPayload(
+            child_agent_id=child_agent_id,
+            result=result,
+            explain=self.payload.get("explain"),
+            periodic=self.payload.get("periodic", False),
+        )
+
+    @staticmethod
+    def create_user_hint(
+        id: str,
+        target_agent_id: str,
+        session_id: str,
+        user_input: dict[str, Any],
+        created_at: datetime,
+        source_agent_id: str | None = None,
+        urgent: bool = False,
+    ) -> "PendingEvent":
+        """Factory method to create a USER_HINT event with typed payload."""
+        payload = UserHintPayload(user_input=user_input)
+        return PendingEvent(
+            id=id,
+            target_agent_id=target_agent_id,
+            session_id=session_id,
+            event_type=SchedulerEventType.USER_HINT,
+            payload=asdict(payload),
+            created_at=created_at,
+            source_agent_id=source_agent_id,
+            urgent=urgent,
+        )
+
+    @staticmethod
+    def create_child_completed(
+        id: str,
+        target_agent_id: str,
+        session_id: str,
+        child_agent_id: str,
+        result: str,
+        created_at: datetime,
+        source_agent_id: str | None = None,
+        urgent: bool = False,
+    ) -> "PendingEvent":
+        """Factory method to create a CHILD_COMPLETED event with typed payload."""
+        payload = ChildCompletedPayload(
+            child_agent_id=child_agent_id,
+            result=result,
+        )
+        return PendingEvent(
+            id=id,
+            target_agent_id=target_agent_id,
+            session_id=session_id,
+            event_type=SchedulerEventType.CHILD_COMPLETED,
+            payload=asdict(payload),
+            created_at=created_at,
+            source_agent_id=source_agent_id,
+            urgent=urgent,
+        )
+
+    @staticmethod
+    def create_child_failed(
+        id: str,
+        target_agent_id: str,
+        session_id: str,
+        child_agent_id: str,
+        reason: str,
+        created_at: datetime,
+        source_agent_id: str | None = None,
+        urgent: bool = False,
+    ) -> "PendingEvent":
+        """Factory method to create a CHILD_FAILED event with typed payload."""
+        payload = ChildFailedPayload(
+            child_agent_id=child_agent_id,
+            reason=reason,
+        )
+        return PendingEvent(
+            id=id,
+            target_agent_id=target_agent_id,
+            session_id=session_id,
+            event_type=SchedulerEventType.CHILD_FAILED,
+            payload=asdict(payload),
+            created_at=created_at,
+            source_agent_id=source_agent_id,
+            urgent=urgent,
+        )
+
+    @staticmethod
+    def create_child_sleep_result(
+        id: str,
+        target_agent_id: str,
+        session_id: str,
+        child_agent_id: str,
+        result: str,
+        created_at: datetime,
+        explain: str | None = None,
+        periodic: bool = False,
+        source_agent_id: str | None = None,
+        urgent: bool = False,
+    ) -> "PendingEvent":
+        """Factory method to create a CHILD_SLEEP_RESULT event with typed payload."""
+        payload = ChildSleepResultPayload(
+            child_agent_id=child_agent_id,
+            result=result,
+            explain=explain,
+            periodic=periodic,
+        )
+        return PendingEvent(
+            id=id,
+            target_agent_id=target_agent_id,
+            session_id=session_id,
+            event_type=SchedulerEventType.CHILD_SLEEP_RESULT,
+            payload=asdict(payload),
+            created_at=created_at,
+            source_agent_id=source_agent_id,
+            urgent=urgent,
         )
 
     def __deepcopy__(self, memo: dict[int, object]) -> "PendingEvent":
@@ -516,6 +752,11 @@ class SchedulerConfig:
     task_limits: TaskLimits = field(default_factory=TaskLimits)
     event_debounce_min_count: int = 3
     event_debounce_max_wait_seconds: float = 10.0
+    # Bulk-listing cap used by subtree / signal-propagation helpers whenever we
+    # need "all children / all terminal candidates" in one shot.  Kept as a
+    # single knob rather than scattered ``limit=1000`` literals so that a deploy
+    # that genuinely has more children only has to change one place.
+    state_list_page_size: int = 1000
 
 
 def normalize_statuses(

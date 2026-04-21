@@ -201,9 +201,13 @@ class Agent:
     def _inject_system_tools(self, system_tools: list[BaseTool]) -> None:
         """Inject system-level tools and rebuild the resolved tool list.
 
-        This is an internal API used by the scheduler to inject runtime tools
+        This is a scheduler-internal API used to inject runtime tools
         (e.g. ``SpawnAgentTool``, ``SleepAndWaitTool``) after construction.
         System tools bypass ``allowed_tools`` filtering.
+
+        **Note**: This method is intended for scheduler use only. Do not call
+        this method directly in application code unless you are implementing
+        custom scheduler logic.
         """
         self._system_tools = tuple(system_tools)
         tool_manager = get_global_tool_manager()
@@ -241,19 +245,6 @@ class Agent:
             max_depth=max_depth,
         )
 
-    def _get_inheritable_extra_tools(self) -> list[BaseTool]:
-        """Return extra tools that children may inherit.
-
-        Filters out ``AgentTool`` instances bound to the parent agent itself
-        (circular reference risk).  Other ``AgentTool`` references (e.g.
-        ResearchAgent) are preserved.
-        """
-        return [
-            t
-            for t in self._extra_tools
-            if not (isinstance(t, AgentTool) and t._agent is self)
-        ]
-
     # --- Child agent ---
     async def run_child(
         self,
@@ -274,7 +265,9 @@ class Agent:
         abort_signal: AbortSignal | None = None,
     ) -> RunOutput:
         resolved_child: ResolvedChildDefinition = resolve_child_definition(
-            self,
+            parent_config=self._config,
+            parent_extra_tools=self._extra_tools,
+            parent_agent_id=self._id,
             instruction=instruction,
             system_prompt_override=system_prompt_override,
             child_allowed_tools=child_allowed_tools,
@@ -343,7 +336,9 @@ class Agent:
         ``allowed_tools`` filtering.
         """
         resolved_child: ResolvedChildDefinition = resolve_child_definition(
-            self,
+            parent_config=self._config,
+            parent_extra_tools=self._extra_tools,
+            parent_agent_id=self._id,
             instruction=instruction,
             system_prompt_override=system_prompt_override,
             child_allowed_tools=child_allowed_tools,

@@ -155,44 +155,11 @@ class ToolManager:
         """
         return name in DEFAULT_TOOLS
 
-    def normalize_allowed_tools(
-        self,
-        allowed_tools: list[str] | None,
-    ) -> list[str] | None:
-        """Normalize allowed_tools list.
-
-        - None means all default tools are allowed
-        - Empty list means no tools allowed (builtin or custom)
-        - ``agent:<id>`` prefixed items are accepted as valid tool references
-        - Builtin tool names are validated; unrecognised names are kept
-          (they may refer to user-supplied custom tools)
-
-        Raises:
-            InvalidToolReferenceError: If malformed agent refs (e.g., "agent:" with empty id).
-        """
-        if allowed_tools is None:
-            return None
-
-        normalized: list[str] = []
-        for name in allowed_tools:
-            # Special handling for agent: prefix - validate format strictly
-            if name.startswith(AgentToolReference.PREFIX):
-                # This will raise InvalidToolReferenceError for malformed refs
-                ref = AgentToolReference.parse(name)
-                normalized.append(str(ref))
-            else:
-                # For non-agent tools, keep as-is (may be builtin or custom)
-                normalized.append(name)
-
-        return normalized
-
     def parse_allowed_tools(
         self,
         allowed_tools: list[str] | None,
     ) -> list[ToolReference] | None:
         """Parse allowed_tools into structured references.
-
-        This is the newer, type-safe alternative to normalize_allowed_tools().
 
         - None -> None (all default tools allowed)
         - [] -> [] (no tools allowed)

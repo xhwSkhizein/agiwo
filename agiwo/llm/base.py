@@ -60,8 +60,10 @@ class Model(ABC):
     Subclasses compose an ``LLMConfig`` via the ``config`` attribute and
     implement ``arun_stream()`` to provide streaming responses.
 
-    Configuration fields on ``LLMConfig`` are exposed on the model instance
-    via ``__getattr__`` delegation to ``config``.
+    Configuration fields on ``LLMConfig`` are re-exposed as explicit
+    read-only properties on the model instance so that static type-checkers
+    see them and accidental typos raise ``AttributeError`` instead of
+    silently returning ``None`` through a magic fallback.
     """
 
     config: LLMConfig
@@ -80,14 +82,61 @@ class Model(ABC):
                 "Model requires either a config argument or keyword arguments"
             )
 
-    def __getattr__(self, name: str) -> Any:
-        try:
-            config = object.__getattribute__(self, "config")
-        except AttributeError:
-            raise AttributeError(name) from None
-        if hasattr(config, name):
-            return getattr(config, name)
-        raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
+    @property
+    def id(self) -> str:
+        return self.config.id
+
+    @property
+    def name(self) -> str:
+        return self.config.name
+
+    @property
+    def provider(self) -> str:
+        return self.config.provider
+
+    @property
+    def temperature(self) -> float:
+        return self.config.temperature
+
+    @property
+    def top_p(self) -> float:
+        return self.config.top_p
+
+    @property
+    def max_output_tokens(self) -> int:
+        return self.config.max_output_tokens
+
+    @property
+    def max_context_window(self) -> int:
+        return self.config.max_context_window
+
+    @property
+    def frequency_penalty(self) -> float:
+        return self.config.frequency_penalty
+
+    @property
+    def presence_penalty(self) -> float:
+        return self.config.presence_penalty
+
+    @property
+    def api_key(self) -> str | None:
+        return self.config.api_key
+
+    @property
+    def base_url(self) -> str | None:
+        return self.config.base_url
+
+    @property
+    def cache_hit_price(self) -> float:
+        return self.config.cache_hit_price
+
+    @property
+    def input_price(self) -> float:
+        return self.config.input_price
+
+    @property
+    def output_price(self) -> float:
+        return self.config.output_price
 
     @abstractmethod
     async def arun_stream(
@@ -98,9 +147,17 @@ class Model(ABC):
         """Stream LLM responses as standardized chunks."""
 
     async def close(self) -> None:
-        """Close the model's underlying client connection."""
-        if hasattr(self, "client") and self.client is not None:
-            await self.client.close()
+        """Close the model's underlying client connection, if any.
+
+        Subclasses that hold a client should assign it to ``self.client``.
+        """
+        client = getattr(self, "client", None)
+        if client is None:
+            return
+        close = getattr(client, "close", None)
+        if close is None:
+            return
+        await close()
 
 
 __all__ = ["LLMConfig", "Model", "StreamChunk"]

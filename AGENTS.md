@@ -10,16 +10,24 @@
 - 优先用本文件定位“应该去哪个目录/模块看”，不要把它当成逐文件索引。
 - 如果某条信息很难长期与源码同步，就应该提升抽象层级或直接删掉。
 
+## Logging
+
+统一日志格式：`logger.{level}("event_name", key=value, ...)`. 详见 [docs/logging-guidelines.md](docs/logging-guidelines.md).
+
+## Config Hot Reload
+
+配置热更仅在 agent 为 IDLE/COMPLETED/FAILED 状态时生效，运行中 agent 配置延迟生效。详见 [docs/config-hot-reload.md](docs/config-hot-reload.md).
+
 ## Repository Layout
 
 ### SDK (`agiwo/`)
 
 | Path | Responsibility |
 | --- | --- |
-| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `agiwo.agent.hooks`，nested-agent adapter 收口在 `nested/`，run/session runtime context 与 state helper 收口在 `agiwo.agent.runtime`，termination logic 收口在 `termination/`，上下文回顾优化收口在 `retrospect/`，`storage/` 负责持久化。 |
+| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `agiwo.agent.hooks`，nested-agent adapter 收口在 `nested/`，run/session runtime context 与 state helper 收口在 `agiwo.agent.runtime`，termination logic 收口在 `termination/`，上下文回顾优化收口在 `retrospect/`，`storage/` 负责持久化。`run_loop.py` 使用 `RunLoopOrchestrator` 类封装运行循环逻辑，消除多层嵌套。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
-| `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade 与 loop lifecycle，`engine.py` 是唯一编排 owner，`runner.py` 负责单次 dispatch action 执行，`commands.py` 承载调度动作与 tool DTO，`runtime_state.py` 承载进程内 live state 与 tick helpers，`tool_control.py` 收口 child/sleep/cancel 的 tool-facing control，`runtime_tools.py` 是注入给 agent 的 scheduler runtime tools，`store/` 只负责持久化。 |
+| `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade 与 loop lifecycle，`engine.py` 是唯一编排 owner，`runner.py` 负责单次 dispatch action 执行，`commands.py` 承载调度动作与 tool DTO，`runtime_state.py` 承载进程内 live state 与 tick helpers，`tool_control.py` 收口 child/sleep/cancel 的 tool-facing control，`runtime_tools.py` 是注入给 agent 的 scheduler runtime tools，`store/` 只负责持久化。`runner.py` 使用策略表驱动 output-handling 链，消除 chained responsibility。 |
 | `agiwo/observability/` | Trace/Span 模型、查询接口与 trace storage 实现；agent 事件到 Trace 的适配层收口在 `agiwo/agent/trace_writer.py`。 |
 | `agiwo/embedding/` | Embedding 抽象与 factory，包含本地/OpenAI 风格实现。 |
 | `agiwo/skill/` | Skill 的发现、路径规则（`config.py`）、加载、注册、异常定义，以及 `SkillTool` 桥接。 |
@@ -59,7 +67,7 @@
 - 公开构造入口是 `Agent(config: AgentConfig, *, model: Model, tools: list[BaseTool] | None = None, hooks: AgentHooks | None = None, id: str | None = None)`；`tools` 是功能/用户自定义工具（受 `allowed_tools` 过滤），`system_tools` 是系统工具（不受 `allowed_tools` 过滤）；`AgentConfig` 只承载纯配置，不放 live object。
 - **`id` 必须稳定**：在 Console 这类跨请求复用会话的场景里，每次构造 `Agent` 都必须传稳定 `id`（如 registry `config.id`），否则历史 steps 会丢。不传 id 时自动生成 `{name}-{hex[:6]}` 格式。
 - `AgentConfig.allowed_skills` 进入 SDK runtime 前必须已经展开成“显式 skill 名列表”或 `None`；不再接受 wildcard/pattern。
-- 对外执行原语是 `start(...)` 返回 live execution handle；`run(...)` / `run_stream(...)` 只是便利封装。
+- 对外执行原语是 `start(...)` 返回 live execution handle。
 - 嵌套 agent 执行是内部协议，由 `nested/agent_tool.py` 通过 `Agent.run_child(...)` 进入；不要再暴露公开 `context` 参数。
 - `SessionRuntime` 是 session 级 owner；`RunContext` 组合 immutable identity 与 mutable ledger。运行时状态变更优先通过 `runtime/state_ops.py` / `runtime/step_committer.py` 收口。
 - `StepRecord` 使用工厂方法创建，不要直接构造。
@@ -83,7 +91,7 @@
   - **系统工具**：SkillTool（受 `allowed_skills` 控制）和 Scheduler runtime tools（通过 `system_tools` 注入）。
 - `allowed_tools: list[str] | None` 控制功能工具：`None` = 默认 builtin + 所有 extra；`[]` = 无功能工具；显式列表同时过滤 builtin 和 extra_tools。
 - `ToolManager.get_tools()` 接受 `system_tools` 参数，无条件注入，不受 `allowed_tools` 约束。
-- `ToolManager.normalize_allowed_tools()` 接受自定义工具名（不再拒绝非 builtin 名称），只校验 `agent:` 前缀合法性。
+- `ToolManager.parse_allowed_tools()` 接受 `list[str] | None`，返回类型安全的 `list[ToolReference] | None`，支持解析 `agent:` 前缀的 agent tool 引用。
 - `BaseTool` 定义稳定契约：名称、描述、参数 schema、并发安全性、可选 `gate(..., context: ToolContext) -> ToolGateDecision` 预检，以及 `execute(..., context: ToolContext) -> ToolResult`。
 - plain tool 只看 `agiwo.tool.context.ToolContext`；nested-agent runtime bridge 由 `agiwo.agent.nested.context.AgentToolContext` 内部承载，不要把 `SessionRuntime` 再泄漏回通用工具边界。
 - agent 运行时内部统一通过 `AgentRuntimeTool` 执行工具；scheduler 控制型 tools 走 runtime tool 契约，不再把终止控制塞进 `ToolResult`。
@@ -107,9 +115,9 @@
 ### Scheduler
 
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
-- Scheduler runtime tools（`SpawnAgentTool`、`SleepAndWaitTool` 等）通过 `Agent._inject_system_tools(...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
+- Scheduler runtime tools（`SpawnAgentTool`、`SleepAndWaitTool` 等）通过 `runtime_agent.inject_system_tools(...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
 - 子 Agent 的 system_tools 由 `SchedulerRunner` 从父 Agent 的 `system_tools` 派生；非 fork 模式排除 `spawn_agent`，fork 模式继承全部（gate 检查仍阻止实际 spawn）。
-- 当前公开编排接口包括：`run`、`submit`、`enqueue_input`、`route_root_input`、`stream`、`wait_for`、`steer`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`。
+- 当前公开编排接口包括：`route_root_input`（统一入口）、`enqueue_input`、`wait_for`、`steer`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`。`submit`、`run`、`stream` 已合并到 `route_root_input` 或改为内部方法。
 - `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 engine 层（facade 直接委托给 `_tick`、`_stream`、`_tree_ops` 等同包 helper）。
 - `SchedulerRunner` 只负责单次 dispatch action；`TaskGuard` 是 spawn/wake 的唯一护栏入口。
 - scheduler 状态现在显式区分 `WAITING`、`IDLE`、`QUEUED`；不要再把待命/排队语义塞回一个泛化 `SLEEPING`。
@@ -117,7 +125,7 @@
 - scheduler state storage 当前支持 memory/sqlite/mongodb，由 `Scheduler` 自己创建和持有。
 - `Scheduler` 的外部流式协议直接复用 `AgentStreamItem`；不要在 SDK core 再维护第二套 live-output protocol。
 - `route_root_input` 对所有非 RUNNING 路径（submitted / enqueued / steered+WAITING / steered+QUEUED）都返回带 stream 的 `RouteResult`；只有 steered+RUNNING 不带 stream（原 stream subscriber 仍在消费）。下游不需要为 steered 场景单独维护 deferred reply 补丁。
-- **Root runtime 严格复用**：`_ensure_root_runtime_agent` 以"canonical Agent 身份"为键缓存 scheduler-managed runtime agent；`submit` / `enqueue_input(agent=same)` 不再每次 clone，persistent 会话下 `run_step_storage` / `trace_storage` / workspace 贯穿所有轮次。只有 `rebind_agent` 或传入新 canonical agent 才会 close 旧 runtime 并重建。
+- **Root runtime 严格复用**：`_ensure_root_runtime_agent` 以"canonical Agent 身份"为键缓存 scheduler-managed runtime agent；`_submit` / `enqueue_input(agent=same)` 不再每次 clone，persistent 会话下 `run_step_storage` / `trace_storage` / workspace 贯穿所有轮次。只有 `rebind_agent` 或传入新 canonical agent 才会 close 旧 runtime 并重建。
 - **非 persistent root 自动收口**：`_cleanup_after_run` 对非 persistent 且进入 terminal 的 root 立即 `pop + await close`；persistent root 与 child 仍按原语义。`Scheduler.stop()` 在关闭前会批量 close 所有残留 runtime agent。
 - **Cancel/Shutdown 写终态结果**：`cancel_subtree` / `shutdown_subtree` 写 `with_failed(...)` 时一并写入 `last_run_result=SchedulerRunResult(termination_reason=CANCELLED, ...)`；`wait_for()` 依赖该字段，能够在 cancel 完成那一刻直接返回 `RunOutput(error, termination_reason=CANCELLED)` 而非等到 timeout。runner 只在终态未写 `last_run_result` 时兜底补一条。
 - **Urgent steer bypass**：`PendingEvent.urgent` 标志位让 `plan_tick` 在 WAITING 分支跳过 `event_debounce_*` 限制；`Scheduler.steer(..., urgent=True)` 据此令 WAITING root 立即 WAKE_EVENTS。非 urgent 事件继续遵循 debounce。
@@ -132,7 +140,7 @@
 ### Storage & Observability
 
 - Run/Step 持久化通过 `AgentOptions.run_step_storage` 配置；Trace 持久化通过 `AgentOptions.trace_storage` 配置。
-- Agent 运行记录通过 session runtime 统一提交；`handle.stream()` / `run_stream()` 对外暴露 `AgentStreamItem`。
+- Agent 运行记录通过 session runtime 统一提交；流式输出通过 `Agent.start()` 返回的 handle 暴露 `AgentStreamItem`。
 - `BaseTraceStorage` 支持查询和实时订阅。
 
 ## Architecture Boundaries
@@ -169,7 +177,7 @@
 
 ### Construction & Layering
 
-- `agiwo.agent.types` 是公共 facade，外部代码（Console、第三方集成）必须从此导入类型。只有 agent 内部模块（如 `models/`、`hooks/`、`runtime/`）可绕过 facade 直接依赖 `agiwo.agent.run_loop`、`agiwo.agent.tool_executor` 等内部模块。
+- `agiwo.agent` 是公共 facade，外部代码（Console、第三方集成）必须从此导入类型。只有 agent 内部模块（如 `models/`、`hooks/`、`runtime/`）可绕过 facade 直接依赖 `agiwo.agent.run_loop`、`agiwo.agent.tool_executor` 等内部模块。
 - 不要在 Console 侧直读 `scheduler.store`；统一走 `Scheduler` facade 的查询 API。
 
 ## Lint & Guardrails

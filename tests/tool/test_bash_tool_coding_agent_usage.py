@@ -14,7 +14,7 @@ from agiwo.tool.builtin.bash_tool.process_tool import (
     BashProcessTool,
     BashProcessToolConfig,
 )
-from agiwo.tool.builtin.bash_tool.sandbox.local import LocalSandbox
+from agiwo.tool.builtin.bash_tool.local_executor import LocalExecutor
 from agiwo.tool.builtin.bash_tool.tool import BashTool, BashToolConfig
 from tests.utils.agent_context import build_tool_context
 
@@ -36,7 +36,7 @@ def mock_context() -> ToolContext:
 
 @pytest.fixture
 def local_tools(tmp_path: Path) -> tuple[BashTool, BashProcessTool]:
-    sandbox = LocalSandbox(workspace_dir=str(tmp_path), max_processes=10)
+    sandbox = LocalExecutor(workspace_dir=str(tmp_path), max_processes=10)
     bash_tool = BashTool(BashToolConfig(sandbox=sandbox, cwd="."))
     process_tool = BashProcessTool(BashProcessToolConfig(sandbox=sandbox))
     return bash_tool, process_tool

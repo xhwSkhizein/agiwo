@@ -413,8 +413,6 @@ def replace_settings(settings_obj: AgiwoSettings) -> AgiwoSettings:
     """Atomically replace the process-global settings instance."""
     global _settings_instance
     _settings_instance = settings_obj
-    if isinstance(settings, _LazySettingsProxy):
-        object.__setattr__(settings, "_instance", settings_obj)
     return settings_obj
 
 
@@ -426,26 +424,14 @@ class _LazySettingsProxy:
     code and tests without side-effects.
     """
 
-    __slots__ = ("_instance",)
-
-    def __init__(self) -> None:
-        object.__setattr__(self, "_instance", None)
-
-    def _resolve(self) -> "AgiwoSettings":
-        inst = object.__getattribute__(self, "_instance")
-        if inst is None:
-            inst = get_settings()
-            object.__setattr__(self, "_instance", inst)
-        return inst
-
     def __getattr__(self, name: str) -> object:
-        return getattr(self._resolve(), name)
+        return getattr(get_settings(), name)
 
     def __setattr__(self, name: str, value: object) -> None:
-        setattr(self._resolve(), name, value)
+        setattr(get_settings(), name, value)
 
     def __repr__(self) -> str:  # pragma: no cover
-        return repr(self._resolve())
+        return repr(get_settings())
 
 
 settings: AgiwoSettings = cast(AgiwoSettings, _LazySettingsProxy())

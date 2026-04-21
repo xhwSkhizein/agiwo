@@ -10,7 +10,7 @@ from agiwo.tool.builtin.bash_tool.parameter_parser import (
 )
 from agiwo.tool.builtin.bash_tool.result_formatter import BashResultFormatter
 from agiwo.tool.builtin.bash_tool.security import CommandSafetyValidator
-from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_sandbox
+from agiwo.tool.builtin.bash_tool.sandbox import get_shared_local_executor
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.tool.builtin.bash_tool.types import (
     AfterBashCallInput,
@@ -64,7 +64,7 @@ class BashTool(BaseTool):
     def __init__(self, config: BashToolConfig | None = None) -> None:
         if config is None:
             config = BashToolConfig(
-                sandbox=get_shared_local_sandbox(),
+                sandbox=get_shared_local_executor(),
                 cwd=".",
             )
         self.config = config

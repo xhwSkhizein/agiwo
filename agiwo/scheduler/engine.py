@@ -2,14 +2,12 @@
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from agiwo.agent import (
     Agent,
-    AgentStreamItem,
     RunOutput,
     TerminationReason,
     UserInput,
@@ -24,6 +22,7 @@ from agiwo.scheduler.commands import (
     RouteResult,
     RouteStreamMode,
 )
+from agiwo.scheduler.engine_context import EngineContext
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
     ACTIVE_AGENT_STATUSES,
@@ -31,7 +30,6 @@ from agiwo.scheduler.models import (
     AgentStateStatus,
     PendingEvent,
     SchedulerConfig,
-    SchedulerEventType,
 )
 from agiwo.scheduler.runner import RunnerContext, SchedulerRunner
 from agiwo.scheduler.runtime_state import RuntimeState, list_all_states
@@ -65,7 +63,11 @@ class Scheduler:
     ) -> None:
         self._config = config or SchedulerConfig()
         self._store = store or create_agent_state_storage(self._config.state_storage)
-        self._guard = guard or TaskGuard(self._config.task_limits, self._store)
+        self._guard = guard or TaskGuard(
+            self._config.task_limits,
+            self._store,
+            state_list_page_size=self._config.state_list_page_size,
+        )
         self._rt = RuntimeState()
         self._tool_control = SchedulerToolControl(
             store=self._store,
@@ -73,6 +75,7 @@ class Scheduler:
             rt=self._rt,
             save_state=self._save_state,
             cancel_subtree=self._cancel_subtree,
+            state_list_page_size=self._config.state_list_page_size,
         )
         self._scheduling_tools = (
             SpawnAgentTool(self._tool_control),
@@ -89,7 +92,17 @@ class Scheduler:
                 notify_state_change=self._notify_state_change,
                 nudge=self.nudge,
                 semaphore=semaphore or asyncio.Semaphore(self._config.max_concurrent),
+                state_list_page_size=self._config.state_list_page_size,
             )
+        )
+        self._ctx = EngineContext(
+            config=self._config,
+            store=self._store,
+            rt=self._rt,
+            guard=self._guard,
+            runner=self._runner,
+            save_state=self._save_state,
+            track_active_task=self._track_active_task,
         )
         self._running = False
         self._loop_task: asyncio.Task | None = None
@@ -183,26 +196,7 @@ class Scheduler:
     def nudge(self) -> None:
         self._rt.nudge.set()
 
-    async def run(
-        self,
-        agent: Agent,
-        user_input: UserInput,
-        *,
-        session_id: str | None = None,
-        timeout: float | None = None,
-        abort_signal: AbortSignal | None = None,
-        persistent: bool = False,
-    ) -> RunOutput:
-        state_id = await self.submit(
-            agent,
-            user_input,
-            session_id=session_id,
-            abort_signal=abort_signal,
-            persistent=persistent,
-        )
-        return await self.wait_for(state_id, timeout=timeout)
-
-    async def submit(
+    async def _submit(
         self,
         agent: Agent,
         user_input: UserInput,
@@ -212,38 +206,42 @@ class Scheduler:
         persistent: bool = False,
         agent_config_id: str | None = None,
     ) -> str:
-        existing = await self._store.get_state(agent.id)
-        if existing is not None and existing.status in ACTIVE_AGENT_STATUSES:
-            raise RuntimeError(
-                f"Agent '{agent.id}' is already active (status={existing.status.value}). "
-                f"Cannot submit concurrently. Use a different agent_id or enqueue_input()."
+        # Get or create lock for this agent_id to prevent concurrent submit
+        lock = self._rt.state_locks.setdefault(agent.id, asyncio.Lock())
+        async with lock:
+            # Double-check after acquiring lock
+            existing = await self._store.get_state(agent.id)
+            if existing is not None and existing.status in ACTIVE_AGENT_STATUSES:
+                raise RuntimeError(
+                    f"Agent '{agent.id}' is already active (status={existing.status.value}). "
+                    f"Cannot submit concurrently. Use a different agent_id or enqueue_input()."
+                )
+
+            await self._ensure_root_runtime_agent(agent, agent.id)
+            resolved_session_id = session_id or str(uuid4())
+            state = AgentState(
+                id=agent.id,
+                session_id=resolved_session_id,
+                status=AgentStateStatus.RUNNING,
+                task=user_input,
+                agent_config_id=agent_config_id,
+                is_persistent=persistent,
+                depth=0,
             )
+            await self._save_state(state)
+            if abort_signal is not None:
+                self._rt.abort_signals[state.id] = abort_signal
 
-        await self._ensure_root_runtime_agent(agent, agent.id)
-        resolved_session_id = session_id or str(uuid4())
-        state = AgentState(
-            id=agent.id,
-            session_id=resolved_session_id,
-            status=AgentStateStatus.RUNNING,
-            task=user_input,
-            agent_config_id=agent_config_id,
-            is_persistent=persistent,
-            depth=0,
-        )
-        await self._save_state(state)
-        if abort_signal is not None:
-            self._rt.abort_signals[state.id] = abort_signal
-
-        await dispatch_action(
-            self,
-            DispatchAction(
-                state=state,
-                reason=DispatchReason.ROOT_SUBMIT,
-                input_override=user_input,
-            ),
-        )
-        self.nudge()
-        return state.id
+            await dispatch_action(
+                self._ctx,
+                DispatchAction(
+                    state=state,
+                    reason=DispatchReason.ROOT_SUBMIT,
+                    input_override=user_input,
+                ),
+            )
+            self.nudge()
+            return state.id
 
     async def enqueue_input(
         self,
@@ -252,23 +250,26 @@ class Scheduler:
         *,
         agent: Agent | None = None,
     ) -> None:
-        state = await self._store.get_state(state_id)
-        if state is None:
-            raise RuntimeError(f"Agent state '{state_id}' not found")
-        if not state.is_root or not state.is_persistent:
-            raise RuntimeError(
-                f"Agent '{state_id}' is not persistent. Use submit() instead."
-            )
-        if not state.can_accept_enqueue_input():
-            raise RuntimeError(
-                f"Agent '{state_id}' is {state.status.value}. "
-                f"Cannot enqueue input (expected IDLE or FAILED)."
-            )
-        if agent is not None:
-            await self._ensure_root_runtime_agent(agent, state_id)
+        # Get or create lock for this state_id to prevent concurrent enqueue
+        lock = self._rt.state_locks.setdefault(state_id, asyncio.Lock())
+        async with lock:
+            state = await self._store.get_state(state_id)
+            if state is None:
+                raise RuntimeError(f"Agent state '{state_id}' not found")
+            if not state.is_root or not state.is_persistent:
+                raise RuntimeError(
+                    f"Agent '{state_id}' is not persistent. Use submit() instead."
+                )
+            if not state.can_accept_enqueue_input():
+                raise RuntimeError(
+                    f"Agent '{state_id}' is {state.status.value}. "
+                    f"Cannot enqueue input (expected IDLE or FAILED)."
+                )
+            if agent is not None:
+                await self._ensure_root_runtime_agent(agent, state_id)
 
-        await self._save_state(state.with_queued(pending_input=user_input))
-        self.nudge()
+            await self._save_state(state.with_queued(pending_input=user_input))
+            self.nudge()
 
     async def route_root_input(
         self,
@@ -282,10 +283,8 @@ class Scheduler:
         agent_config_id: str | None = None,
         timeout: float | None = None,
         include_child_events: bool = True,
-        stream_mode: RouteStreamMode = "run_end",
+        stream_mode: RouteStreamMode = RouteStreamMode.RUN_END,
     ) -> RouteResult:
-        if stream_mode not in {"run_end", "until_settled"}:
-            raise ValueError(f"Unknown scheduler stream mode: {stream_mode}")
         return await self._route_root_input_impl(
             user_input,
             agent=agent,
@@ -296,7 +295,7 @@ class Scheduler:
             agent_config_id=agent_config_id,
             timeout=timeout,
             include_child_events=include_child_events,
-            close_on_root_run_end=stream_mode == "run_end",
+            close_on_root_run_end=stream_mode == RouteStreamMode.RUN_END,
         )
 
     async def _route_root_input_impl(
@@ -317,7 +316,7 @@ class Scheduler:
         deadline = None if timeout is None else time.monotonic() + timeout
 
         async def do_submit() -> str:
-            return await self.submit(
+            return await self._submit(
                 agent,
                 user_input,
                 session_id=session_id,
@@ -330,7 +329,7 @@ class Scheduler:
 
         if current_state is None:
             return await route_with_stream(
-                self,
+                self._ctx,
                 root_state_id=agent.id,
                 action="submitted",
                 timeout=self._deadline_remaining(deadline) if deadline else timeout,
@@ -364,7 +363,7 @@ class Scheduler:
             and current_state.status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
         ):
             return await route_with_stream(
-                self,
+                self._ctx,
                 root_state_id=current_state.id,
                 action="enqueued",
                 timeout=timeout,
@@ -378,7 +377,7 @@ class Scheduler:
             )
 
         return await route_with_stream(
-            self,
+            self._ctx,
             root_state_id=agent.id,
             action="submitted",
             timeout=timeout,
@@ -386,58 +385,6 @@ class Scheduler:
             close_on_root_run_end=close_on_root_run_end,
             operation=do_submit,
         )
-
-    async def stream(
-        self,
-        user_input: UserInput,
-        *,
-        agent: Agent | None = None,
-        state_id: str | None = None,
-        session_id: str | None = None,
-        abort_signal: AbortSignal | None = None,
-        persistent: bool = False,
-        agent_config_id: str | None = None,
-        timeout: float | None = None,
-        include_child_events: bool = True,
-    ) -> AsyncIterator[AgentStreamItem]:
-        if state_id is None and agent is None:
-            raise RuntimeError("scheduler.stream requires either agent or state_id")
-
-        if state_id is None:
-            result = await route_with_stream(
-                self,
-                root_state_id=agent.id,
-                action="submitted",
-                timeout=timeout,
-                include_child_events=include_child_events,
-                close_on_root_run_end=True,
-                operation=lambda: self.submit(
-                    agent,
-                    user_input,
-                    session_id=session_id,
-                    abort_signal=abort_signal,
-                    persistent=persistent,
-                    agent_config_id=agent_config_id,
-                ),
-            )
-        else:
-            result = await route_with_stream(
-                self,
-                root_state_id=state_id,
-                action="enqueued",
-                timeout=timeout,
-                include_child_events=include_child_events,
-                close_on_root_run_end=True,
-                operation=lambda: self._enqueue_and_return_state_id(
-                    state_id=state_id,
-                    agent=agent,
-                    user_input=user_input,
-                ),
-            )
-
-        assert result.stream is not None
-        async for item in result.stream:
-            yield item
 
     async def wait_for(
         self,
@@ -580,7 +527,7 @@ class Scheduler:
             return sid
 
         return await route_with_stream(
-            self,
+            self._ctx,
             root_state_id=sid,
             action="steered",
             timeout=timeout,
@@ -610,12 +557,11 @@ class Scheduler:
                 return False
             return await handle.steer(message)
 
-        event = PendingEvent(
+        event = PendingEvent.create_user_hint(
             id=str(uuid4()),
             target_agent_id=state_id,
             session_id=state.session_id,
-            event_type=SchedulerEventType.USER_HINT,
-            payload={"user_input": UserMessage.to_storage_value(message)},
+            user_input=UserMessage.to_storage_value(message),
             created_at=datetime.now(timezone.utc),
             urgent=urgent,
         )
@@ -644,7 +590,7 @@ class Scheduler:
         return True
 
     async def tick(self) -> None:
-        await _tick(self)
+        await _tick(self._ctx)
 
     # -- Internal helpers (used by extracted modules) --------------------------
 
@@ -654,10 +600,10 @@ class Scheduler:
         self.nudge()
 
     async def _cancel_subtree(self, state_id: str, reason: str) -> None:
-        await cancel_subtree(self, state_id, reason)
+        await cancel_subtree(self._ctx, state_id, reason)
 
     async def _shutdown_subtree(self, state_id: str) -> None:
-        await shutdown_subtree(self, state_id)
+        await shutdown_subtree(self._ctx, state_id)
 
     def _track_active_task(self, task: asyncio.Task) -> None:
         self._rt.active_tasks.add(task)

@@ -200,7 +200,7 @@ Options are mutually exclusive: search_query returns relevant content, summarize
                 },
                 start_time=start_time,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - web reader execution boundary
             return ToolResult.failed(
                 tool_name=self.name,
                 error=f"Error: {exc!s}",

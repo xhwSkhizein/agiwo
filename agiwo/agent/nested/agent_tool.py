@@ -3,6 +3,7 @@
 import time
 from typing import TYPE_CHECKING, Any
 
+from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.nested.context import AgentToolContext
 from agiwo.tool.base import BaseTool, ToolResult, resolve_timeout
 from agiwo.tool.context import ToolContext
@@ -43,6 +44,14 @@ class AgentTool(BaseTool):
     def description(self) -> str:
         return self._description
 
+    def is_inheritable_by(self, parent_agent_id: str) -> bool:
+        """Check if this AgentTool can be inherited by a parent agent.
+
+        Returns False if this tool is bound to the parent agent itself
+        (circular reference risk). Returns True for all other cases.
+        """
+        return self._agent.id != parent_agent_id
+
     def get_parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
@@ -59,7 +68,9 @@ class AgentTool(BaseTool):
             "required": ["task"],
         }
 
-    def build_context(self, run_context: Any, *, tool_call_id: str = "") -> ToolContext:
+    def build_context(
+        self, run_context: "RunContext", *, tool_call_id: str = ""
+    ) -> ToolContext:
         timeout_at = resolve_timeout(run_context.timeout_at, self.timeout_seconds)
         return AgentToolContext.from_run_context(
             run_context,
@@ -75,11 +86,13 @@ class AgentTool(BaseTool):
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         start_time = time.time()
+
+        # Guard: ensure context is AgentToolContext for agent-specific attributes
         if not isinstance(context, AgentToolContext):
             return ToolResult.failed(
                 tool_name=self.name,
-                error="AgentTool requires agent runtime context",
-                tool_call_id=context.tool_call_id,
+                error="AgentTool requires AgentToolContext, got plain ToolContext",
+                tool_call_id=getattr(context, "tool_call_id", ""),
                 input_args=parameters,
                 start_time=start_time,
             )

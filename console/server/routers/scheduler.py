@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 
+from agiwo.scheduler.commands import RouteStreamMode
 from agiwo.scheduler.models import AgentStateStatus
 
 from server.dependencies import ConsoleRuntimeDep, SchedulerDep
@@ -247,11 +248,12 @@ async def create_persistent_agent(
         runtime.agent_registry,
         id=instance_id,
     )
-    state_id = await scheduler.submit(
-        agent,
+    route_result = await scheduler.route_root_input(
         body.initial_task or "",
+        agent=agent,
         session_id=body.session_id or str(uuid4()),
         persistent=True,
         agent_config_id=config_id,
+        stream_mode=RouteStreamMode.UNTIL_SETTLED,
     )
-    return {"ok": True, "state_id": state_id}
+    return {"ok": True, "state_id": route_result.state_id}

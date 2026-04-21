@@ -229,12 +229,14 @@ async def compact_if_needed(
         return CompactResult()
     _s = get_settings()
     metrics_resolver = ModelUsageEstimator(model)
-    estimated_tokens = metrics_resolver.estimate_messages_tokens(state.copy_messages())
+    estimated_tokens = metrics_resolver.estimate_messages_tokens(
+        state.snapshot_messages()
+    )
     threshold = int(max_context_window * _s.compact_threshold_ratio)
     if estimated_tokens < threshold:
         return CompactResult()
 
-    resolved_root_path = root_path or _s.root_path
+    resolved_root_path = root_path if root_path is not None else _s.root_path
     retry_count = _s.compact_retry_count
     last_error: Exception | None = None
     for attempt in range(retry_count + 1):
@@ -290,13 +292,13 @@ async def _compact(
     root_path: str,
 ) -> CompactMetadata:
     metrics_resolver = ModelUsageEstimator(model)
-    current_messages = state.copy_messages()
+    current_messages = state.snapshot_messages()
     before_token_estimate = metrics_resolver.estimate_messages_tokens(current_messages)
 
     prompt_template = compact_prompt or DEFAULT_COMPACT_PROMPT
     previous_summary = ""
-    if state.ledger.last_compact_metadata:
-        previous_summary = state.ledger.last_compact_metadata.get_summary()
+    if state.ledger.compaction.last_metadata:
+        previous_summary = state.ledger.compaction.last_metadata.get_summary()
     compact_prompt_content = prompt_template.format(
         previous_summary=previous_summary or "None",
     )
@@ -310,18 +312,18 @@ async def _compact(
         state,
         sequence=sequence,
         content=compact_prompt_content,
+        name="compact_request",
     )
-    compact_user_step.name = "compact_request"
     await commit_step(state, compact_user_step, append_message=True)
 
     step, llm_context = await stream_assistant_step(
         model,
         state,
         abort_signal,
-        messages=state.copy_messages(),
+        messages=state.snapshot_messages(),
         use_state_tools=False,
+        name="compact",
     )
-    step.name = "compact"
     await commit_step(state, step, llm=llm_context, append_message=False)
 
     response_content = step.content or ""
@@ -373,8 +375,7 @@ async def _compact(
 
     replace_messages(state, compacted_messages)
     record_compaction_metadata(state, metadata)
-    await state.session_runtime.run_step_storage.save_compact_metadata(
-        state.session_id,
+    await state.session_runtime.save_compact_metadata(
         state.agent_id,
         metadata,
     )

@@ -41,7 +41,7 @@ def record_compaction_metadata(
     state: RunContext,
     metadata: CompactMetadata | None,
 ) -> None:
-    state.ledger.last_compact_metadata = metadata
+    state.ledger.compaction.last_metadata = metadata
 
 
 def set_termination_reason(
@@ -57,17 +57,17 @@ def _track_step_metrics(state: RunContext, step: StepRecord) -> None:
     if metrics is None:
         return
     if metrics.token_cost is not None:
-        ledger.token_cost += metrics.token_cost
+        ledger.tokens.cost += metrics.token_cost
     if metrics.total_tokens is not None:
-        ledger.total_tokens += metrics.total_tokens
+        ledger.tokens.total += metrics.total_tokens
     if metrics.input_tokens is not None:
-        ledger.input_tokens += metrics.input_tokens
+        ledger.tokens.input += metrics.input_tokens
     if metrics.output_tokens is not None:
-        ledger.output_tokens += metrics.output_tokens
+        ledger.tokens.output += metrics.output_tokens
     if metrics.cache_read_tokens is not None:
-        ledger.cache_read_tokens += metrics.cache_read_tokens
+        ledger.tokens.cache_read += metrics.cache_read_tokens
     if metrics.cache_creation_tokens is not None:
-        ledger.cache_creation_tokens += metrics.cache_creation_tokens
+        ledger.tokens.cache_creation += metrics.cache_creation_tokens
 
 
 def _extract_text_content(content: str | list[dict[str, Any]] | None) -> str | None:
@@ -88,11 +88,11 @@ def _track_assistant_step(state: RunContext, step: StepRecord) -> None:
     ledger = state.ledger
     if not step.is_assistant_step():
         return
-    ledger.assistant_steps_count += 1
+    ledger.steps.assistant += 1
     if step.content is not None:
         ledger.response_content = _extract_text_content(step.content)
     if step.tool_calls:
-        ledger.tool_calls_count += len(step.tool_calls)
+        ledger.steps.tool_calls += len(step.tool_calls)
 
 
 def track_step_state(
@@ -102,7 +102,7 @@ def track_step_state(
     append_message: bool = True,
 ) -> None:
     ledger = state.ledger
-    ledger.steps_count += 1
+    ledger.steps.total += 1
     _track_step_metrics(state, step)
     _track_assistant_step(state, step)
     if append_message:

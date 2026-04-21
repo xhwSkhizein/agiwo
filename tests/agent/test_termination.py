@@ -2,7 +2,7 @@ import importlib
 
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.step import LLMCallContext, StepMetrics, StepRecord
-from agiwo.agent.types import TerminationReason
+from agiwo.agent import TerminationReason
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunStepStorage

@@ -27,20 +27,27 @@ ConfigSnapshot = tuple[
     tuple[str, ...] | None,  # allowed_skills
     tuple[tuple[str, Any], ...],
     tuple[tuple[str, Any], ...],
+    str,  # updated_at
 ]
 
 
 def _config_snapshot(config: AgentConfigRecord) -> ConfigSnapshot:
+    dumped = config.model_dump(mode="json", exclude={"id", "created_at"})
     return (
-        config.name,
-        config.description,
-        config.model_provider,
-        config.model_name,
-        config.system_prompt,
-        tuple(config.allowed_tools) if config.allowed_tools is not None else None,
-        tuple(config.allowed_skills) if config.allowed_skills is not None else None,
-        tuple(sorted(config.options.items())),
-        tuple(sorted(config.model_params.items())),
+        dumped["name"],
+        dumped["description"],
+        dumped["model_provider"],
+        dumped["model_name"],
+        dumped["system_prompt"],
+        tuple(dumped["allowed_tools"]) if dumped["allowed_tools"] is not None else None,
+        tuple(dumped["allowed_skills"])
+        if dumped["allowed_skills"] is not None
+        else None,
+        tuple(sorted(dumped["options"].items())),
+        tuple(sorted(dumped["model_params"].items())),
+        dumped[
+            "updated_at"
+        ],  # model_dump(mode='json') already converts datetime to ISO string
     )
 
 
@@ -51,6 +58,8 @@ class CachedAgent:
 
 
 class AgentRuntimeCache:
+    """Cache for runtime Agent instances keyed by session_id."""
+
     def __init__(
         self,
         *,
@@ -64,12 +73,20 @@ class AgentRuntimeCache:
         self._console_config = console_config
         self._session_store = session_store
         self._cache: dict[str, CachedAgent] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
     @property
     def runtime_agents(self) -> dict[str, Agent]:
         return {key: cached.agent for key, cached in self._cache.items()}
 
-    async def get_or_create_runtime_agent(self, session: Session) -> Agent:
+    def _get_lock(self, session_id: str) -> asyncio.Lock:
+        """Get or create a lock for the given session_id."""
+        if session_id not in self._locks:
+            self._locks[session_id] = asyncio.Lock()
+        return self._locks[session_id]
+
+    async def _get_or_create_runtime_agent_locked(self, session: Session) -> Agent:
+        """Helper method that performs the actual get/create/rebind logic under lock."""
         base_config = await self._agent_registry.get_agent(session.base_agent_id)
         if base_config is None:
             raise BaseAgentNotFoundError(session.base_agent_id)
@@ -115,6 +132,12 @@ class AgentRuntimeCache:
             config_snapshot=snapshot,
         )
         return agent
+
+    async def get_or_create_runtime_agent(self, session: Session) -> Agent:
+        """Get or create a runtime agent for the given session, with per-session locking."""
+        lock = self._get_lock(session.id)
+        async with lock:
+            return await self._get_or_create_runtime_agent_locked(session)
 
     async def close_runtime_agent(self, agent_id: str) -> None:
         retired = self._cache.pop(agent_id, None)

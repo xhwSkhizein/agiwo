@@ -53,7 +53,7 @@ async def execute_retrospect(
     """
     working = copy.deepcopy(messages)
 
-    last_retrospect_seq = ledger.last_retrospect_seq
+    last_retrospect_seq = ledger.retrospect.last_seq
     offloaded_count = 0
     last_tool_call_id: str | None = None
 
@@ -101,9 +101,9 @@ async def execute_retrospect(
         s = msg.get("_sequence", 0)
         if s > max_seq:
             max_seq = s
-    ledger.last_retrospect_seq = max_seq
-    ledger.retrospect_pending_tokens = 0
-    ledger.retrospect_pending_rounds = 0
+    ledger.retrospect.last_seq = max_seq
+    ledger.retrospect.pending_tokens = 0
+    ledger.retrospect.pending_rounds = 0
 
     logger.info(
         "retrospect_executed",

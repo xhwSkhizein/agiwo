@@ -35,9 +35,10 @@ async def stream_assistant_step(
     messages: list[dict] | None = None,
     tools: list[dict] | None = None,
     use_state_tools: bool = True,
+    name: str | None = None,
 ) -> tuple[StepRecord, LLMCallContext]:
     """Stream call LLM and build Step."""
-    messages = messages if messages is not None else state.copy_messages()
+    messages = messages if messages is not None else state.snapshot_messages()
     tools_resolved = (
         state.copy_tool_schemas() if use_state_tools and tools is None else tools
     )
@@ -51,16 +52,6 @@ async def stream_assistant_step(
         messages_count=len(messages),
         tools_count=len(tools_resolved) if tools_resolved else 0,
         detail=_get_request_params(model),
-    )
-    logger.info(
-        "llm_messages_preview",
-        model=model,
-        messages_count=len(messages),
-        first_message_role=messages[0].get("role") if messages else None,
-        last_message_role=messages[-1].get("role") if messages else None,
-        last_message_content_preview=messages[-1].get("content", "")[:200]
-        if messages and isinstance(messages[-1].get("content"), str)
-        else None,
     )
 
     llm_context = LLMCallContext(
@@ -77,10 +68,11 @@ async def stream_assistant_step(
         content="",
         tool_calls=None,
         metrics=StepMetrics(start_at=datetime.now(timezone.utc)),
+        name=name,
     )
     if step.metrics is not None:
-        step.metrics.model_name = getattr(model, "model_name", None)
-        step.metrics.provider = getattr(model, "provider", None)
+        step.metrics.model_name = model.name
+        step.metrics.provider = model.provider
 
     first_token_received = False
     finish_reason: str | None = None
@@ -272,15 +264,13 @@ def _resolve_step_metrics(
 
 def _get_request_params(model: Model) -> dict:
     """Get LLM request parameters."""
-    params: dict = {
-        "model_id": getattr(model, "id", None),
-        "model_name": getattr(model, "name", None),
+    return {
+        "model_id": model.id,
+        "model_name": model.name,
+        "temperature": model.temperature,
+        "max_output_tokens": model.max_output_tokens,
+        "top_p": model.top_p,
     }
-    if hasattr(model, "temperature"):
-        params["temperature"] = model.temperature
-        params["max_output_tokens"] = model.max_output_tokens
-        params["top_p"] = model.top_p
-    return params
 
 
 def _check_abort(abort_signal: AbortSignal | None) -> None:

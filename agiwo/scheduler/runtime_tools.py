@@ -21,6 +21,23 @@ from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
 
 
+def _build_failed_result(
+    tool_name: str,
+    error: str,
+    context: ToolContext,
+    parameters: dict[str, Any],
+    start_time: float,
+) -> ToolResult:
+    """Helper to build failed ToolResult with common parameters."""
+    return ToolResult.failed(
+        tool_name=tool_name,
+        error=error,
+        tool_call_id=context.tool_call_id,
+        input_args=parameters,
+        start_time=start_time,
+    )
+
+
 class SpawnAgentTool(BaseTool):
     """Spawn a child agent to handle a sub-task."""
 
@@ -98,11 +115,11 @@ Call sleep_and_wait to wait for completion if needed."""
         start_time = time.time()
         parent_agent_id = context.agent_id
         if not parent_agent_id:
-            return ToolResult.failed(
+            return _build_failed_result(
                 tool_name=self.name,
                 error="Cannot spawn agent: no agent_id in execution context",
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
+                context=context,
+                parameters=parameters,
                 start_time=start_time,
             )
 
@@ -126,11 +143,11 @@ Call sleep_and_wait to wait for completion if needed."""
                 )
             )
         except ValueError as exc:
-            return ToolResult.failed(
+            return _build_failed_result(
                 tool_name=self.name,
                 error=str(exc),
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
+                context=context,
+                parameters=parameters,
                 start_time=start_time,
             )
 
@@ -220,11 +237,11 @@ class SleepAndWaitTool(BaseTool):
         start_time = time.time()
         agent_id = context.agent_id
         if not agent_id:
-            return ToolResult.failed(
+            return _build_failed_result(
                 tool_name=self.name,
                 error="Cannot sleep: no agent_id in execution context",
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
+                context=context,
+                parameters=parameters,
                 start_time=start_time,
             )
 
@@ -240,11 +257,11 @@ class SleepAndWaitTool(BaseTool):
         try:
             wake_type = WakeType(wake_type_str)
         except ValueError:
-            return ToolResult.failed(
+            return _build_failed_result(
                 tool_name=self.name,
                 error=f"Invalid wake_type: {wake_type_str}",
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
+                context=context,
+                parameters=parameters,
                 start_time=start_time,
             )
 
@@ -264,11 +281,11 @@ class SleepAndWaitTool(BaseTool):
                 )
             )
         except ValueError as exc:
-            return ToolResult.failed(
+            return _build_failed_result(
                 tool_name=self.name,
                 error=str(exc),
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
+                context=context,
+                parameters=parameters,
                 start_time=start_time,
             )
 
@@ -332,12 +349,11 @@ class QuerySpawnedAgentTool(BaseTool):
 
         state = await self._port.get_child_state(target_id)
         if state is None:
-            return ToolResult.failed(
+            return _build_failed_result(
                 tool_name=self.name,
                 error=f"Agent '{target_id}' not found",
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
-                content=f"Agent '{target_id}' not found.",
+                context=context,
+                parameters=parameters,
                 start_time=start_time,
             )
 
@@ -441,13 +457,11 @@ class CancelAgentTool(BaseTool):
             )
 
         if cancel_result.outcome == "missing":
-            return ToolResult.failed(
+            return _build_failed_result(
                 tool_name=self.name,
                 error=f"Agent '{target_id}' not found",
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
-                content=f"Agent '{target_id}' not found.",
-                output={"success": False},
+                context=context,
+                parameters=parameters,
                 start_time=start_time,
             )
 
@@ -648,11 +662,11 @@ class RetrospectToolResultTool(BaseTool):
         start_time = time.time()
         feedback = parameters.get("feedback", "")
         if not feedback:
-            return ToolResult.failed(
+            return _build_failed_result(
                 tool_name=self.name,
                 error="feedback is required",
-                tool_call_id=context.tool_call_id,
-                input_args=parameters,
+                context=context,
+                parameters=parameters,
                 start_time=start_time,
             )
         return ToolResult.success(
