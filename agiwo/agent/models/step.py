@@ -83,6 +83,32 @@ class StepMetrics:
 
 
 @dataclass
+class StepView:
+    sequence: int
+    session_id: str
+    run_id: str
+    agent_id: str | None = None
+    role: MessageRole = MessageRole.USER
+    content: MessageContent | None = None
+    content_for_user: str | None = None
+    reasoning_content: str | None = None
+    user_input: UserInput | None = None
+    tool_calls: list[dict] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
+    condensed_content: str | None = None
+    metrics: StepMetrics | None = None
+    parent_run_id: str | None = None
+    depth: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = fields_to_dict(self)
+        payload["user_input"] = _serialize_user_input_structured(self.user_input)
+        payload["metrics"] = self.metrics.to_dict() if self.metrics else None
+        return payload
+
+
+@dataclass
 class StepRecord:
     """Unified Step record for persistence and streaming."""
 
@@ -270,4 +296,5 @@ __all__ = [
     "StepDelta",
     "StepMetrics",
     "StepRecord",
+    "StepView",
 ]

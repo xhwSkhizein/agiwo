@@ -202,6 +202,18 @@ class RunOutput:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class RunView:
+    run_id: str
+    session_id: str
+    agent_id: str
+    status: str
+    response: str | None = None
+    termination_reason: TerminationReason | None = None
+    metrics: RunMetrics | None = None
+    last_user_input: UserInput | None = None
+
+
 __all__ = [
     "CompactMetadata",
     "CompactionState",
@@ -213,6 +225,7 @@ __all__ = [
     "RunMetrics",
     "RunOutput",
     "RunStatus",
+    "RunView",
     "StepStats",
     "TerminationReason",
     "TokenStats",
