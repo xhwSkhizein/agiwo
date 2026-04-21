@@ -427,7 +427,7 @@ class SchedulerRunner:
             (self._check_failed, self._handle_failed_output),
             (self._check_sleeping, self._handle_sleeping),
             (self._check_periodic, self._handle_periodic_output),
-            (lambda *args: True, self._complete_state),  # fallback
+            (self._check_normal, self._complete_state),
         ]
 
         for check, handle in strategies:
@@ -590,6 +590,7 @@ class SchedulerRunner:
         agent = self._ctx.rt.agents.pop(state_id, None)
         self._ctx.rt.canonical_agents.pop(state_id, None)
         self._ctx.rt.execution_handles.pop(state_id, None)
+        self._ctx.rt.state_locks.pop(state_id, None)
         if agent is not None:
             try:
                 await agent.close()
@@ -649,6 +650,19 @@ class SchedulerRunner:
                 failed[child_id] = f"Not finished: status={child.status.value}"
         return succeeded, failed
 
+    def _resolve_abort_signal(
+        self, state_id: str, abort_signal: AbortSignal | None
+    ) -> AbortSignal | None:
+        """Resolve the effective abort signal for a state."""
+        cached_abort_signal = self._ctx.rt.abort_signals.get(state_id)
+        if abort_signal is None:
+            abort_signal = cached_abort_signal
+        elif cached_abort_signal is not None:
+            assert cached_abort_signal is abort_signal, (
+                "abort_signals cache diverged before output finalization"
+            )
+        return abort_signal
+
     def _check_aborted_terminal(
         self,
         state: AgentState,
@@ -657,13 +671,7 @@ class SchedulerRunner:
         action: DispatchAction,
     ) -> bool:
         """Check if state is aborted and terminal."""
-        cached_abort_signal = self._ctx.rt.abort_signals.get(state.id)
-        if abort_signal is None:
-            abort_signal = cached_abort_signal
-        elif cached_abort_signal is not None:
-            assert cached_abort_signal is abort_signal, (
-                "abort_signals cache diverged before output finalization"
-            )
+        abort_signal = self._resolve_abort_signal(state.id, abort_signal)
         return (
             state.is_terminal()
             and abort_signal is not None
@@ -715,6 +723,20 @@ class SchedulerRunner:
             and original_wc.to_seconds() is not None
         )
 
+    def _check_normal(
+        self,
+        state: AgentState,
+        output: RunOutput,
+        abort_signal: AbortSignal | None,
+        action: DispatchAction,
+    ) -> bool:
+        """Check if this is a normal successful completion (not periodic)."""
+        original_wc = action.state.wake_condition
+        is_periodic = original_wc is not None and original_wc.type == WakeType.PERIODIC
+        return (
+            output.termination_reason == TerminationReason.COMPLETED and not is_periodic
+        )
+
     async def _finalize_if_aborted_terminal(
         self,
         state: AgentState,
@@ -732,13 +754,7 @@ class SchedulerRunner:
           ``last_run_result`` yet, write a ``CANCELLED`` record so that
           ``wait_for()`` returns promptly instead of waiting on timeout.
         """
-        cached_abort_signal = self._ctx.rt.abort_signals.get(state.id)
-        if abort_signal is None:
-            abort_signal = cached_abort_signal
-        elif cached_abort_signal is not None:
-            assert cached_abort_signal is abort_signal, (
-                "abort_signals cache diverged before output finalization"
-            )
+        abort_signal = self._resolve_abort_signal(state.id, abort_signal)
         if not (
             state.is_terminal()
             and abort_signal is not None

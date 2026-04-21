@@ -3,9 +3,25 @@
 import asyncio
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, NamedTuple
 
 from agiwo.agent.compaction import CompactResult, compact_if_needed
+from agiwo.agent.runtime.context import RunContext
+
+
+class CompactionCycleResult(NamedTuple):
+    """Result of a compaction cycle."""
+
+    compact_start_seq: int
+    should_continue: bool
+
+
+def increment_compaction_failure(context: RunContext) -> int:
+    """Increment compaction failure count and return the new count."""
+    context.ledger.compaction.failure_count += 1
+    return context.ledger.compaction.failure_count
+
+
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import AgentHooks
 from agiwo.agent.models.input import UserInput, UserMessage
@@ -318,7 +334,9 @@ class RunLoopOrchestrator:
             set_termination_reason(self.context, reason)
             return True
 
-        compact_start_seq, should_continue = await self._run_compaction_cycle()
+        result = await self._run_compaction_cycle()
+        compact_start_seq = result.compact_start_seq
+        should_continue = result.should_continue
         self.runtime.compact_start_seq = compact_start_seq
         if should_continue or self.context.is_terminal:
             return self.context.is_terminal
@@ -330,7 +348,7 @@ class RunLoopOrchestrator:
             llm_context=llm_context,
         )
 
-    async def _run_compaction_cycle(self) -> tuple[int, bool]:
+    async def _run_compaction_cycle(self) -> CompactionCycleResult:
         """Run compaction cycle if needed."""
         result: CompactResult = await compact_if_needed(
             state=self.context,
@@ -342,8 +360,7 @@ class RunLoopOrchestrator:
             root_path=self.runtime.root_path,
         )
         if result.failed:
-            self.context.ledger.compaction.failure_count += 1
-            failure_count = self.context.ledger.compaction.failure_count
+            failure_count = increment_compaction_failure(self.context)
             err = result.error or ""
             if self.context.hooks.on_compaction_failed:
                 await self.context.hooks.on_compaction_failed(
@@ -359,11 +376,11 @@ class RunLoopOrchestrator:
                 set_termination_reason(
                     self.context, TerminationReason.MAX_INPUT_TOKENS_PER_CALL
                 )
-            return self.runtime.compact_start_seq, False
+            return CompactionCycleResult(self.runtime.compact_start_seq, False)
 
         compact_metadata = result.metadata
         if compact_metadata is None:
-            return self.runtime.compact_start_seq, False
+            return CompactionCycleResult(self.runtime.compact_start_seq, False)
 
         new_start_seq = compact_metadata.end_seq + 1
         logger.info(
@@ -376,7 +393,7 @@ class RunLoopOrchestrator:
             and self.context.ledger.tokens.cost >= self.runtime.config.max_run_cost
         ):
             set_termination_reason(self.context, TerminationReason.MAX_RUN_COST)
-        return new_start_seq, True
+            return CompactionCycleResult(new_start_seq, True)
 
     async def _run_assistant_turn(self) -> tuple[StepRecord, LLMCallContext]:
         """Execute an assistant turn (LLM call)."""

@@ -45,10 +45,23 @@ async def shutdown_subtree(ctx: EngineContext, state_id: str) -> None:
 
 
 async def active_children(ctx: EngineContext, state_id: str) -> list[AgentState]:
-    children = await ctx.store.list_states(
-        parent_id=state_id, limit=ctx.state_list_page_size
-    )
-    return [child for child in children if child.is_active()]
+    # Fetch all children with pagination to avoid missing children beyond page_size
+    all_children: list[AgentState] = []
+    offset = 0
+    while True:
+        page = await ctx.store.list_states(
+            parent_id=state_id,
+            limit=ctx.state_list_page_size,
+            offset=offset,
+        )
+        if not page:
+            break
+        all_children.extend(page)
+        # If we got fewer than page_size, we've reached the end
+        if len(page) < ctx.state_list_page_size:
+            break
+        offset += len(page)
+    return [child for child in all_children if child.is_active()]
 
 
 def abort_runtime_state(ctx: EngineContext, state_id: str, reason: str) -> None:

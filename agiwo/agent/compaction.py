@@ -236,7 +236,7 @@ async def compact_if_needed(
     if estimated_tokens < threshold:
         return CompactResult()
 
-    resolved_root_path = root_path or _s.root_path
+    resolved_root_path = root_path if root_path is not None else _s.root_path
     retry_count = _s.compact_retry_count
     last_error: Exception | None = None
     for attempt in range(retry_count + 1):

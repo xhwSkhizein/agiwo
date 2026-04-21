@@ -48,7 +48,7 @@ if not rebound:
     )
 ```
 
-Logs a warning when config refresh is deferred.
+Logs an info when config refresh is deferred.
 
 ## User Experience Impact
 

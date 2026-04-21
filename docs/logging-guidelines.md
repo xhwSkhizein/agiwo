@@ -18,7 +18,7 @@ logger.{level}("event_name", key=value, ...)
 - `info`: Key business events (request start/end, state changes)
 - `warning`: Recoverable exceptions (retry, degradation)
 - `error`: Errors needing attention (but not crashing)
-- `exception`: Uncaught exceptions (with stack trace)
+- `exception`: Must be called inside an except block to capture the current exception/stack trace
 
 ## Parameter Guidelines
 

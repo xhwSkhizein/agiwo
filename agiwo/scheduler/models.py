@@ -18,6 +18,10 @@ from agiwo.skill.allowlist import (
     normalize_allowed_skills,
     validate_expanded_allowed_skills,
 )
+from agiwo.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
 
 
 def _deepcopy_mapping_proxy(
@@ -326,6 +330,44 @@ class AgentState:
             if isinstance(self.config_overrides, MappingProxyType)
             else _freeze_value(self.config_overrides),
         )
+        # Warn if new fields are added to AgentState but not handled in storage
+        expected_fields = {
+            "id",
+            "session_id",
+            "status",
+            "task",
+            "parent_id",
+            "pending_input",
+            "config_overrides",
+            "wake_condition",
+            "result_summary",
+            "signal_propagated",
+            "agent_config_id",
+            "is_persistent",
+            "depth",
+            "wake_count",
+            "rollback_count",
+            "no_progress",
+            "explain",
+            "last_run_result",
+            "created_at",
+            "updated_at",
+        }
+        actual_fields = set(self.__dataclass_fields__.keys())
+        missing = expected_fields - actual_fields
+        extra = actual_fields - expected_fields
+        if extra:
+            logger.warning(
+                "agent_state_extra_fields",
+                state_id=self.id,
+                extra_fields=sorted(extra),
+            )
+        if missing:
+            logger.warning(
+                "agent_state_missing_fields",
+                state_id=self.id,
+                missing_fields=sorted(missing),
+            )
 
     def __deepcopy__(self, memo: dict[int, object]) -> "AgentState":
         return _deepcopy_dataclass_with_frozen_mappings(self, memo)  # type: ignore[return-value]

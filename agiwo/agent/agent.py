@@ -198,7 +198,7 @@ class Agent:
         """System-level tools (e.g. scheduler runtime tools)."""
         return self._system_tools
 
-    def inject_system_tools(self, system_tools: list[BaseTool]) -> None:
+    def _inject_system_tools(self, system_tools: list[BaseTool]) -> None:
         """Inject system-level tools and rebuild the resolved tool list.
 
         This is a scheduler-internal API used to inject runtime tools
@@ -355,7 +355,7 @@ class Agent:
             hooks=build_agent_hooks(self._config, self._hooks),
         )
         if system_tools:
-            child.inject_system_tools(system_tools)
+            child._inject_system_tools(system_tools)
         return child
 
     # --- Execution ---

@@ -10,10 +10,14 @@ _SHARED_LOCAL_EXECUTORS: dict[str, LocalExecutor] = {}
 
 def get_shared_local_executor(
     *,
-    workspace_dir: str | Path = settings.root_path,
+    workspace_dir: str | Path | None = None,
     max_processes: int = 10,
 ) -> LocalExecutor:
     """Reuse one LocalExecutor per workspace so bash tools share job state."""
+    # Resolve default workspace_dir here to avoid delayed evaluation of settings.root_path
+    if workspace_dir is None:
+        workspace_dir = settings.root_path
+
     key = "__default__"
     if workspace_dir is not None:
         key = str(Path(workspace_dir).resolve())

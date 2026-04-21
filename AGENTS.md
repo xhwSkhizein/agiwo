@@ -115,7 +115,7 @@
 ### Scheduler
 
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
-- Scheduler runtime tools（`SpawnAgentTool`、`SleepAndWaitTool` 等）通过 `Agent._inject_system_tools(...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
+- Scheduler runtime tools（`SpawnAgentTool`、`SleepAndWaitTool` 等）通过 `runtime_agent.inject_system_tools(...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
 - 子 Agent 的 system_tools 由 `SchedulerRunner` 从父 Agent 的 `system_tools` 派生；非 fork 模式排除 `spawn_agent`，fork 模式继承全部（gate 检查仍阻止实际 spawn）。
 - 当前公开编排接口包括：`route_root_input`（统一入口）、`enqueue_input`、`wait_for`、`steer`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`。`submit`、`run`、`stream` 已合并到 `route_root_input` 或改为内部方法。
 - `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 engine 层（facade 直接委托给 `_tick`、`_stream`、`_tree_ops` 等同包 helper）。

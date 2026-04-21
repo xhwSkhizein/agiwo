@@ -124,11 +124,24 @@ class SchedulerToolControl:
         caller_id: str | None,
         session_id: str,
     ) -> list[AgentState]:
-        return await self._store.list_states(
-            parent_id=caller_id,
-            session_id=session_id,
-            limit=self._state_list_page_size,
-        )
+        # Fetch all children with pagination to avoid missing children beyond page_size
+        all_children: list[AgentState] = []
+        offset = 0
+        while True:
+            page = await self._store.list_states(
+                parent_id=caller_id,
+                session_id=session_id,
+                limit=self._state_list_page_size,
+                offset=offset,
+            )
+            if not page:
+                break
+            all_children.extend(page)
+            # If we got fewer than page_size, we've reached the end
+            if len(page) < self._state_list_page_size:
+                break
+            offset += len(page)
+        return all_children
 
     async def inspect_child_processes(
         self,
@@ -239,12 +252,24 @@ class SchedulerToolControl:
     async def _resolve_waitset_targets(self, request: SleepRequest) -> list[str]:
         if request.wait_for is not None:
             return request.wait_for
-        children = await self._store.list_states(
-            parent_id=request.agent_id,
-            session_id=request.session_id,
-            limit=self._state_list_page_size,
-        )
-        return [child.id for child in children]
+        # Fetch all children with pagination to avoid missing children beyond page_size
+        all_children: list[AgentState] = []
+        offset = 0
+        while True:
+            page = await self._store.list_states(
+                parent_id=request.agent_id,
+                session_id=request.session_id,
+                limit=self._state_list_page_size,
+                offset=offset,
+            )
+            if not page:
+                break
+            all_children.extend(page)
+            # If we got fewer than page_size, we've reached the end
+            if len(page) < self._state_list_page_size:
+                break
+            offset += len(page)
+        return [child.id for child in all_children]
 
     async def _collect_completed_child_ids(self, child_ids: list[str]) -> list[str]:
         completed_ids: list[str] = []

@@ -58,6 +58,8 @@ class CachedAgent:
 
 
 class AgentRuntimeCache:
+    """Cache for runtime Agent instances keyed by session_id."""
+
     def __init__(
         self,
         *,
@@ -71,12 +73,20 @@ class AgentRuntimeCache:
         self._console_config = console_config
         self._session_store = session_store
         self._cache: dict[str, CachedAgent] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
 
     @property
     def runtime_agents(self) -> dict[str, Agent]:
         return {key: cached.agent for key, cached in self._cache.items()}
 
-    async def get_or_create_runtime_agent(self, session: Session) -> Agent:
+    def _get_lock(self, session_id: str) -> asyncio.Lock:
+        """Get or create a lock for the given session_id."""
+        if session_id not in self._locks:
+            self._locks[session_id] = asyncio.Lock()
+        return self._locks[session_id]
+
+    async def _get_or_create_runtime_agent_locked(self, session: Session) -> Agent:
+        """Helper method that performs the actual get/create/rebind logic under lock."""
         base_config = await self._agent_registry.get_agent(session.base_agent_id)
         if base_config is None:
             raise BaseAgentNotFoundError(session.base_agent_id)
@@ -122,6 +132,12 @@ class AgentRuntimeCache:
             config_snapshot=snapshot,
         )
         return agent
+
+    async def get_or_create_runtime_agent(self, session: Session) -> Agent:
+        """Get or create a runtime agent for the given session, with per-session locking."""
+        lock = self._get_lock(session.id)
+        async with lock:
+            return await self._get_or_create_runtime_agent_locked(session)
 
     async def close_runtime_agent(self, agent_id: str) -> None:
         retired = self._cache.pop(agent_id, None)

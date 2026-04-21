@@ -82,10 +82,21 @@ class AgentTool(BaseTool):
     async def execute(
         self,
         parameters: dict[str, Any],
-        context: AgentToolContext,
+        context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
         start_time = time.time()
+
+        # Guard: ensure context is AgentToolContext for agent-specific attributes
+        if not isinstance(context, AgentToolContext):
+            return ToolResult.failed(
+                tool_name=self.name,
+                error="AgentTool requires AgentToolContext, got plain ToolContext",
+                tool_call_id=getattr(context, "tool_call_id", ""),
+                input_args=parameters,
+                start_time=start_time,
+            )
+
         toolcall_id = context.tool_call_id
         task = parameters.get("task", "")
         extra_context = parameters.get("context", "")

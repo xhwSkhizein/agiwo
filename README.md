@@ -211,15 +211,15 @@ async def main() -> None:
         )
         # Consume stream to get result
         async for item in route_result.stream:
-            if item.type == "run_output":
-                print(item.content.response)
+            if item.type == "run_completed":
+                print(item.response)
                 break
 
 
 asyncio.run(main())
 ```
 
-For long-running roots, the scheduler API also supports `enqueue_input`, `route_root_input`, `wait_for`, `steer`, `cancel`, and `shutdown`.
+For long-running roots, the scheduler API also supports `enqueue_input`, `wait_for`, `steer`, `cancel`, and `shutdown`.
 
 ## Console
 

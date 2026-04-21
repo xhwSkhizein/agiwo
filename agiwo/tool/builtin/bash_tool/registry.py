@@ -246,7 +246,6 @@ class ProcessRegistry:
             args=(master_fd, stdout_fp),
             daemon=True,
         )
-        reader.start()
 
         record = ProcessRecord(
             process_id=process_id,
@@ -269,6 +268,8 @@ class ProcessRegistry:
             self._pty_master_fds[process_id] = master_fd
             self._pty_reader_threads[process_id] = reader
             self._save_registry()
+            # Start reader after registration to avoid race window
+            reader.start()
         return process_id
 
     def attach_process(self, process_id: str) -> ProcessInfo:
@@ -378,9 +379,14 @@ class ProcessRegistry:
             master_fd = self._pty_master_fds.get(process_id)
             if master_fd is None:
                 raise RuntimeError(f"PTY handle is not available: {process_id}")
-        # Release the lock before performing the blocking OS write so concurrent
-        # readers can continue inspecting registry state.
-        os.write(master_fd, data.encode("utf-8"))
+            # Duplicate the fd under the lock to avoid TOCTOU race where
+            # another thread closes the original fd after we release the lock.
+            dup_fd = os.dup(master_fd)
+        # Perform the blocking OS write outside the lock using the duplicated fd.
+        try:
+            os.write(dup_fd, data.encode("utf-8"))
+        finally:
+            os.close(dup_fd)
 
     def list_processes(
         self,

@@ -693,7 +693,7 @@ class Scheduler:
             tools=list(canonical_agent.extra_tools) or None,
             hooks=canonical_agent.hooks,
         )
-        runtime_agent.inject_system_tools(list(self._scheduling_tools))
+        runtime_agent._inject_system_tools(list(self._scheduling_tools))
 
         self._rt.agents[state_id] = runtime_agent
         self._rt.canonical_agents[state_id] = canonical_agent

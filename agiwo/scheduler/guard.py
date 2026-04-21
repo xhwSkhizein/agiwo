@@ -45,12 +45,27 @@ class TaskGuard:
             )
             return reason
 
-        children = await self._store.list_states(
-            parent_id=parent_state.id,
-            session_id=parent_state.session_id,
-            limit=self._state_list_page_size,
-        )
-        active_children = [c for c in children if c.status in ACTIVE_AGENT_STATUSES]
+        # Fetch all children with pagination to avoid missing children beyond page_size
+        all_children: list[AgentState] = []
+        offset = 0
+        while True:
+            page = await self._store.list_states(
+                parent_id=parent_state.id,
+                session_id=parent_state.session_id,
+                limit=self._state_list_page_size,
+                offset=offset,
+            )
+            if not page:
+                break
+            all_children.extend(page)
+            # Stop early if we've already exceeded the limit
+            if len(all_children) >= self._limits.max_children_per_agent:
+                break
+            # If we got fewer than page_size, we've reached the end
+            if len(page) < self._state_list_page_size:
+                break
+            offset += len(page)
+        active_children = [c for c in all_children if c.status in ACTIVE_AGENT_STATUSES]
         if len(active_children) >= self._limits.max_children_per_agent:
             reason = (
                 f"Max children per agent ({self._limits.max_children_per_agent}) reached. "

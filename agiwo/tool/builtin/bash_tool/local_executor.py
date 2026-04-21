@@ -342,6 +342,8 @@ class LocalExecutor(Sandbox):
                 exit_code=1,
             )
         finally:
+            # Wait for the reader to finish before cleaning up
+            await process_done.wait()
             loop.remove_reader(master_fd)
             try:
                 os.close(master_fd)

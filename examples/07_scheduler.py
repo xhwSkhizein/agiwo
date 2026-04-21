@@ -9,6 +9,7 @@ import asyncio
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig
 from agiwo.scheduler import Scheduler
+from agiwo.scheduler import RouteStreamMode
 from agiwo.llm import OpenAIModel
 
 

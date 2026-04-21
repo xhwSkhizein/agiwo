@@ -186,12 +186,25 @@ async def dispatch_action(ctx: EngineContext, action: DispatchAction) -> None:
 
 
 async def propagate_signals(ctx: EngineContext) -> None:
-    candidates = await ctx.store.list_states(
-        statuses=(AgentStateStatus.COMPLETED, AgentStateStatus.FAILED),
-        signal_propagated=False,
-        limit=ctx.state_list_page_size,
-    )
-    for state in candidates:
+    # Fetch all candidates with pagination to avoid missing states beyond page_size
+    all_candidates: list[AgentState] = []
+    offset = 0
+    while True:
+        page = await ctx.store.list_states(
+            statuses=(AgentStateStatus.COMPLETED, AgentStateStatus.FAILED),
+            signal_propagated=False,
+            limit=ctx.state_list_page_size,
+            offset=offset,
+        )
+        if not page:
+            break
+        all_candidates.extend(page)
+        # If we got fewer than page_size, we've reached the end
+        if len(page) < ctx.state_list_page_size:
+            break
+        offset += len(page)
+
+    for state in all_candidates:
         if not state.is_child or state.signal_propagated:
             continue
 

@@ -204,13 +204,17 @@ class RunOutput:
 
 __all__ = [
     "CompactMetadata",
+    "CompactionState",
     "MemoryRecord",
+    "RetrospectState",
     "Run",
     "RunIdentity",
     "RunLedger",
     "RunMetrics",
     "RunOutput",
     "RunStatus",
+    "StepStats",
     "TerminationReason",
+    "TokenStats",
     "fields_to_dict",
 ]

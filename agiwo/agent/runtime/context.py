@@ -111,7 +111,8 @@ class RunContext:
 
     @property
     def metadata(self) -> dict[str, Any]:
-        return self._identity.metadata
+        # Return a defensive copy to prevent mutation of the identity's metadata
+        return dict(self._identity.metadata)
 
     @property
     def session_runtime(self) -> SessionRuntime:

@@ -18,8 +18,6 @@ def build_stream(
     state_id: str,
     *,
     timeout: float | None,
-    include_child_events: bool,
-    close_on_root_run_end: bool,
 ) -> AsyncIterator[AgentStreamItem]:
     async def iterator() -> AsyncIterator[AgentStreamItem]:
         try:
@@ -68,8 +66,6 @@ async def route_with_stream(
             ctx,
             root_state_id,
             timeout=timeout,
-            include_child_events=include_child_events,
-            close_on_root_run_end=close_on_root_run_end,
         ),
     )
 
