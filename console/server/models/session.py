@@ -9,6 +9,7 @@ from agiwo.agent import UserInput, UserMessage
 from server.models.metrics import RunMetricsSummary
 
 if TYPE_CHECKING:
+    from agiwo.observability.trace import Trace
     from agiwo.scheduler.models import AgentState
 
 T = TypeVar("T")
@@ -116,6 +117,24 @@ class SessionDetailRecord:
     session: Session | None = None
     chat_context: ChannelChatContext | None = None
     scheduler_state: "AgentState | None" = None
+    observability: "SessionObservabilityRecord | None" = None
+
+
+@dataclass(slots=True)
+class RuntimeDecisionRecord:
+    kind: str
+    sequence: int
+    run_id: str
+    agent_id: str
+    created_at: datetime
+    summary: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class SessionObservabilityRecord:
+    recent_traces: list["Trace"] = field(default_factory=list)
+    decision_events: list[RuntimeDecisionRecord] = field(default_factory=list)
 
 
 @dataclass(slots=True)

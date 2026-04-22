@@ -62,6 +62,7 @@ htmlcov/
 .env
 .env.local
 .env.*.local
+.env.docker
 
 # Project specific
 *.db

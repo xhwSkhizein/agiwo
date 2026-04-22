@@ -16,7 +16,7 @@ from server.dependencies import (
     clear_console_runtime,
 )
 from server.services.agent_registry import AgentRegistry
-from server.services.storage_wiring import create_run_step_storage, create_trace_storage
+from server.services.storage_wiring import create_run_log_storage, create_trace_storage
 
 
 @pytest.mark.asyncio
@@ -25,11 +25,13 @@ async def test_create_app_starts_and_lists_agents() -> None:
     app = create_app()
 
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step_storage = create_run_step_storage(config)
+    run_log_storage = create_run_log_storage(config)
     trace_storage = create_trace_storage(config)
     registry = AgentRegistry(config)
     await registry.initialize()
@@ -38,20 +40,22 @@ async def test_create_app_starts_and_lists_agents() -> None:
         app,
         ConsoleRuntime(
             config=config,
-            run_step_storage=run_step_storage,
+            run_log_storage=run_log_storage,
             trace_storage=trace_storage,
             agent_registry=registry,
         ),
     )
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/agents")
-        assert resp.status_code == 200
-
-    clear_console_runtime(app)
-    await registry.close()
-    await run_step_storage.close()
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/agents")
+            assert resp.status_code == 200
+    finally:
+        clear_console_runtime(app)
+        await registry.close()
+        await run_log_storage.close()
+        await trace_storage.close()
 
 
 @pytest.mark.asyncio
@@ -59,11 +63,13 @@ async def test_lifespan_closes_session_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step_storage = SimpleNamespace(close=AsyncMock())
+    run_log_storage = SimpleNamespace(close=AsyncMock())
     trace_storage = SimpleNamespace(close=AsyncMock())
     session_store = SimpleNamespace(connect=AsyncMock(), close=AsyncMock())
     agent_registry = SimpleNamespace(
@@ -83,7 +89,7 @@ async def test_lifespan_closes_session_store(
 
     monkeypatch.setattr(app_module, "ConsoleConfig", lambda: config)
     monkeypatch.setattr(
-        app_module, "create_run_step_storage", lambda _cfg: run_step_storage
+        app_module, "create_run_log_storage", lambda _cfg: run_log_storage
     )
     monkeypatch.setattr(app_module, "create_trace_storage", lambda _cfg: trace_storage)
     monkeypatch.setattr(app_module, "AgentRegistry", lambda _cfg: agent_registry)
@@ -113,6 +119,8 @@ async def test_lifespan_closes_session_store(
 
     session_store.connect.assert_awaited_once()
     session_store.close.assert_awaited_once()
+    run_log_storage.close.assert_awaited_once()
+    trace_storage.close.assert_awaited_once()
     scheduler.stop.assert_awaited_once()
 
 
@@ -121,16 +129,18 @@ async def test_lifespan_closes_partial_startup_resources_on_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        },
         channels={
             "feishu": {
                 "enabled": True,
             }
         },
     )
-    run_step_storage = SimpleNamespace(close=AsyncMock())
+    run_log_storage = SimpleNamespace(close=AsyncMock())
     trace_storage = SimpleNamespace(close=AsyncMock())
     session_store = SimpleNamespace(connect=AsyncMock(), close=AsyncMock())
     agent_registry = SimpleNamespace(
@@ -149,7 +159,7 @@ async def test_lifespan_closes_partial_startup_resources_on_error(
 
     monkeypatch.setattr(app_module, "ConsoleConfig", lambda: config)
     monkeypatch.setattr(
-        app_module, "create_run_step_storage", lambda _cfg: run_step_storage
+        app_module, "create_run_log_storage", lambda _cfg: run_log_storage
     )
     monkeypatch.setattr(app_module, "create_trace_storage", lambda _cfg: trace_storage)
     monkeypatch.setattr(app_module, "AgentRegistry", lambda _cfg: agent_registry)
@@ -170,6 +180,6 @@ async def test_lifespan_closes_partial_startup_resources_on_error(
     session_store.connect.assert_awaited_once()
     session_store.close.assert_awaited_once()
     agent_registry.close.assert_awaited_once()
-    run_step_storage.close.assert_awaited_once()
+    run_log_storage.close.assert_awaited_once()
     trace_storage.close.assert_awaited_once()
     scheduler.stop.assert_awaited_once()

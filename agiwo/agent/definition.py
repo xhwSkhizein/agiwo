@@ -1,9 +1,16 @@
 """Definition-scoped assembly helpers for Agent."""
 
-from dataclasses import dataclass, replace as dataclass_replace
+from dataclasses import dataclass
 
 from agiwo.agent.models.config import AgentConfig
-from agiwo.agent.hooks import AgentHooks, DefaultMemoryHook
+from agiwo.agent.hooks import (
+    DefaultMemoryHook,
+    HookGroup,
+    HookPhase,
+    HookRegistration,
+    HookRegistry,
+    transform,
+)
 from agiwo.agent.prompt import compose_child_system_prompt
 from agiwo.skill.allowlist import validate_expanded_allowed_skills
 from agiwo.skill.manager import get_global_skill_manager
@@ -44,7 +51,7 @@ def validate_child_subset(
 
 @dataclass(frozen=True)
 class ResolvedAgentDefinition:
-    hooks: AgentHooks
+    hooks: HookRegistry
     workspace: AgentWorkspace
 
 
@@ -56,14 +63,33 @@ class ResolvedChildDefinition:
 
 def build_agent_hooks(
     config: AgentConfig,
-    hooks: AgentHooks | None,
-) -> AgentHooks:
-    resolved = dataclass_replace(hooks or AgentHooks())
-    if resolved.on_memory_retrieve is None:
+    hooks: HookRegistry | list[HookRegistration] | None,
+) -> HookRegistry:
+    if isinstance(hooks, HookRegistry):
+        resolved = HookRegistry(list(hooks.registrations))
+    else:
+        resolved = HookRegistry(list(hooks or []))
+    if not resolved.has_phase(HookPhase.ASSEMBLE_CONTEXT):
         memory_hook = DefaultMemoryHook(
             root_path=config.options.get_effective_root_path()
         )
-        resolved.on_memory_retrieve = memory_hook.retrieve_memories
+
+        async def _memory_retrieve(payload: dict) -> dict:
+            memories = await memory_hook.retrieve_memories(
+                payload["user_input"], payload["context"]
+            )
+            updated = dict(payload)
+            updated["memories"] = memories
+            return updated
+
+        resolved.add(
+            transform(
+                HookPhase.ASSEMBLE_CONTEXT,
+                "default_memory_retrieve",
+                _memory_retrieve,
+                group=HookGroup.SYSTEM,
+            )
+        )
     return resolved
 
 
@@ -71,7 +97,7 @@ def resolve_agent_definition(
     *,
     config: AgentConfig,
     agent_id: str,
-    hooks: AgentHooks | None,
+    hooks: HookRegistry | list[HookRegistration] | None,
 ) -> ResolvedAgentDefinition:
     del agent_id
     resolved_hooks = build_agent_hooks(config, hooks)

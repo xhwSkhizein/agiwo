@@ -6,7 +6,7 @@ from agiwo.agent import (
     MessageRole,
     StepCompletedEvent,
     StepMetrics,
-    StepRecord,
+    StepView,
     TerminationReason,
     UserMessage,
 )
@@ -29,7 +29,7 @@ def test_stream_event_step_payload_matches_rest_step_response() -> None:
     user_input = UserMessage(
         content=[ContentPart(type=ContentType.TEXT, text="hello")],
     )
-    step = StepRecord(
+    step = StepView(
         id="step-1",
         session_id="sess-1",
         run_id="run-1",
@@ -58,7 +58,7 @@ def test_stream_event_step_payload_matches_rest_step_response() -> None:
 
 
 def test_step_response_includes_usage_source_in_metrics() -> None:
-    step = StepRecord(
+    step = StepView(
         id="step-usage",
         session_id="sess-1",
         run_id="run-1",

@@ -3,8 +3,9 @@
 import pytest
 
 from agiwo.agent.models.config import AgentOptions
+from agiwo.agent.models.log import build_committed_step_entry
 from agiwo.agent.models.run import RetrospectState, RunLedger
-from agiwo.agent.models.step import MessageRole, StepRecord
+from agiwo.agent.models.step import MessageRole, StepView
 from agiwo.agent.retrospect.triggers import (
     RetrospectTrigger,
     check_retrospect_trigger,
@@ -15,7 +16,7 @@ from agiwo.agent.retrospect.executor import (
     execute_retrospect,
     offload_to_disk,
 )
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 
 
 class TestCheckRetrospectTrigger:
@@ -140,29 +141,35 @@ class TestOffloadToDisk:
 class TestExecuteRetrospect:
     @pytest.mark.asyncio
     async def test_offloads_and_appends_feedback(self, tmp_path):
-        storage = InMemoryRunStepStorage()
+        storage = InMemoryRunLogStorage()
         session_id = "sess-1"
 
-        step1 = StepRecord(
+        step1 = StepView(
             session_id=session_id,
             run_id="run-1",
             sequence=1,
+            agent_id="agent-1",
             role=MessageRole.TOOL,
             content="big result A",
             tool_call_id="tc-1",
             name="bash",
         )
-        step2 = StepRecord(
+        step2 = StepView(
             session_id=session_id,
             run_id="run-1",
             sequence=2,
+            agent_id="agent-1",
             role=MessageRole.TOOL,
             content="big result B",
             tool_call_id="tc-2",
             name="bash",
         )
-        await storage.save_step(step1)
-        await storage.save_step(step2)
+        await storage.append_entries(
+            [
+                build_committed_step_entry(step1),
+                build_committed_step_entry(step2),
+            ]
+        )
 
         messages = [
             {
@@ -190,6 +197,8 @@ class TestExecuteRetrospect:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
@@ -203,6 +212,11 @@ class TestExecuteRetrospect:
         assert outcome.messages[0]["content"].startswith("[")
         assert "Retrospect:" in outcome.messages[1]["content"]
         assert "Plan A and B" in outcome.messages[1]["content"]
+        assert outcome.affected_sequences == [1, 2]
+        assert outcome.affected_step_ids == [step1.id, step2.id]
+        assert outcome.feedback == "Plan A and B both failed, need to try table Y."
+        assert outcome.replacement is not None
+        assert "Retrospect:" in outcome.replacement
 
         assert ledger.retrospect.pending_tokens == 0
         assert ledger.retrospect.pending_rounds == 0
@@ -211,7 +225,7 @@ class TestExecuteRetrospect:
     @pytest.mark.asyncio
     async def test_original_messages_not_mutated(self, tmp_path):
         """execute_retrospect must work on a copy, leaving originals intact."""
-        storage = InMemoryRunStepStorage()
+        storage = InMemoryRunLogStorage()
         session_id = "sess-1"
 
         messages = [
@@ -231,6 +245,8 @@ class TestExecuteRetrospect:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
@@ -242,19 +258,20 @@ class TestExecuteRetrospect:
     @pytest.mark.asyncio
     async def test_feedback_persisted_to_condensed_content(self, tmp_path):
         """condensed_content in storage must include the feedback suffix."""
-        storage = InMemoryRunStepStorage()
+        storage = InMemoryRunLogStorage()
         session_id = "sess-1"
 
-        step = StepRecord(
+        step = StepView(
             session_id=session_id,
             run_id="run-1",
             sequence=5,
+            agent_id="agent-1",
             role=MessageRole.TOOL,
             content="verbose output",
             tool_call_id="tc-5",
             name="bash",
         )
-        await storage.save_step(step)
+        await storage.append_entries([build_committed_step_entry(step)])
 
         messages = [
             {
@@ -273,18 +290,21 @@ class TestExecuteRetrospect:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
 
-        stored_step = storage.steps[session_id][0]
+        stored_steps = await storage.list_step_views(session_id=session_id)
+        stored_step = stored_steps[0]
         assert stored_step.condensed_content is not None
         assert "Retrospect:" in stored_step.condensed_content
         assert "dead-end" in stored_step.condensed_content
 
     @pytest.mark.asyncio
     async def test_removes_retrospect_tool_call(self, tmp_path):
-        storage = InMemoryRunStepStorage()
+        storage = InMemoryRunLogStorage()
         session_id = "sess-1"
 
         messages = [
@@ -312,6 +332,8 @@ class TestExecuteRetrospect:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
@@ -330,9 +352,9 @@ class TestExecuteRetrospect:
         )
 
 
-class TestStepRecordToMessageSequence:
+class TestStepViewToMessageSequence:
     def test_to_message_includes_sequence(self):
-        step = StepRecord(
+        step = StepView(
             session_id="s1",
             run_id="r1",
             sequence=42,
@@ -345,7 +367,7 @@ class TestStepRecordToMessageSequence:
         assert msg["_sequence"] == 42
 
     def test_to_message_sequence_zero_for_default(self):
-        step = StepRecord(
+        step = StepView(
             session_id="s1",
             run_id="r1",
             sequence=0,
@@ -361,7 +383,7 @@ class TestRemoveRetrospectMultiCall:
     @pytest.mark.asyncio
     async def test_multi_call_removes_only_retrospect_entry(self, tmp_path):
         """When assistant has [search, retrospect], only retrospect tc is removed."""
-        storage = InMemoryRunStepStorage()
+        storage = InMemoryRunLogStorage()
         session_id = "sess-1"
 
         messages = [
@@ -399,6 +421,8 @@ class TestRemoveRetrospectMultiCall:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
@@ -414,29 +438,33 @@ class TestRemoveRetrospectMultiCall:
         assert "tc-r" not in tool_ids
 
 
-class TestStorageUpdateCondensedContent:
+class TestStorageAppendCondensedContent:
     @pytest.mark.asyncio
-    async def test_in_memory_update(self):
-        storage = InMemoryRunStepStorage()
-        step = StepRecord(
+    async def test_in_memory_append(self):
+        storage = InMemoryRunLogStorage()
+        step = StepView(
             session_id="s1",
             run_id="r1",
             sequence=1,
+            agent_id="agent-1",
             role=MessageRole.TOOL,
             content="original",
             tool_call_id="tc-1",
             name="bash",
         )
-        await storage.save_step(step)
+        await storage.append_entries([build_committed_step_entry(step)])
 
-        updated = await storage.update_step_condensed_content(
-            "s1", step.id, "condensed"
+        updated = await storage.append_step_condensed_content(
+            "s1", "r1", "agent-1", step.id, "condensed"
         )
         assert updated is True
-        assert storage.steps["s1"][0].condensed_content == "condensed"
+        steps = await storage.list_step_views(session_id="s1")
+        assert steps[0].condensed_content == "condensed"
 
     @pytest.mark.asyncio
-    async def test_in_memory_update_nonexistent(self):
-        storage = InMemoryRunStepStorage()
-        updated = await storage.update_step_condensed_content("s1", "ghost", "x")
+    async def test_in_memory_append_nonexistent(self):
+        storage = InMemoryRunLogStorage()
+        updated = await storage.append_step_condensed_content(
+            "s1", "r1", "agent-1", "ghost", "x"
+        )
         assert updated is False

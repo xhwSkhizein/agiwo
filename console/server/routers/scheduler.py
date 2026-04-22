@@ -34,7 +34,7 @@ from server.services.runtime import (
     SchedulerTreeTooLargeError,
     SchedulerTreeValidationError,
     SchedulerTreeViewService,
-    build_agent,
+    materialize_agent,
     resume_persistent_agent,
 )
 
@@ -242,7 +242,7 @@ async def create_persistent_agent(
         )
 
     instance_id = f"{config.id}--{uuid4()}"
-    agent = await build_agent(
+    agent = await materialize_agent(
         config,
         runtime.config,
         runtime.agent_registry,

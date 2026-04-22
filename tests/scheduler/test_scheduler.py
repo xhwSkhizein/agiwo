@@ -10,10 +10,13 @@ import pytest
 
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig, AgentOptions
-from agiwo.agent import AgentHooks
 from agiwo.agent import RunCompletedEvent, TerminationReason
+from agiwo.agent import HookPhase, HookRegistry, transform
 from agiwo.agent import ChannelContext, ContentPart, ContentType
-from agiwo.agent.models.step import MessageRole, StepRecord, UserMessage
+from agiwo.agent import build_committed_step_entry
+from agiwo.agent import RunFinished, RunStarted
+from agiwo.agent.models.step import MessageRole, StepView, UserMessage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.scheduler._tick import propagate_signals
@@ -85,8 +88,10 @@ class _FakeEncoding:
         return [ord(char) for char in text]
 
 
-async def _noop_memory_retrieve(*_args, **_kwargs) -> list:
-    return []
+async def _noop_memory_retrieve(payload: dict[str, object]) -> dict[str, object]:
+    payload = dict(payload)
+    payload["memories"] = []
+    return payload
 
 
 @pytest.fixture(autouse=True)
@@ -106,6 +111,15 @@ def _make_agent(
     system_prompt: str = "",
     options: AgentOptions | None = None,
 ) -> Agent:
+    hooks = HookRegistry(
+        [
+            transform(
+                HookPhase.ASSEMBLE_CONTEXT,
+                "noop_memory_retrieve",
+                _noop_memory_retrieve,
+            )
+        ]
+    )
     return Agent(
         AgentConfig(
             name=name,
@@ -115,7 +129,7 @@ def _make_agent(
         ),
         model=model,
         tools=tools,
-        hooks=AgentHooks(on_memory_retrieve=_noop_memory_retrieve),
+        hooks=hooks,
         id=id,
     )
 
@@ -382,7 +396,7 @@ class TestSchedulerCreateChildAgent:
         assert child_agent.name == "parent"
         assert child_agent.model is parent.model
         assert child_agent.hooks is not parent.hooks
-        assert child_agent.run_step_storage is not parent.run_step_storage
+        assert child_agent.run_log_storage is not parent.run_log_storage
         assert child_agent.options.enable_termination_summary is True
         # Check child inherited parent's system prompt (get_effective_system_prompt triggers build)
         child_prompt = await child_agent.get_effective_system_prompt()
@@ -487,27 +501,34 @@ class TestSchedulerCreateChildAgent:
         assert parent_state is not None
         # Root agent session_id is auto-generated UUID
         parent_session_id = parent_state.resolve_runtime_session_id()
+        next_sequence = await parent_runtime.run_log_storage.get_max_sequence(
+            parent_session_id
+        )
 
         # Add some history steps to parent agent's session
-        step1 = StepRecord(
+        step1 = StepView(
             session_id=parent_session_id,
             run_id="run-1",
-            sequence=1,
+            sequence=next_sequence + 1,
             role=MessageRole.USER,
             agent_id="parent-fork",
             content="Initial user message",
             user_input=UserMessage.from_value("Initial user message"),
         )
-        step2 = StepRecord(
+        step2 = StepView(
             session_id=parent_session_id,
             run_id="run-1",
-            sequence=2,
+            sequence=next_sequence + 2,
             role=MessageRole.ASSISTANT,
             agent_id="parent-fork",
             content="Assistant response",
         )
-        await parent_runtime.run_step_storage.save_step(step1)
-        await parent_runtime.run_step_storage.save_step(step2)
+        await parent_runtime.run_log_storage.append_entries(
+            [
+                build_committed_step_entry(step1),
+                build_committed_step_entry(step2),
+            ]
+        )
 
         # Create child state with fork=True
         child_state = AgentState(
@@ -557,12 +578,12 @@ class TestSchedulerCreateChildAgent:
         # Verify session steps were copied from parent to child
         # ═══════════════════════════════════════════════════════════════════
         child_session_id = child_state.resolve_runtime_session_id()
-        child_steps = await child_agent.run_step_storage.get_steps(
+        child_steps = await child_agent.run_log_storage.list_step_views(
             session_id=child_session_id,
             agent_id="fork-child-1",
         )
 
-        parent_steps = await parent_runtime.run_step_storage.get_steps(
+        parent_steps = await parent_runtime.run_log_storage.list_step_views(
             session_id=parent_session_id,
             agent_id="parent-fork",
         )
@@ -941,6 +962,61 @@ class TestSchedulerQueuedMailbox:
 
         assert result.termination_reason == TerminationReason.CANCELLED
         assert result.error == "cancelled by user"
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_wait_for_prefers_runtime_run_view_when_runtime_agent_exists(self):
+        scheduler = Scheduler(_fast_config())
+        storage = InMemoryRunLogStorage()
+
+        class RuntimeAgentStub:
+            def __init__(self, run_log_storage):
+                self.run_log_storage = run_log_storage
+
+            async def close(self):
+                return None
+
+        scheduler._rt.agents["root"] = RuntimeAgentStub(storage)
+        await storage.append_entries(
+            [
+                RunStarted(
+                    sequence=1,
+                    session_id="sess",
+                    run_id="run-1",
+                    agent_id="root",
+                    user_input="initial",
+                ),
+                RunFinished(
+                    sequence=2,
+                    session_id="sess",
+                    run_id="run-1",
+                    agent_id="root",
+                    response="fresh response",
+                    termination_reason=TerminationReason.COMPLETED,
+                ),
+            ]
+        )
+        await scheduler._store.save_state(
+            AgentState(
+                id="root",
+                session_id="sess",
+                status=AgentStateStatus.IDLE,
+                task="initial",
+                is_persistent=True,
+                result_summary="stale summary",
+                last_run_result=SchedulerRunResult(
+                    run_id="run-old",
+                    termination_reason=TerminationReason.COMPLETED,
+                    summary="stale summary",
+                ),
+            )
+        )
+
+        result = await scheduler.wait_for("root", timeout=_TEST_RUN_TIMEOUT)
+
+        assert result.run_id == "run-1"
+        assert result.response == "fresh response"
+        assert result.termination_reason == TerminationReason.COMPLETED
         await scheduler.stop()
 
     @pytest.mark.asyncio
@@ -1565,7 +1641,7 @@ class TestSchedulerSteer:
 class TestSchedulerRuntimeAgentReuse:
     @pytest.mark.asyncio
     async def test_persistent_root_reuses_runtime_agent_across_turns(self):
-        """Persistent roots must preserve their run_step_storage across turns.
+        """Persistent roots must preserve their run_log_storage across turns.
 
         This guards against the earlier bug where ``submit`` / ``enqueue_input``
         cloned the ``Agent`` on every call and, under the default in-memory
@@ -1597,8 +1673,8 @@ class TestSchedulerRuntimeAgentReuse:
             runtime_after_first = scheduler.get_registered_agent(state_id)
             assert runtime_after_first is not None
 
-            storage_after_first = runtime_after_first.run_step_storage
-            steps_after_first = await storage_after_first.get_steps(
+            storage_after_first = runtime_after_first.run_log_storage
+            steps_after_first = await storage_after_first.list_step_views(
                 session_id="sess-persist",
                 agent_id=state_id,
             )
@@ -1616,9 +1692,9 @@ class TestSchedulerRuntimeAgentReuse:
             runtime_after_second = scheduler.get_registered_agent(state_id)
             # Strict reuse: same Python runtime agent, same storage instance.
             assert runtime_after_second is runtime_after_first
-            assert runtime_after_second.run_step_storage is storage_after_first
+            assert runtime_after_second.run_log_storage is storage_after_first
 
-            steps_after_second = await storage_after_first.get_steps(
+            steps_after_second = await storage_after_first.list_step_views(
                 session_id="sess-persist",
                 agent_id=state_id,
             )

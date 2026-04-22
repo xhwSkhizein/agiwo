@@ -1,14 +1,13 @@
-"""
-Session storage module.
+"""Session storage module."""
 
-Contains RunStepStorage implementations for Run and Step persistence.
-"""
-
-from .base import InMemoryRunStepStorage, RunStepStorage
-from .sqlite import SQLiteRunStepStorage
+from .base import (
+    InMemoryRunLogStorage,
+    RunLogStorage,
+)
+from .sqlite import SQLiteRunLogStorage
 
 __all__ = [
-    "RunStepStorage",
-    "InMemoryRunStepStorage",
-    "SQLiteRunStepStorage",
+    "InMemoryRunLogStorage",
+    "RunLogStorage",
+    "SQLiteRunLogStorage",
 ]

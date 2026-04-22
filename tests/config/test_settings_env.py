@@ -81,3 +81,12 @@ def test_skill_search_settings_are_loaded(monkeypatch) -> None:
     assert settings.default_prompt_skills == ["brainstorming", "writing-plans"]
     assert settings.skill_search_enabled is False
     assert settings.skill_search_top_k == 4
+
+
+def test_web_search_serper_api_key_accepts_prefixed_env(monkeypatch) -> None:
+    monkeypatch.setenv("AGIWO_TOOL_WEB_SEARCH_SERPER_API_KEY", "serper-test-key")
+
+    settings = load_settings(include_env_file=False)
+
+    assert settings.web_search_serper_api_key is not None
+    assert settings.web_search_serper_api_key.get_secret_value() == "serper-test-key"

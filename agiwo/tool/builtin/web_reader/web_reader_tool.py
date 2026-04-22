@@ -98,10 +98,7 @@ Options are mutually exclusive: search_query returns relevant content, summarize
                     "default": False,
                 },
             },
-            "oneOf": [
-                {"required": ["index"]},
-                {"required": ["url"]},
-            ],
+            "required": [],
         }
 
     async def execute(

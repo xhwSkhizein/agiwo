@@ -13,7 +13,7 @@ from server.channels.exceptions import BaseAgentNotFoundError
 from server.models.session import ChannelChatSessionStore, Session
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.runtime.agent_factory import build_agent
+from server.services.runtime.agent_factory import materialize_agent
 
 logger = get_logger(__name__)
 
@@ -102,7 +102,7 @@ class AgentRuntimeCache:
                 base_agent_id=session.base_agent_id,
             )
 
-        agent = await build_agent(
+        agent = await materialize_agent(
             base_config,
             self._console_config,
             self._agent_registry,

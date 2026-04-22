@@ -1,467 +1,415 @@
-"""
-Repository interface and in-memory implementation.
-"""
+"""Replayable run-log storage interfaces and in-memory implementation."""
 
 import asyncio
-import bisect
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Literal
 
-from agiwo.agent.models.run import CompactMetadata
-from agiwo.agent.models.run import Run
-from agiwo.agent.models.step import StepRecord
+from agiwo.agent.models.log import (
+    AssistantStepCommitted,
+    CompactionApplied,
+    RunLogEntry,
+    RunRolledBack,
+    StepCondensedContentUpdated,
+    ToolStepCommitted,
+    UserStepCommitted,
+    build_compact_metadata_from_entry,
+)
+from agiwo.agent.models.runtime_decision import RuntimeDecisionState
+from agiwo.agent.models.run import CompactMetadata, RunView
+from agiwo.agent.models.step import StepView
+from agiwo.agent.storage.serialization import (
+    build_runtime_decision_state_from_entries,
+    build_run_view_from_entries,
+    build_run_views_from_entries,
+    build_step_views_from_entries,
+)
 
 
-class RunStepStorage(ABC):
-    """
-    Run and Step storage interface.
-    Responsible for Run and Step persistence and queries.
-    """
+@dataclass(frozen=True)
+class SessionRunStats:
+    committed_step_count: int
+    run_views: list[RunView]
 
-    # --- Lifecycle Methods ---
+
+class RunLogStorage(ABC):
+    """Append-only run-log storage plus replay/query helpers."""
 
     async def close(self) -> None:
         """Close storage and release resources (optional)."""
-        pass
-
-    # --- Run Operations ---
 
     @abstractmethod
-    async def save_run(self, run: Run) -> None:
-        """Save Run"""
+    async def append_entries(self, entries: list[RunLogEntry]) -> None:
+        """Append run-log entries."""
         ...
 
     @abstractmethod
-    async def get_run(self, run_id: str) -> Run | None:
-        """Get Run"""
-        ...
-
-    @abstractmethod
-    async def list_runs(
+    async def list_entries(
         self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 1000,
+    ) -> list[RunLogEntry]:
+        """List run-log entries in ascending sequence order."""
+        ...
+
+    @abstractmethod
+    async def get_run_view(self, run_id: str) -> RunView | None:
+        """Build one run view from run-log entries."""
+        ...
+
+    @abstractmethod
+    async def list_run_views(
+        self,
+        *,
         user_id: str | None = None,
         session_id: str | None = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> list[Run]:
-        """List Runs"""
+    ) -> list[RunView]:
+        """List run views in descending created-at order."""
         ...
 
-    @abstractmethod
-    async def count_runs(self, session_id: str) -> int:
-        """Count total runs for a session."""
-        ...
+    async def get_latest_run_view(self, session_id: str) -> RunView | None:
+        runs = await self.list_run_views(session_id=session_id, limit=1)
+        return runs[0] if runs else None
+
+    async def get_session_run_stats(self, session_id: str) -> SessionRunStats:
+        run_views = await self.list_run_views(session_id=session_id, limit=100_000)
+        return SessionRunStats(
+            committed_step_count=await self.get_committed_step_count(session_id),
+            run_views=run_views,
+        )
 
     @abstractmethod
-    async def delete_run(self, run_id: str) -> None:
-        """Delete Run"""
-        ...
-
-    # --- Step Operations ---
-
-    @abstractmethod
-    async def save_step(self, step: StepRecord) -> None:
-        """Save single Step"""
-        ...
-
-    @abstractmethod
-    async def save_steps_batch(self, steps: list[StepRecord]) -> None:
-        """Batch save Steps (for fork operations)"""
-        ...
-
-    @abstractmethod
-    async def get_steps(
+    async def get_runtime_decision_state(
         self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> RuntimeDecisionState:
+        """Return the latest replayed runtime decision state for the filter."""
+        ...
+
+    async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
+        result: dict[str, int] = {}
+        for session_id in session_ids:
+            result[session_id] = len(
+                await self.list_run_views(session_id=session_id, limit=100_000)
+            )
+        return result
+
+    async def batch_get_latest_run_views(
+        self, session_ids: list[str]
+    ) -> dict[str, RunView | None]:
+        result: dict[str, RunView | None] = {}
+        for session_id in session_ids:
+            result[session_id] = await self.get_latest_run_view(session_id)
+        return result
+
+    @abstractmethod
+    async def get_committed_step_count(self, session_id: str) -> int:
+        """Count committed step entries for one session."""
+        ...
+
+    async def batch_get_committed_step_counts(
+        self, session_ids: list[str]
+    ) -> dict[str, int]:
+        return {
+            session_id: await self.get_committed_step_count(session_id)
+            for session_id in session_ids
+        }
+
+    @abstractmethod
+    async def list_step_views(
+        self,
+        *,
         session_id: str,
         start_seq: int | None = None,
         end_seq: int | None = None,
         run_id: str | None = None,
         agent_id: str | None = None,
+        include_rolled_back: bool = False,
         limit: int = 1000,
-    ) -> list[StepRecord]:
-        """
-        Get Steps (sorted by sequence)
-
-        Args:
-            session_id: Session ID
-            start_seq: Start sequence (inclusive), None = from beginning
-            end_seq: End sequence (inclusive), None = to end
-            run_id: Filter by run_id (optional)
-            agent_id: Filter by agent_id (optional)
-            limit: Maximum return count
-        """
+        order: Literal["asc", "desc"] = "asc",
+    ) -> list[StepView]:
+        """List committed step views in ascending sequence order."""
         ...
+
+    async def append_run_rollback(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        agent_id: str,
+        start_sequence: int,
+        end_sequence: int,
+        reason: str,
+    ) -> None:
+        sequence = await self.allocate_sequence(session_id)
+        await self.append_entries(
+            [
+                RunRolledBack(
+                    sequence=sequence,
+                    session_id=session_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    start_sequence=start_sequence,
+                    end_sequence=end_sequence,
+                    reason=reason,
+                )
+            ]
+        )
 
     @abstractmethod
-    async def get_last_step(self, session_id: str) -> StepRecord | None:
-        """Get last Step"""
-        ...
-
-    @abstractmethod
-    async def delete_steps(self, session_id: str, start_seq: int) -> int:
-        """
-        Delete Steps (sequence >= start_seq)
-
-        Returns:
-            Number of deleted Steps
-        """
-        ...
-
-    @abstractmethod
-    async def get_step_count(self, session_id: str) -> int:
-        """Get total Step count for session"""
-        ...
-
-    @abstractmethod
-    async def get_max_sequence(self, session_id: str) -> int:
-        """
-        Get the maximum sequence number in the session.
-
-        Returns:
-            Maximum sequence number, or 0 if no steps exist
-        """
-        ...
-
-    @abstractmethod
-    async def allocate_sequence(self, session_id: str) -> int:
-        """
-        Atomically allocate next sequence number for a session.
-        Thread-safe and concurrent-safe operation.
-
-        Args:
-            session_id: Session ID
-
-        Returns:
-            Next sequence number (starting from 1)
-        """
-        ...
-
-    # --- Batch Query Operations (for list views) ---
-
-    async def batch_count_runs(self, session_ids: list[str]) -> dict[str, int]:
-        """Count runs for multiple sessions in one call.
-
-        Default falls back to per-session queries; subclasses should override
-        with a single batch query for efficiency.
-        """
-        result: dict[str, int] = {}
-        for sid in session_ids:
-            result[sid] = await self.count_runs(sid)
-        return result
-
-    async def batch_get_step_counts(self, session_ids: list[str]) -> dict[str, int]:
-        """Get step counts for multiple sessions in one call.
-
-        Default falls back to per-session queries; subclasses should override
-        with a single batch query for efficiency.
-        """
-        result: dict[str, int] = {}
-        for sid in session_ids:
-            result[sid] = await self.get_step_count(sid)
-        return result
-
-    async def batch_get_latest_runs(
-        self, session_ids: list[str]
-    ) -> dict[str, "Run | None"]:
-        """Get the latest run for each session in one call.
-
-        Default falls back to per-session queries; subclasses should override
-        with a single batch query for efficiency.
-        """
-        result: dict[str, Run | None] = {}
-        for sid in session_ids:
-            runs = await self.list_runs(session_id=sid, limit=1)
-            result[sid] = runs[0] if runs else None
-        return result
-
-    # --- Step Content Update (for retrospect) ---
-
-    async def update_step_condensed_content(
+    async def append_step_condensed_content(
         self,
         session_id: str,
+        run_id: str,
+        agent_id: str,
         step_id: str,
         condensed_content: str,
     ) -> bool:
-        """Update the condensed_content field of a step.
-
-        Returns True if the step was found and updated.
-        """
-        return False
-
-    # --- Tool Result Query (for cross-agent reference) ---
+        """Append a step-condensation fact for an existing committed step."""
+        ...
 
     async def get_step_by_tool_call_id(
         self,
         session_id: str,
         tool_call_id: str,
-    ) -> StepRecord | None:
-        """Get a Tool Step by tool_call_id"""
-        steps = await self.get_steps(session_id)
+    ) -> StepView | None:
+        steps = await self.list_step_views(session_id=session_id, limit=100_000)
         for step in steps:
             if step.tool_call_id == tool_call_id:
                 return step
         return None
 
-    # --- Compact Metadata Operations ---
-
-    async def save_compact_metadata(
-        self, session_id: str, agent_id: str, metadata: CompactMetadata
-    ) -> None:
-        """Save compact metadata (append to history). Override in subclasses."""
-
     async def get_latest_compact_metadata(
         self, session_id: str, agent_id: str
     ) -> CompactMetadata | None:
-        """Get the most recent compact metadata."""
-        return None
+        entries = await self.list_entries(
+            session_id=session_id,
+            agent_id=agent_id,
+            limit=100_000,
+        )
+        compact_entries = [
+            entry for entry in entries if isinstance(entry, CompactionApplied)
+        ]
+        if not compact_entries:
+            return None
+        return build_compact_metadata_from_entry(compact_entries[-1])
 
     async def get_compact_history(
         self, session_id: str, agent_id: str
     ) -> list[CompactMetadata]:
-        """Get all compact metadata history (sorted by created_at ascending)."""
-        return []
+        entries = await self.list_entries(
+            session_id=session_id,
+            agent_id=agent_id,
+            limit=100_000,
+        )
+        compact_entries = [
+            entry for entry in entries if isinstance(entry, CompactionApplied)
+        ]
+        return [build_compact_metadata_from_entry(entry) for entry in compact_entries]
+
+    @abstractmethod
+    async def get_max_sequence(self, session_id: str) -> int:
+        """Return the current max session sequence, or 0 when empty."""
+        ...
+
+    @abstractmethod
+    async def allocate_sequence(self, session_id: str) -> int:
+        """Allocate the next session sequence atomically."""
+        ...
 
 
-class InMemoryRunStepStorage(RunStepStorage):
-    """
-    In-memory implementation (for testing and development)
-    """
+class InMemoryRunLogStorage(RunLogStorage):
+    """In-memory run-log storage used by tests and local runtime instances."""
 
     def __init__(self) -> None:
-        self.runs: dict[str, Run] = {}
-        self.steps: dict[str, list[StepRecord]] = {}  # session_id -> list[StepRecord]
-        self._id_index: dict[
-            str, dict[str, int]
-        ] = {}  # session_id -> {step_id -> list_index}
-        self._seq_index: dict[
-            str, dict[int, int]
-        ] = {}  # session_id -> {sequence -> list_index}
-        self._sequence_counters: dict[str, int] = {}  # session_id -> counter
-        self._sequence_locks: dict[str, asyncio.Lock] = {}  # session_id -> lock
-        self._compact_history: dict[str, list[CompactMetadata]] = {}
-        self._compact_lock = asyncio.Lock()
+        self.run_log_entries: dict[str, list[RunLogEntry]] = {}
+        self._sequence_counters: dict[str, int] = {}
+        self._sequence_locks: dict[str, asyncio.Lock] = {}
 
-    async def save_run(self, run: Run) -> None:
-        self.runs[run.id] = run
+    async def append_entries(self, entries: list[RunLogEntry]) -> None:
+        for entry in entries:
+            bucket = self.run_log_entries.setdefault(entry.session_id, [])
+            if any(existing.sequence == entry.sequence for existing in bucket):
+                raise ValueError(
+                    "Duplicate run-log sequence for session "
+                    f"{entry.session_id}: {entry.sequence}"
+                )
+            bucket.append(entry)
+            bucket.sort(key=lambda item: item.sequence)
+            current = self._sequence_counters.get(entry.session_id, 0)
+            if entry.sequence > current:
+                self._sequence_counters[entry.session_id] = entry.sequence
 
-    async def get_run(self, run_id: str) -> Run | None:
-        return self.runs.get(run_id)
-
-    async def list_runs(
+    async def list_entries(
         self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 1000,
+    ) -> list[RunLogEntry]:
+        entries = list(self.run_log_entries.get(session_id, []))
+        if run_id is not None:
+            entries = [entry for entry in entries if entry.run_id == run_id]
+        if agent_id is not None:
+            entries = [entry for entry in entries if entry.agent_id == agent_id]
+        if after_sequence is not None:
+            entries = [entry for entry in entries if entry.sequence > after_sequence]
+        return entries[:limit]
+
+    async def get_run_view(self, run_id: str) -> RunView | None:
+        for entries in self.run_log_entries.values():
+            run_entries = [entry for entry in entries if entry.run_id == run_id]
+            if run_entries:
+                return build_run_view_from_entries(run_entries)
+        return None
+
+    async def list_run_views(
+        self,
+        *,
         user_id: str | None = None,
         session_id: str | None = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> list[Run]:
-        runs = list(self.runs.values())
+    ) -> list[RunView]:
+        entries: list[RunLogEntry] = []
+        session_ids = (
+            [session_id] if session_id is not None else list(self.run_log_entries)
+        )
+        for sid in session_ids:
+            entries.extend(self.run_log_entries.get(sid, []))
+        run_views = build_run_views_from_entries(entries)
+        if user_id is not None:
+            run_views = [view for view in run_views if view.user_id == user_id]
+        return run_views[offset : offset + limit]
 
-        if user_id:
-            runs = [r for r in runs if r.user_id == user_id]
+    async def get_committed_step_count(self, session_id: str) -> int:
+        return len(await self.list_step_views(session_id=session_id, limit=100_000))
 
-        if session_id:
-            runs = [r for r in runs if r.session_id == session_id]
+    async def batch_get_committed_step_counts(
+        self, session_ids: list[str]
+    ) -> dict[str, int]:
+        return {
+            session_id: len(
+                build_step_views_from_entries(self.run_log_entries.get(session_id, []))
+            )
+            for session_id in session_ids
+        }
 
-        runs.sort(key=lambda r: r.created_at, reverse=True)
+    async def get_session_run_stats(self, session_id: str) -> SessionRunStats:
+        entries = list(self.run_log_entries.get(session_id, []))
+        run_views = build_run_views_from_entries(entries)
+        step_count = len(build_step_views_from_entries(entries))
+        return SessionRunStats(
+            committed_step_count=step_count,
+            run_views=run_views,
+        )
 
-        return runs[offset : offset + limit]
-
-    async def count_runs(self, session_id: str) -> int:
-        return sum(1 for r in self.runs.values() if r.session_id == session_id)
-
-    async def delete_run(self, run_id: str) -> None:
-        run = self.runs.pop(run_id, None)
-        if run is None:
-            return
-        session_steps = self.steps.get(run.session_id, [])
-        self.steps[run.session_id] = [
-            step for step in session_steps if step.run_id != run_id
-        ]
-        self._rebuild_indexes(run.session_id)
-
-    # --- Step Operations ---
-
-    def _rebuild_indexes(self, session_id: str) -> None:
-        """Rebuild id/seq indexes from the steps list."""
-        id_idx: dict[str, int] = {}
-        seq_idx: dict[int, int] = {}
-        for i, s in enumerate(self.steps.get(session_id, [])):
-            id_idx[s.id] = i
-            seq_idx[s.sequence] = i
-        self._id_index[session_id] = id_idx
-        self._seq_index[session_id] = seq_idx
-
-    async def save_step(self, step: StepRecord) -> None:
-        """
-        Save or update a step.
-
-        Handles idempotency: if a step with same (session_id, sequence) exists,
-        updates it instead of creating a duplicate.
-        """
-        sid = step.session_id
-        if sid not in self.steps:
-            self.steps[sid] = []
-            self._id_index[sid] = {}
-            self._seq_index[sid] = {}
-
-        id_idx = self._id_index[sid]
-        seq_idx = self._seq_index[sid]
-        step_list = self.steps[sid]
-
-        # O(1) lookup by step.id
-        if step.id in id_idx:
-            idx = id_idx[step.id]
-            old = step_list[idx]
-            if old.sequence != step.sequence:
-                step_list.pop(idx)
-                self._rebuild_indexes(sid)
-                self._insert_new_step(sid, step)
-            else:
-                step_list[idx] = step
-            return
-
-        # O(1) lookup by sequence
-        if step.sequence in seq_idx:
-            idx = seq_idx[step.sequence]
-            old = step_list[idx]
-            del id_idx[old.id]
-            step_list[idx] = step
-            id_idx[step.id] = idx
-            return
-
-        self._insert_new_step(sid, step)
-
-    def _insert_new_step(self, sid: str, step: StepRecord) -> None:
-        """Bisect-insert a brand-new step with incremental index update."""
-        step_list = self.steps[sid]
-        id_idx = self._id_index[sid]
-        seq_idx = self._seq_index[sid]
-
-        sequences = [s.sequence for s in step_list]
-        pos = bisect.bisect_left(sequences, step.sequence)
-        step_list.insert(pos, step)
-
-        for existing_id, existing_pos in list(id_idx.items()):
-            if existing_pos >= pos:
-                id_idx[existing_id] = existing_pos + 1
-        for existing_seq, existing_pos in list(seq_idx.items()):
-            if existing_pos >= pos:
-                seq_idx[existing_seq] = existing_pos + 1
-
-        id_idx[step.id] = pos
-        seq_idx[step.sequence] = pos
-
-        current = self._sequence_counters.get(sid)
-        if current is not None and step.sequence > current:
-            self._sequence_counters[sid] = step.sequence
-
-    async def save_steps_batch(self, steps: list[StepRecord]) -> None:
-        for step in steps:
-            await self.save_step(step)
-
-    async def get_steps(
+    async def get_runtime_decision_state(
         self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> RuntimeDecisionState:
+        entries = await self.list_entries(
+            session_id=session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            limit=100_000,
+        )
+        return build_runtime_decision_state_from_entries(entries)
+
+    async def list_step_views(
+        self,
+        *,
         session_id: str,
         start_seq: int | None = None,
         end_seq: int | None = None,
         run_id: str | None = None,
         agent_id: str | None = None,
+        include_rolled_back: bool = False,
         limit: int = 1000,
-    ) -> list[StepRecord]:
-        steps = self.steps.get(session_id, [])
-
+        order: Literal["asc", "desc"] = "asc",
+    ) -> list[StepView]:
+        entries = await self.list_entries(
+            session_id=session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            limit=100_000,
+        )
+        step_views = build_step_views_from_entries(
+            entries,
+            include_rolled_back=include_rolled_back,
+        )
         if start_seq is not None:
-            steps = [s for s in steps if s.sequence >= start_seq]
+            step_views = [step for step in step_views if step.sequence >= start_seq]
         if end_seq is not None:
-            steps = [s for s in steps if s.sequence <= end_seq]
-        if run_id is not None:
-            steps = [s for s in steps if s.run_id == run_id]
-        if agent_id is not None:
-            steps = [s for s in steps if s.agent_id == agent_id]
+            step_views = [step for step in step_views if step.sequence <= end_seq]
+        if order == "desc":
+            step_views = list(reversed(step_views))
+        return step_views[:limit]
 
-        return steps[:limit]
-
-    async def get_last_step(self, session_id: str) -> StepRecord | None:
-        steps = self.steps.get(session_id, [])
-        return steps[-1] if steps else None
-
-    async def delete_steps(self, session_id: str, start_seq: int) -> int:
-        if session_id not in self.steps:
-            return 0
-
-        original_count = len(self.steps[session_id])
-        self.steps[session_id] = [
-            s for s in self.steps[session_id] if s.sequence < start_seq
-        ]
-        self._rebuild_indexes(session_id)
-        return original_count - len(self.steps[session_id])
-
-    # --- Step Content Update (for retrospect) ---
-
-    async def update_step_condensed_content(
+    async def append_step_condensed_content(
         self,
         session_id: str,
+        run_id: str,
+        agent_id: str,
         step_id: str,
         condensed_content: str,
     ) -> bool:
-        id_idx = self._id_index.get(session_id, {})
-        idx = id_idx.get(step_id)
-        if idx is None:
-            return False
-        step = self.steps[session_id][idx]
-        step.condensed_content = condensed_content
-        return True
-
-    async def get_step_count(self, session_id: str) -> int:
-        return len(self.steps.get(session_id, []))
+        bucket = self.run_log_entries.get(session_id, [])
+        for entry in bucket:
+            if not isinstance(
+                entry,
+                (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
+            ):
+                continue
+            if entry.step_id == step_id:
+                sequence = await self.allocate_sequence(session_id)
+                await self.append_entries(
+                    [
+                        StepCondensedContentUpdated(
+                            sequence=sequence,
+                            session_id=session_id,
+                            run_id=run_id,
+                            agent_id=agent_id,
+                            step_id=step_id,
+                            condensed_content=condensed_content,
+                        )
+                    ]
+                )
+                return True
+        return False
 
     async def get_max_sequence(self, session_id: str) -> int:
-        steps = self.steps.get(session_id, [])
-        if not steps:
-            return 0
-        return max(s.sequence for s in steps)
+        entries = self.run_log_entries.get(session_id, [])
+        return max((entry.sequence for entry in entries), default=0)
 
     async def allocate_sequence(self, session_id: str) -> int:
-        """Atomically allocate next sequence number."""
-        # Initialize lock for this session if not exists
         if session_id not in self._sequence_locks:
             self._sequence_locks[session_id] = asyncio.Lock()
-
         async with self._sequence_locks[session_id]:
-            # Initialize counter from existing steps if not yet initialized
-            if session_id not in self._sequence_counters:
-                max_seq = await self.get_max_sequence(session_id)
-                self._sequence_counters[session_id] = max_seq
-
-            # Increment and return
-            self._sequence_counters[session_id] += 1
-            return self._sequence_counters[session_id]
-
-    # --- Compact Metadata ---
-
-    def _compact_key(self, session_id: str, agent_id: str) -> str:
-        return f"{session_id}:{agent_id}"
-
-    async def save_compact_metadata(
-        self, session_id: str, agent_id: str, metadata: CompactMetadata
-    ) -> None:
-        async with self._compact_lock:
-            key = self._compact_key(session_id, agent_id)
-            if key not in self._compact_history:
-                self._compact_history[key] = []
-            self._compact_history[key].append(metadata)
-
-    async def get_latest_compact_metadata(
-        self, session_id: str, agent_id: str
-    ) -> CompactMetadata | None:
-        key = self._compact_key(session_id, agent_id)
-        history = self._compact_history.get(key, [])
-        return history[-1] if history else None
-
-    async def get_compact_history(
-        self, session_id: str, agent_id: str
-    ) -> list[CompactMetadata]:
-        key = self._compact_key(session_id, agent_id)
-        return list(self._compact_history.get(key, []))
+            current = self._sequence_counters.get(session_id)
+            if current is None:
+                current = await self.get_max_sequence(session_id)
+            current += 1
+            self._sequence_counters[session_id] = current
+            return current
 
 
-__all__ = ["RunStepStorage", "InMemoryRunStepStorage"]
+__all__ = [
+    "InMemoryRunLogStorage",
+    "RunLogStorage",
+    "SessionRunStats",
+]

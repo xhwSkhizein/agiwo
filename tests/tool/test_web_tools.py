@@ -56,9 +56,33 @@ def test_web_tool_schemas_and_descriptions_match_runtime_support() -> None:
     )
 
     assert search_tool.get_parameters()["properties"]["query"]["type"] == "string"
-    assert reader_tool.get_parameters()["properties"]["url"]["type"] == "string"
+    reader_schema = reader_tool.get_parameters()
+    assert reader_schema["properties"]["url"]["type"] == "string"
+    assert "oneOf" not in reader_schema
+    assert reader_schema["required"] == []
     assert "web_fetch" not in search_tool.description
     assert "web_reader" in search_tool.description
+
+
+def test_web_reader_openai_schema_stays_provider_compatible() -> None:
+    reader_tool = WebReaderTool(
+        citation_store_config=CitationStoreConfig(
+            storage_type="memory",
+        ),
+    )
+
+    schema = reader_tool.to_openai_schema()
+
+    assert schema["type"] == "function"
+    assert schema["function"]["name"] == "web_reader"
+    assert "oneOf" not in schema["function"]["parameters"]
+    assert schema["function"]["parameters"]["required"] == []
+    assert set(schema["function"]["parameters"]["properties"]) == {
+        "index",
+        "url",
+        "search_query",
+        "summarize",
+    }
 
 
 @pytest.mark.asyncio

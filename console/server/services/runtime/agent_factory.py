@@ -4,7 +4,7 @@ from agiwo.agent import Agent, AgentConfig
 from agiwo.agent import (
     AgentOptions,
     AgentStorageOptions,
-    RunStepStorageConfig,
+    RunLogStorageConfig,
     TraceStorageConfig,
 )
 from agiwo.llm import create_model_from_dict
@@ -24,7 +24,7 @@ from server.services.agent_registry import (
 )
 from server.services.storage_wiring import (
     build_citation_store_config,
-    build_run_step_storage_config,
+    build_run_log_storage_config,
     build_trace_storage_config,
 )
 
@@ -48,14 +48,14 @@ class PersistentAgentValidationError(PersistentAgentResumeError):
 def agent_options_input_to_agent_options(
     options_input: AgentOptionsInput,
     *,
-    run_step_storage: RunStepStorageConfig,
+    run_log_storage: RunLogStorageConfig,
     trace_storage: TraceStorageConfig,
 ) -> AgentOptions:
     data = options_input.model_dump(exclude_none=True)
     return AgentOptions(
         **data,
         storage=AgentStorageOptions(
-            run_step_storage=run_step_storage,
+            run_log_storage=run_log_storage,
             trace_storage=trace_storage,
         ),
     )
@@ -74,7 +74,7 @@ def build_model(config: AgentConfigRecord) -> Model:
     )
 
 
-async def build_agent(
+async def materialize_agent(
     config: AgentConfigRecord,
     console_config: ConsoleConfig,
     registry: AgentRegistry,
@@ -98,7 +98,7 @@ async def build_agent(
     opts_input = AgentOptionsInput.model_validate(config.options or {})
     options = agent_options_input_to_agent_options(
         opts_input,
-        run_step_storage=build_run_step_storage_config(console_config),
+        run_log_storage=build_run_log_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),
     )
 
@@ -115,7 +115,7 @@ async def build_agent(
                 child_config = await registry.get_agent(ref.agent_id)
                 if child_config is None:
                     continue
-                child_agent = await build_agent(
+                child_agent = await materialize_agent(
                     child_config,
                     console_config,
                     registry,
@@ -132,7 +132,7 @@ async def build_agent(
         allowed_tools=config.allowed_tools,
     )
     logger.info(
-        "build_agent",
+        "materialize_agent",
         agent=config.id,
         allowed_tools=config.allowed_tools,
         extra_tools=[t.name for t in agent_tools],
@@ -158,7 +158,7 @@ async def rehydrate_agent(
             f"config '{config_id}' not found in registry"
         )
 
-    return await build_agent(
+    return await materialize_agent(
         config,
         console_config,
         registry,

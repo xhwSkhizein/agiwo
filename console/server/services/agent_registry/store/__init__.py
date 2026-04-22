@@ -23,7 +23,7 @@ class AgentRegistryStore(Protocol):
 
 
 def create_agent_registry_store(config: ConsoleConfig) -> AgentRegistryStore:
-    if config.metadata_storage_type == "sqlite":
+    if config.storage.metadata_type == "sqlite":
         return SqliteAgentRegistryStore(db_path=config.sqlite_db_path)
     return InMemoryAgentRegistryStore()
 

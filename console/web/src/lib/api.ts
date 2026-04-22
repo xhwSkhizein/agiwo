@@ -189,6 +189,17 @@ export interface SessionDetail {
   session: SessionRecord | null;
   chat_context: ChatContextRecord | null;
   scheduler_state: AgentStateDetail | null;
+  observability: SessionObservability | null;
+}
+
+export interface RuntimeDecisionEvent {
+  kind: "termination" | "compaction" | "retrospect" | "rollback" | string;
+  sequence: number;
+  run_id: string;
+  agent_id: string;
+  created_at: string;
+  summary: string;
+  details: Record<string, unknown>;
 }
 
 export interface DashboardOverview {
@@ -377,6 +388,11 @@ export interface TraceListItem {
   total_tool_calls: number;
   input_query: string | null;
   final_output: string | null;
+}
+
+export interface SessionObservability {
+  recent_traces: TraceListItem[];
+  decision_events: RuntimeDecisionEvent[];
 }
 
 export interface SpanResponse {

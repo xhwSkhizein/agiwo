@@ -3,12 +3,13 @@
 import asyncio
 from collections.abc import AsyncIterator
 
+from agiwo.agent.models.log import RunLogEntry
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.input import UserInput, UserMessage
-from agiwo.agent.models.run import Run
-from agiwo.agent.models.step import StepRecord
-from agiwo.agent.storage.base import RunStepStorage
-from agiwo.agent.models.stream import AgentStreamItem
+from agiwo.agent.storage.base import (
+    RunLogStorage,
+)
+from agiwo.agent.models.stream import AgentStreamItem, stream_items_from_entries
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
@@ -17,12 +18,7 @@ logger = get_logger(__name__)
 
 
 class SessionRuntime:
-    """Session-scoped runtime state shared by root and child runs.
-
-    Convenience methods (``save_run``, ``save_step``, etc.) are provided so
-    callers avoid 3-level Law-of-Demeter chains such as
-    ``state.session_runtime.run_step_storage.save_run(run)``.
-    """
+    """Session-scoped runtime state shared by root and child runs."""
 
     _SENTINEL = object()
     _MAX_SUBSCRIBER_QUEUE_SIZE = 256
@@ -31,13 +27,13 @@ class SessionRuntime:
         self,
         *,
         session_id: str,
-        run_step_storage: RunStepStorage,
+        run_log_storage: RunLogStorage,
         trace_runtime: AgentTraceCollector | None = None,
         abort_signal: AbortSignal | None = None,
         steering_queue: asyncio.Queue[object] | None = None,
     ) -> None:
         self.session_id = session_id
-        self.run_step_storage = run_step_storage
+        self.run_log_storage = run_log_storage
         self.trace_runtime = trace_runtime
         self.abort_signal = abort_signal or AbortSignal()
         self.steering_queue = steering_queue or asyncio.Queue()
@@ -49,28 +45,43 @@ class SessionRuntime:
     # ------------------------------------------------------------------
 
     async def allocate_sequence(self) -> int:
-        return await self.run_step_storage.allocate_sequence(self.session_id)
+        return await self.run_log_storage.allocate_sequence(self.session_id)
 
-    async def save_run(self, run: Run) -> None:
-        await self.run_step_storage.save_run(run)
+    async def append_run_log_entries(self, entries: list[RunLogEntry]) -> None:
+        await self.run_log_storage.append_entries(entries)
+        if self.trace_runtime is not None:
+            try:
+                await self.trace_runtime.on_run_log_entries(entries)
+            except Exception as error:  # noqa: BLE001 - trace publication boundary
+                logger.warning(
+                    "trace_run_log_dispatch_failed",
+                    session_id=self.session_id,
+                    entry_count=len(entries),
+                    error=str(error),
+                )
 
-    async def save_step(self, step: StepRecord) -> None:
-        await self.run_step_storage.save_step(step)
+    async def list_run_log_entries(
+        self,
+        *,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        after_sequence: int | None = None,
+        limit: int = 1000,
+    ) -> list[RunLogEntry]:
+        return await self.run_log_storage.list_entries(
+            session_id=self.session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
 
     async def get_latest_compact_metadata(
         self, agent_id: str
     ) -> CompactMetadata | None:
         """Retrieve the latest compact metadata for the given agent."""
-        return await self.run_step_storage.get_latest_compact_metadata(
+        return await self.run_log_storage.get_latest_compact_metadata(
             self.session_id, agent_id
-        )
-
-    async def save_compact_metadata(
-        self, agent_id: str, metadata: CompactMetadata
-    ) -> None:
-        """Save compact metadata for the given agent."""
-        await self.run_step_storage.save_compact_metadata(
-            self.session_id, agent_id, metadata
         )
 
     def subscribe(self) -> AsyncIterator[AgentStreamItem]:
@@ -115,6 +126,24 @@ class SessionRuntime:
                 except asyncio.QueueFull:
                     pass
                 logger.warning("subscriber_dropped_slow_consumer")
+
+    async def project_run_log_entries(
+        self,
+        entries: list[RunLogEntry],
+        *,
+        run_id: str,
+        agent_id: str,
+        parent_run_id: str | None,
+        depth: int,
+    ) -> None:
+        run_contexts = {
+            run_id: {
+                "parent_run_id": parent_run_id,
+                "depth": depth,
+            }
+        }
+        for item in stream_items_from_entries(entries, run_contexts=run_contexts):
+            await self.publish(item)
 
     async def close(self) -> None:
         if self._closed:

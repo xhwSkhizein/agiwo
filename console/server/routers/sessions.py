@@ -2,14 +2,16 @@
 
 from collections.abc import AsyncIterator
 import json
+from dataclasses import dataclass
 
 from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
-from agiwo.scheduler.commands import RouteStreamMode
+from agiwo.scheduler.commands import RouteResult, RouteStreamMode
 
 from server.dependencies import (
     ConsoleRuntimeDep,
+    get_run_query_service,
     get_session_context_service,
     get_session_view_service,
 )
@@ -31,11 +33,88 @@ from server.models.view import (
     SessionSummaryResponse,
     StepResponse,
 )
+from server.models.session import Session
 from server.channels.exceptions import BaseAgentNotFoundError
 from server.services.runtime import SessionRuntimeService
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 _STEPS_MAX_LIMIT = 5000
+
+
+@dataclass(frozen=True)
+class _SessionExecutionContext:
+    session: Session
+    runtime_service: SessionRuntimeService
+
+
+def _require_session_runtime(runtime: ConsoleRuntimeDep) -> None:
+    if runtime.session_store is None:
+        raise RuntimeError("Session store not available")
+    if runtime.agent_runtime_cache is None:
+        raise RuntimeError("Agent runtime cache not available")
+    if runtime.scheduler is None:
+        raise RuntimeError("Scheduler not initialized")
+
+
+async def _build_session_execution_context(
+    runtime: ConsoleRuntimeDep,
+    session_id: str,
+) -> _SessionExecutionContext:
+    _require_session_runtime(runtime)
+    assert runtime.session_store is not None
+    assert runtime.scheduler is not None
+    session = await runtime.session_store.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    runtime_service = SessionRuntimeService(
+        scheduler=runtime.scheduler,
+        session_store=runtime.session_store,
+        timeout=600,
+    )
+    return _SessionExecutionContext(session=session, runtime_service=runtime_service)
+
+
+def _scheduler_ack_payload(
+    *,
+    session_id: str,
+    last_run_result=None,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "type": "scheduler_ack",
+        "session_id": session_id,
+        "state_id": session_id,
+    }
+    if last_run_result is not None:
+        payload["last_run_result"] = scheduler_run_result_response_from_sdk(
+            last_run_result
+        ).model_dump()
+    else:
+        payload["message"] = "消息已收到，正在继续处理。"
+    return payload
+
+
+async def _session_input_event_stream(
+    *,
+    dispatch: RouteResult,
+    runtime_service: SessionRuntimeService,
+    session_id: str,
+) -> AsyncIterator[dict[str, str]]:
+    if dispatch.stream is not None:
+        async for item in dispatch.stream:
+            yield stream_event_to_sse_message(item)
+        return
+
+    state = await runtime_service.get_state(session_id)
+    yield {
+        "event": "scheduler_ack",
+        "data": json.dumps(
+            _scheduler_ack_payload(
+                session_id=session_id,
+                last_run_result=state.last_run_result if state is not None else None,
+            ),
+            default=str,
+        ),
+    }
 
 
 @router.get("/runs", response_model=PageResponse[RunResponse])
@@ -47,29 +126,25 @@ async def list_runs(
     offset: int = Query(default=0, ge=0),
 ) -> PageResponse[RunResponse]:
     """List all runs with optional filtering."""
-    storage = runtime.run_step_storage
-    runs = await storage.list_runs(
+    page = await get_run_query_service(runtime).list_runs(
         user_id=user_id,
         session_id=session_id,
-        limit=limit + 1,
-        offset=offset,
-    )
-    has_more = len(runs) > limit
-    page = runs[:limit]
-    return PageResponse(
-        items=[run_response_from_sdk(r) for r in page],
         limit=limit,
         offset=offset,
-        has_more=has_more,
-        total=None,
+    )
+    return PageResponse(
+        items=[run_response_from_sdk(r) for r in page.items],
+        limit=page.limit,
+        offset=page.offset,
+        has_more=page.has_more,
+        total=page.total,
     )
 
 
 @router.get("/runs/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str, runtime: ConsoleRuntimeDep) -> RunResponse:
     """Get a single run by ID."""
-    storage = runtime.run_step_storage
-    run = await storage.get_run(run_id)
+    run = await get_run_query_service(runtime).get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run_response_from_sdk(run)
@@ -111,74 +186,31 @@ async def send_session_input(
     body: ChatRequest,
     runtime: ConsoleRuntimeDep,
 ) -> EventSourceResponse:
-    if runtime.session_store is None:
-        raise RuntimeError("Session store not available")
-    if runtime.agent_runtime_cache is None:
-        raise RuntimeError("Agent runtime cache not available")
-
-    session = await runtime.session_store.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    context = await _build_session_execution_context(runtime, session_id)
+    assert runtime.agent_runtime_cache is not None
 
     try:
-        agent = await runtime.agent_runtime_cache.get_or_create_runtime_agent(session)
+        agent = await runtime.agent_runtime_cache.get_or_create_runtime_agent(
+            context.session
+        )
     except BaseAgentNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Agent not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    if runtime.scheduler is None:
-        raise RuntimeError("Scheduler not initialized")
-
-    runtime_service = SessionRuntimeService(
-        scheduler=runtime.scheduler,
-        session_store=runtime.session_store,
-        timeout=600,
-    )
-    dispatch = await runtime_service.execute(
+    dispatch = await context.runtime_service.execute(
         agent,
-        session,
+        context.session,
         body.message,
         stream_mode=RouteStreamMode.UNTIL_SETTLED,
     )
-
-    async def event_generator() -> AsyncIterator[dict[str, str]]:
-        if dispatch.stream is not None:
-            async for item in dispatch.stream:
-                yield stream_event_to_sse_message(item)
-            return
-
-        state = await runtime_service.get_state(session.id)
-        if state is not None and state.last_run_result is not None:
-            yield {
-                "event": "scheduler_ack",
-                "data": json.dumps(
-                    {
-                        "type": "scheduler_ack",
-                        "session_id": session.id,
-                        "state_id": session.id,
-                        "last_run_result": scheduler_run_result_response_from_sdk(
-                            state.last_run_result
-                        ).model_dump(),
-                    },
-                    default=str,
-                ),
-            }
-            return
-        yield {
-            "event": "scheduler_ack",
-            "data": json.dumps(
-                {
-                    "type": "scheduler_ack",
-                    "session_id": session.id,
-                    "state_id": session.id,
-                    "message": "消息已收到，正在继续处理。",
-                },
-                default=str,
-            ),
-        }
-
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(
+        _session_input_event_stream(
+            dispatch=dispatch,
+            runtime_service=context.runtime_service,
+            session_id=context.session.id,
+        )
+    )
 
 
 @router.get("/sessions/{session_id}/summary", response_model=SessionSummaryResponse)
@@ -254,26 +286,19 @@ async def get_session_steps(
     order: str = Query(default="asc", pattern="^(asc|desc)$"),
 ) -> PageResponse[StepResponse]:
     """Get all steps for a session."""
-    storage = runtime.run_step_storage
-    raw_steps = await storage.get_steps(
-        session_id=session_id,
+    page = await get_run_query_service(runtime).list_session_steps(
+        session_id,
         start_seq=start_seq,
         end_seq=end_seq,
         run_id=run_id,
         agent_id=agent_id,
-        limit=_STEPS_MAX_LIMIT + 1 if order == "desc" else limit + 1,
-    )
-    if order == "desc":
-        raw_steps = list(reversed(raw_steps))
-    has_more = len(raw_steps) > limit
-    page = raw_steps[:limit]
-    total = None
-    if start_seq is None and end_seq is None and run_id is None and agent_id is None:
-        total = await storage.get_step_count(session_id)
-    return PageResponse(
-        items=[step_response_from_sdk(s) for s in page],
         limit=limit,
-        offset=0,
-        has_more=has_more,
-        total=total,
+        order=order,
+    )
+    return PageResponse(
+        items=[step_response_from_sdk(s) for s in page.items],
+        limit=page.limit,
+        offset=page.offset,
+        has_more=page.has_more,
+        total=page.total,
     )

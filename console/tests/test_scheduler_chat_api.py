@@ -21,7 +21,7 @@ from server.dependencies import (
     get_console_runtime_from_app,
 )
 from server.services.agent_registry import AgentRegistry
-from server.services.storage_wiring import create_run_step_storage, create_trace_storage
+from server.services.storage_wiring import create_run_log_storage, create_trace_storage
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
@@ -33,11 +33,13 @@ async def client():
     app = create_app()
 
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step_storage = create_run_step_storage(config)
+    run_log_storage = create_run_log_storage(config)
     trace_storage = create_trace_storage(config)
     registry = AgentRegistry(config)
     await registry.initialize()
@@ -54,7 +56,7 @@ async def client():
         app,
         ConsoleRuntime(
             config=config,
-            run_step_storage=run_step_storage,
+            run_log_storage=run_log_storage,
             trace_storage=trace_storage,
             agent_registry=registry,
             scheduler=scheduler,
@@ -69,7 +71,9 @@ async def client():
     clear_console_runtime(app)
     await scheduler.stop()
     await registry.close()
-    await run_step_storage.close()
+    await run_log_storage.close()
+    await trace_storage.close()
+    await session_store.close()
 
 
 class TestSessionCancel:

@@ -356,12 +356,13 @@ class QuerySpawnedAgentTool(BaseTool):
                 parameters=parameters,
                 start_time=start_time,
             )
+        result_summary = await self._port.get_child_result_summary(target_id)
 
         result_info: dict[str, Any] = {
             "agent_id": state.id,
             "status": state.status.value,
             "task": state.task if isinstance(state.task, str) else str(state.task),
-            "result_summary": state.result_summary,
+            "result_summary": result_summary,
             "explain": state.explain,
             "wake_count": state.wake_count,
         }
@@ -373,7 +374,7 @@ class QuerySpawnedAgentTool(BaseTool):
         ]
         content_parts.extend(
             build_child_result_detail_lines(
-                result=state.result_summary,
+                result=result_summary,
                 explain=state.explain,
             )
         )
@@ -573,6 +574,7 @@ class ListAgentsTool(BaseTool):
 
         for state in children:
             running_secs = self._port.age_seconds(state.created_at, now=now)
+            result_summary = await self._port.get_child_result_summary(state.id)
 
             info: dict[str, Any] = {
                 "agent_id": state.id,
@@ -589,7 +591,7 @@ class ListAgentsTool(BaseTool):
                 "created_ago_seconds": running_secs,
                 "wake_count": state.wake_count,
                 "explain": state.explain,
-                "result_summary": summarize_text(state.result_summary, 200),
+                "result_summary": summarize_text(result_summary, 200),
             }
 
             agent_infos.append(info)
@@ -598,7 +600,7 @@ class ListAgentsTool(BaseTool):
             status_str = state.status.value.upper()
             line = f"- [{status_str}] {state.id}: {task_str} (running {running_secs}s, woke {state.wake_count}x)"
             for detail in build_child_result_detail_lines(
-                result=summarize_text(state.result_summary, 100),
+                result=summarize_text(result_summary, 100),
                 explain=state.explain,
             ):
                 line += f"\n  {detail}"

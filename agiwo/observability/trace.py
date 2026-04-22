@@ -18,6 +18,7 @@ class SpanKind(str, Enum):
     AGENT = "agent"
     LLM_CALL = "llm_call"
     TOOL_CALL = "tool_call"
+    RUNTIME = "runtime"
 
 
 class SpanStatus(str, Enum):
@@ -140,6 +141,7 @@ class Span(BaseModel):
             SpanKind.AGENT: 1,  # INTERNAL
             SpanKind.LLM_CALL: 3,  # CLIENT (calling external LLM API)
             SpanKind.TOOL_CALL: 3,  # CLIENT
+            SpanKind.RUNTIME: 1,  # INTERNAL
         }
         return mapping.get(self.kind, 1)
 

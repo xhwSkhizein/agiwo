@@ -12,7 +12,7 @@ from agiwo.agent.models.step import (
     LLMCallContext,
     StepDelta,
     StepMetrics,
-    StepRecord,
+    StepView,
 )
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.models.stream import StepDeltaEvent
@@ -36,7 +36,7 @@ async def stream_assistant_step(
     tools: list[dict] | None = None,
     use_state_tools: bool = True,
     name: str | None = None,
-) -> tuple[StepRecord, LLMCallContext]:
+) -> tuple[StepView, LLMCallContext]:
     """Stream call LLM and build Step."""
     messages = messages if messages is not None else state.snapshot_messages()
     tools_resolved = (
@@ -62,7 +62,7 @@ async def stream_assistant_step(
 
     step_start_time = time.time()
     sequence = await state.session_runtime.allocate_sequence()
-    step = StepRecord.assistant(
+    step = StepView.assistant(
         state,
         sequence=sequence,
         content="",
@@ -166,7 +166,7 @@ def _finalize_tool_calls(tool_calls_acc: dict[int, dict]) -> list[dict]:
 
 def _apply_chunk_to_step(
     *,
-    step: StepRecord,
+    step: StepView,
     chunk: StreamChunk,
     tool_calls_acc: dict[int, dict],
 ) -> tuple[StepDelta, bool, str | None]:
@@ -201,11 +201,11 @@ def _apply_chunk_to_step(
 
 
 def _resolve_step_metrics(
-    step: StepRecord,
+    step: StepView,
     metrics_resolver: ModelUsageEstimator,
     request_estimate: UsageEstimate | None,
 ) -> None:
-    """Fill missing metrics on StepRecord and compute cost."""
+    """Fill missing metrics on StepView and compute cost."""
     if step.metrics is None:
         return
 

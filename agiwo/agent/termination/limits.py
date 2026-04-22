@@ -4,7 +4,7 @@ import time
 
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.run import TerminationReason
-from agiwo.agent.models.step import LLMCallContext, StepRecord
+from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.utils.logging import get_logger
 
@@ -47,7 +47,7 @@ def check_non_recoverable_limits(
 
 def check_post_llm_limits(
     state: RunContext,
-    step: StepRecord,
+    step: StepView,
     llm_context: LLMCallContext,
     *,
     options: AgentOptions,

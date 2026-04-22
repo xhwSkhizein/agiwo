@@ -2,11 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from agiwo.agent.models.run import RunIdentity
 from agiwo.agent.nested.agent_tool import AgentTool
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.tool_executor import execute_tool_batch
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.tool.base import BaseTool, ToolGateDecision, ToolResult
 from agiwo.tool.context import ToolContext
 
@@ -46,13 +47,15 @@ class DenyTool(EchoTool):
 
 def build_context():
     return RunContext(
+        identity=RunIdentity(
+            run_id="run-1",
+            agent_id="agent-1",
+            agent_name="agent-1",
+        ),
         session_runtime=SessionRuntime(
             session_id="session-1",
-            run_step_storage=InMemoryRunStepStorage(),
+            run_log_storage=InMemoryRunLogStorage(),
         ),
-        run_id="run-1",
-        agent_id="agent-1",
-        agent_name="agent-1",
     )
 
 

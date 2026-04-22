@@ -2,8 +2,8 @@
 set -euo pipefail
 
 export AGIWO_ROOT_PATH="${AGIWO_ROOT_PATH:-/data/root}"
-export AGIWO_CONSOLE_HOST="${AGIWO_CONSOLE_HOST:-127.0.0.1}"
-export AGIWO_CONSOLE_PORT="${AGIWO_CONSOLE_PORT:-18080}"
+BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
+BACKEND_PORT="${BACKEND_PORT:-18080}"
 
 if [[ ! -d /data ]]; then
   echo "/data mount is required" >&2
@@ -32,7 +32,7 @@ shutdown() {
 
 trap shutdown EXIT INT TERM
 
-agiwo-console serve --host "${AGIWO_CONSOLE_HOST}" --port "${AGIWO_CONSOLE_PORT}" &
+agiwo-console serve --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" &
 backend_pid=$!
 
 (

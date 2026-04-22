@@ -38,6 +38,7 @@ class RetrospectBatch:
             and "retrospect_tool_result" in tools_map
         )
         self._feedback: str | None = None
+        self._trigger: RetrospectTrigger | None = None
         self._step_lookup: dict[str, dict[str, Any]] = {}
 
     @property
@@ -62,6 +63,7 @@ class RetrospectBatch:
             result.tool_name,
         )
         if trigger is not RetrospectTrigger.NONE:
+            self._trigger = trigger
             content = inject_system_notice(content, trigger)
         return content
 
@@ -92,10 +94,13 @@ class RetrospectBatch:
             feedback=self._feedback,
             messages=self._state.ledger.messages,
             ledger=self._state.ledger,
-            storage=self._state.session_runtime.run_step_storage,
+            storage=self._state.session_runtime.run_log_storage,
             session_id=self._state.session_id,
+            run_id=self._state.run_id,
+            agent_id=self._state.agent_id,
             offload_dir=offload_dir,
             step_lookup=self._step_lookup,
+            trigger=self._trigger,
         )
 
 

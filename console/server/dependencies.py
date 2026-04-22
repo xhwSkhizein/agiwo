@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 
-from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.storage.base import RunLogStorage
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.scheduler.engine import Scheduler
 
@@ -15,7 +15,9 @@ from server.services.session_store.base import SessionStore
 from server.services.agent_registry import AgentRegistry
 from server.services.runtime import (
     AgentRuntimeCache,
+    RunQueryService,
     SessionContextService,
+    TraceQueryService,
     SessionViewService,
 )
 from server.services.runtime_config import RuntimeConfigService
@@ -26,7 +28,7 @@ _RUNTIME_STATE_KEY = "console_runtime"
 @dataclass
 class ConsoleRuntime:
     config: ConsoleConfig
-    run_step_storage: RunStepStorage
+    run_log_storage: RunLogStorage
     trace_storage: BaseTraceStorage
     agent_registry: AgentRegistry
     scheduler: Scheduler | None = None
@@ -68,10 +70,19 @@ SchedulerDep = Annotated[Scheduler, Depends(get_scheduler)]
 
 def get_session_view_service(runtime: ConsoleRuntime) -> SessionViewService:
     return SessionViewService(
-        run_storage=runtime.run_step_storage,
+        run_queries=get_run_query_service(runtime),
+        trace_queries=get_trace_query_service(runtime),
         session_store=runtime.session_store,
         scheduler=runtime.scheduler,
     )
+
+
+def get_run_query_service(runtime: ConsoleRuntime) -> RunQueryService:
+    return RunQueryService(run_storage=runtime.run_log_storage)
+
+
+def get_trace_query_service(runtime: ConsoleRuntime) -> TraceQueryService:
+    return TraceQueryService(trace_storage=runtime.trace_storage)
 
 
 def get_session_context_service(runtime: ConsoleRuntime) -> SessionContextService:
@@ -93,6 +104,8 @@ __all__ = [
     "get_console_runtime",
     "get_console_runtime_from_app",
     "get_scheduler",
+    "get_run_query_service",
+    "get_trace_query_service",
     "get_session_context_service",
     "get_session_view_service",
 ]

@@ -8,7 +8,8 @@ from typing import Any
 import aiofiles
 
 from agiwo.agent.models.run import RunLedger
-from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.retrospect.triggers import RetrospectTrigger
+from agiwo.agent.storage.base import RunLogStorage
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -25,6 +26,11 @@ class RetrospectOutcome:
     applied: bool = False
     offloaded_count: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
+    affected_sequences: list[int] = field(default_factory=list)
+    affected_step_ids: list[str] = field(default_factory=list)
+    feedback: str | None = None
+    replacement: str | None = None
+    trigger: RetrospectTrigger | None = None
 
 
 async def offload_to_disk(content: str, path: Path) -> str:
@@ -40,10 +46,13 @@ async def execute_retrospect(
     feedback: str,
     messages: list[dict[str, Any]],
     ledger: RunLedger,
-    storage: RunStepStorage,
+    storage: RunLogStorage,
     session_id: str,
+    run_id: str,
+    agent_id: str,
     offload_dir: Path,
     step_lookup: dict[str, dict[str, Any]],
+    trigger: RetrospectTrigger | None = None,
 ) -> RetrospectOutcome:
     """Execute a retrospect pass and return the outcome.
 
@@ -56,6 +65,9 @@ async def execute_retrospect(
     last_retrospect_seq = ledger.retrospect.last_seq
     offloaded_count = 0
     last_tool_call_id: str | None = None
+    affected_sequences: list[int] = []
+    affected_step_ids: list[str] = []
+    replacement: str | None = None
 
     for msg in working:
         if msg.get("role") != "tool":
@@ -74,13 +86,20 @@ async def execute_retrospect(
         msg["content"] = placeholder
         offloaded_count += 1
         last_tool_call_id = tool_call_id
+        affected_sequences.append(seq)
+        replacement = placeholder
 
         step_info = step_lookup.get(tool_call_id)
         if step_info is not None:
             step_id = step_info.get("id", "")
             if step_id:
-                await storage.update_step_condensed_content(
-                    session_id, step_id, placeholder
+                affected_step_ids.append(step_id)
+                await storage.append_step_condensed_content(
+                    session_id,
+                    run_id,
+                    agent_id,
+                    step_id,
+                    placeholder,
                 )
 
     if last_tool_call_id is not None and feedback:
@@ -92,6 +111,17 @@ async def execute_retrospect(
             step_lookup,
             storage,
             session_id,
+            run_id,
+            agent_id,
+        )
+        replacement = next(
+            (
+                msg.get("content")
+                for msg in reversed(working)
+                if msg.get("role") == "tool"
+                and msg.get("tool_call_id") == last_tool_call_id
+            ),
+            replacement,
         )
 
     _remove_retrospect_tool_call(working)
@@ -115,6 +145,11 @@ async def execute_retrospect(
         applied=True,
         offloaded_count=offloaded_count,
         messages=working,
+        affected_sequences=affected_sequences,
+        affected_step_ids=affected_step_ids,
+        feedback=feedback,
+        replacement=replacement if isinstance(replacement, str) else None,
+        trigger=trigger,
     )
 
 
@@ -124,8 +159,10 @@ async def _persist_feedback(
     feedback: str,
     target_tool_call_id: str,
     step_lookup: dict[str, Any],
-    storage: RunStepStorage,
+    storage: RunLogStorage,
     session_id: str,
+    run_id: str,
+    agent_id: str,
 ) -> None:
     """Append retrospect feedback to the last tool message and persist.
 
@@ -147,8 +184,12 @@ async def _persist_feedback(
         if step_info is not None:
             step_id = step_info.get("id", "")
             if step_id:
-                await storage.update_step_condensed_content(
-                    session_id, step_id, combined
+                await storage.append_step_condensed_content(
+                    session_id,
+                    run_id,
+                    agent_id,
+                    step_id,
+                    combined,
                 )
         break
 

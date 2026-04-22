@@ -40,6 +40,19 @@ PULL=0
 MOUNTS=()
 EXTRA_ENVS=()
 FORWARD_ENV_NAMES=()
+AUTO_FORWARD_ENV_NAMES=(
+  SERPER_API_KEY
+  AGIWO_TOOL_WEB_SEARCH_SERPER_API_KEY
+  HTTP_PROXY
+  HTTPS_PROXY
+  ALL_PROXY
+  http_proxy
+  https_proxy
+  all_proxy
+  NO_PROXY
+  no_proxy
+)
+DISCOVERED_ENV_NAMES=()
 BUILD_PROXY_ARGS=(
   --build-arg HTTP_PROXY=
   --build-arg HTTPS_PROXY=
@@ -132,9 +145,37 @@ fi
 require_cmd docker
 require_cmd uv
 
+is_valid_env_name() {
+  [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
+}
+
 mkdir -p "$DATA_DIR"
 ENV_FILE="$(cd "$(dirname "$ENV_FILE")" && pwd)/$(basename "$ENV_FILE")"
 DATA_DIR="$(cd "$DATA_DIR" && pwd)"
+
+while IFS='=' read -r raw_key raw_value || [[ -n "$raw_key${raw_value:-}" ]]; do
+  key="${raw_key#"${raw_key%%[![:space:]]*}"}"
+  key="${key%"${key##*[![:space:]]}"}"
+  value="${raw_value#"${raw_value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  value="${value%%#*}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+    value="${value:1:${#value}-2}"
+  elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+    value="${value:1:${#value}-2}"
+  fi
+  if [[ -z "$key" || "$key" == \#* ]]; then
+    continue
+  fi
+  if [[ "$key" != *_API_KEY_ENV_NAME ]]; then
+    continue
+  fi
+  if [[ -n "$value" ]]; then
+    DISCOVERED_ENV_NAMES+=("$value")
+  fi
+done < "$ENV_FILE"
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
   echo "[deploy_console] building image: $IMAGE"
@@ -179,9 +220,34 @@ for env_name in "${FORWARD_ENV_NAMES[@]}"; do
     echo "--env-name requires a non-empty variable name" >&2
     exit 1
   fi
+  if ! is_valid_env_name "$env_name"; then
+    echo "Invalid env variable name: $env_name" >&2
+    exit 1
+  fi
   if [[ -z "${!env_name+x}" ]]; then
     echo "Host environment variable is not set: $env_name" >&2
     exit 1
+  fi
+  CMD+=(--env "$env_name=${!env_name}")
+done
+
+for env_name in "${AUTO_FORWARD_ENV_NAMES[@]}"; do
+  if ! is_valid_env_name "$env_name"; then
+    continue
+  fi
+  if [[ -z "${!env_name+x}" ]]; then
+    continue
+  fi
+  CMD+=(--env "$env_name=${!env_name}")
+done
+
+for env_name in "${DISCOVERED_ENV_NAMES[@]}"; do
+  if ! is_valid_env_name "$env_name"; then
+    echo "Skipping invalid env variable name from env file: $env_name" >&2
+    continue
+  fi
+  if [[ -z "${!env_name+x}" ]]; then
+    continue
   fi
   CMD+=(--env "$env_name=${!env_name}")
 done

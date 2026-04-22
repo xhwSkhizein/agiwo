@@ -7,7 +7,7 @@ import agiwo.agent.agent as agent_module
 import agiwo.agent.definition as definition_module
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig, AgentOptions
-from agiwo.agent import AgentHooks
+from agiwo.agent import HookRegistry
 from agiwo.agent.definition import resolve_child_definition
 from agiwo.llm.base import Model
 from agiwo.skill.loader import SkillLoader
@@ -86,7 +86,7 @@ def _build_agent() -> Agent:
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
         tools=[DummyTool()],
-        hooks=AgentHooks(),
+        hooks=HookRegistry(),
     )
 
 
@@ -177,7 +177,7 @@ def test_agent_constructor_does_not_expose_skill_manager(
         ),
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
-        hooks=AgentHooks(),
+        hooks=HookRegistry(),
     )
 
     skill_tool = next(tool for tool in agent.tools if tool.name == "skill")
@@ -245,7 +245,7 @@ async def test_create_child_agent_rebuilds_skill_tool_with_narrowed_allowlist(
         ),
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
-        hooks=AgentHooks(),
+        hooks=HookRegistry(),
     )
 
     clone = await agent.create_child_agent(
@@ -274,7 +274,7 @@ async def test_create_child_agent_skips_skill_tool_for_empty_allowlist(
         ),
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
-        hooks=AgentHooks(),
+        hooks=HookRegistry(),
     )
 
     clone = await agent.create_child_agent(
@@ -301,7 +301,7 @@ async def test_create_child_agent_rejects_wildcard_child_allowlist(
         ),
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
-        hooks=AgentHooks(),
+        hooks=HookRegistry(),
     )
 
     with pytest.raises(ValueError, match="explicit skill names"):
@@ -323,7 +323,7 @@ def test_agent_rejects_wildcard_allowed_skills_in_constructor() -> None:
             ),
             id="definition-agent",
             model=MockModel(id="mock", name="mock", provider="openai"),
-            hooks=AgentHooks(),
+            hooks=HookRegistry(),
         )
 
 
@@ -350,7 +350,7 @@ def test_agent_resolves_definition_once_during_init(
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
         tools=[DummyTool()],
-        hooks=AgentHooks(),
+        hooks=HookRegistry(),
     )
 
     assert resolve_calls == 1
@@ -374,7 +374,7 @@ def test_agent_config_uses_allowed_tools_to_filter_sdk_tools() -> None:
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
         tools=[DummyTool()],
-        hooks=AgentHooks(),
+        hooks=HookRegistry(),
     )
 
     tool_names = {tool.name for tool in agent.tools}

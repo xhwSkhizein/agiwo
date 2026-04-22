@@ -21,6 +21,7 @@ from agiwo.scheduler.models import (
     WakeType,
     to_seconds,
 )
+from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import RuntimeState
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.codec import serialize_child_agent_config_overrides
@@ -35,6 +36,7 @@ class SchedulerToolControl:
         store: AgentStateStorage,
         guard: TaskGuard,
         rt: RuntimeState,
+        runtime_facts: SchedulerRuntimeFacts,
         save_state: Callable[[AgentState], Awaitable[None]],
         cancel_subtree: Callable[[str, str], Awaitable[None]],
         state_list_page_size: int,
@@ -42,6 +44,7 @@ class SchedulerToolControl:
         self._store = store
         self._guard = guard
         self._rt = rt
+        self._runtime_facts = runtime_facts
         self._save_state = save_state
         self._cancel_subtree = cancel_subtree
         self._state_list_page_size = state_list_page_size
@@ -117,6 +120,12 @@ class SchedulerToolControl:
 
     async def get_child_state(self, target_id: str) -> AgentState | None:
         return await self._store.get_state(target_id)
+
+    async def get_child_result_summary(self, target_id: str) -> str | None:
+        state = await self.get_child_state(target_id)
+        if state is None:
+            return None
+        return await self._runtime_facts.get_result_summary(state)
 
     async def list_child_states(
         self,

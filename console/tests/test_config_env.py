@@ -13,6 +13,7 @@ from agiwo.skill.loader import SkillLoader
 from agiwo.skill.registry import SkillRegistry
 from agiwo.skill.skill_tool import SkillTool
 import server.services.runtime.agent_factory as agent_factory_module
+import agiwo.tool.builtin.bash_tool.sandbox as bash_sandbox_module
 from server.config import ConsoleConfig, DefaultAgentConfig
 from server.models.agent_config import AgentOptionsInput
 from server.models.view import AgentConfigPayload
@@ -23,12 +24,12 @@ from server.services.agent_registry import (
 )
 from server.services.runtime.agent_factory import (
     agent_options_input_to_agent_options,
-    build_agent,
     build_default_agent_record,
     build_model,
+    materialize_agent,
 )
 from server.services.storage_wiring import (
-    build_run_step_storage_config,
+    build_run_log_storage_config,
     build_trace_storage_config,
 )
 from server.services.tool_catalog.tool_builder import build_tools
@@ -106,7 +107,7 @@ def stub_skill_manager(monkeypatch: pytest.MonkeyPatch) -> DummySkillManager:
 
 
 def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AGIWO_CONSOLE_FEISHU_ENABLED", "true")
+    monkeypatch.setenv("AGIWO_CONSOLE_CHANNELS__FEISHU__ENABLED", "true")
 
     config = ConsoleConfig()
 
@@ -182,14 +183,16 @@ def test_console_config_rejects_plain_api_key_in_default_model_params(
 
 def test_agent_options_input_defaults() -> None:
     console_config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
     opts = AgentOptionsInput.model_validate({})
     options = agent_options_input_to_agent_options(
         opts,
-        run_step_storage=build_run_step_storage_config(console_config),
+        run_log_storage=build_run_log_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),
     )
 
@@ -234,9 +237,11 @@ def test_console_default_agent_config_normalizes_allowed_skills() -> None:
 
 def test_agent_options_input_maps_all_fields() -> None:
     console_config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
     opts = AgentOptionsInput.model_validate(
         {
@@ -259,7 +264,7 @@ def test_agent_options_input_maps_all_fields() -> None:
     )
     options = agent_options_input_to_agent_options(
         opts,
-        run_step_storage=build_run_step_storage_config(console_config),
+        run_log_storage=build_run_log_storage_config(console_config),
         trace_storage=build_trace_storage_config(console_config),
     )
 
@@ -292,9 +297,11 @@ async def test_default_agent_record_is_consistent_across_entrypoints(
 ) -> None:
     del stub_skill_manager
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        },
         default_agent={
             "model_provider": "openai",
             "model_name": "gpt-4o-mini",
@@ -341,9 +348,11 @@ def test_console_tool_catalog_parses_builtin_and_agent_refs() -> None:
 @pytest.mark.asyncio
 async def test_console_tool_catalog_builds_shared_web_tool_overrides() -> None:
     console_config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
 
     tools = await build_tools(
@@ -384,21 +393,31 @@ def test_build_model_uses_shared_model_factory_for_compatible_provider(
 
 
 @pytest.mark.asyncio
-async def test_build_agent_preserves_empty_allowed_skills(
+async def test_materialize_agent_preserves_empty_allowed_skills(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setattr(
         agent_factory_module,
         "build_model",
         lambda _config: MockModel(id="mock", name="mock", provider="openai"),
     )
+    monkeypatch.setenv("AGIWO_ROOT_PATH", str(tmp_path / ".agiwo"))
+    monkeypatch.setattr(
+        bash_sandbox_module.settings,
+        "root_path",
+        str(tmp_path / ".agiwo"),
+    )
+    bash_sandbox_module._SHARED_LOCAL_EXECUTORS.clear()
     console_config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
 
-    agent = await build_agent(
+    agent = await materialize_agent(
         AgentConfigRecord(
             name="tester",
             model_provider="openai",
@@ -414,9 +433,10 @@ async def test_build_agent_preserves_empty_allowed_skills(
 
 
 @pytest.mark.asyncio
-async def test_build_agent_tool_preserves_delegate_skill_access(
+async def test_materialize_agent_tool_preserves_delegate_skill_access(
     monkeypatch: pytest.MonkeyPatch,
     stub_skill_manager: DummySkillManager,
+    tmp_path,
 ) -> None:
     del stub_skill_manager
     monkeypatch.setattr(
@@ -424,10 +444,19 @@ async def test_build_agent_tool_preserves_delegate_skill_access(
         "build_model",
         lambda _config: MockModel(id="mock", name="mock", provider="openai"),
     )
+    monkeypatch.setenv("AGIWO_ROOT_PATH", str(tmp_path / ".agiwo"))
+    monkeypatch.setattr(
+        bash_sandbox_module.settings,
+        "root_path",
+        str(tmp_path / ".agiwo"),
+    )
+    bash_sandbox_module._SHARED_LOCAL_EXECUTORS.clear()
     console_config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
     child = AgentConfigRecord(
         id="child",
@@ -444,7 +473,7 @@ async def test_build_agent_tool_preserves_delegate_skill_access(
         allowed_tools=["agent:child"],
     )
 
-    agent = await build_agent(
+    agent = await materialize_agent(
         parent,
         console_config,
         DummyRegistry({"child": child}),
@@ -571,9 +600,11 @@ def test_agent_config_payload_uses_defaults_when_options_omitted() -> None:
 async def test_agent_registry_replace_overwrites_nested_config_without_merge() -> None:
     registry = AgentRegistry(
         ConsoleConfig(
-            run_step_storage_type="memory",
-            trace_storage_type="memory",
-            metadata_storage_type="memory",
+            storage={
+                "run_log_type": "memory",
+                "trace_type": "memory",
+                "metadata_type": "memory",
+            }
         )
     )
     await registry.initialize()
@@ -626,9 +657,11 @@ async def test_agent_registry_replace_overwrites_nested_config_without_merge() -
 async def test_agent_registry_replace_rejects_invalid_full_compatible_config() -> None:
     registry = AgentRegistry(
         ConsoleConfig(
-            run_step_storage_type="memory",
-            trace_storage_type="memory",
-            metadata_storage_type="memory",
+            storage={
+                "run_log_type": "memory",
+                "trace_type": "memory",
+                "metadata_type": "memory",
+            }
         )
     )
     await registry.initialize()

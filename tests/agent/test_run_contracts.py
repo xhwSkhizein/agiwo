@@ -10,7 +10,7 @@ from agiwo.agent import Agent
 from agiwo.agent import AgentConfig
 from agiwo.agent import RunOutput
 from agiwo.agent.runtime.session import SessionRuntime
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -130,12 +130,12 @@ async def test_stream_assistant_step_accumulates_chat_compatible_tool_call_delta
     )
 
     await agent.run("weather?", session_id="tool-call-contract-session")
-    steps = await agent.run_step_storage.get_steps(
+    steps = await agent.run_log_storage.list_step_views(
         session_id="tool-call-contract-session",
         agent_id=agent.id,
     )
 
-    assistant_steps = [step for step in steps if step.role == "assistant"]
+    assistant_steps = [step for step in steps if step.role.value == "assistant"]
     assert assistant_steps[-1].tool_calls == [
         {
             "id": "call_123",
@@ -246,7 +246,7 @@ async def test_run_child_uses_agent_instance_id(
     )
     session_runtime = SessionRuntime(
         session_id="sess-child",
-        run_step_storage=InMemoryRunStepStorage(),
+        run_log_storage=InMemoryRunLogStorage(),
     )
 
     result = await agent.run_child(

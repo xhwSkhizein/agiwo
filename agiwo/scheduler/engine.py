@@ -9,13 +9,18 @@ from uuid import uuid4
 from agiwo.agent import (
     Agent,
     RunOutput,
-    TerminationReason,
     UserInput,
     UserMessage,
 )
+from agiwo.scheduler._runtime_agents import ensure_root_runtime_agent
 from agiwo.scheduler._stream import route_with_stream
 from agiwo.scheduler._tick import dispatch_action, tick as _tick
 from agiwo.scheduler._tree_ops import cancel_subtree, shutdown_subtree
+from agiwo.scheduler._wait import (
+    deadline_remaining,
+    resolve_routable_state,
+    wait_for_state_result,
+)
 from agiwo.scheduler.commands import (
     DispatchAction,
     DispatchReason,
@@ -32,6 +37,7 @@ from agiwo.scheduler.models import (
     SchedulerConfig,
 )
 from agiwo.scheduler.runner import RunnerContext, SchedulerRunner
+from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import RuntimeState, list_all_states
 from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
@@ -69,10 +75,12 @@ class Scheduler:
             state_list_page_size=self._config.state_list_page_size,
         )
         self._rt = RuntimeState()
+        self._runtime_facts = SchedulerRuntimeFacts(self._rt)
         self._tool_control = SchedulerToolControl(
             store=self._store,
             guard=self._guard,
             rt=self._rt,
+            runtime_facts=self._runtime_facts,
             save_state=self._save_state,
             cancel_subtree=self._cancel_subtree,
             state_list_page_size=self._config.state_list_page_size,
@@ -89,6 +97,7 @@ class Scheduler:
             RunnerContext(
                 store=self._store,
                 rt=self._rt,
+                runtime_facts=self._runtime_facts,
                 notify_state_change=self._notify_state_change,
                 nudge=self.nudge,
                 semaphore=semaphore or asyncio.Semaphore(self._config.max_concurrent),
@@ -325,14 +334,21 @@ class Scheduler:
                 agent_config_id=agent_config_id,
             )
 
-        current_state = await self._resolve_routable_state(lookup_id, deadline)
+        current_state = await resolve_routable_state(
+            store=self._store,
+            rt=self._rt,
+            state_id=lookup_id,
+            deadline=deadline,
+        )
 
         if current_state is None:
             return await route_with_stream(
                 self._ctx,
                 root_state_id=agent.id,
                 action="submitted",
-                timeout=self._deadline_remaining(deadline) if deadline else timeout,
+                timeout=(
+                    deadline_remaining(deadline) if deadline is not None else timeout
+                ),
                 include_child_events=include_child_events,
                 close_on_root_run_end=close_on_root_run_end,
                 operation=do_submit,
@@ -391,53 +407,13 @@ class Scheduler:
         state_id: str,
         timeout: float | None = None,
     ) -> RunOutput:
-        start = time.monotonic()
-        event = asyncio.Event()
-        waiters = self._rt.waiters.setdefault(state_id, set())
-        waiters.add(event)
-
-        try:
-            while True:
-                state = await self._store.get_state(state_id)
-                if state is not None:
-                    if state.last_run_result is not None and (
-                        state.status
-                        in (
-                            AgentStateStatus.IDLE,
-                            AgentStateStatus.COMPLETED,
-                            AgentStateStatus.FAILED,
-                        )
-                    ):
-                        last_run_result = state.last_run_result
-                        return RunOutput(
-                            run_id=last_run_result.run_id,
-                            response=(
-                                last_run_result.summary
-                                if last_run_result.error is None
-                                else None
-                            ),
-                            error=last_run_result.error,
-                            termination_reason=last_run_result.termination_reason,
-                        )
-
-                remaining = None
-                if timeout is not None:
-                    elapsed = time.monotonic() - start
-                    if elapsed >= timeout:
-                        return RunOutput(termination_reason=TerminationReason.TIMEOUT)
-                    remaining = timeout - elapsed
-
-                try:
-                    await asyncio.wait_for(event.wait(), timeout=remaining)
-                except asyncio.TimeoutError:
-                    return RunOutput(termination_reason=TerminationReason.TIMEOUT)
-                event.clear()
-        finally:
-            waiters = self._rt.waiters.get(state_id)
-            if waiters is not None:
-                waiters.discard(event)
-                if not waiters:
-                    self._rt.waiters.pop(state_id, None)
+        return await wait_for_state_result(
+            store=self._store,
+            rt=self._rt,
+            runtime_facts=self._runtime_facts,
+            state_id=state_id,
+            timeout=timeout,
+        )
 
     async def get_state(self, state_id: str) -> AgentState | None:
         return await self._store.get_state(state_id)
@@ -613,53 +589,6 @@ class Scheduler:
         for waiter in self._rt.waiters.get(state_id, set()):
             waiter.set()
 
-    async def _resolve_routable_state(
-        self,
-        state_id: str,
-        deadline: float | None,
-    ) -> AgentState | None:
-        while True:
-            state = await self._store.get_state(state_id)
-            if state is None:
-                return None
-            if state.status != AgentStateStatus.PENDING:
-                return state
-            state = await self._wait_until_not_pending(state.id, deadline=deadline)
-            if state is None:
-                return None
-
-    async def _wait_until_not_pending(
-        self,
-        state_id: str,
-        *,
-        deadline: float | None,
-    ) -> AgentState | None:
-        event = asyncio.Event()
-        waiters = self._rt.waiters.setdefault(state_id, set())
-        waiters.add(event)
-        try:
-            while True:
-                state = await self._store.get_state(state_id)
-                if state is None or state.status != AgentStateStatus.PENDING:
-                    return state
-                try:
-                    await asyncio.wait_for(
-                        event.wait(),
-                        timeout=self._deadline_remaining(deadline),
-                    )
-                except asyncio.TimeoutError as exc:
-                    raise RuntimeError(
-                        f"Timed out waiting for scheduler state '{state_id}' "
-                        "to become routable"
-                    ) from exc
-                event.clear()
-        finally:
-            waiters = self._rt.waiters.get(state_id)
-            if waiters is not None:
-                waiters.discard(event)
-                if not waiters:
-                    self._rt.waiters.pop(state_id, None)
-
     async def _ensure_root_runtime_agent(
         self,
         canonical_agent: Agent,
@@ -669,7 +598,7 @@ class Scheduler:
 
         **Identity rule (strict reuse):** if the cached canonical agent for
         ``state_id`` is the *same Python object* as the caller-supplied one,
-        we reuse the existing runtime agent (preserving its ``run_step_storage``
+        we reuse the existing runtime agent (preserving its ``run_log_storage``
         / ``trace_storage`` / workspace state across turns).  Otherwise we
         build a new runtime agent (clone + inject scheduler system tools),
         close the previous runtime agent, and record the new canonical.
@@ -681,31 +610,12 @@ class Scheduler:
         runtime lock if future changes keep returned runtime-agent references
         alive across canonical swaps.
         """
-        cached_canonical = self._rt.canonical_agents.get(state_id)
-        cached_runtime = self._rt.agents.get(state_id)
-        if cached_canonical is canonical_agent and cached_runtime is not None:
-            return cached_runtime
-
-        runtime_agent = Agent(
-            canonical_agent.config,
-            id=state_id,
-            model=canonical_agent.model,
-            tools=list(canonical_agent.extra_tools) or None,
-            hooks=canonical_agent.hooks,
+        return await ensure_root_runtime_agent(
+            rt=self._rt,
+            scheduling_tools=self._scheduling_tools,
+            canonical_agent=canonical_agent,
+            state_id=state_id,
         )
-        runtime_agent._inject_system_tools(list(self._scheduling_tools))
-
-        self._rt.agents[state_id] = runtime_agent
-        self._rt.canonical_agents[state_id] = canonical_agent
-        if cached_runtime is not None:
-            try:
-                await cached_runtime.close()
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "scheduler_root_runtime_agent_close_failed",
-                    state_id=state_id,
-                )
-        return runtime_agent
 
     async def _enqueue_and_return_state_id(
         self,
@@ -716,14 +626,6 @@ class Scheduler:
     ) -> str:
         await self.enqueue_input(state_id, user_input, agent=agent)
         return state_id
-
-    def _deadline_remaining(self, deadline: float | None) -> float | None:
-        if deadline is None:
-            return None
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return 0
-        return remaining
 
 
 __all__ = ["Scheduler"]

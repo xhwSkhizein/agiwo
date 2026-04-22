@@ -16,16 +16,16 @@ from agiwo.agent.definition import (
     resolve_agent_definition,
     resolve_child_definition,
 )
-from agiwo.agent.hooks import AgentHooks
+from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.prompt import build_system_prompt
-from agiwo.agent.models.run import RunOutput
+from agiwo.agent.models.run import RunIdentity, RunOutput
 from agiwo.agent.run_loop import execute_run
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.models.stream import AgentStreamItem
-from agiwo.agent.storage.base import RunStepStorage
-from agiwo.agent.storage.factory import create_run_step_storage
+from agiwo.agent.storage.base import RunLogStorage
+from agiwo.agent.storage.factory import create_run_log_storage
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
@@ -92,7 +92,7 @@ class Agent:
         *,
         model: Model,
         tools: list[BaseTool] | None = None,
-        hooks: AgentHooks | None = None,
+        hooks: HookRegistry | list[HookRegistration] | None = None,
         id: str | None = None,
     ) -> None:
         """Create an Agent.
@@ -131,8 +131,8 @@ class Agent:
         )
 
         self._workspace = resolved_definition.workspace
-        self._run_step_storage = create_run_step_storage(
-            self._config.options.storage.run_step_storage
+        self._run_log_storage = create_run_log_storage(
+            self._config.options.storage.run_log_storage
         )
         self._trace_storage = create_trace_storage(
             self._config.options.storage.trace_storage
@@ -169,16 +169,16 @@ class Agent:
         return self._model
 
     @property
-    def hooks(self) -> AgentHooks:
+    def hooks(self) -> HookRegistry:
         return self._hooks
 
     @hooks.setter
-    def hooks(self, hooks: AgentHooks | None) -> None:
+    def hooks(self, hooks: HookRegistry | list[HookRegistration] | None) -> None:
         self._hooks = build_agent_hooks(self._config, hooks)
 
     @property
-    def run_step_storage(self) -> RunStepStorage:
-        return self._run_step_storage
+    def run_log_storage(self) -> RunLogStorage:
+        return self._run_log_storage
 
     @property
     def trace_storage(self) -> BaseTraceStorage | None:
@@ -274,21 +274,23 @@ class Agent:
             child_allowed_skills=child_allowed_skills,
         )
         context = RunContext(
+            identity=RunIdentity(
+                run_id=str(uuid4()),
+                agent_id=self._id,
+                agent_name=self.name,
+                user_id=parent_user_id,
+                depth=parent_depth + 1,
+                parent_run_id=parent_run_id,
+                timeout_at=parent_timeout_at,
+                metadata=dict(parent_metadata),
+            ),
             session_runtime=session_runtime,
-            run_id=str(uuid4()),
-            agent_id=self._id,
-            agent_name=self.name,
-            user_id=parent_user_id,
-            depth=parent_depth + 1,
-            parent_run_id=parent_run_id,
-            timeout_at=parent_timeout_at,
-            metadata=dict(parent_metadata),
         )
         combined_metadata = dict(metadata_overrides or {})
         if metadata_updates:
             combined_metadata.update(metadata_updates)
         if combined_metadata:
-            context.metadata.update(combined_metadata)
+            context.update_metadata(combined_metadata)
         child_abort_signal = abort_signal or session_runtime.abort_signal
 
         return await execute_run(
@@ -379,17 +381,19 @@ class Agent:
         )
         session_runtime = SessionRuntime(
             session_id=resolved_session_id,
-            run_step_storage=self._run_step_storage,
+            run_log_storage=self._run_log_storage,
             trace_runtime=trace_runtime,
             abort_signal=resolved_abort_signal,
         )
         context = RunContext(
+            identity=RunIdentity(
+                run_id=str(uuid4()),
+                agent_id=self._id,
+                agent_name=self.name,
+                user_id=user_id,
+                metadata=dict(metadata or {}),
+            ),
             session_runtime=session_runtime,
-            run_id=str(uuid4()),
-            agent_id=self._id,
-            agent_name=self.name,
-            user_id=user_id,
-            metadata=dict(metadata or {}),
         )
         task = asyncio.create_task(
             self._execute_root(
@@ -533,9 +537,9 @@ class Agent:
                     *[task for task, _ in active],
                     return_exceptions=True,
                 )
-            storage_names = ["run_step_storage"]
+            storage_names = ["run_log_storage"]
             close_coros = [
-                self._run_step_storage.close(),
+                self._run_log_storage.close(),
             ]
             if self._trace_storage is not None:
                 storage_names.append("trace_storage")

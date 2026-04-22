@@ -6,7 +6,7 @@ Merges compaction/runtime.py + messages.py + parser.py + prompt.py + transcript.
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +14,9 @@ import aiofiles
 
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.llm_caller import stream_assistant_step
-from agiwo.agent.models.step import StepRecord
+from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
-from agiwo.agent.runtime.state_ops import (
-    record_compaction_metadata,
-    replace_messages,
-)
+from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator
@@ -91,7 +88,7 @@ async def save_transcript(
     transcript_dir = Path(root) / "compaction" / "transcripts" / agent_id / session_id
     transcript_dir.mkdir(parents=True, exist_ok=True)
 
-    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     filename = f"{start_seq}_{end_seq}_{date_str}.jsonl"
     filepath = transcript_dir / filename
 
@@ -291,6 +288,7 @@ async def _compact(
     compact_start_seq: int,
     root_path: str,
 ) -> CompactMetadata:
+    writer = RunStateWriter(state)
     metrics_resolver = ModelUsageEstimator(model)
     current_messages = state.snapshot_messages()
     before_token_estimate = metrics_resolver.estimate_messages_tokens(current_messages)
@@ -308,7 +306,7 @@ async def _compact(
     )
 
     sequence = await state.session_runtime.allocate_sequence()
-    compact_user_step = StepRecord.user(
+    compact_user_step = StepView.user(
         state,
         sequence=sequence,
         content=compact_prompt_content,
@@ -368,16 +366,22 @@ async def _compact(
         message_count=len(messages_to_backup),
         transcript_path=transcript_path,
         analysis=analysis,
-        created_at=datetime.now(),
+        created_at=datetime.now(timezone.utc),
         compact_model=getattr(model, "name", "unknown"),
         compact_tokens=(step.metrics.total_tokens if step.metrics else 0),
     )
 
-    replace_messages(state, compacted_messages)
-    record_compaction_metadata(state, metadata)
-    await state.session_runtime.save_compact_metadata(
-        state.agent_id,
-        metadata,
+    rebuilt_entries = await writer.rebuild_messages(
+        reason="compaction",
+        messages=compacted_messages,
+    )
+    applied_entries = await writer.record_compaction_applied(metadata)
+    await state.session_runtime.project_run_log_entries(
+        [*rebuilt_entries, *applied_entries],
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        parent_run_id=state.parent_run_id,
+        depth=state.depth,
     )
 
     return metadata

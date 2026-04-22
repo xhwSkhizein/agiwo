@@ -3,10 +3,13 @@
 import json
 from typing import Any
 
-from agiwo.agent import AgentStreamItem, StepCompletedEvent
-
-from agiwo.agent.models import step
-from agiwo.agent.models.run import Run
+from agiwo.agent import (
+    AgentStreamItem,
+    RunView,
+    StepCompletedEvent,
+    StepMetrics,
+    StepView,
+)
 from agiwo.observability.trace import Trace
 from agiwo.scheduler.models import (
     AgentState,
@@ -17,8 +20,10 @@ from agiwo.scheduler.models import (
 from server.models.metrics import RunMetricsSummary
 from server.models.session import (
     ChannelChatContext,
+    RuntimeDecisionRecord,
     Session,
     SessionDetailRecord,
+    SessionObservabilityRecord,
     SessionSummaryRecord,
 )
 from server.models.view import (
@@ -28,11 +33,13 @@ from server.models.view import (
     PendingEventResponse,
     RunMetricsResponse,
     RunResponse,
+    RuntimeDecisionResponse,
     SchedulerTreeNodeResponse,
     SchedulerRunResultResponse,
     SchedulerTreeResponse,
     SchedulerTreeStatsResponse,
     SessionDetailResponse,
+    SessionObservabilityResponse,
     SessionRecordResponse,
     SessionSummaryResponse,
     SpanResponse,
@@ -45,7 +52,7 @@ from server.models.view import (
 from server.services.runtime.scheduler_tree_view_service import SchedulerTreeRecord
 
 
-def step_metrics_response_from_sdk(metrics: step.StepMetrics) -> StepMetricsResponse:
+def step_metrics_response_from_sdk(metrics: StepMetrics) -> StepMetricsResponse:
     return StepMetricsResponse(
         duration_ms=metrics.duration_ms,
         input_tokens=metrics.input_tokens,
@@ -61,50 +68,54 @@ def step_metrics_response_from_sdk(metrics: step.StepMetrics) -> StepMetricsResp
     )
 
 
-def step_response_from_sdk(step: step.StepRecord) -> StepResponse:
+def step_response_from_sdk(step_view: StepView) -> StepResponse:
     return StepResponse(
-        id=step.id,
-        session_id=step.session_id,
-        run_id=step.run_id,
-        sequence=step.sequence,
-        role=step.role.value,
-        agent_id=step.agent_id,
-        content=step.content,
-        content_for_user=step.content_for_user,
-        reasoning_content=step.reasoning_content,
-        user_input=step.user_input,
-        tool_calls=step.tool_calls if step.tool_calls else None,
-        tool_call_id=step.tool_call_id,
-        name=step.name,
-        condensed_content=step.condensed_content,
-        metrics=step_metrics_response_from_sdk(step.metrics) if step.metrics else None,
-        created_at=step.created_at.isoformat() if step.created_at else None,
-        parent_run_id=step.parent_run_id,
-        depth=step.depth,
+        id=step_view.id or f"{step_view.run_id}:{step_view.sequence}",
+        session_id=step_view.session_id,
+        run_id=step_view.run_id,
+        sequence=step_view.sequence,
+        role=step_view.role.value,
+        agent_id=step_view.agent_id,
+        content=step_view.content,
+        content_for_user=step_view.content_for_user,
+        reasoning_content=step_view.reasoning_content,
+        user_input=step_view.user_input,
+        tool_calls=step_view.tool_calls if step_view.tool_calls else None,
+        tool_call_id=step_view.tool_call_id,
+        name=step_view.name,
+        condensed_content=step_view.condensed_content,
+        metrics=(
+            step_metrics_response_from_sdk(step_view.metrics)
+            if step_view.metrics
+            else None
+        ),
+        created_at=step_view.created_at.isoformat() if step_view.created_at else None,
+        parent_run_id=step_view.parent_run_id,
+        depth=step_view.depth,
     )
 
 
-def run_response_from_sdk(run: Run) -> RunResponse:
+def run_response_from_sdk(run: RunView) -> RunResponse:
     return RunResponse(
-        id=run.id,
+        id=run.run_id,
         agent_id=run.agent_id,
         session_id=run.session_id,
         user_id=run.user_id,
-        user_input=run.user_input,
-        status=run.status.value if hasattr(run.status, "value") else str(run.status),
-        response_content=run.response_content,
+        user_input=run.last_user_input,
+        status=run.status.value,
+        response_content=run.response,
         metrics=RunMetricsResponse(
-            duration_ms=run.metrics.duration_ms,
-            input_tokens=run.metrics.input_tokens,
-            output_tokens=run.metrics.output_tokens,
-            total_tokens=run.metrics.total_tokens,
-            cache_read_tokens=run.metrics.cache_read_tokens,
-            cache_creation_tokens=run.metrics.cache_creation_tokens,
-            token_cost=run.metrics.token_cost,
-            steps_count=run.metrics.steps_count,
-            tool_calls_count=run.metrics.tool_calls_count,
+            duration_ms=metrics.duration_ms,
+            input_tokens=metrics.input_tokens,
+            output_tokens=metrics.output_tokens,
+            total_tokens=metrics.total_tokens,
+            cache_read_tokens=metrics.cache_read_tokens,
+            cache_creation_tokens=metrics.cache_creation_tokens,
+            token_cost=metrics.token_cost,
+            steps_count=metrics.steps_count,
+            tool_calls_count=metrics.tool_calls_count,
         )
-        if run.metrics
+        if (metrics := run.metrics) is not None
         else None,
         created_at=run.created_at.isoformat() if run.created_at else None,
         updated_at=run.updated_at.isoformat() if run.updated_at else None,
@@ -163,6 +174,34 @@ def session_summary_response_from_record(
     )
 
 
+def runtime_decision_response_from_record(
+    decision: RuntimeDecisionRecord,
+) -> RuntimeDecisionResponse:
+    return RuntimeDecisionResponse(
+        kind=decision.kind,
+        sequence=decision.sequence,
+        run_id=decision.run_id,
+        agent_id=decision.agent_id,
+        created_at=decision.created_at.isoformat(),
+        summary=decision.summary,
+        details=dict(decision.details),
+    )
+
+
+def session_observability_response_from_record(
+    observability: SessionObservabilityRecord,
+) -> SessionObservabilityResponse:
+    return SessionObservabilityResponse(
+        recent_traces=[
+            trace_list_item_from_sdk(trace) for trace in observability.recent_traces
+        ],
+        decision_events=[
+            runtime_decision_response_from_record(decision)
+            for decision in observability.decision_events
+        ],
+    )
+
+
 def session_detail_response_from_record(
     detail: SessionDetailRecord,
 ) -> SessionDetailResponse:
@@ -181,6 +220,11 @@ def session_detail_response_from_record(
         scheduler_state=(
             agent_state_response_from_sdk(detail.scheduler_state)
             if detail.scheduler_state is not None
+            else None
+        ),
+        observability=(
+            session_observability_response_from_record(detail.observability)
+            if detail.observability is not None
             else None
         ),
     )

@@ -1,9 +1,9 @@
 """Console storage wiring — config builders."""
 
-from agiwo.agent import RunStepStorageConfig, TraceStorageConfig
-from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent import RunLogStorageConfig, TraceStorageConfig
+from agiwo.agent.storage.base import RunLogStorage
 from agiwo.agent.storage.factory import (
-    create_run_step_storage as _create_run_step_storage,
+    create_run_log_storage as _create_run_log_storage,
 )
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.factory import (
@@ -21,15 +21,15 @@ logger = get_logger(__name__)
 # ── Storage config builders ──────────────────────────────────────────────────
 
 
-def build_run_step_storage_config(
+def build_run_log_storage_config(
     console_config: ConsoleConfig,
-) -> RunStepStorageConfig:
-    if console_config.storage.run_step_type == "sqlite":
-        return RunStepStorageConfig(
+) -> RunLogStorageConfig:
+    if console_config.storage.run_log_type == "sqlite":
+        return RunLogStorageConfig(
             storage_type="sqlite",
             config={"db_path": console_config.sqlite_db_path},
         )
-    return RunStepStorageConfig(storage_type="memory")
+    return RunLogStorageConfig(storage_type="memory")
 
 
 def build_trace_storage_config(console_config: ConsoleConfig) -> TraceStorageConfig:
@@ -64,8 +64,8 @@ def build_citation_store_config(console_config: ConsoleConfig) -> CitationStoreC
     return CitationStoreConfig(storage_type="memory")
 
 
-def create_run_step_storage(config: ConsoleConfig) -> RunStepStorage:
-    return _create_run_step_storage(build_run_step_storage_config(config))
+def create_run_log_storage(config: ConsoleConfig) -> RunLogStorage:
+    return _create_run_log_storage(build_run_log_storage_config(config))
 
 
 def create_trace_storage(config: ConsoleConfig) -> BaseTraceStorage:

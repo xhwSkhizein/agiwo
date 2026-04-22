@@ -3,8 +3,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from agiwo.agent import Run, RunStatus
-from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent import RunLogStorage, RunStatus, RunView
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.trace import Trace
 
@@ -29,9 +28,9 @@ class TraceAggregateSummary:
 # ── Core accumulator ────────────────────────────────────────────────────────
 
 
-def add_run_to_summary(summary: RunMetricsSummary, run: Run) -> None:
+def add_run_to_summary(summary: RunMetricsSummary, run: RunView) -> None:
     summary.run_count += 1
-    if run.status == RunStatus.COMPLETED:
+    if run.status is RunStatus.COMPLETED:
         summary.completed_run_count += 1
     metrics = run.metrics
     if metrics is None:
@@ -50,16 +49,16 @@ def add_run_to_summary(summary: RunMetricsSummary, run: Run) -> None:
 # ── Paginated run iteration ─────────────────────────────────────────────────
 
 
-async def iter_runs_paginated(
-    run_storage: RunStepStorage,
+async def iter_run_views_paginated(
+    run_storage: RunLogStorage,
     *,
     user_id: str | None = None,
     session_id: str | None = None,
     page_size: int = RUN_METRICS_PAGE_SIZE,
-) -> AsyncIterator[list[Run]]:
+) -> AsyncIterator[list[RunView]]:
     offset = 0
     while True:
-        page = await run_storage.list_runs(
+        page = await run_storage.list_run_views(
             user_id=user_id,
             session_id=session_id,
             limit=page_size,
@@ -73,15 +72,15 @@ async def iter_runs_paginated(
         offset += len(page)
 
 
-async def summarize_runs_paginated(
-    run_storage: RunStepStorage,
+async def summarize_run_views_paginated(
+    run_storage: RunLogStorage,
     *,
     user_id: str | None = None,
     session_id: str | None = None,
     page_size: int = RUN_METRICS_PAGE_SIZE,
 ) -> RunMetricsSummary:
     summary = RunMetricsSummary()
-    async for page in iter_runs_paginated(
+    async for page in iter_run_views_paginated(
         run_storage,
         user_id=user_id,
         session_id=session_id,

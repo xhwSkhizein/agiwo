@@ -1,0 +1,169 @@
+from collections.abc import AsyncIterator
+
+import pytest
+
+from agiwo.agent import Agent, AgentConfig, TerminationReason
+from agiwo.agent.hooks import HookPhase, HookRegistry, transform
+from agiwo.agent.models.log import (
+    AssistantStepCommitted,
+    LLMCallStarted,
+    MessagesRebuilt,
+    RunFinished,
+    RunLogEntryKind,
+)
+from agiwo.agent.models.stream import stream_items_from_entries
+from agiwo.agent.models.step import MessageRole
+from agiwo.llm.base import Model, StreamChunk
+
+
+class _FixedResponseModel(Model):
+    def __init__(self, response: str = "ok") -> None:
+        super().__init__(id="fixed-model", name="fixed-model", temperature=0.0)
+        self._response = response
+
+    async def arun_stream(self, messages, tools=None) -> AsyncIterator[StreamChunk]:
+        del messages, tools
+        yield StreamChunk(content=self._response)
+        yield StreamChunk(finish_reason="stop")
+
+
+class _NeverCalledModel(Model):
+    def __init__(self) -> None:
+        super().__init__(id="never", name="never", temperature=0.0)
+
+    async def arun_stream(self, messages, tools=None) -> AsyncIterator[StreamChunk]:
+        del messages, tools
+        raise AssertionError("llm should not run when prepare fails")
+
+
+@pytest.mark.asyncio
+async def test_agent_run_writes_basic_run_log_entries() -> None:
+    agent = Agent(
+        AgentConfig(name="run-engine-test", description="run engine test"),
+        model=_FixedResponseModel(),
+    )
+
+    result = await agent.run("hello", session_id="sess-1")
+
+    assert result.response == "ok"
+    entries = await agent.run_log_storage.list_entries(session_id="sess-1")
+    kinds = [entry.kind for entry in entries]
+    assert RunLogEntryKind.RUN_STARTED in kinds
+    assert RunLogEntryKind.CONTEXT_ASSEMBLED in kinds
+    assert RunLogEntryKind.USER_STEP_COMMITTED in kinds
+    assert RunLogEntryKind.LLM_CALL_STARTED in kinds
+    assert RunLogEntryKind.LLM_CALL_COMPLETED in kinds
+    assert RunLogEntryKind.TERMINATION_DECIDED in kinds
+    assert RunLogEntryKind.RUN_FINISHED in kinds
+    replayed = stream_items_from_entries(entries)
+    assert [
+        item.type
+        for item in replayed
+        if item.type in {"termination_decided", "run_completed"}
+    ] == [
+        "termination_decided",
+        "run_completed",
+    ]
+    termination_event = next(
+        item for item in replayed if item.type == "termination_decided"
+    )
+    assert termination_event.termination_reason == TerminationReason.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_prepare_failure_after_run_started_writes_run_failed() -> None:
+    async def explode(payload: dict) -> dict:
+        del payload
+        raise RuntimeError("prepare boom")
+
+    agent = Agent(
+        AgentConfig(name="strict-run", description="strict run"),
+        model=_NeverCalledModel(),
+        hooks=HookRegistry(
+            [
+                transform(
+                    HookPhase.PREPARE,
+                    "explode",
+                    explode,
+                    critical=True,
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="prepare boom"):
+        await agent.run("hello", session_id="strict-run-session")
+
+    entries = await agent.run_log_storage.list_entries(session_id="strict-run-session")
+    assert [entry.kind.value for entry in entries][-1] == "run_failed"
+
+
+@pytest.mark.asyncio
+async def test_before_llm_message_rewrite_becomes_messages_rebuilt_fact() -> None:
+    async def rewrite_messages(payload: dict) -> dict:
+        updated = dict(payload)
+        messages = list(payload["messages"])
+        messages.append({"role": "user", "content": "steered follow-up"})
+        updated["messages"] = messages
+        return updated
+
+    agent = Agent(
+        AgentConfig(name="rewrite-test", description="rewrite test"),
+        model=_FixedResponseModel(),
+        hooks=HookRegistry(
+            [
+                transform(
+                    HookPhase.BEFORE_LLM,
+                    "rewrite_messages",
+                    rewrite_messages,
+                )
+            ]
+        ),
+    )
+
+    result = await agent.run("hello", session_id="rewrite-session")
+
+    assert result.response == "ok"
+    entries = await agent.run_log_storage.list_entries(session_id="rewrite-session")
+    rebuilt = next(entry for entry in entries if isinstance(entry, MessagesRebuilt))
+    llm_started = next(entry for entry in entries if isinstance(entry, LLMCallStarted))
+
+    assert rebuilt.reason == "before_llm"
+    assert rebuilt.messages[-1] == {
+        "role": "user",
+        "content": "steered follow-up",
+    }
+    assert llm_started.messages == rebuilt.messages
+
+
+def test_stream_items_from_entries_reuses_nested_run_context_without_run_started() -> (
+    None
+):
+    items = stream_items_from_entries(
+        [
+            AssistantStepCommitted(
+                sequence=2,
+                session_id="sess-1",
+                run_id="child-run",
+                agent_id="agent-1",
+                step_id="step-2",
+                role=MessageRole.ASSISTANT,
+                content="done",
+                parent_run_id="parent-run",
+                depth=1,
+            ),
+            RunFinished(
+                sequence=3,
+                session_id="sess-1",
+                run_id="child-run",
+                agent_id="agent-1",
+                response="done",
+                termination_reason=TerminationReason.COMPLETED,
+            ),
+        ]
+    )
+
+    assert items[0].parent_run_id == "parent-run"
+    assert items[0].depth == 1
+    assert items[1].parent_run_id == "parent-run"
+    assert items[1].depth == 1

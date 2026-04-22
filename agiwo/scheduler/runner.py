@@ -8,14 +8,19 @@ states should run next; that remains the engine's job.
 import asyncio
 import dataclasses
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from uuid import uuid4
 
-from agiwo.agent import Agent, AgentStreamItem, RunOutput, TerminationReason, UserInput
+from agiwo.agent import (
+    Agent,
+    AgentStreamItem,
+    RunOutput,
+    TerminationReason,
+    UserInput,
+    build_committed_step_entry,
+)
 from agiwo.scheduler.commands import DispatchAction, DispatchReason
 from agiwo.scheduler.formatting import (
-    SHUTDOWN_SUMMARY_TASK,
     build_events_message,
     build_fork_task_notice,
     build_timeout_message,
@@ -24,11 +29,17 @@ from agiwo.scheduler.formatting import (
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
-    PendingEvent,
-    SchedulerRunResult,
     SchedulerEventType,
-    WakeType,
 )
+from agiwo.scheduler.runner_completion import (
+    RunnerCompletionContext,
+    RunnerCompletionHandler,
+)
+from agiwo.scheduler.runner_output import (
+    build_last_run_result,
+)
+from agiwo.scheduler.runner_events import build_parent_pending_event
+from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import ExecutionHandleLike, RuntimeState
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.codec import deserialize_child_agent_config_overrides
@@ -39,15 +50,6 @@ logger = get_logger(__name__)
 
 _CHILD_EXCLUDED_SYSTEM_TOOLS: frozenset[str] = frozenset({"spawn_agent"})
 
-_FAILED_TERMINATIONS = frozenset(
-    {
-        TerminationReason.CANCELLED,
-        TerminationReason.ERROR,
-        TerminationReason.ERROR_WITH_CONTEXT,
-        TerminationReason.TIMEOUT,
-    }
-)
-
 
 @dataclass(frozen=True, slots=True)
 class RunnerContext:
@@ -55,6 +57,7 @@ class RunnerContext:
 
     store: AgentStateStorage
     rt: RuntimeState
+    runtime_facts: SchedulerRuntimeFacts
     notify_state_change: Callable[[str], None]
     nudge: Callable[[], None]
     semaphore: asyncio.Semaphore
@@ -66,6 +69,16 @@ class SchedulerRunner:
 
     def __init__(self, context: RunnerContext) -> None:
         self._ctx = context
+        self._completion_handler = RunnerCompletionHandler(
+            RunnerCompletionContext(
+                save_state=self._save_state,
+                emit_event_to_parent=self._emit_event_to_parent,
+                resolve_abort_signal=self._resolve_abort_signal,
+                should_rollback=self._should_rollback_periodic_run,
+                rollback_run_steps=self._rollback_run_steps,
+                shutdown_requested=self._ctx.rt.shutdown_requested,
+            )
+        )
 
     async def run(self, action: DispatchAction) -> None:
         state = action.state
@@ -175,28 +188,30 @@ class SchedulerRunner:
         parent_session_id = parent_state.resolve_runtime_session_id()
         child_session_id = state.resolve_runtime_session_id()
 
-        parent_steps = await parent.run_step_storage.get_steps(
+        parent_steps = await parent.run_log_storage.list_step_views(
             session_id=parent_session_id,
             agent_id=state.parent_id,
         )
         if not parent_steps:
             return
 
-        forked_steps = [
-            dataclasses.replace(
-                step,
-                id=str(uuid4()),
-                session_id=child_session_id,
-                agent_id=state.id,
+        forked_entries = [
+            build_committed_step_entry(
+                dataclasses.replace(
+                    step,
+                    id=str(uuid4()),
+                    session_id=child_session_id,
+                    agent_id=state.id,
+                )
             )
             for step in parent_steps
         ]
-        await child.run_step_storage.save_steps_batch(forked_steps)
+        await child.run_log_storage.append_entries(forked_entries)
         logger.info(
             "fork_steps_copied",
             parent_id=state.parent_id,
             child_id=state.id,
-            steps_count=len(forked_steps),
+            steps_count=len(forked_entries),
         )
 
     async def _build_wake_message(self, state: AgentState) -> UserInput:
@@ -363,21 +378,6 @@ class SchedulerRunner:
             )
         return fallback
 
-    @staticmethod
-    def _build_last_run_result(
-        *,
-        termination_reason: TerminationReason,
-        run_id: str | None,
-        summary: str | None = None,
-        error: str | None = None,
-    ) -> SchedulerRunResult:
-        return SchedulerRunResult(
-            run_id=run_id,
-            termination_reason=termination_reason,
-            summary=summary,
-            error=error,
-        )
-
     async def _fanout_stream_item(
         self, state: AgentState, item: AgentStreamItem
     ) -> None:
@@ -417,34 +417,24 @@ class SchedulerRunner:
         current_state = await self._ctx.store.get_state(state.id)
         if current_state is None:
             return
-
-        text = output.response
-
-        # 策略表：(check_method, handle_method)
-        strategies = [
-            (self._check_aborted_terminal, self._handle_aborted_terminal_wrapper),
-            (self._check_shutdown_requested, self._handle_shutdown_requested),
-            (self._check_failed, self._handle_failed_output),
-            (self._check_sleeping, self._handle_sleeping),
-            (self._check_periodic, self._handle_periodic_output),
-            (self._check_normal, self._complete_state),
-        ]
-
-        for check, handle in strategies:
-            if check(current_state, output, abort_signal, action):
-                await handle(current_state, output, text, abort_signal, action)
-                return
-
-    async def _handle_aborted_terminal_wrapper(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        text: str | None,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Wrapper for _finalize_if_aborted_terminal to match unified signature."""
-        return await self._finalize_if_aborted_terminal(state, abort_signal)
+        handled = await self._completion_handler.handle(
+            state=current_state,
+            output=output,
+            action=action,
+            abort_signal=abort_signal,
+        )
+        if handled:
+            return
+        logger.warning(
+            "scheduler_output_unhandled",
+            state_id=current_state.id,
+            reason=action.reason.value,
+            termination_reason=(
+                output.termination_reason.value
+                if output.termination_reason is not None
+                else None
+            ),
+        )
 
     async def _emit_event_to_parent(
         self,
@@ -459,59 +449,13 @@ class SchedulerRunner:
         if parent_state is None:
             return
 
-        child_agent_id = state.id
-
-        if event_type == SchedulerEventType.CHILD_FAILED:
-            reason = payload.get("reason", "")
-            event = PendingEvent.create_child_failed(
-                id=str(uuid4()),
-                target_agent_id=state.parent_id or "",
-                session_id=state.session_id,
-                child_agent_id=child_agent_id,
-                reason=reason,
-                created_at=datetime.now(timezone.utc),
-                source_agent_id=state.id,
-            )
-        elif event_type == SchedulerEventType.CHILD_COMPLETED:
-            result = payload.get("result", "")
-            event = PendingEvent.create_child_completed(
-                id=str(uuid4()),
-                target_agent_id=state.parent_id or "",
-                session_id=state.session_id,
-                child_agent_id=child_agent_id,
-                result=result,
-                created_at=datetime.now(timezone.utc),
-                source_agent_id=state.id,
-            )
-        elif event_type == SchedulerEventType.CHILD_SLEEP_RESULT:
-            result = payload.get("result", "")
-            explain = payload.get("explain")
-            periodic = payload.get("periodic", False)
-            event = PendingEvent.create_child_sleep_result(
-                id=str(uuid4()),
-                target_agent_id=state.parent_id or "",
-                session_id=state.session_id,
-                child_agent_id=child_agent_id,
-                result=result,
-                explain=explain,
-                periodic=periodic,
-                created_at=datetime.now(timezone.utc),
-                source_agent_id=state.id,
-            )
-        else:
-            # Fallback for unknown event types (should not happen)
-            event = PendingEvent(
-                id=str(uuid4()),
-                target_agent_id=state.parent_id or "",
-                session_id=state.session_id,
-                event_type=event_type,
-                payload={
-                    **payload,
-                    "child_agent_id": child_agent_id,
-                },
-                created_at=datetime.now(timezone.utc),
-                source_agent_id=state.id,
-            )
+        event = build_parent_pending_event(
+            parent_agent_id=state.parent_id or "",
+            session_id=state.session_id,
+            source_agent_id=state.id,
+            event_type=event_type,
+            payload=payload,
+        )
 
         await self._ctx.store.save_event(event)
         self._ctx.nudge()
@@ -557,7 +501,7 @@ class SchedulerRunner:
             return
         await self._save_state(
             current_state.with_failed(reason).with_updates(
-                last_run_result=self._build_last_run_result(
+                last_run_result=build_last_run_result(
                     termination_reason=termination_reason,
                     run_id=None,
                     error=reason,
@@ -645,7 +589,9 @@ class SchedulerRunner:
             elif child.status == AgentStateStatus.FAILED:
                 failed[child_id] = child.result_summary or "Unknown failure"
             elif child.status == AgentStateStatus.COMPLETED:
-                succeeded[child_id] = child.result_summary or "Completed"
+                succeeded[child_id] = (
+                    await self._ctx.runtime_facts.get_result_summary(child)
+                ) or "Completed"
             else:
                 failed[child_id] = f"Not finished: status={child.status.value}"
         return succeeded, failed
@@ -663,241 +609,9 @@ class SchedulerRunner:
             )
         return abort_signal
 
-    def _check_aborted_terminal(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Check if state is aborted and terminal."""
-        abort_signal = self._resolve_abort_signal(state.id, abort_signal)
-        return (
-            state.is_terminal()
-            and abort_signal is not None
-            and abort_signal.is_aborted()
-        )
-
-    def _check_shutdown_requested(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Check if shutdown was requested for this state."""
-        return state.id in self._ctx.rt.shutdown_requested
-
-    def _check_failed(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Check if output indicates a failed termination."""
-        return output.termination_reason in _FAILED_TERMINATIONS
-
-    def _check_sleeping(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Check if output indicates a sleeping termination."""
-        return output.termination_reason == TerminationReason.SLEEPING
-
-    def _check_periodic(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Check if this is a periodic wake."""
-        original_wc = action.state.wake_condition
-        return (
-            original_wc is not None
-            and original_wc.type == WakeType.PERIODIC
-            and original_wc.to_seconds() is not None
-        )
-
-    def _check_normal(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Check if this is a normal successful completion (not periodic)."""
-        original_wc = action.state.wake_condition
-        is_periodic = original_wc is not None and original_wc.type == WakeType.PERIODIC
-        return (
-            output.termination_reason == TerminationReason.COMPLETED and not is_periodic
-        )
-
-    async def _finalize_if_aborted_terminal(
-        self,
-        state: AgentState,
-        abort_signal: AbortSignal | None,
-    ) -> bool:
-        """Finalize terminal aborted states before further result handling.
-
-        Returns ``True`` when the caller should stop further result handling.
-
-        - If the state is already terminal and aborted, preserve whatever
-          ``last_run_result`` was written by the cancel/shutdown path so
-          ``wait_for()`` can return immediately with ``SchedulerRunResult``
-          carrying ``termination_reason=CANCELLED``.
-        - As a defensive fallback, if the terminal+aborted state has no
-          ``last_run_result`` yet, write a ``CANCELLED`` record so that
-          ``wait_for()`` returns promptly instead of waiting on timeout.
-        """
-        abort_signal = self._resolve_abort_signal(state.id, abort_signal)
-        if not (
-            state.is_terminal()
-            and abort_signal is not None
-            and abort_signal.is_aborted()
-        ):
-            return False
-
-        if state.last_run_result is None:
-            reason = abort_signal.reason or "Cancelled"
-            await self._save_state(
-                state.with_updates(
-                    last_run_result=self._build_last_run_result(
-                        termination_reason=TerminationReason.CANCELLED,
-                        run_id=None,
-                        error=reason,
-                    )
-                )
-            )
-        return True
-
-    async def _handle_shutdown_requested(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        text: str | None,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Handle shutdown requested state."""
-        self._ctx.rt.shutdown_requested.discard(state.id)
-        if state.is_root and state.is_persistent:
-            await self._save_state(
-                state.with_queued(
-                    pending_input=SHUTDOWN_SUMMARY_TASK,
-                ).with_updates(result_summary=text)
-            )
-            return True
-
-        error = "Shutdown before completion"
-        await self._save_state(
-            state.with_failed(error).with_updates(
-                last_run_result=self._build_last_run_result(
-                    termination_reason=TerminationReason.ERROR,
-                    run_id=None,
-                    summary=text,
-                    error=error,
-                )
-            )
-        )
-        if state.is_child:
-            await self._emit_event_to_parent(
-                state,
-                SchedulerEventType.CHILD_FAILED,
-                {"reason": error},
-            )
-        return True
-
-    async def _handle_failed_output(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        text: str | None,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Handle failed output."""
-        reason = output.error or text or output.termination_reason.value
-        await self._save_state(
-            state.with_failed(reason).with_updates(
-                last_run_result=self._build_last_run_result(
-                    termination_reason=output.termination_reason,
-                    run_id=output.run_id,
-                    summary=text,
-                    error=reason,
-                )
-            )
-        )
-        if state.is_child:
-            await self._emit_event_to_parent(
-                state,
-                SchedulerEventType.CHILD_FAILED,
-                {"reason": reason},
-            )
-        return True
-
-    async def _handle_sleeping(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        text: str | None,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Handle sleeping output."""
-        await self._emit_event_to_parent(
-            state,
-            SchedulerEventType.CHILD_SLEEP_RESULT,
-            {"result": text or "", "explain": state.explain},
-        )
-        return True
-
-    async def _handle_periodic_output(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        text: str | None,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Handle periodic output."""
-        original_wc = action.state.wake_condition
-        secs = original_wc.to_seconds()  # type: ignore[union-attr]
-
-        should_rollback = False
-        if state.no_progress:
-            agent = self._ctx.rt.agents.get(state.id)
-            should_rollback = (
-                agent is not None and agent.config.options.enable_context_rollback
-            )
-            if should_rollback:
-                await self._rollback_run_steps(state, output)
-
-        next_wakeup = datetime.now(timezone.utc) + timedelta(seconds=secs)  # type: ignore[arg-type]
-        new_state = state.with_waiting(
-            wake_condition=original_wc.with_next_wakeup(next_wakeup),
-            result_summary=text if not should_rollback else state.result_summary,
-        )
-        if should_rollback:
-            new_state = new_state.with_updates(
-                rollback_count=state.rollback_count + 1,
-            )
-        await self._save_state(new_state)
-        if not should_rollback:
-            await self._emit_event_to_parent(
-                state,
-                SchedulerEventType.CHILD_SLEEP_RESULT,
-                {
-                    "result": text or "",
-                    "explain": state.explain,
-                    "periodic": True,
-                },
-            )
-        return True
+    def _should_rollback_periodic_run(self, state: AgentState) -> bool:
+        agent = self._ctx.rt.agents.get(state.id)
+        return agent is not None and agent.config.options.enable_context_rollback
 
     async def _rollback_run_steps(
         self,
@@ -911,51 +625,28 @@ class SchedulerRunner:
         if agent is None:
             return
         session_id = state.resolve_runtime_session_id()
-        storage = agent.run_step_storage
-        deleted = await storage.delete_steps(session_id, start_seq=run_start_seq)
+        storage = agent.run_log_storage
+        if output.run_id is None:
+            return
+        end_sequence = await storage.get_max_sequence(session_id)
+        if end_sequence < run_start_seq:
+            return
+        await storage.append_run_rollback(
+            session_id=session_id,
+            run_id=output.run_id,
+            agent_id=state.id,
+            start_sequence=run_start_seq,
+            end_sequence=end_sequence,
+            reason="scheduler_no_progress_periodic",
+        )
         logger.info(
             "context_rollback_executed",
             state_id=state.id,
             session_id=session_id,
             run_start_seq=run_start_seq,
-            deleted_steps=deleted,
+            rollback_end_sequence=end_sequence,
             rollback_count=state.rollback_count + 1,
         )
-
-    async def _complete_state(
-        self,
-        state: AgentState,
-        output: RunOutput,
-        text: str | None,
-        abort_signal: AbortSignal | None,
-        action: DispatchAction,
-    ) -> bool:
-        """Handle completed state."""
-        last_run_result = self._build_last_run_result(
-            termination_reason=TerminationReason.COMPLETED,
-            run_id=output.run_id,
-            summary=text,
-        )
-        if state.is_root and state.is_persistent:
-            await self._save_state(
-                state.with_idle(result_summary=text).with_updates(
-                    last_run_result=last_run_result
-                )
-            )
-            return True
-
-        await self._save_state(
-            state.with_completed(result_summary=text).with_updates(
-                last_run_result=last_run_result
-            )
-        )
-        if state.is_child:
-            await self._emit_event_to_parent(
-                state,
-                SchedulerEventType.CHILD_COMPLETED,
-                {"result": text or ""},
-            )
-        return True
 
 
 __all__ = ["RunnerContext", "SchedulerRunner"]

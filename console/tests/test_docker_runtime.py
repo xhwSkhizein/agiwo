@@ -7,7 +7,7 @@ import pytest
 from server.docker_runtime import (
     ContainerUpOptions,
     DockerRuntimeError,
-    build_loopback_proxy_env_overrides,
+    build_container_proxy_env,
     build_docker_run_command,
     container_up,
     ensure_supported_network_mode,
@@ -85,7 +85,7 @@ def test_build_docker_run_command_includes_defaults_and_mounts(tmp_path: Path) -
         container_user="1000:1000",
     )
 
-    assert command[:10] == [
+    assert command[:12] == [
         "docker",
         "run",
         "-d",
@@ -95,6 +95,8 @@ def test_build_docker_run_command_includes_defaults_and_mounts(tmp_path: Path) -
         "unless-stopped",
         "--user",
         "1000:1000",
+        "--add-host",
+        "host.docker.internal:host-gateway",
         "-p",
     ]
     assert "9000:8422" in command
@@ -107,24 +109,39 @@ def test_build_docker_run_command_includes_defaults_and_mounts(tmp_path: Path) -
     assert command[-1] == "example:latest"
 
 
-def test_build_loopback_proxy_env_overrides_blanks_local_proxy_values() -> None:
-    overrides = build_loopback_proxy_env_overrides(
+def test_build_container_proxy_env_rewrites_loopback_proxy_values_for_bridge() -> None:
+    overrides = build_container_proxy_env(
+        "bridge",
         {
             "HTTP_PROXY": "http://127.0.0.1:7890",
             "HTTPS_PROXY": "https://localhost:8443",
             "ALL_PROXY": "socks5://[::1]:1080",
             "NO_PROXY": "example.com",
-        }
+        },
     )
 
     assert overrides == (
-        "HTTP_PROXY=",
-        "HTTPS_PROXY=",
-        "ALL_PROXY=",
+        "HTTP_PROXY=http://host.docker.internal:7890",
+        "http_proxy=http://host.docker.internal:7890",
+        "HTTPS_PROXY=https://host.docker.internal:8443",
+        "https_proxy=https://host.docker.internal:8443",
+        "ALL_PROXY=socks5://host.docker.internal:1080",
+        "all_proxy=socks5://host.docker.internal:1080",
     )
 
 
-def test_build_docker_run_command_blanks_loopback_proxy_env_before_explicit_env(
+def test_build_container_proxy_env_skips_rewrite_for_host_network() -> None:
+    overrides = build_container_proxy_env(
+        "host",
+        {
+            "HTTP_PROXY": "http://127.0.0.1:7890",
+        },
+    )
+
+    assert overrides == ()
+
+
+def test_build_docker_run_command_rewrites_loopback_proxy_env_before_explicit_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -140,9 +157,30 @@ def test_build_docker_run_command_blanks_loopback_proxy_env_before_explicit_env(
         mounts=(),
     )
 
-    assert "HTTP_PROXY=" in command
-    assert "HTTPS_PROXY=" not in command
-    assert command.index("HTTP_PROXY=") < command.index("OPENAI_API_KEY=test")
+    assert "--add-host" in command
+    assert "host.docker.internal:host-gateway" in command
+    assert "HTTP_PROXY=http://host.docker.internal:7890" in command
+    assert not any(arg.startswith("HTTPS_PROXY=") for arg in command)
+    assert command.index("HTTP_PROXY=http://host.docker.internal:7890") < command.index(
+        "OPENAI_API_KEY=test"
+    )
+
+
+def test_build_docker_run_command_rewrites_explicit_loopback_proxy_env(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+
+    command = build_docker_run_command(
+        ContainerUpOptions(
+            data_dir=data_dir,
+            env=("HTTP_PROXY=http://127.0.0.1:7890",),
+        ),
+        mounts=(),
+    )
+
+    assert "HTTP_PROXY=http://host.docker.internal:7890" in command
+    assert "HTTP_PROXY=http://127.0.0.1:7890" not in command
 
 
 def test_resolve_container_user_uses_host_uid_gid(
@@ -243,7 +281,7 @@ def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for
     assert calls[0] == ["/usr/bin/docker", "info"]
     assert calls[1] == ["/usr/bin/docker", "container", "inspect", "console"]
     assert calls[2] == ["/usr/bin/docker", "rm", "-f", "console"]
-    assert calls[3][:11] == [
+    assert calls[3][:13] == [
         "/usr/bin/docker",
         "run",
         "-d",
@@ -253,6 +291,8 @@ def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for
         "unless-stopped",
         "--user",
         "1000:1000",
+        "--add-host",
+        "host.docker.internal:host-gateway",
         "-p",
         "8422:8422",
     ]

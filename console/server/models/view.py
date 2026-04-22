@@ -334,6 +334,22 @@ class SessionDetailResponse(BaseModel):
     session: SessionRecordResponse | None = None
     chat_context: ChatContextResponse | None = None
     scheduler_state: AgentStateResponse | None = None
+    observability: "SessionObservabilityResponse | None" = None
+
+
+class RuntimeDecisionResponse(BaseModel):
+    kind: str
+    sequence: int
+    run_id: str
+    agent_id: str
+    created_at: str
+    summary: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionObservabilityResponse(BaseModel):
+    recent_traces: list["TraceListItem"] = Field(default_factory=list)
+    decision_events: list[RuntimeDecisionResponse] = Field(default_factory=list)
 
 
 class StepResponse(BaseModel):
@@ -456,12 +472,14 @@ __all__ = [
     "PendingEventResponse",
     "RunMetricsResponse",
     "RunResponse",
+    "RuntimeDecisionResponse",
     "SchedulerChatCancelRequest",
     "SchedulerStatsResponse",
     "SchedulerTreeNodeResponse",
     "SchedulerTreeResponse",
     "SchedulerTreeStatsResponse",
     "SessionDetailResponse",
+    "SessionObservabilityResponse",
     "SessionRecordResponse",
     "SessionSummaryResponse",
     "SpanResponse",

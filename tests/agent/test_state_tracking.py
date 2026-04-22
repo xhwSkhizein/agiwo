@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from agiwo.agent.models.run import CompactMetadata
+from agiwo.agent.models.run import CompactMetadata, RunIdentity
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.runtime.state_ops import (
@@ -11,29 +11,32 @@ from agiwo.agent.runtime.state_ops import (
     set_termination_reason,
     track_step_state,
 )
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.runtime.state_writer import RunStateWriter
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.agent import (
     StepMetrics,
-    StepRecord,
+    StepView,
     TerminationReason,
 )
 
 
 def _make_state() -> RunContext:
     return RunContext(
+        identity=RunIdentity(
+            run_id="run-1",
+            agent_id="agent-1",
+            agent_name="agent",
+        ),
         session_runtime=SessionRuntime(
             session_id="session-1",
-            run_step_storage=InMemoryRunStepStorage(),
+            run_log_storage=InMemoryRunLogStorage(),
         ),
-        run_id="run-1",
-        agent_id="agent-1",
-        agent_name="agent",
     )
 
 
 def test_track_step_state_updates_counters_response_and_messages() -> None:
     state = _make_state()
-    step = StepRecord.assistant(
+    step = StepView.assistant(
         state,
         sequence=1,
         content="final answer",
@@ -66,7 +69,7 @@ def test_track_step_state_updates_counters_response_and_messages() -> None:
 
 def test_track_step_state_skips_message_append_when_disabled() -> None:
     state = _make_state()
-    step = StepRecord.user(state, sequence=1, content="hello")
+    step = StepView.user(state, sequence=1, content="hello")
 
     track_step_state(state, step, append_message=False)
 
@@ -74,6 +77,19 @@ def test_track_step_state_skips_message_append_when_disabled() -> None:
     assert ledger.steps.total == 1
     assert ledger.steps.assistant == 0
     assert ledger.messages == []
+
+
+@pytest.mark.asyncio
+async def test_run_state_writer_commit_step_updates_state_and_returns_entry() -> None:
+    state = _make_state()
+    writer = RunStateWriter(state)
+    step = StepView.user(state, sequence=1, user_input="hello")
+
+    committed = await writer.commit_step(step)
+
+    assert committed[0].kind.value == "user_step_committed"
+    assert state.ledger.steps.total == 1
+    assert state.ledger.messages[-1]["role"] == "user"
 
 
 def test_runtime_state_ops_only_touch_mutable_ledger_state() -> None:

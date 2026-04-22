@@ -19,7 +19,7 @@ from server.channels.feishu.commands.base import (
 )
 from server.channels.feishu.commands.status_text import format_scheduler_status
 from server.models.session import Session
-from server.services.metrics import summarize_runs_paginated
+from server.services.metrics import summarize_run_views_paginated
 from server.services.runtime import AgentRuntimeCache
 
 
@@ -99,8 +99,8 @@ async def _execute_status(
     state = await scheduler.get_state(current_session.id)
     scheduler_status = format_scheduler_status(state.status) if state else "未启动"
 
-    metrics_summary = await summarize_runs_paginated(
-        agent.run_step_storage,
+    metrics_summary = await summarize_run_views_paginated(
+        agent.run_log_storage,
         session_id=current_session.id,
     )
 

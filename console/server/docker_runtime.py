@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 from urllib.request import urlopen
 
 
@@ -24,6 +24,11 @@ _PROXY_ENV_KEYS = (
     "http_proxy",
     "https_proxy",
     "all_proxy",
+)
+_PROXY_ENV_GROUPS = (
+    ("HTTP_PROXY", "http_proxy"),
+    ("HTTPS_PROXY", "https_proxy"),
+    ("ALL_PROXY", "all_proxy"),
 )
 
 
@@ -120,17 +125,58 @@ def _proxy_hostname(value: str) -> str | None:
     return None
 
 
-def build_loopback_proxy_env_overrides(
+def _rebuild_proxy_netloc(parsed: SplitResult, host: str) -> str:
+    auth = ""
+    if parsed.username is not None:
+        auth = parsed.username
+        if parsed.password is not None:
+            auth = f"{auth}:{parsed.password}"
+        auth = f"{auth}@"
+    netloc = f"{auth}{host}"
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    return netloc
+
+
+def rewrite_loopback_proxy_url(value: str, *, host: str) -> str:
+    has_scheme = "://" in value
+    parsed = urlsplit(value if has_scheme else f"//{value}")
+    if parsed.hostname is None or parsed.hostname.lower() not in _LOOPBACK_PROXY_HOSTS:
+        return value
+    rewritten = parsed._replace(netloc=_rebuild_proxy_netloc(parsed, host)).geturl()
+    if has_scheme:
+        return rewritten
+    return rewritten.removeprefix("//")
+
+
+def normalize_container_env_entry(item: str, *, network_mode: str) -> str:
+    key, sep, value = item.partition("=")
+    if not sep or key not in _PROXY_ENV_KEYS or network_mode == "host":
+        return item
+    if _proxy_hostname(value) not in _LOOPBACK_PROXY_HOSTS:
+        return item
+    return f"{key}={rewrite_loopback_proxy_url(value, host='host.docker.internal')}"
+
+
+def build_container_proxy_env(
+    network_mode: str,
     base_env: dict[str, str] | None = None,
 ) -> tuple[str, ...]:
     env = os.environ if base_env is None else base_env
     overrides: list[str] = []
-    for key in _PROXY_ENV_KEYS:
-        value = env.get(key)
+    rewrite_host = "host.docker.internal"
+    for keys in _PROXY_ENV_GROUPS:
+        value = next((env.get(key) for key in keys if env.get(key) is not None), None)
         if value is None:
             continue
-        if _proxy_hostname(value) in _LOOPBACK_PROXY_HOSTS:
-            overrides.append(f"{key}=")
+        hostname = _proxy_hostname(value)
+        if hostname not in _LOOPBACK_PROXY_HOSTS:
+            continue
+        if network_mode == "host":
+            continue
+        rewritten = rewrite_loopback_proxy_url(value, host=rewrite_host)
+        for key in keys:
+            overrides.append(f"{key}={rewritten}")
     return tuple(overrides)
 
 
@@ -270,6 +316,8 @@ def build_docker_run_command(
     if options.network_mode == "host":
         command.extend(["--network", "host"])
     else:
+        if sys.platform == "linux":
+            command.extend(["--add-host", "host.docker.internal:host-gateway"])
         command.extend(["-p", options.publish])
     command.extend(["-v", f"{options.data_dir}:/data"])
     for mount in mounts:
@@ -277,9 +325,10 @@ def build_docker_run_command(
     if options.env_file:
         command.extend(["--env-file", options.env_file])
     command.extend(["-e", "AGIWO_ROOT_PATH=/data/root"])
-    for item in build_loopback_proxy_env_overrides():
+    for item in build_container_proxy_env(options.network_mode):
         command.extend(["-e", item])
     for item in options.env:
+        item = normalize_container_env_entry(item, network_mode=options.network_mode)
         command.extend(["-e", item])
     command.append(options.image)
     return command

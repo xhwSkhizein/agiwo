@@ -26,7 +26,7 @@ from server.services.runtime import AgentRuntimeCache
 from server.services.runtime_config import RuntimeConfigService
 from server.services.storage_wiring import (
     build_agent_state_storage_config,
-    create_run_step_storage,
+    create_run_log_storage,
     create_trace_storage,
 )
 from server.routers import (
@@ -45,7 +45,7 @@ logger = get_logger("app")
 
 @dataclass
 class LifespanResources:
-    run_step_storage: object | None = None
+    run_log_storage: object | None = None
     trace_storage: object | None = None
     agent_registry: AgentRegistry | None = None
     scheduler: Scheduler | None = None
@@ -108,8 +108,8 @@ async def _close_runtime_resources(resources: LifespanResources) -> None:
         closables.append(resources.console_session_store)
     if resources.agent_registry is not None:
         closables.append(resources.agent_registry)
-    if resources.run_step_storage is not None:
-        closables.append(resources.run_step_storage)
+    if resources.run_log_storage is not None:
+        closables.append(resources.run_log_storage)
     if resources.trace_storage is not None:
         closables.append(resources.trace_storage)
     if resources.scheduler is not None and resources.scheduler_started:
@@ -126,7 +126,7 @@ async def _startup_console_runtime(
     runtime_config_service: RuntimeConfigService,
     resources: LifespanResources,
 ) -> None:
-    resources.run_step_storage = create_run_step_storage(config)
+    resources.run_log_storage = create_run_log_storage(config)
     resources.trace_storage = create_trace_storage(config)
     resources.agent_registry = AgentRegistry(config)
     await resources.agent_registry.initialize()
@@ -162,7 +162,7 @@ async def _startup_console_runtime(
         app,
         ConsoleRuntime(
             config=config,
-            run_step_storage=resources.run_step_storage,
+            run_log_storage=resources.run_log_storage,
             trace_storage=resources.trace_storage,
             agent_registry=resources.agent_registry,
             scheduler=resources.scheduler,

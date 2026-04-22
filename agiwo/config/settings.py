@@ -206,7 +206,10 @@ class AgiwoSettings(BaseSettings):
 
     web_search_serper_api_key: SecretStr | None = Field(
         default=None,
-        validation_alias=AliasChoices("SERPER_API_KEY"),
+        validation_alias=AliasChoices(
+            "AGIWO_TOOL_WEB_SEARCH_SERPER_API_KEY",
+            "SERPER_API_KEY",
+        ),
     )
 
     web_search_api_timeout: int = Field(

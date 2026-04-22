@@ -2,7 +2,6 @@
 
 import dataclasses
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -172,24 +171,6 @@ class RunMetrics:
 
 
 @dataclass
-class Run:
-    """Unified Run metadata."""
-
-    agent_id: str
-    session_id: str
-    user_input: UserInput
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    user_id: str | None = None
-    status: RunStatus = RunStatus.STARTING
-    response_content: str | None = None
-    metrics: RunMetrics = field(default_factory=RunMetrics)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    parent_run_id: str | None = None
-    trace_id: str | None = None
-
-
-@dataclass
 class RunOutput:
     """Execution result from Agent.run()."""
 
@@ -202,17 +183,33 @@ class RunOutput:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class RunView:
+    run_id: str
+    session_id: str
+    agent_id: str
+    status: RunStatus
+    user_id: str | None = None
+    response: str | None = None
+    termination_reason: TerminationReason | None = None
+    metrics: RunMetrics | None = None
+    last_user_input: UserInput | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    parent_run_id: str | None = None
+
+
 __all__ = [
     "CompactMetadata",
     "CompactionState",
     "MemoryRecord",
     "RetrospectState",
-    "Run",
     "RunIdentity",
     "RunLedger",
     "RunMetrics",
     "RunOutput",
     "RunStatus",
+    "RunView",
     "StepStats",
     "TerminationReason",
     "TokenStats",

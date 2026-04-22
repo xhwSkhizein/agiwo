@@ -126,12 +126,14 @@ async def _prepare_tool_call(
             start_time=start_time,
         )
 
-    if context.hooks.on_before_tool_call:
-        modified = await context.hooks.on_before_tool_call(
-            call_id, tool_name, dict(args)
-        )
-        if modified is not None:
-            args = dict(modified)
+    modified = await context.hooks.before_tool_call(
+        call_id,
+        tool_name,
+        dict(args),
+        context,
+    )
+    if modified is not None:
+        args = dict(modified)
 
     return call_id, tool_name, tool, args
 

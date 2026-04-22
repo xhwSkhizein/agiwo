@@ -6,7 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agiwo.agent import TerminationReason
+from agiwo.agent import RunFinished, RunStarted, TerminationReason
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
@@ -532,6 +533,54 @@ class TestQuerySpawnedAgentTool:
         )
         assert tool_result.is_success
         assert "Waiting 8h" in tool_result.content
+
+    @pytest.mark.asyncio
+    async def test_query_prefers_runtime_run_view_summary(
+        self, store, control, context
+    ):
+        state = AgentState(
+            id="child-3",
+            session_id="sess-1",
+            status=AgentStateStatus.COMPLETED,
+            task="Do research",
+            parent_id="orch",
+            result_summary="stale summary",
+        )
+        await store.save_state(state)
+        storage = InMemoryRunLogStorage()
+        await storage.append_entries(
+            [
+                RunStarted(
+                    sequence=1,
+                    session_id="child-3",
+                    run_id="run-1",
+                    agent_id="child-3",
+                    user_input="Do research",
+                ),
+                RunFinished(
+                    sequence=2,
+                    session_id="child-3",
+                    run_id="run-1",
+                    agent_id="child-3",
+                    response="fresh runtime summary",
+                    termination_reason=TerminationReason.COMPLETED,
+                ),
+            ]
+        )
+        control._rt.agents["child-3"] = type(
+            "RuntimeAgentStub",
+            (),
+            {"run_log_storage": storage},
+        )()
+
+        tool = QuerySpawnedAgentTool(control)
+        tool_result = await tool.execute(
+            {"agent_id": "child-3", "tool_call_id": "tc-1"},
+            context,
+        )
+
+        assert tool_result.is_success
+        assert "fresh runtime summary" in tool_result.content
 
 
 class TestSleepAndWaitExplain:
