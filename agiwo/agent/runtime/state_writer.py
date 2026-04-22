@@ -28,6 +28,7 @@ from agiwo.agent.runtime.state_ops import (
     record_compaction_metadata,
     replace_messages,
     set_termination_reason,
+    set_tool_schemas,
     track_step_state,
 )
 
@@ -81,8 +82,14 @@ class RunStateWriter:
         *,
         messages: list[dict[str, Any]],
         memory_count: int,
+        run_start_seq: int,
+        tool_schemas: list[dict[str, Any]] | None,
+        latest_compaction: CompactMetadata | None,
     ) -> list[object]:
         replace_messages(self._state, messages)
+        self._state.ledger.run_start_seq = run_start_seq
+        set_tool_schemas(self._state, tool_schemas)
+        record_compaction_metadata(self._state, latest_compaction)
         return await self.append_entries(
             [
                 build_context_assembled_entry(
@@ -213,6 +220,9 @@ class RunStateWriter:
                 )
             ]
         )
+
+    def next_compaction_failure_attempt(self) -> int:
+        return self._state.ledger.compaction.failure_count + 1
 
     async def record_retrospect_applied(
         self,

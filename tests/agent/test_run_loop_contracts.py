@@ -67,7 +67,7 @@ async def test_apply_steering_messages_preserves_multimodal_payloads() -> None:
 
     updated = apply_steering_messages(
         [{"role": "assistant", "content": "waiting"}],
-        session_runtime.steering_queue,
+        session_runtime.peek_pending_steer_inputs(),
     )
 
     assert updated[-1] == {
@@ -80,6 +80,27 @@ async def test_apply_steering_messages_preserves_multimodal_payloads() -> None:
             },
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_session_runtime_peek_steer_does_not_consume_until_ack() -> None:
+    session_runtime = _make_session_runtime()
+
+    await session_runtime.enqueue_steer("follow up")
+
+    pending = session_runtime.peek_pending_steer_inputs()
+
+    assert [UserMessage.from_value(item).extract_text() for item in pending] == [
+        "follow up"
+    ]
+    assert [
+        UserMessage.from_value(item).extract_text()
+        for item in session_runtime.peek_pending_steer_inputs()
+    ] == ["follow up"]
+
+    session_runtime.ack_pending_steer_inputs(len(pending))
+
+    assert session_runtime.peek_pending_steer_inputs() == []
 
 
 @pytest.mark.asyncio

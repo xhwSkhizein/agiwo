@@ -6,13 +6,20 @@ from agiwo.agent import Agent, AgentConfig, TerminationReason
 from agiwo.agent.hooks import HookPhase, HookRegistry, transform
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
+    HookFailed,
     LLMCallStarted,
     MessagesRebuilt,
     RunFinished,
     RunLogEntryKind,
 )
+from agiwo.agent.models.config import AgentOptions
+from agiwo.agent.models.run import RunIdentity
 from agiwo.agent.models.stream import stream_items_from_entries
 from agiwo.agent.models.step import MessageRole
+from agiwo.agent.run_loop import RunLoopOrchestrator
+from agiwo.agent.runtime.context import RunContext, RunRuntime
+from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -134,6 +141,83 @@ async def test_before_llm_message_rewrite_becomes_messages_rebuilt_fact() -> Non
         "content": "steered follow-up",
     }
     assert llm_started.messages == rebuilt.messages
+
+
+@pytest.mark.asyncio
+async def test_before_llm_failure_records_accepted_steer_input_before_run_failed() -> (
+    None
+):
+    async def explode(payload: dict) -> dict:
+        assert payload["messages"][-1] == {
+            "role": "user",
+            "content": "follow up",
+        }
+        raise RuntimeError("before llm boom")
+
+    session_runtime = SessionRuntime(
+        session_id="steer-failure-session",
+        run_log_storage=InMemoryRunLogStorage(),
+    )
+    context = RunContext(
+        identity=RunIdentity(
+            run_id="run-1",
+            agent_id="agent-1",
+            agent_name="agent",
+        ),
+        session_runtime=session_runtime,
+        messages=[
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+        ],
+    )
+    hooks = HookRegistry(
+        [
+            transform(
+                HookPhase.BEFORE_LLM,
+                "explode",
+                explode,
+                critical=True,
+            )
+        ]
+    )
+    context.hooks = hooks
+    runtime = RunRuntime(
+        session_runtime=session_runtime,
+        config=AgentOptions(),
+        hooks=hooks,
+        model=_NeverCalledModel(),
+        tools_map={},
+        abort_signal=None,
+        root_path=".",
+        compact_start_seq=0,
+        max_input_tokens_per_call=0,
+        max_context_window=None,
+        compact_prompt=None,
+    )
+    orchestrator = RunLoopOrchestrator(context, runtime)
+
+    await orchestrator._start_run("hello")
+    accepted = await session_runtime.enqueue_steer("follow up")
+
+    assert accepted is True
+
+    with pytest.raises(RuntimeError, match="before llm boom") as exc_info:
+        await orchestrator._run_assistant_turn()
+    await orchestrator._fail_run(exc_info.value)
+
+    entries = await session_runtime.list_run_log_entries(run_id="run-1")
+    rebuilt = next(entry for entry in entries if isinstance(entry, MessagesRebuilt))
+    hook_failed = next(entry for entry in entries if isinstance(entry, HookFailed))
+
+    assert rebuilt.reason == "before_llm"
+    assert rebuilt.messages[-1] == {
+        "role": "user",
+        "content": "follow up",
+    }
+    assert hook_failed.phase == "before_llm"
+    assert hook_failed.handler_name == "explode"
+    assert rebuilt.sequence < hook_failed.sequence < entries[-1].sequence
+    assert entries[-1].kind.value == "run_failed"
 
 
 def test_stream_items_from_entries_reuses_nested_run_context_without_run_started() -> (
