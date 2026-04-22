@@ -6,9 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agiwo.agent import UserInput
-from agiwo.agent.models.run import Run, RunMetrics, RunStatus, RunView
-from agiwo.agent.models.step import MessageRole, StepMetrics, StepRecord
+from agiwo.agent.models.run import RunMetrics, RunView
+from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 from agiwo.scheduler.models import TimeUnit
 
 from server.models.view import (
@@ -208,11 +207,11 @@ class TestStepResponseToolCalls:
 
     def test_from_sdk_accepts_dict_list_for_tool_calls(self):
         """Verify StepResponse.from_sdk accepts plain dict list for tool_calls."""
-        # StepRecord.tool_calls is list[dict], not pydantic models
+        # StepView.tool_calls is list[dict], not pydantic models
         tool_calls = [{"id": "1", "type": "function", "function": {"name": "test"}}]
 
-        # Create a minimal StepRecord-like object
-        step = MagicMock(spec=StepRecord)
+        # Create a minimal StepView-like object
+        step = MagicMock(spec=StepView)
         step.id = "step-1"
         step.session_id = "session-1"
         step.run_id = "run-1"
@@ -240,7 +239,7 @@ class TestStepResponseToolCalls:
 
     def test_from_sdk_handles_none_tool_calls(self):
         """Verify StepResponse.from_sdk handles None tool_calls."""
-        step = MagicMock(spec=StepRecord)
+        step = MagicMock(spec=StepView)
         step.id = "step-1"
         step.session_id = "session-1"
         step.run_id = "run-1"
@@ -266,10 +265,10 @@ class TestStepResponseToolCalls:
 
 
 class TestStepResponseCondensedContent:
-    """Test StepResponse maps condensed_content from StepRecord."""
+    """Test StepResponse maps condensed_content from StepView."""
 
     def test_condensed_content_mapped_when_present(self):
-        step = MagicMock(spec=StepRecord)
+        step = MagicMock(spec=StepView)
         step.id = "step-1"
         step.session_id = "session-1"
         step.run_id = "run-1"
@@ -297,7 +296,7 @@ class TestStepResponseCondensedContent:
         assert response.content == "original verbose output"
 
     def test_condensed_content_none_when_absent(self):
-        step = MagicMock(spec=StepRecord)
+        step = MagicMock(spec=StepView)
         step.id = "step-1"
         step.session_id = "session-1"
         step.run_id = "run-1"
@@ -325,96 +324,6 @@ class TestStepResponseCondensedContent:
 class TestRunResponseFromSdk:
     """Test RunResponse.from_sdk converter."""
 
-    def test_from_sdk_converts_run_correctly(self):
-        """Verify RunResponse.from_sdk maps all Run fields."""
-        now = datetime.now(timezone.utc)
-        user_input: UserInput = "test input"
-
-        run = Run(
-            id="run-1",
-            agent_id="agent-1",
-            session_id="session-1",
-            user_id="user-1",
-            user_input=user_input,
-            status=RunStatus.COMPLETED,
-            response_content="test response",
-            metrics=RunMetrics(
-                duration_ms=1000.0,
-                input_tokens=50,
-                output_tokens=100,
-                total_tokens=150,
-                cache_read_tokens=25,
-                cache_creation_tokens=10,
-                token_cost=0.005,
-                steps_count=3,
-                tool_calls_count=1,
-            ),
-            created_at=now,
-            updated_at=now,
-            parent_run_id="parent-run-1",
-        )
-
-        response = run_response_from_sdk(run)
-
-        assert response.id == "run-1"
-        assert response.agent_id == "agent-1"
-        assert response.session_id == "session-1"
-        assert response.user_id == "user-1"
-        assert response.user_input == user_input
-        assert response.status == "completed"
-        assert response.response_content == "test response"
-        assert response.parent_run_id == "parent-run-1"
-
-        # Check metrics
-        assert response.metrics is not None
-        assert response.metrics.duration_ms == 1000.0
-        assert response.metrics.input_tokens == 50
-        assert response.metrics.output_tokens == 100
-        assert response.metrics.total_tokens == 150
-        assert response.metrics.cache_read_tokens == 25
-        assert response.metrics.cache_creation_tokens == 10
-        assert response.metrics.token_cost == 0.005
-        assert response.metrics.steps_count == 3
-        assert response.metrics.tool_calls_count == 1
-
-        # Check timestamps are ISO formatted
-        assert response.created_at == now.isoformat()
-        assert response.updated_at == now.isoformat()
-
-    def test_from_sdk_handles_enum_status(self):
-        """Verify status enum is converted to string value."""
-        user_input: UserInput = "test"
-
-        run = Run(
-            id="run-1",
-            agent_id="agent-1",
-            session_id="session-1",
-            user_input=user_input,
-            status=RunStatus.RUNNING,
-        )
-
-        response = run_response_from_sdk(run)
-
-        assert response.status == "running"
-
-    def test_from_sdk_handles_none_metrics(self):
-        """Verify RunResponse.from_sdk handles None metrics."""
-        user_input: UserInput = "test"
-
-        run = Run(
-            id="run-1",
-            agent_id="agent-1",
-            session_id="session-1",
-            user_input=user_input,
-            status=RunStatus.COMPLETED,
-            metrics=RunMetrics(),  # Empty metrics
-        )
-
-        response = run_response_from_sdk(run)
-
-        assert response.metrics is not None
-        assert response.metrics.duration_ms == 0.0
-
     def test_from_sdk_converts_run_view_correctly(self):
         now = datetime.now(timezone.utc)
         run = RunView(
@@ -435,9 +344,24 @@ class TestRunResponseFromSdk:
 
         assert response.id == "run-view-1"
         assert response.user_input == "hello"
+        assert response.status == "completed"
         assert response.response_content == "world"
         assert response.parent_run_id == "parent-run-1"
         assert response.created_at == now.isoformat()
+
+    def test_from_sdk_handles_run_view_without_metrics(self):
+        run = RunView(
+            run_id="run-view-2",
+            agent_id="agent-1",
+            session_id="session-1",
+            status="running",
+            last_user_input="test",
+        )
+
+        response = run_response_from_sdk(run)
+
+        assert response.status == "running"
+        assert response.metrics is None
 
 
 class TestToolReferenceLazyLoading:

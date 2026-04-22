@@ -18,11 +18,10 @@ def test_models_package_exposes_domain_specific_modules() -> None:
     assert hasattr(input_module.UserMessage, "to_message_content")
     assert hasattr(run_module, "MemoryRecord")
     assert hasattr(run_module, "CompactMetadata")
-    assert hasattr(run_module, "Run")
     assert hasattr(run_module, "RunIdentity")
     assert hasattr(run_module, "RunLedger")
-    assert hasattr(step_module, "StepRecord")
-    assert hasattr(step_module.StepRecord, "to_message")
+    assert hasattr(step_module, "StepView")
+    assert hasattr(step_module.StepView, "to_message")
     assert hasattr(step_module, "LLMCallContext")
     assert hasattr(stream_module, "AgentStreamItem")
 

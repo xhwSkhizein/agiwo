@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - optional dependency
 from agiwo.agent.hooks import filter_relevant_memories
 from agiwo.agent.models.input import ChannelContext, UserMessage
 from agiwo.agent.models.run import MemoryRecord
-from agiwo.agent.models.step import StepRecord, StepView
+from agiwo.agent.models.step import StepView
 from agiwo.skill.allowlist import skills_enabled
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
@@ -170,7 +170,7 @@ def _prepend_to_user_message(msg: dict[str, Any], preamble: str) -> None:
 
 def assemble_run_messages(
     system_prompt: str,
-    existing_steps: list[StepRecord | StepView] | None = None,
+    existing_steps: list[StepView] | None = None,
     memories: list[MemoryRecord] | None = None,
     before_run_hook_result: str | None = None,
     *,

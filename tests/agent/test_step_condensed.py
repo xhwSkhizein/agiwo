@@ -1,11 +1,11 @@
-"""Tests for StepRecord.condensed_content and to_message() behaviour."""
+"""Tests for StepView.condensed_content and to_message() behaviour."""
 
-from agiwo.agent.models.step import MessageRole, StepRecord
+from agiwo.agent.models.step import MessageRole, StepView
 
 
-class TestStepRecordCondensedContent:
+class TestStepViewCondensedContent:
     def test_to_message_uses_content_when_no_condensed(self):
-        step = StepRecord(
+        step = StepView(
             session_id="s1",
             run_id="r1",
             sequence=1,
@@ -18,7 +18,7 @@ class TestStepRecordCondensedContent:
         assert msg["content"] == "original result"
 
     def test_to_message_prefers_condensed_content(self):
-        step = StepRecord(
+        step = StepView(
             session_id="s1",
             run_id="r1",
             sequence=1,
@@ -33,7 +33,7 @@ class TestStepRecordCondensedContent:
 
     def test_assistant_message_ignores_condensed(self):
         """condensed_content applies to all roles via to_message()."""
-        step = StepRecord(
+        step = StepView(
             session_id="s1",
             run_id="r1",
             sequence=1,
@@ -45,7 +45,7 @@ class TestStepRecordCondensedContent:
         assert msg["content"] == "override"
 
     def test_condensed_content_defaults_to_none(self):
-        step = StepRecord(
+        step = StepView(
             session_id="s1",
             run_id="r1",
             sequence=1,

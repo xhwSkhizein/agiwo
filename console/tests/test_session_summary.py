@@ -4,7 +4,7 @@ import pytest
 
 from agiwo.agent import ContentPart, ContentType, UserMessage
 from agiwo.agent.models.log import RunFinished, RunStarted
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.agent.models.run import RunMetrics
 from server.models.session import Session
 from server.services.runtime.session_view_service import SessionViewService
@@ -40,7 +40,7 @@ def _make_session(session_id: str, agent_id: str = "agent-a") -> Session:
 
 
 async def _append_run_view_entries(
-    storage: InMemoryRunStepStorage,
+    storage: InMemoryRunLogStorage,
     *,
     session_id: str,
     run_id: str,
@@ -74,7 +74,7 @@ async def _append_run_view_entries(
 async def test_list_sessions_returns_summary_with_latest_run() -> None:
     session = _make_session("sess-1")
     store = FakeSessionStore([session])
-    storage = InMemoryRunStepStorage()
+    storage = InMemoryRunLogStorage()
 
     await _append_run_view_entries(
         storage,
@@ -116,7 +116,7 @@ async def test_list_sessions_returns_summary_with_latest_run() -> None:
 async def test_get_session_detail_populates_metrics() -> None:
     session = _make_session("sess-1")
     store = FakeSessionStore([session])
-    storage = InMemoryRunStepStorage()
+    storage = InMemoryRunLogStorage()
 
     metrics = RunMetrics(
         steps_count=1,
@@ -158,7 +158,7 @@ async def test_get_session_detail_populates_metrics() -> None:
 @pytest.mark.asyncio
 async def test_get_session_detail_returns_none_for_missing() -> None:
     store = FakeSessionStore([])
-    storage = InMemoryRunStepStorage()
+    storage = InMemoryRunLogStorage()
 
     service = SessionViewService(
         run_storage=storage,

@@ -72,7 +72,7 @@ class ServerConfig(BaseModel):
 
 
 class StorageConfig(BaseModel):
-    run_step_type: Literal["memory", "sqlite"] = "sqlite"
+    run_log_type: Literal["memory", "sqlite"] = "sqlite"
     trace_type: Literal["memory", "sqlite"] = "sqlite"
     metadata_type: Literal["memory", "sqlite"] = "sqlite"
 
@@ -107,49 +107,28 @@ class ChannelConfig(BaseModel):
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
 
 
-def _apply_server_legacy_fields(
-    normalized: dict[str, Any],
-) -> None:
-    server = dict(normalized.get("server") or {})
-    if "host" in normalized:
-        server.setdefault("host", normalized["host"])
-    if "port" in normalized:
-        server.setdefault("port", normalized["port"])
-    if server:
-        normalized["server"] = server
-
-
-def _apply_storage_legacy_fields(
-    normalized: dict[str, Any],
-) -> None:
-    storage = dict(normalized.get("storage") or {})
-    if "run_step_storage_type" in normalized:
-        storage.setdefault("run_step_type", normalized["run_step_storage_type"])
-    if "trace_storage_type" in normalized:
-        storage.setdefault("trace_type", normalized["trace_storage_type"])
-    if "metadata_storage_type" in normalized:
-        storage.setdefault("metadata_type", normalized["metadata_storage_type"])
-    if storage:
-        normalized["storage"] = storage
-
-
-_LEGACY_FEISHU_FIELDS: dict[str, str] = {
-    "feishu_enabled": "enabled",
-    "feishu_channel_instance_id": "channel_instance_id",
-    "feishu_api_base_url": "api_base_url",
-    "feishu_app_id": "app_id",
-    "feishu_app_secret": "app_secret",
-    "feishu_verification_token": "verification_token",
-    "feishu_encrypt_key": "encrypt_key",
-    "feishu_sdk_log_level": "sdk_log_level",
-    "feishu_bot_open_id": "bot_open_id",
-    "feishu_default_agent_name": "default_agent_name",
-    "feishu_whitelist_open_ids": "whitelist_open_ids",
-    "feishu_debounce_ms": "debounce_ms",
-    "feishu_max_batch_window_ms": "max_batch_window_ms",
-    "feishu_scheduler_wait_timeout": "scheduler_wait_timeout",
-    "feishu_ack_reaction_emoji": "ack_reaction_emoji",
-    "feishu_ack_fallback_text": "ack_fallback_text",
+_LEGACY_FLAT_FIELD_HINTS: dict[str, str] = {
+    "host": "server.host",
+    "port": "server.port",
+    "run_log_storage_type": "storage.run_log_type",
+    "trace_storage_type": "storage.trace_type",
+    "metadata_storage_type": "storage.metadata_type",
+    "feishu_enabled": "channels.feishu.enabled",
+    "feishu_channel_instance_id": "channels.feishu.channel_instance_id",
+    "feishu_api_base_url": "channels.feishu.api_base_url",
+    "feishu_app_id": "channels.feishu.app_id",
+    "feishu_app_secret": "channels.feishu.app_secret",
+    "feishu_verification_token": "channels.feishu.verification_token",
+    "feishu_encrypt_key": "channels.feishu.encrypt_key",
+    "feishu_sdk_log_level": "channels.feishu.sdk_log_level",
+    "feishu_bot_open_id": "channels.feishu.bot_open_id",
+    "feishu_default_agent_name": "channels.feishu.default_agent_name",
+    "feishu_whitelist_open_ids": "channels.feishu.whitelist_open_ids",
+    "feishu_debounce_ms": "channels.feishu.debounce_ms",
+    "feishu_max_batch_window_ms": "channels.feishu.max_batch_window_ms",
+    "feishu_scheduler_wait_timeout": "channels.feishu.scheduler_wait_timeout",
+    "feishu_ack_reaction_emoji": "channels.feishu.ack_reaction_emoji",
+    "feishu_ack_fallback_text": "channels.feishu.ack_fallback_text",
 }
 
 _LEGACY_DEFAULT_AGENT_GROUP_ENV_HINTS: dict[str, tuple[str, str]] = {
@@ -165,17 +144,15 @@ _LEGACY_DEFAULT_AGENT_GROUP_ENV_HINTS: dict[str, tuple[str, str]] = {
 }
 
 
-def _apply_feishu_legacy_fields(
+def _reject_legacy_flat_fields(
     normalized: dict[str, Any],
 ) -> None:
-    channels = dict(normalized.get("channels") or {})
-    feishu = dict(channels.get("feishu") or {})
-    for legacy_key, nested_key in _LEGACY_FEISHU_FIELDS.items():
-        if legacy_key in normalized:
-            feishu.setdefault(nested_key, normalized[legacy_key])
-    if feishu:
-        channels["feishu"] = feishu
-        normalized["channels"] = channels
+    for legacy_key, replacement in _LEGACY_FLAT_FIELD_HINTS.items():
+        if normalized.get(legacy_key) is None:
+            continue
+        raise ValueError(
+            f"Unsupported legacy config field '{legacy_key}'. Use '{replacement}' instead."
+        )
 
 
 def _reject_default_agent_legacy_fields(
@@ -233,10 +210,11 @@ class ConsoleConfig(BaseSettings):
     default_agent: DefaultAgentConfig = Field(default_factory=DefaultAgentConfig)
     channels: ChannelConfig = Field(default_factory=ChannelConfig)
 
-    # Legacy flat settings preserved as aliases for environment variables and kwargs.
+    # Legacy flat settings are retained only so the boundary can reject them
+    # explicitly instead of silently ignoring them.
     host: str | None = Field(default=None, exclude=True)
     port: int | None = Field(default=None, exclude=True)
-    run_step_storage_type: Literal["memory", "sqlite"] | None = Field(
+    run_log_storage_type: Literal["memory", "sqlite"] | None = Field(
         default=None,
         exclude=True,
     )
@@ -272,41 +250,14 @@ class ConsoleConfig(BaseSettings):
 
     @model_validator(mode="before")
     @classmethod
-    def _lift_legacy_flat_fields(cls, data: object) -> object:
+    def _reject_legacy_fields(cls, data: object) -> object:
         if not isinstance(data, dict):
             return data
         normalized = dict(data)
-        _apply_server_legacy_fields(normalized)
-        _apply_storage_legacy_fields(normalized)
-        _apply_feishu_legacy_fields(normalized)
+        _reject_legacy_flat_fields(normalized)
         _reject_default_agent_legacy_fields(normalized)
         _validate_default_agent_override(normalized)
         return normalized
-
-    @model_validator(mode="after")
-    def _populate_legacy_accessors(self) -> "ConsoleConfig":
-        self.host = self.server.host
-        self.port = self.server.port
-        self.run_step_storage_type = self.storage.run_step_type
-        self.trace_storage_type = self.storage.trace_type
-        self.metadata_storage_type = self.storage.metadata_type
-        self.feishu_enabled = self.channels.feishu.enabled
-        self.feishu_channel_instance_id = self.channels.feishu.channel_instance_id
-        self.feishu_api_base_url = self.channels.feishu.api_base_url
-        self.feishu_app_id = self.channels.feishu.app_id
-        self.feishu_app_secret = self.channels.feishu.app_secret
-        self.feishu_verification_token = self.channels.feishu.verification_token
-        self.feishu_encrypt_key = self.channels.feishu.encrypt_key
-        self.feishu_sdk_log_level = self.channels.feishu.sdk_log_level
-        self.feishu_bot_open_id = self.channels.feishu.bot_open_id
-        self.feishu_default_agent_name = self.channels.feishu.default_agent_name
-        self.feishu_whitelist_open_ids = self.channels.feishu.whitelist_open_ids
-        self.feishu_debounce_ms = self.channels.feishu.debounce_ms
-        self.feishu_max_batch_window_ms = self.channels.feishu.max_batch_window_ms
-        self.feishu_scheduler_wait_timeout = self.channels.feishu.scheduler_wait_timeout
-        self.feishu_ack_reaction_emoji = self.channels.feishu.ack_reaction_emoji
-        self.feishu_ack_fallback_text = self.channels.feishu.ack_fallback_text
-        return self
 
     @property
     def sqlite_db_path(self) -> str:

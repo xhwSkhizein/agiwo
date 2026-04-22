@@ -2,7 +2,6 @@
 
 import dataclasses
 import time
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -172,24 +171,6 @@ class RunMetrics:
 
 
 @dataclass
-class Run:
-    """Unified Run metadata."""
-
-    agent_id: str
-    session_id: str
-    user_input: UserInput
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    user_id: str | None = None
-    status: RunStatus = RunStatus.STARTING
-    response_content: str | None = None
-    metrics: RunMetrics = field(default_factory=RunMetrics)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    parent_run_id: str | None = None
-    trace_id: str | None = None
-
-
-@dataclass
 class RunOutput:
     """Execution result from Agent.run()."""
 
@@ -223,7 +204,6 @@ __all__ = [
     "CompactionState",
     "MemoryRecord",
     "RetrospectState",
-    "Run",
     "RunIdentity",
     "RunLedger",
     "RunMetrics",

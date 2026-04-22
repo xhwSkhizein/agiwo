@@ -49,7 +49,7 @@ class MessageRole(str, Enum):
 
 @dataclass
 class StepDelta:
-    """Incremental update to a StepRecord for streaming."""
+    """Incremental update to a StepView for streaming."""
 
     content: str | None = None
     reasoning_content: str | None = None
@@ -62,7 +62,7 @@ class StepDelta:
 
 @dataclass
 class StepMetrics:
-    """Metrics for a single StepRecord."""
+    """Metrics for a single StepView."""
 
     start_at: datetime | None = None
     end_at: datetime | None = None
@@ -87,68 +87,9 @@ class StepView:
     sequence: int
     session_id: str
     run_id: str
-    id: str | None = None
-    agent_id: str | None = None
-    role: MessageRole = MessageRole.USER
-    content: MessageContent | None = None
-    content_for_user: str | None = None
-    reasoning_content: str | None = None
-    user_input: UserInput | None = None
-    tool_calls: list[dict] | None = None
-    tool_call_id: str | None = None
-    name: str | None = None
-    is_error: bool = False
-    condensed_content: str | None = None
-    metrics: StepMetrics | None = None
-    created_at: datetime | None = None
-    parent_run_id: str | None = None
-    depth: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        payload = fields_to_dict(self)
-        payload["user_input"] = _serialize_user_input_structured(self.user_input)
-        payload["metrics"] = self.metrics.to_dict() if self.metrics else None
-        return payload
-
-    def is_user_step(self) -> bool:
-        return self.role == MessageRole.USER
-
-    def is_assistant_step(self) -> bool:
-        return self.role == MessageRole.ASSISTANT
-
-    def is_tool_step(self) -> bool:
-        return self.role == MessageRole.TOOL
-
-    def to_message(self) -> dict[str, Any]:
-        msg: dict[str, Any] = {"role": self.role.value, "_sequence": self.sequence}
-        effective_content = (
-            self.condensed_content
-            if self.condensed_content is not None
-            else self.content
-        )
-        if effective_content is not None:
-            msg["content"] = effective_content
-        if self.reasoning_content is not None:
-            msg["reasoning_content"] = self.reasoning_content
-        if self.tool_calls is not None:
-            msg["tool_calls"] = self.tool_calls
-        if self.tool_call_id is not None:
-            msg["tool_call_id"] = self.tool_call_id
-        if self.name is not None:
-            msg["name"] = self.name
-        return msg
-
-
-@dataclass
-class StepRecord:
-    """Unified Step record for persistence and streaming."""
-
-    session_id: str
-    run_id: str
-    sequence: int
-    role: MessageRole
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     agent_id: str | None = None
+    role: MessageRole = MessageRole.USER
     content: MessageContent | None = None
     content_for_user: str | None = None
     reasoning_content: str | None = None
@@ -170,6 +111,12 @@ class StepRecord:
             and self.content is None
         ):
             self.content = UserMessage.from_value(self.user_input).to_message_content()
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = fields_to_dict(self)
+        payload["user_input"] = _serialize_user_input_structured(self.user_input)
+        payload["metrics"] = self.metrics.to_dict() if self.metrics else None
+        return payload
 
     def is_user_step(self) -> bool:
         return self.role == MessageRole.USER
@@ -201,12 +148,6 @@ class StepRecord:
             return self.user_input.context
         return None
 
-    def to_dict(self) -> dict[str, Any]:
-        payload = fields_to_dict(self)
-        payload["user_input"] = _serialize_user_input_structured(self.user_input)
-        payload["metrics"] = self.metrics.to_dict() if self.metrics else None
-        return payload
-
     def to_message(self) -> dict[str, Any]:
         msg: dict[str, Any] = {"role": self.role.value, "_sequence": self.sequence}
         effective_content = (
@@ -236,7 +177,7 @@ class StepRecord:
         content: MessageContent | None = None,
         name: str | None = None,
         **overrides: Any,
-    ) -> "StepRecord":
+    ) -> "StepView":
         context_attrs = _build_step_context_attrs(ctx, overrides)
         if user_input is not None:
             derived_content = UserMessage.from_value(user_input).to_message_content()
@@ -256,7 +197,7 @@ class StepRecord:
                 name=name,
                 **context_attrs,
             )
-        raise ValueError("StepRecord.user() requires either user_input or content")
+        raise ValueError("StepView.user() requires either user_input or content")
 
     @classmethod
     def assistant(
@@ -270,7 +211,7 @@ class StepRecord:
         metrics: StepMetrics | None = None,
         name: str | None = None,
         **overrides: Any,
-    ) -> "StepRecord":
+    ) -> "StepView":
         context_attrs = _build_step_context_attrs(ctx, overrides)
         return cls(
             sequence=sequence,
@@ -296,7 +237,7 @@ class StepRecord:
         is_error: bool = False,
         metrics: StepMetrics | None = None,
         **overrides: Any,
-    ) -> "StepRecord":
+    ) -> "StepView":
         context_attrs = _build_step_context_attrs(ctx, overrides)
         return cls(
             sequence=sequence,
@@ -326,6 +267,5 @@ __all__ = [
     "MessageRole",
     "StepDelta",
     "StepMetrics",
-    "StepRecord",
     "StepView",
 ]

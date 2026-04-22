@@ -29,7 +29,7 @@ async def test_agent_run_writes_basic_run_log_entries() -> None:
     result = await agent.run("hello", session_id="sess-1")
 
     assert result.response == "ok"
-    entries = await agent.run_step_storage.list_entries(session_id="sess-1")
+    entries = await agent.run_log_storage.list_entries(session_id="sess-1")
     kinds = [entry.kind for entry in entries]
     assert RunLogEntryKind.RUN_STARTED in kinds
     assert RunLogEntryKind.CONTEXT_ASSEMBLED in kinds

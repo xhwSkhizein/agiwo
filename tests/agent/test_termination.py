@@ -6,11 +6,12 @@ import pytest
 from agiwo.agent import Agent, AgentConfig
 from agiwo.agent.models.log import RunLogEntryKind
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.models.step import LLMCallContext, StepMetrics, StepRecord
+from agiwo.agent.models.run import RunIdentity
+from agiwo.agent.models.step import LLMCallContext, StepMetrics, StepView
 from agiwo.agent import TerminationReason
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -71,13 +72,15 @@ def test_format_termination_reason_accepts_raw_string_fallback() -> None:
 
 def _make_context() -> RunContext:
     return RunContext(
+        identity=RunIdentity(
+            run_id="run-1",
+            agent_id="agent-1",
+            agent_name="agent",
+        ),
         session_runtime=SessionRuntime(
             session_id="session-1",
-            run_step_storage=InMemoryRunStepStorage(),
+            run_log_storage=InMemoryRunLogStorage(),
         ),
-        run_id="run-1",
-        agent_id="agent-1",
-        agent_name="agent",
     )
 
 
@@ -97,7 +100,7 @@ def test_check_non_recoverable_limits_returns_max_steps_reason() -> None:
 def test_check_post_llm_limits_returns_max_input_reason() -> None:
     limits_module = importlib.import_module("agiwo.agent.termination.limits")
     state = _make_context()
-    step = StepRecord.assistant(
+    step = StepView.assistant(
         state,
         sequence=1,
         content="answer",
@@ -129,9 +132,7 @@ async def test_run_records_termination_decision_entry() -> None:
     result = await agent.run("hello", session_id="termination-session")
 
     assert result.termination_reason == TerminationReason.MAX_STEPS
-    entries = await agent.run_step_storage.list_entries(
-        session_id="termination-session"
-    )
+    entries = await agent.run_log_storage.list_entries(session_id="termination-session")
     termination_entry = next(
         entry for entry in entries if entry.kind is RunLogEntryKind.TERMINATION_DECIDED
     )

@@ -92,7 +92,7 @@ class RetrospectBatch:
             feedback=self._feedback,
             messages=self._state.ledger.messages,
             ledger=self._state.ledger,
-            storage=self._state.session_runtime.run_step_storage,
+            storage=self._state.session_runtime.run_log_storage,
             session_id=self._state.session_id,
             offload_dir=offload_dir,
             step_lookup=self._step_lookup,

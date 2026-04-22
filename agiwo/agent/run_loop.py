@@ -1,8 +1,6 @@
 """Single-run execution engine — the core run loop."""
 
 import asyncio
-import time
-from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
 from agiwo.agent.compaction import CompactResult, compact_if_needed
@@ -29,15 +27,13 @@ from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.prompt import apply_steering_messages, assemble_run_messages
 from agiwo.agent.models.run import (
-    Run,
     RunMetrics,
     RunOutput,
-    RunStatus,
     TerminationReason,
 )
 from agiwo.agent.models.step import (
     LLMCallContext,
-    StepRecord,
+    StepView,
 )
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.state_ops import (
@@ -105,13 +101,13 @@ class RunEngine:
     ) -> RunOutput:
         """Execute a single agent run with the orchestrator."""
         # Prepare run context
-        run, user_step, compact_start_seq = await self._prepare_run_context(
+        user_step, compact_start_seq = await self._prepare_run_context(
             user_input,
             system_prompt=system_prompt,
         )
 
         # Start the run
-        await self._start_run(run)
+        await self._start_run(user_input)
 
         try:
             # Commit user step
@@ -129,25 +125,26 @@ class RunEngine:
             # Finalize and return result
             return await self._finalize_run(
                 user_input,
-                run,
             )
         except Exception as error:
-            await self._fail_run(run, error)
+            await self._fail_run(error)
             raise
 
-    async def _start_run(self, run: Run) -> None:
+    async def _start_run(self, user_input: UserInput) -> None:
         """Initialize and start the run."""
-        run.trace_id = self.context.trace_id
         if self.context.session_runtime.trace_runtime is not None:
-            run.trace_id = self.context.session_runtime.trace_runtime.on_run_started(
-                run
+            self.context.session_runtime.trace_runtime.on_run_started(
+                run_id=self.context.run_id,
+                agent_id=self.context.agent_id,
+                session_id=self.context.session_id,
+                parent_run_id=self.context.parent_run_id,
             )
         await self.context.session_runtime.append_run_log_entries(
             [
                 build_run_started_entry(
                     self.context,
                     sequence=await self.context.session_runtime.allocate_sequence(),
-                    user_input=run.user_input,
+                    user_input=user_input,
                 )
             ]
         )
@@ -155,27 +152,12 @@ class RunEngine:
             RunStartedEvent.from_context(self.context)
         )
 
-    async def _complete_run(self, run: Run, result: RunOutput) -> None:
+    async def _complete_run(self, result: RunOutput) -> None:
         """Complete the run successfully."""
-        run.status = (
-            RunStatus.CANCELLED
-            if result.termination_reason == TerminationReason.CANCELLED
-            else RunStatus.COMPLETED
-        )
-        run.response_content = result.response
-        now = datetime.now(timezone.utc)
-        run.updated_at = now
-        run.metrics.end_at = now.timestamp()
-        if result.metrics is not None:
-            preserved_start_at = run.metrics.start_at
-            preserved_end_at = run.metrics.end_at
-            run.metrics = result.metrics
-            run.metrics.start_at = preserved_start_at
-            run.metrics.end_at = preserved_end_at
         if self.context.session_runtime.trace_runtime is not None:
             await self.context.session_runtime.trace_runtime.on_run_completed(
                 result,
-                run_id=run.id,
+                run_id=self.context.run_id,
             )
         await self.context.session_runtime.append_run_log_entries(
             [
@@ -195,16 +177,12 @@ class RunEngine:
             ),
         )
 
-    async def _fail_run(self, run: Run, error: Exception) -> None:
+    async def _fail_run(self, error: Exception) -> None:
         """Handle run failure."""
-        run.status = RunStatus.FAILED
-        now = datetime.now(timezone.utc)
-        run.updated_at = now
-        run.metrics.end_at = now.timestamp()
         if self.context.session_runtime.trace_runtime is not None:
             await self.context.session_runtime.trace_runtime.on_run_failed(
                 error,
-                run_id=run.id,
+                run_id=self.context.run_id,
             )
         await self.context.session_runtime.append_run_log_entries(
             [
@@ -264,8 +242,8 @@ class RunEngine:
         self,
         user_input: UserInput,
         system_prompt: str,
-    ) -> tuple[Run, StepRecord, int]:
-        """Build all state needed before the main loop starts. Returns (run, user_step, compact_start_seq)."""
+    ) -> tuple[StepView, int]:
+        """Build all state needed before the main loop starts."""
         tools_map = self.runtime.tools_map
         tool_schemas = [
             {
@@ -289,8 +267,8 @@ class RunEngine:
                 user_input, self.context
             )
 
-        run_step_storage = self.context.session_runtime.run_step_storage
-        user_step = StepRecord.user(
+        run_log_storage = self.context.session_runtime.run_log_storage
+        user_step = StepView.user(
             self.context,
             sequence=await self.context.session_runtime.allocate_sequence(),
             user_input=user_input,
@@ -300,7 +278,7 @@ class RunEngine:
             self.context.agent_id
         )
         compact_start_seq = last_compact.end_seq + 1 if last_compact is not None else 0
-        existing_steps = await run_step_storage.list_step_views(
+        existing_steps = await run_log_storage.list_step_views(
             session_id=self.context.session_id,
             agent_id=self.context.agent_id,
             start_seq=compact_start_seq if compact_start_seq > 0 else None,
@@ -331,19 +309,9 @@ class RunEngine:
         set_tool_schemas(self.context, tool_schemas)
         record_compaction_metadata(self.context, last_compact)
 
-        run = Run(
-            id=self.context.run_id,
-            agent_id=self.context.agent_id,
-            session_id=self.context.session_id,
-            user_input=user_input,
-            status=RunStatus.RUNNING,
-            parent_run_id=self.context.parent_run_id,
-        )
-        run.metrics.start_at = time.time()
+        return user_step, compact_start_seq
 
-        return run, user_step, compact_start_seq
-
-    async def _finalize_run(self, user_input: UserInput, run: Run) -> RunOutput:
+    async def _finalize_run(self, user_input: UserInput) -> RunOutput:
         """Generate summary, build output, and complete the run."""
         await maybe_generate_termination_summary(
             state=self.context,
@@ -355,7 +323,7 @@ class RunEngine:
         await self.context.hooks.after_run(result, self.context)
         if result.response is not None:
             await self.context.hooks.memory_write(user_input, result, self.context)
-        await self._complete_run(run, result)
+        await self._complete_run(result)
         return result
 
     async def _run_loop(
@@ -481,7 +449,7 @@ class RunEngine:
             return CompactionCycleResult(new_start_seq, True)
         return CompactionCycleResult(new_start_seq, False)
 
-    async def _run_assistant_turn(self) -> tuple[StepRecord, LLMCallContext]:
+    async def _run_assistant_turn(self) -> tuple[StepView, LLMCallContext]:
         """Execute an assistant turn (LLM call)."""
         replace_messages(
             self.context,
@@ -529,7 +497,7 @@ class RunEngine:
 
     async def _handle_assistant_turn_result(
         self,
-        step: StepRecord,
+        step: StepView,
         llm_context: LLMCallContext,
     ) -> bool:
         """Handle the result of an assistant turn."""
@@ -585,7 +553,7 @@ class RunEngine:
 
             content = batch.process_result(result)
 
-            tool_step = StepRecord.tool(
+            tool_step = StepView.tool(
                 self.context,
                 sequence=await self.context.session_runtime.allocate_sequence(),
                 tool_call_id=call_id,

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
+from agiwo.agent.storage.sqlite import SQLiteRunLogStorage
 from agiwo.tool.storage.citation.sqlite_store import SQLiteCitationStore
 from agiwo.utils.sqlite_pool import get_sqlite_pool
 
@@ -12,7 +12,7 @@ async def test_sqlite_stores_share_same_connection(tmp_path: Path) -> None:
     db_path = str(tmp_path / "shared.db")
     baseline = get_sqlite_pool().get_connection_count()
     citation_store = SQLiteCitationStore(db_path=db_path)
-    run_step_store = SQLiteRunStepStorage(db_path=db_path)
+    run_step_store = SQLiteRunLogStorage(db_path=db_path)
 
     await citation_store.connect()
     await run_step_store.connect()

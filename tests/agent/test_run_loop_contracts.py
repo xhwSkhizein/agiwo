@@ -14,7 +14,7 @@ from agiwo.agent import (
 from agiwo.agent.hooks import HookPhase, HookRegistry, transform
 from agiwo.agent.prompt import apply_steering_messages
 from agiwo.agent.runtime.session import SessionRuntime
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -32,7 +32,7 @@ class _FixedResponseModel(Model):
 def _make_session_runtime() -> SessionRuntime:
     return SessionRuntime(
         session_id="session-1",
-        run_step_storage=InMemoryRunStepStorage(),
+        run_log_storage=InMemoryRunLogStorage(),
     )
 
 

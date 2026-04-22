@@ -1,11 +1,9 @@
-"""Shared Run/Step/RunLog storage serialization helpers."""
+"""Shared run-log serialization and read-view builders."""
 
-from dataclasses import asdict, fields, is_dataclass
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
-
-from pydantic import TypeAdapter
 
 from agiwo.agent.models.input import UserMessage
 from agiwo.agent.models.log import (
@@ -27,11 +25,9 @@ from agiwo.agent.models.log import (
     ToolStepCommitted,
     UserStepCommitted,
 )
-from agiwo.agent.models.run import Run, RunMetrics, RunView
-from agiwo.agent.models.step import StepRecord, StepView
+from agiwo.agent.models.run import RunMetrics, RunView
+from agiwo.agent.models.step import StepView
 
-_RUN_FIELD_NAMES = {field.name for field in fields(Run)}
-_STEP_FIELD_NAMES = {field.name for field in fields(StepRecord)}
 _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.RUN_STARTED: RunStarted,
     RunLogEntryKind.RUN_FINISHED: RunFinished,
@@ -48,8 +44,6 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.TERMINATION_DECIDED: TerminationDecided,
     RunLogEntryKind.HOOK_FAILED: HookFailed,
 }
-_RUN_ADAPTER = TypeAdapter(Run)
-_STEP_ADAPTER = TypeAdapter(StepRecord)
 
 
 def _drop_none(value: Any) -> Any:
@@ -75,12 +69,7 @@ def _normalize_storage_value(value: Any) -> Any:
             for key, item in value.items()
             if item is not None
         }
-    if isinstance(value, list):
-        return [
-            _normalize_storage_value(item) if item is not None else None
-            for item in value
-        ]
-    if isinstance(value, tuple):
+    if isinstance(value, (list, tuple)):
         return [
             _normalize_storage_value(item) if item is not None else None
             for item in value
@@ -92,49 +81,6 @@ def _as_storage_dict(value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError("Expected storage payload dict")
     return value
-
-
-def _filter_storage_fields(
-    data: dict[str, Any],
-    field_names: set[str],
-) -> dict[str, Any]:
-    return {key: value for key, value in data.items() if key in field_names}
-
-
-def serialize_run_for_storage(run: Run) -> dict[str, Any]:
-    data = _as_storage_dict(_normalize_storage_value(asdict(run)))
-    data["status"] = run.status.value
-    data["user_input"] = UserMessage.to_storage_value(run.user_input)
-    if run.metrics is not None:
-        data["metrics"] = _normalize_storage_value(run.metrics)
-    return _as_storage_dict(_drop_none(data))
-
-
-def serialize_step_for_storage(step: StepRecord) -> dict[str, Any]:
-    data = _as_storage_dict(_normalize_storage_value(asdict(step)))
-    data["role"] = step.role.value
-    if step.user_input is not None:
-        data["user_input"] = UserMessage.to_storage_value(step.user_input)
-    if step.metrics is not None:
-        data["metrics"] = _normalize_storage_value(step.metrics)
-    if step.is_user_step() and step.user_input is not None:
-        data.pop("content", None)
-    return _as_storage_dict(_drop_none(data))
-
-
-def deserialize_run_from_storage(data: dict[str, Any]) -> Run:
-    run_data = _filter_storage_fields(data, _RUN_FIELD_NAMES)
-    run_data["user_input"] = UserMessage.from_storage_value(run_data.get("user_input"))
-    return _RUN_ADAPTER.validate_python(run_data)
-
-
-def deserialize_step_from_storage(data: dict[str, Any]) -> StepRecord:
-    step_data = _filter_storage_fields(data, _STEP_FIELD_NAMES)
-    step_data["user_input"] = UserMessage.from_storage_value(
-        step_data.get("user_input")
-    )
-
-    return _STEP_ADAPTER.validate_python(step_data)
 
 
 def serialize_run_log_entry_for_storage(entry: RunLogEntry) -> dict[str, Any]:
@@ -156,24 +102,6 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
         )
     normalized.pop("kind", None)
     return entry_type(**normalized)
-
-
-def build_run_view_from_run(run: Run) -> RunView:
-    status = run.status.value if hasattr(run.status, "value") else str(run.status)
-    return RunView(
-        run_id=run.id,
-        session_id=run.session_id,
-        agent_id=run.agent_id,
-        status=status,
-        user_id=run.user_id,
-        response=run.response_content,
-        termination_reason=None,
-        metrics=run.metrics,
-        last_user_input=run.user_input,
-        created_at=run.created_at,
-        updated_at=run.updated_at,
-        parent_run_id=run.parent_run_id,
-    )
 
 
 def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
@@ -283,30 +211,6 @@ def build_step_view_from_entry(entry: CommittedStep) -> StepView:
     )
 
 
-def build_step_view_from_record(step: StepRecord) -> StepView:
-    return StepView(
-        id=step.id,
-        sequence=step.sequence,
-        session_id=step.session_id,
-        run_id=step.run_id,
-        agent_id=step.agent_id,
-        role=step.role,
-        content=step.content,
-        content_for_user=step.content_for_user,
-        reasoning_content=step.reasoning_content,
-        user_input=step.user_input,
-        tool_calls=step.tool_calls,
-        tool_call_id=step.tool_call_id,
-        name=step.name,
-        is_error=step.is_error,
-        condensed_content=step.condensed_content,
-        metrics=step.metrics,
-        created_at=step.created_at,
-        parent_run_id=step.parent_run_id,
-        depth=step.depth,
-    )
-
-
 def build_step_views_from_entries(entries: list[RunLogEntry]) -> list[StepView]:
     return [
         build_step_view_from_entry(entry)
@@ -318,42 +222,11 @@ def build_step_views_from_entries(entries: list[RunLogEntry]) -> list[StepView]:
     ]
 
 
-def build_step_record_from_view(step: StepView) -> StepRecord:
-    return StepRecord(
-        id=step.id or "",
-        session_id=step.session_id,
-        run_id=step.run_id,
-        sequence=step.sequence,
-        role=step.role,
-        agent_id=step.agent_id,
-        content=step.content,
-        content_for_user=step.content_for_user,
-        reasoning_content=step.reasoning_content,
-        user_input=step.user_input,
-        tool_calls=step.tool_calls,
-        tool_call_id=step.tool_call_id,
-        name=step.name,
-        is_error=step.is_error,
-        condensed_content=step.condensed_content,
-        metrics=step.metrics,
-        created_at=step.created_at or datetime.now(timezone.utc),
-        parent_run_id=step.parent_run_id,
-        depth=step.depth,
-    )
-
-
 __all__ = [
-    "build_run_view_from_run",
     "build_run_view_from_entries",
     "build_run_views_from_entries",
-    "build_step_record_from_view",
-    "build_step_view_from_record",
     "build_step_view_from_entry",
     "build_step_views_from_entries",
     "deserialize_run_log_entry_from_storage",
-    "deserialize_run_from_storage",
-    "deserialize_step_from_storage",
     "serialize_run_log_entry_for_storage",
-    "serialize_run_for_storage",
-    "serialize_step_for_storage",
 ]

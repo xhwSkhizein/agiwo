@@ -18,7 +18,7 @@ from agiwo.agent.models.stream import (
     CompactionAppliedEvent,
     MessagesRebuiltEvent,
 )
-from agiwo.agent.models.step import StepRecord
+from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.state_ops import (
     record_compaction_metadata,
@@ -316,7 +316,7 @@ async def _compact(
     )
 
     sequence = await state.session_runtime.allocate_sequence()
-    compact_user_step = StepRecord.user(
+    compact_user_step = StepView.user(
         state,
         sequence=sequence,
         content=compact_prompt_content,

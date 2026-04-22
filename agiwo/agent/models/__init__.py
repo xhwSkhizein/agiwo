@@ -4,7 +4,7 @@ from agiwo.agent.models.config import (
     AgentConfig,
     AgentOptions,
     AgentStorageOptions,
-    RunStepStorageConfig,
+    RunLogStorageConfig,
     TraceStorageConfig,
 )
 from agiwo.agent.models.input import (
@@ -38,7 +38,6 @@ from agiwo.agent.models.log import (
 from agiwo.agent.models.run import (
     CompactMetadata,
     MemoryRecord,
-    Run,
     RunIdentity,
     RunLedger,
     RunMetrics,
@@ -52,7 +51,6 @@ from agiwo.agent.models.step import (
     MessageRole,
     StepDelta,
     StepMetrics,
-    StepRecord,
     StepView,
 )
 from agiwo.agent.models.stream import (
@@ -97,7 +95,6 @@ __all__ = [
     "MessageRole",
     "RetrospectApplied",
     "RetrospectAppliedEvent",
-    "Run",
     "RunFailed",
     "RunFinished",
     "RunCompletedEvent",
@@ -111,13 +108,12 @@ __all__ = [
     "RunStarted",
     "RunStartedEvent",
     "RunStatus",
-    "RunStepStorageConfig",
+    "RunLogStorageConfig",
     "RunView",
     "StepCompletedEvent",
     "StepDelta",
     "StepDeltaEvent",
     "StepMetrics",
-    "StepRecord",
     "StepView",
     "TerminationDecided",
     "TerminationDecidedEvent",

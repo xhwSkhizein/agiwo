@@ -3,30 +3,25 @@ from datetime import datetime
 from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
 from agiwo.agent import StepCompletedEvent
 from agiwo.agent.models.log import RunFinished, RunStarted, UserStepCommitted
-from agiwo.agent.models.step import StepRecord as InternalStepRecord
+from agiwo.agent.models.run import RunIdentity
+from agiwo.agent.models.step import StepView as InternalStepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.agent.storage.serialization import (
     build_run_view_from_entries,
     build_step_views_from_entries,
     deserialize_run_log_entry_from_storage,
-    deserialize_run_from_storage,
-    deserialize_step_from_storage,
     serialize_run_log_entry_for_storage,
-    serialize_run_for_storage,
-    serialize_step_for_storage,
 )
 from agiwo.agent.models.stream import (
     StepCompletedEvent as InternalStepCompletedEvent,
 )
 from agiwo.agent import (
     MessageRole,
-    Run,
     RunMetrics,
     RunOutput,
-    RunStatus,
-    StepRecord,
+    StepView,
     StepMetrics,
     TerminationReason,
 )
@@ -46,12 +41,12 @@ _RUN_COMPLETED_METRIC_DEFAULTS: dict[str, int | float] = {
 
 
 def test_public_agent_exports_remain_stable_after_internal_type_split() -> None:
-    assert StepRecord is InternalStepRecord
+    assert StepView is InternalStepView
     assert StepCompletedEvent is InternalStepCompletedEvent
 
 
-def test_step_record_to_message_is_public_conversion_surface() -> None:
-    step = StepRecord.user(_make_context(), sequence=1, user_input="hello")
+def test_step_view_to_message_is_public_conversion_surface() -> None:
+    step = StepView.user(_make_context(), sequence=1, user_input="hello")
 
     msg = step.to_message()
     assert msg["role"] == MessageRole.USER.value
@@ -84,68 +79,22 @@ def build_run_completed_event_data(result: RunOutput) -> dict:
     return data
 
 
-def test_run_storage_round_trip_restores_structured_user_input_and_status() -> None:
-    run = Run(
-        id="run-1",
-        agent_id="agent-1",
-        session_id="session-1",
-        user_input=UserMessage(
-            content=[ContentPart(type=ContentType.TEXT, text="hello")],
-            context=ChannelContext(source="api", metadata={"channel": "test"}),
-        ),
-        status=RunStatus.COMPLETED,
-    )
-
-    payload = serialize_run_for_storage(run)
-    restored = deserialize_run_from_storage(payload)
-
-    assert restored.status == RunStatus.COMPLETED
-    assert isinstance(restored.user_input, UserMessage)
-    assert restored.user_input.context is not None
-    assert restored.user_input.context.source == "api"
-
-
 def _make_context():
     return RunContext(
+        identity=RunIdentity(
+            run_id="run-1",
+            agent_id="agent-1",
+            agent_name="test-agent",
+        ),
         session_runtime=SessionRuntime(
             session_id="session-1",
-            run_step_storage=InMemoryRunStepStorage(),
+            run_log_storage=InMemoryRunLogStorage(),
         ),
-        run_id="run-1",
-        agent_id="agent-1",
-        agent_name="test-agent",
     )
 
 
-def test_step_storage_round_trip_derives_user_content_from_user_input() -> None:
-    step = StepRecord(
-        id="step-1",
-        session_id="session-1",
-        run_id="run-1",
-        sequence=1,
-        role=MessageRole.USER,
-        user_input=[
-            ContentPart(type=ContentType.TEXT, text="hello"),
-            ContentPart(type=ContentType.IMAGE, url="https://example.com/a.png"),
-        ],
-        created_at=datetime(2026, 3, 8, 12, 0, 0),
-    )
-
-    payload = serialize_step_for_storage(step)
-
-    assert "content" not in payload
-
-    restored = deserialize_step_from_storage(payload)
-
-    assert restored.role == MessageRole.USER
-    assert restored.user_input is not None
-    assert isinstance(restored.content, list)
-    assert restored.content[0]["text"] == "hello"
-    assert restored.content[1]["type"] == "image_url"
-
-
-def test_step_record_direct_user_construction_derives_content() -> None:
-    step = StepRecord(
+def test_step_view_direct_user_construction_derives_content() -> None:
+    step = StepView(
         id="step-direct-user",
         session_id="session-1",
         run_id="run-1",
@@ -164,8 +113,8 @@ def test_step_record_direct_user_construction_derives_content() -> None:
     assert step.to_message()["content"] == step.content
 
 
-def test_step_record_user_factory_preserves_name_override() -> None:
-    step = StepRecord.user(
+def test_step_view_user_factory_preserves_name_override() -> None:
+    step = StepView.user(
         _make_context(),
         sequence=1,
         content="summary prompt",
@@ -173,69 +122,6 @@ def test_step_record_user_factory_preserves_name_override() -> None:
     )
 
     assert step.name == "summary_request"
-
-
-def test_step_storage_deserializer_ignores_backend_only_fields() -> None:
-    payload = {
-        "id": "step-2",
-        "session_id": "session-1",
-        "run_id": "run-1",
-        "sequence": 2,
-        "role": "assistant",
-        "content": "done",
-        "trace_id": "trace-1",
-        "span_id": "span-1",
-        "llm_messages": [],
-    }
-
-    restored = deserialize_step_from_storage(payload)
-
-    assert restored.id == "step-2"
-    assert restored.role == MessageRole.ASSISTANT
-    assert restored.content == "done"
-
-
-def test_run_storage_deserializer_restores_datetime_fields_from_iso_strings() -> None:
-    restored = deserialize_run_from_storage(
-        {
-            "id": "run-iso",
-            "agent_id": "agent-1",
-            "session_id": "session-1",
-            "user_input": "hello",
-            "status": "completed",
-            "created_at": "2026-03-17T10:11:12+00:00",
-            "updated_at": "2026-03-17T10:11:13+00:00",
-        }
-    )
-
-    assert restored.status == RunStatus.COMPLETED
-    assert isinstance(restored.created_at, datetime)
-    assert isinstance(restored.updated_at, datetime)
-
-
-def test_step_storage_deserializer_restores_datetime_fields_from_iso_strings() -> None:
-    restored = deserialize_step_from_storage(
-        {
-            "id": "step-iso",
-            "session_id": "session-1",
-            "run_id": "run-1",
-            "sequence": 3,
-            "role": "assistant",
-            "content": "done",
-            "metrics": {
-                "start_at": "2026-03-17T10:11:12+00:00",
-                "end_at": "2026-03-17T10:11:13+00:00",
-                "usage_source": "estimated",
-            },
-            "created_at": "2026-03-17T10:11:12+00:00",
-        }
-    )
-
-    assert isinstance(restored.created_at, datetime)
-    assert restored.metrics is not None
-    assert isinstance(restored.metrics.start_at, datetime)
-    assert isinstance(restored.metrics.end_at, datetime)
-    assert restored.metrics.usage_source == "estimated"
 
 
 def test_run_completed_payload_round_trip_uses_shared_metrics_mapping() -> None:
@@ -269,26 +155,6 @@ def test_run_completed_payload_round_trip_uses_shared_metrics_mapping() -> None:
     assert restored.token_cost == 0.12
     assert restored.steps_count == 6
     assert restored.tool_calls_count == 2
-
-
-def test_step_storage_round_trip_preserves_usage_source() -> None:
-    step = StepRecord.assistant(
-        _make_context(),
-        sequence=1,
-        content="done",
-        metrics=StepMetrics(
-            input_tokens=1,
-            output_tokens=2,
-            total_tokens=3,
-            usage_source="estimated",
-        ),
-    )
-
-    payload = serialize_step_for_storage(step)
-    restored = deserialize_step_from_storage(payload)
-
-    assert restored.metrics is not None
-    assert restored.metrics.usage_source == "estimated"
 
 
 def test_step_metrics_to_dict_tolerates_string_timestamps() -> None:

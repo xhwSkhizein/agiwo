@@ -14,86 +14,110 @@ from agiwo.agent import (
     AgentConfig,
     AgentOptions,
     AgentStorageOptions,
-    RunStepStorageConfig,
+    RunLogStorageConfig,
     TraceStorageConfig,
 )
-from agiwo.agent.storage.base import InMemoryRunStepStorage
-from agiwo.agent.storage.factory import create_run_step_storage
-from agiwo.agent.storage.sqlite import SQLiteRunStepStorage
-from agiwo.agent import Run, RunMetrics, RunStatus
+from agiwo.agent import TerminationReason
+from agiwo.agent.models.log import RunFinished, RunStarted
+from agiwo.agent.storage.base import InMemoryRunLogStorage
+from agiwo.agent.storage.factory import create_run_log_storage
+from agiwo.agent.storage.sqlite import SQLiteRunLogStorage
+from agiwo.agent import RunMetrics
 from agiwo.observability.factory import create_trace_storage
 from agiwo.observability.memory_store import InMemoryTraceStorage
 from agiwo.observability.sqlite_store import SQLiteTraceStorage
 from agiwo.observability.trace import SpanStatus, Trace
 
 
-class TestRunStepStorageConstructors:
-    """Test RunStepStorage creation."""
+class TestRunLogStorageConstructors:
+    """Test RunLogStorage creation."""
 
     def test_create_memory_storage(self):
-        config = RunStepStorageConfig(storage_type="memory")
-        storage = create_run_step_storage(config)
-        assert isinstance(storage, InMemoryRunStepStorage)
+        config = RunLogStorageConfig(storage_type="memory")
+        storage = create_run_log_storage(config)
+        assert isinstance(storage, InMemoryRunLogStorage)
 
     def test_create_sqlite_storage(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
-            config = RunStepStorageConfig(
+            config = RunLogStorageConfig(
                 storage_type="sqlite",
                 config={"db_path": db_path},
             )
-            storage = create_run_step_storage(config)
-            assert isinstance(storage, SQLiteRunStepStorage)
+            storage = create_run_log_storage(config)
+            assert isinstance(storage, SQLiteRunLogStorage)
             assert storage.db_path == db_path
 
     def test_create_unknown_storage_type(self):
-        config = RunStepStorageConfig(storage_type="unknown")  # type: ignore
-        with pytest.raises(ValueError, match="Unknown run_step_storage type"):
-            create_run_step_storage(config)
+        config = RunLogStorageConfig(storage_type="unknown")  # type: ignore
+        with pytest.raises(ValueError, match="Unknown run_log_storage type"):
+            create_run_log_storage(config)
 
     @pytest.mark.asyncio
     async def test_memory_storage_works(self):
-        config = RunStepStorageConfig(storage_type="memory")
-        storage = create_run_step_storage(config)
+        config = RunLogStorageConfig(storage_type="memory")
+        storage = create_run_log_storage(config)
 
-        run = Run(
-            id="test-run",
-            agent_id="test-agent",
-            session_id="test-session",
-            user_input="test",
-            status=RunStatus.COMPLETED,
+        await storage.append_entries(
+            [
+                RunStarted(
+                    sequence=1,
+                    session_id="test-session",
+                    run_id="test-run",
+                    agent_id="test-agent",
+                    user_input="test",
+                ),
+                RunFinished(
+                    sequence=2,
+                    session_id="test-session",
+                    run_id="test-run",
+                    agent_id="test-agent",
+                    response="ok",
+                    termination_reason=TerminationReason.COMPLETED,
+                    metrics=RunMetrics().to_dict(),
+                ),
+            ]
         )
-        run.metrics = RunMetrics()
-        await storage.save_run(run)
 
-        retrieved = await storage.get_run("test-run")
+        retrieved = await storage.get_run_view("test-run")
         assert retrieved is not None
-        assert retrieved.id == "test-run"
+        assert retrieved.run_id == "test-run"
 
     @pytest.mark.asyncio
     async def test_sqlite_storage_lazy_connect(self):
         """SQLite storage connects lazily on first operation."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
-            config = RunStepStorageConfig(
+            config = RunLogStorageConfig(
                 storage_type="sqlite",
                 config={"db_path": db_path},
             )
-            storage = create_run_step_storage(config)
+            storage = create_run_log_storage(config)
             assert not storage._initialized
 
-            run = Run(
-                id="test-run",
-                agent_id="test-agent",
-                session_id="test-session",
-                user_input="test",
-                status=RunStatus.COMPLETED,
+            await storage.append_entries(
+                [
+                    RunStarted(
+                        sequence=1,
+                        session_id="test-session",
+                        run_id="test-run",
+                        agent_id="test-agent",
+                        user_input="test",
+                    ),
+                    RunFinished(
+                        sequence=2,
+                        session_id="test-session",
+                        run_id="test-run",
+                        agent_id="test-agent",
+                        response="ok",
+                        termination_reason=TerminationReason.COMPLETED,
+                        metrics=RunMetrics().to_dict(),
+                    ),
+                ]
             )
-            run.metrics = RunMetrics()
-            await storage.save_run(run)
             assert storage._initialized
 
-            retrieved = await storage.get_run("test-run")
+            retrieved = await storage.get_run_view("test-run")
             assert retrieved is not None
 
             await storage.close()
@@ -256,8 +280,8 @@ class TestAgentIntegration:
             model=None,  # type: ignore
         )
 
-        assert agent.run_step_storage is not None
-        assert isinstance(agent.run_step_storage, InMemoryRunStepStorage)
+        assert agent.run_log_storage is not None
+        assert isinstance(agent.run_log_storage, InMemoryRunLogStorage)
         assert agent.trace_storage is None  # default: tracing disabled
         assert not hasattr(agent, "system_prompt")
 
@@ -290,7 +314,7 @@ class TestAgentIntegration:
             model=None,  # type: ignore
         )
 
-        assert agent.run_step_storage is not None
+        assert agent.run_log_storage is not None
         await agent.close()
 
 

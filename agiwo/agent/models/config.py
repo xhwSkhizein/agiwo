@@ -13,8 +13,8 @@ from agiwo.skill.allowlist import (
 
 
 @dataclass
-class RunStepStorageConfig:
-    """Configuration for RunStepStorage.
+class RunLogStorageConfig:
+    """Configuration for RunLogStorage.
 
     storage_type: backend selector (e.g. ``memory``, ``sqlite``).
         - memory: in-process, no persistence
@@ -46,7 +46,7 @@ class AgentStorageOptions(BaseModel):
 
     model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
 
-    run_step_storage: RunStepStorageConfig = Field(default_factory=RunStepStorageConfig)
+    run_log_storage: RunLogStorageConfig = Field(default_factory=RunLogStorageConfig)
     trace_storage: TraceStorageConfig = Field(default_factory=TraceStorageConfig)
 
 

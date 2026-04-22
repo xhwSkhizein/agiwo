@@ -36,7 +36,7 @@ from server.dependencies import (
 )
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.storage_wiring import create_run_step_storage, create_trace_storage
+from server.services.storage_wiring import create_run_log_storage, create_trace_storage
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
@@ -51,11 +51,13 @@ async def client(monkeypatch: pytest.MonkeyPatch):
 
     # Manually initialize dependencies with in-memory storage
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step_storage = create_run_step_storage(config)
+    run_log_storage = create_run_log_storage(config)
     trace_storage = create_trace_storage(config)
     scheduler = Scheduler(
         SchedulerConfig(
@@ -70,7 +72,7 @@ async def client(monkeypatch: pytest.MonkeyPatch):
         app,
         ConsoleRuntime(
             config=config,
-            run_step_storage=run_step_storage,
+            run_log_storage=run_log_storage,
             trace_storage=trace_storage,
             agent_registry=registry,
             scheduler=scheduler,
@@ -84,7 +86,7 @@ async def client(monkeypatch: pytest.MonkeyPatch):
     clear_console_runtime(app)
     await registry.close()
     await scheduler.stop()
-    await run_step_storage.close()
+    await run_log_storage.close()
 
     # Clean up agent workspace directories created during tests
     _cleanup_agent_workspaces()

@@ -182,7 +182,7 @@ class SchedulerRunner:
         parent_session_id = parent_state.resolve_runtime_session_id()
         child_session_id = state.resolve_runtime_session_id()
 
-        parent_steps = await parent.run_step_storage.list_step_views(
+        parent_steps = await parent.run_log_storage.list_step_views(
             session_id=parent_session_id,
             agent_id=state.parent_id,
         )
@@ -200,7 +200,7 @@ class SchedulerRunner:
             )
             for step in parent_steps
         ]
-        await child.run_step_storage.append_entries(forked_entries)
+        await child.run_log_storage.append_entries(forked_entries)
         logger.info(
             "fork_steps_copied",
             parent_id=state.parent_id,
@@ -920,7 +920,7 @@ class SchedulerRunner:
         if agent is None:
             return
         session_id = state.resolve_runtime_session_id()
-        storage = agent.run_step_storage
+        storage = agent.run_log_storage
         deleted = await storage.delete_steps(session_id, start_seq=run_start_seq)
         logger.info(
             "context_rollback_executed",

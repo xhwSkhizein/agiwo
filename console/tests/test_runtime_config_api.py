@@ -16,7 +16,7 @@ from server.dependencies import (
 )
 from server.services.agent_registry import AgentRegistry
 from server.services.runtime_config import RuntimeConfigService
-from server.services.storage_wiring import create_run_step_storage, create_trace_storage
+from server.services.storage_wiring import create_run_log_storage, create_trace_storage
 
 
 @pytest.fixture
@@ -35,11 +35,13 @@ async def client(monkeypatch: pytest.MonkeyPatch):
 
     app = create_app()
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step_storage = create_run_step_storage(config)
+    run_log_storage = create_run_log_storage(config)
     trace_storage = create_trace_storage(config)
     registry = AgentRegistry(config)
     await registry.initialize()
@@ -63,7 +65,7 @@ async def client(monkeypatch: pytest.MonkeyPatch):
         app,
         ConsoleRuntime(
             config=config,
-            run_step_storage=run_step_storage,
+            run_log_storage=run_log_storage,
             trace_storage=trace_storage,
             agent_registry=registry,
             runtime_config_service=runtime_config_service,
@@ -78,7 +80,7 @@ async def client(monkeypatch: pytest.MonkeyPatch):
     clear_console_runtime(app)
     await registry.close()
     await trace_storage.close()
-    await run_step_storage.close()
+    await run_log_storage.close()
 
 
 @pytest.mark.asyncio

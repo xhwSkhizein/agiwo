@@ -11,7 +11,7 @@ from typing import Any
 
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.run import TerminationReason
-from agiwo.agent.models.step import StepRecord
+from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
 
 
@@ -51,7 +51,7 @@ def set_termination_reason(
     state.ledger.termination_reason = reason
 
 
-def _track_step_metrics(state: RunContext, step: StepRecord) -> None:
+def _track_step_metrics(state: RunContext, step: StepView) -> None:
     ledger = state.ledger
     metrics = step.metrics
     if metrics is None:
@@ -84,7 +84,7 @@ def _extract_text_content(content: str | list[dict[str, Any]] | None) -> str | N
     return "\n".join(texts) if texts else None
 
 
-def _track_assistant_step(state: RunContext, step: StepRecord) -> None:
+def _track_assistant_step(state: RunContext, step: StepView) -> None:
     ledger = state.ledger
     if not step.is_assistant_step():
         return
@@ -97,7 +97,7 @@ def _track_assistant_step(state: RunContext, step: StepRecord) -> None:
 
 def track_step_state(
     state: RunContext,
-    step: StepRecord,
+    step: StepView,
     *,
     append_message: bool = True,
 ) -> None:

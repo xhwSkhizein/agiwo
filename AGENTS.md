@@ -67,10 +67,10 @@
 - 公开构造入口是 `Agent(config: AgentConfig, *, model: Model, tools: list[BaseTool] | None = None, hooks: HookRegistry | list[HookRegistration] | None = None, id: str | None = None)`；`hooks` 统一走 `agiwo.agent.hooks` 中的 phase-based registry；`tools` 是功能/用户自定义工具（受 `allowed_tools` 过滤），`system_tools` 是系统工具（不受 `allowed_tools` 过滤）；`AgentConfig` 只承载纯配置，不放 live object。
 - **`id` 必须稳定**：在 Console 这类跨请求复用会话的场景里，每次构造 `Agent` 都必须传稳定 `id`（如 registry `config.id`），否则历史 steps 会丢。不传 id 时自动生成 `{name}-{hex[:6]}` 格式。
 - `AgentConfig.allowed_skills` 进入 SDK runtime 前必须已经展开成“显式 skill 名列表”或 `None`；不再接受 wildcard/pattern。
-- 对外执行原语是 `start(...)` 返回 live execution handle。
+- 对外执行原语是 `start(...)` 返回 live execution handle；`run(...)` / `run_stream(...)` 只是便利封装。
 - 嵌套 agent 执行是内部协议，由 `nested/agent_tool.py` 通过 `Agent.run_child(...)` 进入；不要再暴露公开 `context` 参数。
-- `SessionRuntime` 是 session 级 owner；`RunContext` 组合 immutable identity 与 mutable ledger。运行时状态变更优先通过 `runtime/state_ops.py` / `runtime/step_committer.py` 收口。
-- `StepRecord` 使用工厂方法创建，不要直接构造。
+- `SessionRuntime` 是 session 级 owner；`RunContext` 组合 immutable identity 与 mutable ledger。运行时状态变更优先通过 `runtime/state_ops.py` / `runtime/step_committer.py` / `runtime/state_writer.py` 收口。
+- `StepView` 是唯一的已提交 step 视图与运行时 step 数据模型；统一通过 `StepView.user()/assistant()/tool()` 创建，不要再引入第二套 step 记录模型。
 - `UserMessage` 是 `UserInput` 的 canonical structured owner；input normalization 和 storage encoding/decoding 统一收口在它本身。
 - 纯数据模型统一放 `models/`，不要再新增顶层 `*_types.py`、one-model 文件或垃圾桶式 `types.py`。
 
@@ -125,7 +125,7 @@
 - scheduler state storage 当前支持 memory/sqlite/mongodb，由 `Scheduler` 自己创建和持有。
 - `Scheduler` 的外部流式协议直接复用 `AgentStreamItem`；不要在 SDK core 再维护第二套 live-output protocol。
 - `route_root_input` 对所有非 RUNNING 路径（submitted / enqueued / steered+WAITING / steered+QUEUED）都返回带 stream 的 `RouteResult`；只有 steered+RUNNING 不带 stream（原 stream subscriber 仍在消费）。下游不需要为 steered 场景单独维护 deferred reply 补丁。
-- **Root runtime 严格复用**：`_ensure_root_runtime_agent` 以"canonical Agent 身份"为键缓存 scheduler-managed runtime agent；`_submit` / `enqueue_input(agent=same)` 不再每次 clone，persistent 会话下 `run_step_storage` / `trace_storage` / workspace 贯穿所有轮次。只有 `rebind_agent` 或传入新 canonical agent 才会 close 旧 runtime 并重建。
+- **Root runtime 严格复用**：`_ensure_root_runtime_agent` 以"canonical Agent 身份"为键缓存 scheduler-managed runtime agent；`_submit` / `enqueue_input(agent=same)` 不再每次 clone，persistent 会话下 `run_log_storage` / `trace_storage` / workspace 贯穿所有轮次。只有 `rebind_agent` 或传入新 canonical agent 才会 close 旧 runtime 并重建。
 - **非 persistent root 自动收口**：`_cleanup_after_run` 对非 persistent 且进入 terminal 的 root 立即 `pop + await close`；persistent root 与 child 仍按原语义。`Scheduler.stop()` 在关闭前会批量 close 所有残留 runtime agent。
 - **Cancel/Shutdown 写终态结果**：`cancel_subtree` / `shutdown_subtree` 写 `with_failed(...)` 时一并写入 `last_run_result=SchedulerRunResult(termination_reason=CANCELLED, ...)`；`wait_for()` 依赖该字段，能够在 cancel 完成那一刻直接返回 `RunOutput(error, termination_reason=CANCELLED)` 而非等到 timeout。runner 只在终态未写 `last_run_result` 时兜底补一条。
 - **Urgent steer bypass**：`PendingEvent.urgent` 标志位让 `plan_tick` 在 WAITING 分支跳过 `event_debounce_*` 限制；`Scheduler.steer(..., urgent=True)` 据此令 WAITING root 立即 WAKE_EVENTS。非 urgent 事件继续遵循 debounce。
@@ -135,11 +135,12 @@
 
 - Context Rollback 通过 `sleep_and_wait(no_progress=True)` 触发，删除空转轮次。
 - Tool Result Retrospect 由 `agiwo/agent/retrospect/` 处理，`run_loop.py` 只通过 `RetrospectBatch` 交互。
-- `StepRecord.condensed_content` 记录精简内容，加载历史时优先。
+- `StepView.condensed_content` 记录精简内容，加载历史时优先。
 
 ### Storage & Observability
 
-- Run/Step 持久化通过 `AgentOptions.run_step_storage` 配置；Trace 持久化通过 `AgentOptions.trace_storage` 配置。
+- Agent 运行记录的 canonical persistence 是 `AgentOptions.storage.run_log_storage`；storage 层以 append-only `RunLog` entries 为真相源，并从中重建 `RunView` / `StepView` 查询结果。
+- `SessionRuntime` 统一负责 sequence 分配、run-log 追加，以及把同一批 runtime facts 喂给 trace writer；`trace`/`stream` 应感知 `compaction`、`retrospect`、`termination` 并保持可记录、可重放。
 - Agent 运行记录通过 session runtime 统一提交；流式输出通过 `Agent.start()` 返回的 handle 暴露 `AgentStreamItem`。
 - `BaseTraceStorage` 支持查询和实时订阅。
 

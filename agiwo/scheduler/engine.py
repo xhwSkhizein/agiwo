@@ -669,7 +669,7 @@ class Scheduler:
 
         **Identity rule (strict reuse):** if the cached canonical agent for
         ``state_id`` is the *same Python object* as the caller-supplied one,
-        we reuse the existing runtime agent (preserving its ``run_step_storage``
+        we reuse the existing runtime agent (preserving its ``run_log_storage``
         / ``trace_storage`` / workspace state across turns).  Otherwise we
         build a new runtime agent (clone + inject scheduler system tools),
         close the previous runtime agent, and record the new canonical.

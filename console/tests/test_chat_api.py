@@ -35,7 +35,7 @@ from server.dependencies import (
 from server.models.session import Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.runtime import AgentRuntimeCache
-from server.services.storage_wiring import create_run_step_storage, create_trace_storage
+from server.services.storage_wiring import create_run_log_storage, create_trace_storage
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
@@ -47,11 +47,13 @@ async def client():
     app = create_app()
 
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step_storage = create_run_step_storage(config)
+    run_log_storage = create_run_log_storage(config)
     trace_storage = create_trace_storage(config)
     registry = AgentRegistry(config)
     await registry.initialize()
@@ -76,7 +78,7 @@ async def client():
         app,
         ConsoleRuntime(
             config=config,
-            run_step_storage=run_step_storage,
+            run_log_storage=run_log_storage,
             trace_storage=trace_storage,
             agent_registry=registry,
             scheduler=scheduler,
@@ -93,7 +95,7 @@ async def client():
     await agent_runtime_cache.close()
     await scheduler.stop()
     await registry.close()
-    await run_step_storage.close()
+    await run_log_storage.close()
 
 
 @pytest.mark.asyncio

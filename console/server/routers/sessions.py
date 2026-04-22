@@ -47,7 +47,7 @@ async def list_runs(
     offset: int = Query(default=0, ge=0),
 ) -> PageResponse[RunResponse]:
     """List all runs with optional filtering."""
-    storage = runtime.run_step_storage
+    storage = runtime.run_log_storage
     runs = await storage.list_run_views(
         user_id=user_id,
         session_id=session_id,
@@ -68,7 +68,7 @@ async def list_runs(
 @router.get("/runs/{run_id}", response_model=RunResponse)
 async def get_run(run_id: str, runtime: ConsoleRuntimeDep) -> RunResponse:
     """Get a single run by ID."""
-    storage = runtime.run_step_storage
+    storage = runtime.run_log_storage
     run = await storage.get_run_view(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -254,7 +254,7 @@ async def get_session_steps(
     order: str = Query(default="asc", pattern="^(asc|desc)$"),
 ) -> PageResponse[StepResponse]:
     """Get all steps for a session."""
-    storage = runtime.run_step_storage
+    storage = runtime.run_log_storage
     raw_steps = await storage.list_step_views(
         session_id=session_id,
         start_seq=start_seq,

@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 
-from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.storage.base import RunLogStorage
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.scheduler.engine import Scheduler
 
@@ -26,7 +26,7 @@ _RUNTIME_STATE_KEY = "console_runtime"
 @dataclass
 class ConsoleRuntime:
     config: ConsoleConfig
-    run_step_storage: RunStepStorage
+    run_log_storage: RunLogStorage
     trace_storage: BaseTraceStorage
     agent_registry: AgentRegistry
     scheduler: Scheduler | None = None
@@ -68,7 +68,7 @@ SchedulerDep = Annotated[Scheduler, Depends(get_scheduler)]
 
 def get_session_view_service(runtime: ConsoleRuntime) -> SessionViewService:
     return SessionViewService(
-        run_storage=runtime.run_step_storage,
+        run_storage=runtime.run_log_storage,
         session_store=runtime.session_store,
         scheduler=runtime.scheduler,
     )

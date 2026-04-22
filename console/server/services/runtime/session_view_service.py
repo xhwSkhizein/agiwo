@@ -2,7 +2,7 @@
 
 from agiwo.agent.models.input import UserMessage
 from agiwo.agent.models.run import RunView
-from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.storage.base import RunLogStorage
 from agiwo.scheduler.engine import Scheduler
 
 from server.models.metrics import RunMetricsSummary
@@ -21,7 +21,7 @@ class SessionViewService:
     def __init__(
         self,
         *,
-        run_storage: RunStepStorage,
+        run_storage: RunLogStorage,
         session_store: ChannelChatSessionStore | None,
         scheduler: Scheduler | None,
     ) -> None:

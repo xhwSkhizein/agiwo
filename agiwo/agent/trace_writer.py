@@ -1,4 +1,4 @@
-"""Agent trace collector — build Trace/Span trees from run and step callbacks."""
+"""Agent trace collector — build Trace/Span trees from run-log and step callbacks."""
 
 import json
 from collections import OrderedDict
@@ -19,8 +19,8 @@ from agiwo.agent.models.log import (
     TerminationDecided,
     ToolStepCommitted,
 )
-from agiwo.agent.models.run import Run, RunOutput
-from agiwo.agent.models.step import LLMCallContext, StepRecord
+from agiwo.agent.models.run import RunOutput
+from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 
@@ -36,7 +36,7 @@ def _utc(value: datetime | None) -> datetime | None:
 
 
 def _resolve_parent(
-    step: StepRecord,
+    step: StepView,
     run_spans: dict[str, Span],
     fallback: Span | None,
 ) -> tuple[str | None, int]:
@@ -47,9 +47,7 @@ def _resolve_parent(
     return (parent.span_id, parent.depth) if parent else (None, 0)
 
 
-def _extract_tool_args(
-    step: StepRecord, cache: dict[str, StepRecord]
-) -> dict[str, Any]:
+def _extract_tool_args(step: StepView, cache: dict[str, StepView]) -> dict[str, Any]:
     if not step.tool_call_id:
         return {}
     assistant = cache.get(step.tool_call_id)
@@ -70,8 +68,8 @@ def _extract_tool_args(
 
 def _build_tool_span(
     trace_id: str,
-    step: StepRecord,
-    cache: dict[str, StepRecord],
+    step: StepView,
+    cache: dict[str, StepView],
     run_spans: dict[str, Span],
     fallback: Span | None,
 ) -> Span:
@@ -114,7 +112,7 @@ def _build_tool_span(
 
 def _build_assistant_span(
     trace_id: str,
-    step: StepRecord,
+    step: StepView,
     llm: LLMCallContext | None,
     run_spans: dict[str, Span],
     fallback: Span | None,
@@ -584,7 +582,7 @@ class AgentTraceCollector:
         self.store = store
         self._trace: Trace | None = None
         self._run_spans: dict[str, Span] = {}
-        self._assistant_cache: OrderedDict[str, StepRecord] = OrderedDict()
+        self._assistant_cache: OrderedDict[str, StepView] = OrderedDict()
 
     @property
     def trace_id(self) -> str | None:
@@ -608,33 +606,38 @@ class AgentTraceCollector:
         self._run_spans = {}
         self._assistant_cache = OrderedDict()
 
-    def on_run_started(self, run: Run) -> str:
+    def on_run_started(
+        self,
+        *,
+        run_id: str,
+        agent_id: str,
+        session_id: str,
+        parent_run_id: str | None,
+    ) -> str:
         trace = self._require_trace()
         run_trace_id = trace.trace_id
-        parent = self._run_spans.get(run.parent_run_id) if run.parent_run_id else None
+        parent = self._run_spans.get(parent_run_id) if parent_run_id else None
         span = Span(
             trace_id=trace.trace_id,
             parent_span_id=parent.span_id if parent else None,
             kind=SpanKind.AGENT,
-            name=run.agent_id,
+            name=agent_id,
             depth=(parent.depth + 1) if parent else 0,
             attributes={
-                "agent_id": run.agent_id,
-                "session_id": run.session_id,
-                "nested": run.parent_run_id is not None,
-                "parent_run_id": run.parent_run_id,
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "nested": parent_run_id is not None,
+                "parent_run_id": parent_run_id,
             },
-            run_id=run.id,
+            run_id=run_id,
         )
         if trace.root_span_id is None:
             trace.root_span_id = span.span_id
         trace.add_span(span)
-        self._run_spans[run.id] = span
+        self._run_spans[run_id] = span
         return run_trace_id
 
-    async def on_step(
-        self, step: StepRecord, llm: LLMCallContext | None = None
-    ) -> None:
+    async def on_step(self, step: StepView, llm: LLMCallContext | None = None) -> None:
         trace = self._require_trace()
         self._cache_tool_calls(step)
         fallback = self._run_spans.get(step.run_id) or (
@@ -735,7 +738,7 @@ class AgentTraceCollector:
 
     _CACHE_MAX_SIZE = 10_000
 
-    def _cache_tool_calls(self, step: StepRecord) -> None:
+    def _cache_tool_calls(self, step: StepView) -> None:
         if step.role.value != "assistant" or not step.tool_calls:
             return
         for tc in step.tool_calls:

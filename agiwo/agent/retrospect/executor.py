@@ -8,7 +8,7 @@ from typing import Any
 import aiofiles
 
 from agiwo.agent.models.run import RunLedger
-from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.storage.base import RunLogStorage
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -44,7 +44,7 @@ async def execute_retrospect(
     feedback: str,
     messages: list[dict[str, Any]],
     ledger: RunLedger,
-    storage: RunStepStorage,
+    storage: RunLogStorage,
     session_id: str,
     offload_dir: Path,
     step_lookup: dict[str, dict[str, Any]],
@@ -147,7 +147,7 @@ async def _persist_feedback(
     feedback: str,
     target_tool_call_id: str,
     step_lookup: dict[str, Any],
-    storage: RunStepStorage,
+    storage: RunLogStorage,
     session_id: str,
 ) -> None:
     """Append retrospect feedback to the last tool message and persist.

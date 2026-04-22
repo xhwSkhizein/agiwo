@@ -13,8 +13,8 @@ from agiwo.agent.models.log import (
     ToolStepCommitted,
     UserStepCommitted,
 )
-from agiwo.agent.models.run import Run, RunMetrics, RunStatus
-from agiwo.agent.models.step import MessageRole, StepMetrics, StepRecord
+from agiwo.agent.models.run import RunMetrics
+from agiwo.agent.models.step import MessageRole, StepMetrics
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
     AgentState,
@@ -35,7 +35,7 @@ from server.dependencies import (
 )
 from server.models.session import ChannelChatContext, Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.storage_wiring import create_run_step_storage, create_trace_storage
+from server.services.storage_wiring import create_run_log_storage, create_trace_storage
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
@@ -47,11 +47,13 @@ async def client():
     app = create_app()
 
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step_storage = create_run_step_storage(config)
+    run_log_storage = create_run_log_storage(config)
     trace_storage = create_trace_storage(config)
     registry = AgentRegistry(config)
     await registry.initialize()
@@ -68,7 +70,7 @@ async def client():
         app,
         ConsoleRuntime(
             config=config,
-            run_step_storage=run_step_storage,
+            run_log_storage=run_log_storage,
             trace_storage=trace_storage,
             agent_registry=registry,
             scheduler=scheduler,
@@ -84,7 +86,7 @@ async def client():
     await session_store.close()
     await scheduler.stop()
     await registry.close()
-    await run_step_storage.close()
+    await run_log_storage.close()
 
 
 async def _seed_session_context(client: AsyncClient) -> None:
@@ -152,28 +154,7 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
                 updated_at=now,
             )
         )
-    await runtime.run_step_storage.save_run(
-        Run(
-            id="run-a1",
-            agent_id="agent-alpha",
-            session_id="session-a",
-            user_input="hello",
-            status=RunStatus.COMPLETED,
-            response_content="done",
-            metrics=RunMetrics(
-                duration_ms=12.0,
-                input_tokens=4,
-                output_tokens=6,
-                total_tokens=10,
-                token_cost=0.2,
-                steps_count=3,
-                tool_calls_count=1,
-            ),
-            created_at=now,
-            updated_at=now,
-        )
-    )
-    await runtime.run_step_storage.append_entries(
+    await runtime.run_log_storage.append_entries(
         [
             RunStarted(
                 sequence=1,
@@ -203,28 +184,7 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
             ),
         ]
     )
-    await runtime.run_step_storage.save_run(
-        Run(
-            id="run-a2",
-            agent_id="agent-alpha",
-            session_id="session-a",
-            user_input="again",
-            status=RunStatus.COMPLETED,
-            response_content="done again",
-            metrics=RunMetrics(
-                duration_ms=15.0,
-                input_tokens=5,
-                output_tokens=7,
-                total_tokens=12,
-                token_cost=0.3,
-                steps_count=4,
-                tool_calls_count=2,
-            ),
-            created_at=now,
-            updated_at=now,
-        )
-    )
-    await runtime.run_step_storage.append_entries(
+    await runtime.run_log_storage.append_entries(
         [
             RunStarted(
                 sequence=3,
@@ -254,28 +214,7 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
             ),
         ]
     )
-    await runtime.run_step_storage.save_run(
-        Run(
-            id="run-z1",
-            agent_id="agent-zeta",
-            session_id="session-z",
-            user_input="zeta",
-            status=RunStatus.COMPLETED,
-            response_content="zeta done",
-            metrics=RunMetrics(
-                duration_ms=20.0,
-                input_tokens=8,
-                output_tokens=9,
-                total_tokens=17,
-                token_cost=0.4,
-                steps_count=2,
-                tool_calls_count=0,
-            ),
-            created_at=now,
-            updated_at=now,
-        )
-    )
-    await runtime.run_step_storage.append_entries(
+    await runtime.run_log_storage.append_entries(
         [
             RunStarted(
                 sequence=1,
@@ -305,27 +244,7 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
             ),
         ]
     )
-
-    for sequence, role, content, agent_id in [
-        (1, MessageRole.USER, "hello", "agent-alpha"),
-        (2, MessageRole.ASSISTANT, "thinking", "agent-alpha"),
-        (3, MessageRole.TOOL, "tool output", "child-agent"),
-    ]:
-        await runtime.run_step_storage.save_step(
-            StepRecord(
-                id=f"step-{sequence}",
-                session_id="session-a",
-                run_id="run-a1",
-                sequence=sequence,
-                role=role,
-                content=content,
-                agent_id=agent_id,
-                name="web_search" if role == MessageRole.TOOL else None,
-                metrics=StepMetrics(duration_ms=float(sequence)),
-                created_at=now,
-            )
-        )
-    await runtime.run_step_storage.append_entries(
+    await runtime.run_log_storage.append_entries(
         [
             UserStepCommitted(
                 sequence=1,

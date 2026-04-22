@@ -5,7 +5,7 @@ from agiwo.agent.models.config import (
     AgentConfig,
     AgentOptions,
     AgentStorageOptions,
-    RunStepStorageConfig,
+    RunLogStorageConfig,
     TraceStorageConfig,
 )
 from agiwo.agent.hooks import (
@@ -47,7 +47,6 @@ from agiwo.agent.models.log import (
 )
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.run import (
-    Run,
     RunMetrics,
     RunOutput,
     RunStatus,
@@ -59,7 +58,6 @@ from agiwo.agent.models.step import (
     MessageRole,
     StepDelta,
     StepMetrics,
-    StepRecord,
     StepView,
 )
 from agiwo.agent.models.stream import (
@@ -107,7 +105,6 @@ __all__ = [
     "HookPhase",
     "HookRegistration",
     "HookRegistry",
-    "Run",
     "RunFailedEntry",
     "RunFinished",
     "RunCompletedEvent",
@@ -119,7 +116,7 @@ __all__ = [
     "RunStarted",
     "RunStartedEvent",
     "RunStatus",
-    "RunStepStorageConfig",
+    "RunLogStorageConfig",
     "RunView",
     "RetrospectApplied",
     "RetrospectAppliedEvent",
@@ -127,7 +124,6 @@ __all__ = [
     "StepDelta",
     "StepDeltaEvent",
     "StepMetrics",
-    "StepRecord",
     "StepView",
     "TerminationDecided",
     "TerminationDecidedEvent",

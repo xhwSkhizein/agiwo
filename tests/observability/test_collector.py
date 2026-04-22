@@ -5,11 +5,9 @@ import pytest
 from agiwo.agent import (
     LLMCallContext,
     MessageRole,
-    Run,
     RunOutput,
-    RunStatus,
     StepMetrics,
-    StepRecord,
+    StepView,
     TerminationReason,
 )
 from agiwo.agent.models.log import (
@@ -32,16 +30,13 @@ async def test_collect_routes_assistant_and_tool_steps() -> None:
         input_query="search for updates",
     )
     collector.on_run_started(
-        Run(
-            id="run-1",
-            agent_id="agent-1",
-            session_id="session-1",
-            user_input="search",
-            status=RunStatus.RUNNING,
-        )
+        run_id="run-1",
+        agent_id="agent-1",
+        session_id="session-1",
+        parent_run_id=None,
     )
 
-    assistant_step = StepRecord(
+    assistant_step = StepView(
         session_id="session-1",
         run_id="run-1",
         sequence=1,
@@ -78,7 +73,7 @@ async def test_collect_routes_assistant_and_tool_steps() -> None:
         ),
     )
 
-    tool_step = StepRecord(
+    tool_step = StepView(
         session_id="session-1",
         run_id="run-1",
         sequence=2,
@@ -143,13 +138,10 @@ async def test_collector_records_runtime_run_log_entries() -> None:
         input_query="hello",
     )
     collector.on_run_started(
-        Run(
-            id="run-1",
-            agent_id="agent-1",
-            session_id="session-1",
-            user_input="hello",
-            status=RunStatus.RUNNING,
-        )
+        run_id="run-1",
+        agent_id="agent-1",
+        session_id="session-1",
+        parent_run_id=None,
     )
 
     await collector.on_run_log_entries(

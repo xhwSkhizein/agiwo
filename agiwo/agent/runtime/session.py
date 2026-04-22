@@ -7,9 +7,7 @@ from agiwo.agent.models.log import RunLogEntry
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.storage.base import (
-    InMemoryRunLogStorage,
     RunLogStorage,
-    RunStepStorage,
 )
 from agiwo.agent.models.stream import AgentStreamItem
 from agiwo.agent.trace_writer import AgentTraceCollector
@@ -29,19 +27,13 @@ class SessionRuntime:
         self,
         *,
         session_id: str,
-        run_step_storage: RunStepStorage,
-        run_log_storage: RunLogStorage | None = None,
+        run_log_storage: RunLogStorage,
         trace_runtime: AgentTraceCollector | None = None,
         abort_signal: AbortSignal | None = None,
         steering_queue: asyncio.Queue[object] | None = None,
     ) -> None:
         self.session_id = session_id
-        self.run_step_storage = run_step_storage
-        self.run_log_storage = run_log_storage or (
-            run_step_storage
-            if isinstance(run_step_storage, RunLogStorage)
-            else InMemoryRunLogStorage()
-        )
+        self.run_log_storage = run_log_storage
         self.trace_runtime = trace_runtime
         self.abort_signal = abort_signal or AbortSignal()
         self.steering_queue = steering_queue or asyncio.Queue()
@@ -53,7 +45,7 @@ class SessionRuntime:
     # ------------------------------------------------------------------
 
     async def allocate_sequence(self) -> int:
-        return await self.run_step_storage.allocate_sequence(self.session_id)
+        return await self.run_log_storage.allocate_sequence(self.session_id)
 
     async def append_run_log_entries(self, entries: list[RunLogEntry]) -> None:
         await self.run_log_storage.append_entries(entries)
@@ -80,7 +72,7 @@ class SessionRuntime:
         self, agent_id: str
     ) -> CompactMetadata | None:
         """Retrieve the latest compact metadata for the given agent."""
-        return await self.run_step_storage.get_latest_compact_metadata(
+        return await self.run_log_storage.get_latest_compact_metadata(
             self.session_id, agent_id
         )
 

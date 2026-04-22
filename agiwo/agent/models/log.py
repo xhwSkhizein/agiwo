@@ -7,7 +7,7 @@ from typing import Any
 
 from agiwo.agent.models.input import MessageContent, UserInput
 from agiwo.agent.models.run import CompactMetadata
-from agiwo.agent.models.step import MessageRole, StepMetrics, StepRecord, StepView
+from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 from agiwo.config.termination import TerminationReason
 
 
@@ -184,7 +184,7 @@ class HookFailed(RunLogEntry):
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.HOOK_FAILED)
 
 
-def build_committed_step_entry(step: StepRecord | StepView) -> CommittedStep:
+def build_committed_step_entry(step: StepView) -> CommittedStep:
     common = {
         "sequence": step.sequence,
         "session_id": step.session_id,

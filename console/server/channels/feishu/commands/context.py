@@ -100,7 +100,7 @@ async def _execute_status(
     scheduler_status = format_scheduler_status(state.status) if state else "未启动"
 
     metrics_summary = await summarize_run_views_paginated(
-        agent.run_step_storage,
+        agent.run_log_storage,
         session_id=current_session.id,
     )
 

@@ -2,7 +2,7 @@
 
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.llm_caller import stream_assistant_step
-from agiwo.agent.models.step import StepRecord
+from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.agent.termination.prompts import (
@@ -38,7 +38,7 @@ async def maybe_generate_termination_summary(
     )
 
     sequence = await state.session_runtime.allocate_sequence()
-    summary_user_step = StepRecord.user(
+    summary_user_step = StepView.user(
         state,
         sequence=sequence,
         content=user_prompt,

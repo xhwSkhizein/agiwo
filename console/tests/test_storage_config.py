@@ -3,9 +3,9 @@ from server.config import ConsoleConfig
 from server.services.storage_wiring import (
     build_agent_state_storage_config,
     build_citation_store_config,
-    build_run_step_storage_config,
+    build_run_log_storage_config,
     build_trace_storage_config,
-    create_run_step_storage,
+    create_run_log_storage,
     create_trace_storage,
 )
 
@@ -14,12 +14,14 @@ def test_storage_config_builders_sqlite(monkeypatch) -> None:
     monkeypatch.setattr(sdk_settings, "sqlite_db_path", "/tmp/agiwo.db")
     monkeypatch.setattr(sdk_settings, "trace_collection_name", "trace_spans")
     config = ConsoleConfig(
-        run_step_storage_type="sqlite",
-        metadata_storage_type="sqlite",
-        trace_storage_type="sqlite",
+        storage={
+            "run_log_type": "sqlite",
+            "trace_type": "sqlite",
+            "metadata_type": "sqlite",
+        }
     )
 
-    run_step = build_run_step_storage_config(config)
+    run_step = build_run_log_storage_config(config)
     trace = build_trace_storage_config(config)
     citation = build_citation_store_config(config)
     agent_state = build_agent_state_storage_config(config)
@@ -38,11 +40,13 @@ def test_storage_config_builders_sqlite(monkeypatch) -> None:
 
 def test_storage_factory_functions_create_correct_storage_types() -> None:
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step = create_run_step_storage(config)
+    run_step = create_run_log_storage(config)
     trace = create_trace_storage(config)
 
     assert run_step is not None
@@ -51,11 +55,13 @@ def test_storage_factory_functions_create_correct_storage_types() -> None:
 
 def test_all_memory_storage_types() -> None:
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step = build_run_step_storage_config(config)
+    run_step = build_run_log_storage_config(config)
     trace = build_trace_storage_config(config)
     agent_state = build_agent_state_storage_config(config)
     citation = build_citation_store_config(config)
@@ -68,7 +74,7 @@ def test_all_memory_storage_types() -> None:
 
 def test_agent_state_sqlite_config(monkeypatch) -> None:
     monkeypatch.setattr(sdk_settings, "sqlite_db_path", "/tmp/test.db")
-    config = ConsoleConfig(metadata_storage_type="sqlite")
+    config = ConsoleConfig(storage={"metadata_type": "sqlite"})
     result = build_agent_state_storage_config(config)
     assert result.storage_type == "sqlite"
     assert result.config == {"db_path": "/tmp/test.db"}
@@ -76,7 +82,7 @@ def test_agent_state_sqlite_config(monkeypatch) -> None:
 
 def test_citation_sqlite_config(monkeypatch) -> None:
     monkeypatch.setattr(sdk_settings, "sqlite_db_path", "/tmp/test.db")
-    config = ConsoleConfig(metadata_storage_type="sqlite")
+    config = ConsoleConfig(storage={"metadata_type": "sqlite"})
     result = build_citation_store_config(config)
     assert result.storage_type == "sqlite"
     assert result.sqlite_db_path == "/tmp/test.db"

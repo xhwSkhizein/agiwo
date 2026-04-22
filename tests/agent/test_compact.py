@@ -7,10 +7,10 @@ import pytest
 from agiwo.agent.compaction import build_compacted_messages, compact_if_needed
 from agiwo.agent.hooks import HookPhase, HookRegistry, observe
 from agiwo.agent.models.log import RunLogEntryKind
-from agiwo.agent.models.run import CompactMetadata
+from agiwo.agent.models.run import CompactMetadata, RunIdentity
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -80,10 +80,10 @@ class TestDefaultPrompt:
 async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
     tmp_path,
 ):
-    step_storage = InMemoryRunStepStorage()
+    step_storage = InMemoryRunLogStorage()
     session_runtime = SessionRuntime(
         session_id="sess-1",
-        run_step_storage=step_storage,
+        run_log_storage=step_storage,
     )
     published = []
 
@@ -99,10 +99,12 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
         seen_steps.append(step.name or step.role.value)
 
     state = RunContext(
+        identity=RunIdentity(
+            run_id="run-1",
+            agent_id="agent-1",
+            agent_name="agent",
+        ),
         session_runtime=session_runtime,
-        run_id="run-1",
-        agent_id="agent-1",
-        agent_name="agent",
         messages=[
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hello"},
@@ -130,7 +132,7 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
         root_path=str(tmp_path),
     )
 
-    steps = await step_storage.get_steps("sess-1", run_id="run-1")
+    steps = await step_storage.list_step_views(session_id="sess-1", run_id="run-1")
 
     assert [step.name for step in steps[-2:]] == ["compact_request", "compact"]
     assert seen_steps[-2:] == ["compact_request", "compact"]

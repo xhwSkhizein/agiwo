@@ -19,7 +19,7 @@ from agiwo.agent.models.log import (
     UserStepCommitted,
 )
 from agiwo.agent.models.run import RunMetrics, TerminationReason
-from agiwo.agent.models.step import StepDelta, StepRecord
+from agiwo.agent.models.step import StepDelta, StepView
 from agiwo.utils.serialization import serialize_optional_datetime
 
 if TYPE_CHECKING:
@@ -83,7 +83,7 @@ class StepDeltaEvent(AgentStreamItemBase):
 
 @dataclass(kw_only=True)
 class StepCompletedEvent(AgentStreamItemBase):
-    step: StepRecord
+    step: StepView
     type: Literal["step_completed"] = "step_completed"
 
     def to_dict(self) -> dict[str, Any]:
@@ -204,7 +204,7 @@ class _ReplayContext:
     depth: int = 0
 
 
-def _step_from_entry(entry: CommittedStep) -> StepRecord:
+def _step_from_entry(entry: CommittedStep) -> StepView:
     ctx = _ReplayContext(
         session_id=entry.session_id,
         run_id=entry.run_id,
@@ -213,7 +213,7 @@ def _step_from_entry(entry: CommittedStep) -> StepRecord:
         depth=entry.depth,
     )
     if isinstance(entry, UserStepCommitted):
-        step = StepRecord.user(
+        step = StepView.user(
             ctx,
             sequence=entry.sequence,
             user_input=entry.user_input,
@@ -221,7 +221,7 @@ def _step_from_entry(entry: CommittedStep) -> StepRecord:
             name=entry.name,
         )
     elif isinstance(entry, AssistantStepCommitted):
-        step = StepRecord.assistant(
+        step = StepView.assistant(
             ctx,
             sequence=entry.sequence,
             content=entry.content if isinstance(entry.content, str) else None,
@@ -231,7 +231,7 @@ def _step_from_entry(entry: CommittedStep) -> StepRecord:
             name=entry.name,
         )
     else:
-        step = StepRecord.tool(
+        step = StepView.tool(
             ctx,
             sequence=entry.sequence,
             tool_call_id=entry.tool_call_id or "",

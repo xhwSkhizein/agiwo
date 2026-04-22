@@ -21,7 +21,7 @@ from agiwo.agent.models.log import (
 )
 from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import CompactMetadata, RunOutput, TerminationReason
-from agiwo.agent.models.step import LLMCallContext, StepRecord, StepView
+from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.runtime.context import RunContext
 
 
@@ -113,7 +113,7 @@ def build_llm_call_completed_entry(
     state: RunContext,
     *,
     sequence: int,
-    step: StepRecord,
+    step: StepView,
     llm: LLMCallContext,
 ) -> LLMCallCompleted:
     return LLMCallCompleted(
@@ -130,7 +130,7 @@ def build_llm_call_completed_entry(
 
 
 def build_step_log_entry(
-    step: StepRecord | StepView,
+    step: StepView,
 ) -> UserStepCommitted | AssistantStepCommitted | ToolStepCommitted:
     return build_committed_step_entry(step)
 

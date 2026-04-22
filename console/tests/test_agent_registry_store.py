@@ -44,9 +44,11 @@ def _make_store(
         )
     return create_agent_registry_store(
         ConsoleConfig(
-            run_step_storage_type="memory",
-            trace_storage_type="memory",
-            metadata_storage_type=kind,
+            storage={
+                "run_log_type": "memory",
+                "trace_type": "memory",
+                "metadata_type": kind,
+            }
         )
     )
 
@@ -97,10 +99,10 @@ def test_agent_registry_store_factory_selects_backend(
     )
 
     memory_store = create_agent_registry_store(
-        ConsoleConfig(metadata_storage_type="memory")
+        ConsoleConfig(storage={"metadata_type": "memory"})
     )
     sqlite_store = create_agent_registry_store(
-        ConsoleConfig(metadata_storage_type="sqlite")
+        ConsoleConfig(storage={"metadata_type": "sqlite"})
     )
 
     assert isinstance(memory_store, InMemoryAgentRegistryStore)

@@ -2,25 +2,28 @@ from dataclasses import dataclass
 
 import pytest
 
+from agiwo.agent.models.run import RunIdentity
 from agiwo.agent import RunOutput
 from agiwo.agent.nested.agent_tool import AgentTool
 from agiwo.agent.nested.context import AgentToolContext
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
-from agiwo.agent.storage.base import InMemoryRunStepStorage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 
 
 def _make_context(*, metadata: dict | None = None):
     session_runtime = SessionRuntime(
         session_id="sess-1",
-        run_step_storage=InMemoryRunStepStorage(),
+        run_log_storage=InMemoryRunLogStorage(),
     )
     return RunContext(
+        identity=RunIdentity(
+            run_id="run-1",
+            agent_id="caller-id",
+            agent_name="caller",
+            metadata=dict(metadata or {}),
+        ),
         session_runtime=session_runtime,
-        run_id="run-1",
-        agent_id="caller-id",
-        agent_name="caller",
-        metadata=dict(metadata or {}),
     )
 
 

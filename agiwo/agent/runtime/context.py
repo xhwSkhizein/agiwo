@@ -2,7 +2,7 @@
 
 import copy
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from agiwo.agent.models.config import AgentOptions
@@ -32,46 +32,19 @@ class RunRuntime:
 
 
 class RunContext:
-    """Facade for identity + ledger + IO deps.
-
-    Provides backward-compatible property access to identity fields
-    while internally maintaining three-layer separation.
-    """
+    """Facade for run identity, mutable ledger state, and IO dependencies."""
 
     __slots__ = ("_identity", "ledger", "_session_runtime", "config", "hooks")
 
     def __init__(
         self,
         *,
-        identity: RunIdentity | None = None,
+        identity: RunIdentity,
         ledger: RunLedger | None = None,
         session_runtime: SessionRuntime,
-        # Backward-compatible parameters (for gradual migration)
-        run_id: str | None = None,
-        agent_id: str | None = None,
-        agent_name: str | None = None,
-        user_id: str | None = None,
-        depth: int = 0,
-        parent_run_id: str | None = None,
-        timeout_at: float | None = None,
-        metadata: dict[str, Any] | None = None,
         messages: list[dict[str, Any]] | None = None,
     ) -> None:
-        if identity is not None:
-            self._identity = identity
-        else:
-            # Backward-compatible construction
-            self._identity = RunIdentity(
-                run_id=run_id or "",
-                agent_id=agent_id or "",
-                agent_name=agent_name or "",
-                user_id=user_id,
-                depth=depth,
-                parent_run_id=parent_run_id,
-                timeout_at=timeout_at,
-                metadata=dict(metadata or {}),
-            )
-
+        self._identity = identity
         self.ledger = ledger or RunLedger(messages=list(messages or []))
         self._session_runtime = session_runtime
         # Overwritten by execute_run with the effective options/hooks for
@@ -80,7 +53,6 @@ class RunContext:
         self.config = AgentOptions()
         self.hooks = HookRegistry()
 
-    # Identity properties (backward-compatible)
     @property
     def run_id(self) -> str:
         return self._identity.run_id
@@ -111,8 +83,14 @@ class RunContext:
 
     @property
     def metadata(self) -> dict[str, Any]:
-        # Return a defensive copy to prevent mutation of the identity's metadata
         return dict(self._identity.metadata)
+
+    def update_metadata(self, updates: dict[str, Any]) -> None:
+        if not updates:
+            return
+        merged = dict(self._identity.metadata)
+        merged.update(updates)
+        self._identity = replace(self._identity, metadata=merged)
 
     @property
     def session_runtime(self) -> SessionRuntime:

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from agiwo.agent import RunStatus
 from agiwo.agent.models.run import RunView
-from agiwo.agent.storage.base import RunStepStorage
+from agiwo.agent.storage.base import RunLogStorage
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.trace import Trace
 
@@ -52,7 +52,7 @@ def add_run_to_summary(summary: RunMetricsSummary, run: RunView) -> None:
 
 
 async def iter_run_views_paginated(
-    run_storage: RunStepStorage,
+    run_storage: RunLogStorage,
     *,
     user_id: str | None = None,
     session_id: str | None = None,
@@ -75,7 +75,7 @@ async def iter_run_views_paginated(
 
 
 async def summarize_run_views_paginated(
-    run_storage: RunStepStorage,
+    run_storage: RunLogStorage,
     *,
     user_id: str | None = None,
     session_id: str | None = None,

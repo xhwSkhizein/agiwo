@@ -1,6 +1,6 @@
 """Step commit pipeline for persistence, hooks, trace, and stream publication."""
 
-from agiwo.agent.models.step import LLMCallContext, StepRecord
+from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.state_ops import track_step_state
 from agiwo.agent.runtime.state_writer import build_step_log_entry
@@ -9,12 +9,12 @@ from agiwo.agent.models.stream import StepCompletedEvent
 
 async def commit_step(
     state: RunContext,
-    step: StepRecord,
+    step: StepView,
     *,
     llm: LLMCallContext | None = None,
     append_message: bool = True,
     track_state: bool = True,
-) -> StepRecord:
+) -> StepView:
     if track_state:
         track_step_state(state, step, append_message=append_message)
     await state.session_runtime.append_run_log_entries([build_step_log_entry(step)])

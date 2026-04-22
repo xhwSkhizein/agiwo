@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.agent.models.run import Run, RunMetrics, RunStatus
+from agiwo.agent.models.log import RunFinished, RunStarted
+from agiwo.agent.models.run import RunMetrics
+from agiwo.agent import TerminationReason
 from agiwo.observability.trace import SpanStatus, Trace
 
 from server.app import create_app
@@ -18,7 +20,7 @@ from server.dependencies import (
 )
 from server.models.session import Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.storage_wiring import create_run_step_storage, create_trace_storage
+from server.services.storage_wiring import create_run_log_storage, create_trace_storage
 
 
 @pytest.mark.asyncio
@@ -26,11 +28,13 @@ async def test_overview_reports_real_totals_instead_of_recent_samples() -> None:
     app = create_app()
 
     config = ConsoleConfig(
-        run_step_storage_type="memory",
-        trace_storage_type="memory",
-        metadata_storage_type="memory",
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
     )
-    run_step_storage = create_run_step_storage(config)
+    run_log_storage = create_run_log_storage(config)
     trace_storage = create_trace_storage(config)
     registry = AgentRegistry(config)
     await registry.initialize()
@@ -64,7 +68,7 @@ async def test_overview_reports_real_totals_instead_of_recent_samples() -> None:
         app,
         ConsoleRuntime(
             config=config,
-            run_step_storage=run_step_storage,
+            run_log_storage=run_log_storage,
             trace_storage=trace_storage,
             agent_registry=registry,
             session_store=session_store,
@@ -81,61 +85,82 @@ async def test_overview_reports_real_totals_instead_of_recent_samples() -> None:
             )
         )
 
-    runs = [
-        Run(
-            id="run-1",
-            agent_id="agent-0",
-            session_id="session-a",
-            user_input="hello",
-            status=RunStatus.COMPLETED,
-            response_content="done",
-            metrics=RunMetrics(
-                duration_ms=10.0,
-                input_tokens=10,
-                output_tokens=5,
-                total_tokens=15,
-                token_cost=0.1,
+    await run_log_storage.append_entries(
+        [
+            RunStarted(
+                sequence=1,
+                session_id="session-a",
+                run_id="run-1",
+                agent_id="agent-0",
+                user_input="hello",
+                created_at=created_at,
             ),
-            created_at=created_at,
-            updated_at=created_at,
-        ),
-        Run(
-            id="run-2",
-            agent_id="agent-0",
-            session_id="session-a",
-            user_input="follow-up",
-            status=RunStatus.COMPLETED,
-            response_content="done again",
-            metrics=RunMetrics(
-                duration_ms=12.0,
-                input_tokens=8,
-                output_tokens=4,
-                total_tokens=12,
-                token_cost=0.08,
+            RunFinished(
+                sequence=2,
+                session_id="session-a",
+                run_id="run-1",
+                agent_id="agent-0",
+                response="done",
+                termination_reason=TerminationReason.COMPLETED,
+                metrics=RunMetrics(
+                    duration_ms=10.0,
+                    input_tokens=10,
+                    output_tokens=5,
+                    total_tokens=15,
+                    token_cost=0.1,
+                ).to_dict(),
+                created_at=created_at,
             ),
-            created_at=created_at,
-            updated_at=created_at,
-        ),
-        Run(
-            id="run-3",
-            agent_id="agent-1",
-            session_id="session-b",
-            user_input="other",
-            status=RunStatus.COMPLETED,
-            response_content="done third",
-            metrics=RunMetrics(
-                duration_ms=5.0,
-                input_tokens=4,
-                output_tokens=2,
-                total_tokens=6,
-                token_cost=0.03,
+            RunStarted(
+                sequence=3,
+                session_id="session-a",
+                run_id="run-2",
+                agent_id="agent-0",
+                user_input="follow-up",
+                created_at=created_at,
             ),
-            created_at=created_at,
-            updated_at=created_at,
-        ),
-    ]
-    for run in runs:
-        await run_step_storage.save_run(run)
+            RunFinished(
+                sequence=4,
+                session_id="session-a",
+                run_id="run-2",
+                agent_id="agent-0",
+                response="done again",
+                termination_reason=TerminationReason.COMPLETED,
+                metrics=RunMetrics(
+                    duration_ms=12.0,
+                    input_tokens=8,
+                    output_tokens=4,
+                    total_tokens=12,
+                    token_cost=0.08,
+                ).to_dict(),
+                created_at=created_at,
+            ),
+            RunStarted(
+                sequence=1,
+                session_id="session-b",
+                run_id="run-3",
+                agent_id="agent-1",
+                user_input="other",
+                created_at=created_at,
+            ),
+            RunFinished(
+                sequence=2,
+                session_id="session-b",
+                run_id="run-3",
+                agent_id="agent-1",
+                response="done third",
+                termination_reason=TerminationReason.COMPLETED,
+                metrics=RunMetrics(
+                    duration_ms=5.0,
+                    input_tokens=4,
+                    output_tokens=2,
+                    total_tokens=6,
+                    token_cost=0.03,
+                ).to_dict(),
+                created_at=created_at,
+            ),
+        ]
+    )
 
     traces = [
         Trace(
@@ -199,4 +224,4 @@ async def test_overview_reports_real_totals_instead_of_recent_samples() -> None:
 
     clear_console_runtime(app)
     await registry.close()
-    await run_step_storage.close()
+    await run_log_storage.close()
