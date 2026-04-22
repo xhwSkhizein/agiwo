@@ -313,9 +313,10 @@ async def _compact(
         name="compact_request",
     )
     await commit_step(state, compact_user_step, append_message=True)
+    snapshot_messages = state.snapshot_messages()
 
     started_entries = await writer.record_llm_call_started(
-        messages=state.snapshot_messages(),
+        messages=snapshot_messages,
         tools=None,
     )
     await state.session_runtime.project_run_log_entries(
@@ -330,7 +331,7 @@ async def _compact(
         model,
         state,
         abort_signal,
-        messages=state.snapshot_messages(),
+        messages=snapshot_messages,
         use_state_tools=False,
         name="compact",
     )

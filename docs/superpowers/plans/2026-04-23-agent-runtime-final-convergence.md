@@ -35,7 +35,7 @@
 - `tests/agent/test_compact.py`
   Cover canonical compaction LLM facts.
 - `tests/agent/test_termination.py`
-  Cover canonical termination-summary LLM facts.
+  Summarize canonical termination-summary LLM behavior.
 - `tests/observability/test_collector.py`
   Switch fully to committed-entry trace construction and assert bounded cache / persistence behavior.
 - `tests/agent/test_run_log_replay_parity.py`
@@ -228,7 +228,9 @@ async def test_run_state_writer_owns_bootstrap_state_mutations() -> None:
     state = _make_state()
     writer = RunStateWriter(state)
 
-    await writer.record_bootstrap_state(
+    await writer.record_context_assembled(
+        messages=[{"role": "system", "content": "sys"}],
+        memory_count=0,
         run_start_seq=7,
         tool_schemas=[{"type": "function", "function": {"name": "bash"}}],
         latest_compaction=None,
@@ -265,18 +267,22 @@ Expected: FAIL because bootstrap still mutates state directly and compaction sti
 ```python
 # agiwo/agent/runtime/state_writer.py
 class RunStateWriter:
-    async def record_bootstrap_state(
+    async def record_context_assembled(
         self,
         *,
+        messages: list[dict[str, Any]],
+        memory_count: int,
         run_start_seq: int,
         tool_schemas: list[dict[str, Any]] | None,
         latest_compaction: CompactMetadata | None,
-    ) -> None:
+    ) -> list[RunLogEntry]:
+        replace_messages(self._state, messages)
         self._state.ledger.run_start_seq = run_start_seq
         self._state.ledger.tool_schemas = (
             copy.deepcopy(tool_schemas) if tool_schemas is not None else None
         )
         self._state.ledger.compaction.last_metadata = latest_compaction
+        return await self.append_entries([build_context_assembled_entry(...)])
 
     async def record_llm_turn(
         self,
@@ -297,14 +303,12 @@ class RunStateWriter:
 ```python
 # agiwo/agent/run_bootstrap.py
 user_step = await _build_user_step(context, user_input)
-await writer.record_bootstrap_state(
-    run_start_seq=user_step.sequence,
-    tool_schemas=_build_tool_schemas(runtime),
-    latest_compaction=latest_compact,
-)
 await writer.record_context_assembled(
     messages=assembled_messages,
     memory_count=len(memories),
+    run_start_seq=user_step.sequence,
+    tool_schemas=_build_tool_schemas(runtime),
+    latest_compaction=latest_compact,
 )
 ```
 
@@ -606,4 +610,4 @@ Placeholder scan:
 - No `TODO`, `TBD`, or deferred implementation placeholders remain.
 
 Type consistency:
-- The plan consistently uses `peek_pending_steer_inputs`, `ack_pending_steer_inputs`, `record_bootstrap_state`, and canonical `LLMCallStarted` / `LLMCallCompleted` naming across tasks.
+- The plan consistently uses `peek_pending_steer_inputs`, `ack_pending_steer_inputs`, `record_context_assembled`, and canonical `LLMCallStarted` / `LLMCallCompleted` naming across tasks.
