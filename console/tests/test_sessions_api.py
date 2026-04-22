@@ -273,7 +273,7 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
     await runtime.run_log_storage.append_entries(
         [
             UserStepCommitted(
-                sequence=1,
+                sequence=6,
                 session_id="session-a",
                 run_id="run-a1",
                 agent_id="agent-alpha",
@@ -284,7 +284,7 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
                 created_at=now,
             ),
             AssistantStepCommitted(
-                sequence=2,
+                sequence=7,
                 session_id="session-a",
                 run_id="run-a1",
                 agent_id="agent-alpha",
@@ -295,7 +295,7 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
                 created_at=now,
             ),
             ToolStepCommitted(
-                sequence=3,
+                sequence=8,
                 session_id="session-a",
                 run_id="run-a1",
                 agent_id="child-agent",
@@ -418,7 +418,7 @@ async def test_get_session_steps_supports_order_and_has_more(client) -> None:
     payload = response.json()
     assert payload["has_more"] is False
     assert payload["total"] is None
-    assert [item["sequence"] for item in payload["items"]] == [2, 1]
+    assert [item["sequence"] for item in payload["items"]] == [7, 6]
 
 
 @pytest.mark.asyncio
@@ -430,4 +430,4 @@ async def test_get_session_steps_reports_total_for_unfiltered_session(client) ->
     assert response.status_code == 200
     payload = response.json()
     assert payload["total"] == 3
-    assert [item["sequence"] for item in payload["items"]] == [1, 2, 3]
+    assert [item["sequence"] for item in payload["items"]] == [6, 7, 8]
