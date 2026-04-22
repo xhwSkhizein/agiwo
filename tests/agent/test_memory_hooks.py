@@ -11,6 +11,7 @@ from agiwo.agent import Agent
 from agiwo.agent import AgentConfig
 from agiwo.agent.hooks import (
     DefaultMemoryHook,
+    HookGroup,
     HookPhase,
     HookRegistry,
     filter_relevant_memories,
@@ -150,6 +151,8 @@ class TestAgentAutoInjectMemoryHook:
 
         assert agent.hooks.has_handler("custom_step_hook")
         assert agent.hooks.has_phase(HookPhase.ASSEMBLE_CONTEXT)
+        handlers = agent.hooks.for_phase(HookPhase.ASSEMBLE_CONTEXT)
+        assert handlers[0].group is HookGroup.SYSTEM
 
     def test_agent_empty_hooks_gets_memory_hook(self):
         """Test that empty hooks object gets memory hook injected."""

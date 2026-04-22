@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from agiwo.agent.models.config import AgentConfig
 from agiwo.agent.hooks import (
     DefaultMemoryHook,
+    HookGroup,
     HookPhase,
     HookRegistration,
     HookRegistry,
@@ -86,6 +87,7 @@ def build_agent_hooks(
                 HookPhase.ASSEMBLE_CONTEXT,
                 "default_memory_retrieve",
                 _memory_retrieve,
+                group=HookGroup.SYSTEM,
             )
         )
     return resolved

@@ -20,8 +20,8 @@ class HookPhase(str, Enum):
     ASSEMBLE_CONTEXT = "assemble_context"
     BEFORE_LLM = "before_llm"
     AFTER_LLM = "after_llm"
-    BEFORE_TOOL_BATCH = "before_tool_batch"
-    AFTER_TOOL_BATCH = "after_tool_batch"
+    BEFORE_TOOL_CALL = "before_tool_call"
+    AFTER_TOOL_CALL = "after_tool_call"
     BEFORE_COMPACTION = "before_compaction"
     AFTER_COMPACTION = "after_compaction"
     BEFORE_RETROSPECT = "before_retrospect"
@@ -40,6 +40,12 @@ class HookCapability(str, Enum):
     DECISION_SUPPORT = "decision_support"
 
 
+class HookGroup(str, Enum):
+    SYSTEM = "system"
+    RUNTIME_ADAPTER = "runtime_adapter"
+    USER = "user"
+
+
 class MemoryHookContext(Protocol):
     agent_name: str
     agent_id: str
@@ -56,6 +62,7 @@ class HookRegistration:
     capability: HookCapability
     handler_name: str
     handler: PhaseHook
+    group: HookGroup = HookGroup.USER
     order: int = 100
     critical: bool = False
 
@@ -64,20 +71,42 @@ class HookRegistration:
 class HookRegistry:
     registrations: list[HookRegistration] = field(default_factory=list)
 
-    _MUTATING_PHASES = {
+    _TRANSFORM_PHASES = {
         HookPhase.PREPARE,
         HookPhase.ASSEMBLE_CONTEXT,
         HookPhase.BEFORE_LLM,
-        HookPhase.BEFORE_TOOL_BATCH,
+        HookPhase.BEFORE_TOOL_CALL,
     }
-    _LATE_FINAL_PHASES = {
-        HookPhase.AFTER_STEP_COMMIT,
-        HookPhase.AFTER_COMPACTION,
-        HookPhase.COMPACTION_FAILED,
-        HookPhase.AFTER_RETROSPECT,
-        HookPhase.AFTER_TERMINATION,
-        HookPhase.RUN_FINALIZED,
-        HookPhase.MEMORY_PERSIST,
+    _DECISION_SUPPORT_PHASES = {
+        HookPhase.BEFORE_LLM,
+        HookPhase.BEFORE_TOOL_CALL,
+        HookPhase.BEFORE_COMPACTION,
+        HookPhase.BEFORE_RETROSPECT,
+        HookPhase.BEFORE_TERMINATION,
+    }
+    _CRITICAL_PHASES = {
+        HookPhase.PREPARE,
+        HookPhase.ASSEMBLE_CONTEXT,
+        HookPhase.BEFORE_LLM,
+        HookPhase.BEFORE_TOOL_CALL,
+    }
+    _TRANSFORM_ALLOWLISTS = {
+        HookPhase.PREPARE: {"prelude_text"},
+        HookPhase.ASSEMBLE_CONTEXT: {"memories", "context_additions"},
+        HookPhase.BEFORE_LLM: {"messages", "model_settings_override"},
+        HookPhase.BEFORE_TOOL_CALL: {"parameters"},
+    }
+    _DECISION_SUPPORT_ALLOWLISTS = {
+        HookPhase.BEFORE_LLM: {"llm_advice"},
+        HookPhase.BEFORE_TOOL_CALL: {"tool_advice"},
+        HookPhase.BEFORE_COMPACTION: {"compaction_advice"},
+        HookPhase.BEFORE_RETROSPECT: {"retrospect_advice"},
+        HookPhase.BEFORE_TERMINATION: {"termination_advice"},
+    }
+    _GROUP_ORDER = {
+        HookGroup.SYSTEM: 0,
+        HookGroup.RUNTIME_ADAPTER: 1,
+        HookGroup.USER: 2,
     }
 
     def __post_init__(self) -> None:
@@ -85,10 +114,16 @@ class HookRegistry:
             self._validate_registration(registration)
 
     def for_phase(self, phase: HookPhase) -> list[HookRegistration]:
-        return sorted(
-            [item for item in self.registrations if item.phase == phase],
-            key=lambda item: item.order,
+        indexed = list(enumerate(self.registrations))
+        matching = [(index, item) for index, item in indexed if item.phase == phase]
+        matching.sort(
+            key=lambda pair: (
+                self._GROUP_ORDER[pair[1].group],
+                pair[1].order,
+                pair[0],
+            )
         )
+        return [item for _, item in matching]
 
     def has_phase(self, phase: HookPhase) -> bool:
         return bool(self.for_phase(phase))
@@ -101,23 +136,57 @@ class HookRegistry:
         self.registrations.append(registration)
 
     def _validate_registration(self, registration: HookRegistration) -> None:
-        if (
-            registration.capability is not HookCapability.OBSERVE_ONLY
-            and registration.phase not in self._MUTATING_PHASES
-        ):
+        allowed_capabilities = {HookCapability.OBSERVE_ONLY}
+        if registration.phase in self._TRANSFORM_PHASES:
+            allowed_capabilities.add(HookCapability.TRANSFORM)
+        if registration.phase in self._DECISION_SUPPORT_PHASES:
+            allowed_capabilities.add(HookCapability.DECISION_SUPPORT)
+
+        if registration.capability not in allowed_capabilities:
             raise ValueError(
-                "Only observe-only hooks are allowed for "
+                "Unsupported hook capability for "
                 f"{registration.phase.value}: {registration.handler_name}"
             )
-        if (
-            registration.capability is HookCapability.OBSERVE_ONLY
-            and registration.critical
-            and registration.phase in self._LATE_FINAL_PHASES
-        ):
+        if registration.critical and registration.phase not in self._CRITICAL_PHASES:
             raise ValueError(
-                "Observe-only hooks cannot be critical in late/final phases: "
+                "Critical hooks are allowed only in early phases: "
                 f"{registration.phase.value}: {registration.handler_name}"
             )
+
+    def _merge_hook_result(
+        self,
+        phase: HookPhase,
+        capability: HookCapability,
+        current: dict[str, Any],
+        result: object,
+    ) -> dict[str, Any]:
+        if not isinstance(result, dict):
+            return current
+
+        if capability is HookCapability.TRANSFORM:
+            allowed = self._TRANSFORM_ALLOWLISTS.get(phase, set())
+        elif capability is HookCapability.DECISION_SUPPORT:
+            allowed = self._DECISION_SUPPORT_ALLOWLISTS.get(phase, set())
+        else:
+            return current
+
+        changed_keys = {
+            key
+            for key, value in result.items()
+            if key not in current or current.get(key) != value
+        }
+        illegal_keys = sorted(changed_keys - allowed)
+        if illegal_keys:
+            raise ValueError(
+                "Hook result contains fields outside the phase allowlist for "
+                f"{phase.value}: {', '.join(illegal_keys)}"
+            )
+
+        merged = dict(current)
+        for key in allowed:
+            if key in result:
+                merged[key] = result[key]
+        return merged
 
     async def _record_hook_failed(
         self,
@@ -184,12 +253,16 @@ class HookRegistry:
             if not allow_transform:
                 continue
 
-            if registration.capability == HookCapability.TRANSFORM:
-                if isinstance(result, dict):
-                    current = result
-            elif registration.capability == HookCapability.DECISION_SUPPORT:
-                if isinstance(result, dict):
-                    current.update(result)
+            if registration.capability in {
+                HookCapability.TRANSFORM,
+                HookCapability.DECISION_SUPPORT,
+            }:
+                current = self._merge_hook_result(
+                    phase,
+                    registration.capability,
+                    current,
+                    result,
+                )
         return current
 
     async def before_run(
@@ -199,10 +272,10 @@ class HookRegistry:
     ) -> str | None:
         payload = await self._dispatch(
             HookPhase.PREPARE,
-            {"user_input": user_input, "context": context, "before_run_result": None},
+            {"user_input": user_input, "context": context, "prelude_text": None},
             allow_transform=True,
         )
-        result = payload.get("before_run_result")
+        result = payload.get("prelude_text")
         return result if isinstance(result, str) else None
 
     async def memory_retrieve(
@@ -212,7 +285,12 @@ class HookRegistry:
     ) -> list[MemoryRecord]:
         payload = await self._dispatch(
             HookPhase.ASSEMBLE_CONTEXT,
-            {"user_input": user_input, "context": context, "memories": []},
+            {
+                "user_input": user_input,
+                "context": context,
+                "memories": [],
+                "context_additions": [],
+            },
             allow_transform=True,
         )
         memories = payload.get("memories", [])
@@ -225,7 +303,12 @@ class HookRegistry:
     ) -> list[dict[str, Any]] | None:
         payload = await self._dispatch(
             HookPhase.BEFORE_LLM,
-            {"messages": messages, "context": context},
+            {
+                "messages": messages,
+                "context": context,
+                "model_settings_override": None,
+                "llm_advice": None,
+            },
             allow_transform=True,
         )
         modified = payload.get("messages")
@@ -246,12 +329,13 @@ class HookRegistry:
         context: object | None = None,
     ) -> dict[str, Any] | None:
         payload = await self._dispatch(
-            HookPhase.BEFORE_TOOL_BATCH,
+            HookPhase.BEFORE_TOOL_CALL,
             {
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "parameters": dict(parameters),
                 "context": context,
+                "tool_advice": None,
             },
             allow_transform=True,
         )
@@ -267,7 +351,7 @@ class HookRegistry:
         context: object | None = None,
     ) -> None:
         await self._dispatch(
-            HookPhase.AFTER_TOOL_BATCH,
+            HookPhase.AFTER_TOOL_CALL,
             {
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
@@ -328,6 +412,7 @@ def observe(
     handler_name: str,
     handler: PhaseHook,
     *,
+    group: HookGroup = HookGroup.USER,
     order: int = 100,
     critical: bool = False,
 ) -> HookRegistration:
@@ -336,6 +421,7 @@ def observe(
         capability=HookCapability.OBSERVE_ONLY,
         handler_name=handler_name,
         handler=handler,
+        group=group,
         order=order,
         critical=critical,
     )
@@ -346,6 +432,7 @@ def transform(
     handler_name: str,
     handler: PhaseHook,
     *,
+    group: HookGroup = HookGroup.USER,
     order: int = 100,
     critical: bool = False,
 ) -> HookRegistration:
@@ -354,6 +441,7 @@ def transform(
         capability=HookCapability.TRANSFORM,
         handler_name=handler_name,
         handler=handler,
+        group=group,
         order=order,
         critical=critical,
     )
@@ -364,6 +452,7 @@ def decision_support(
     handler_name: str,
     handler: PhaseHook,
     *,
+    group: HookGroup = HookGroup.USER,
     order: int = 100,
     critical: bool = False,
 ) -> HookRegistration:
@@ -372,6 +461,7 @@ def decision_support(
         capability=HookCapability.DECISION_SUPPORT,
         handler_name=handler_name,
         handler=handler,
+        group=group,
         order=order,
         critical=critical,
     )
@@ -520,6 +610,7 @@ class DefaultMemoryHook:
 __all__ = [
     "DefaultMemoryHook",
     "HookCapability",
+    "HookGroup",
     "HookPhase",
     "HookRegistration",
     "HookRegistry",

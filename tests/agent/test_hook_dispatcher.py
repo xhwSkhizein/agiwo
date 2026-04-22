@@ -2,7 +2,15 @@ from dataclasses import dataclass
 
 import pytest
 
-from agiwo.agent.hooks import HookCapability, HookPhase, HookRegistration, HookRegistry
+from agiwo.agent.hooks import (
+    HookCapability,
+    HookGroup,
+    HookPhase,
+    HookRegistration,
+    HookRegistry,
+    observe,
+    transform,
+)
 from agiwo.agent.models.log import HookFailed
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunLogStorage
@@ -21,6 +29,7 @@ def test_hook_registration_exposes_phase_and_capability() -> None:
 
     assert registration.phase is HookPhase.BEFORE_LLM
     assert registration.capability is HookCapability.TRANSFORM
+    assert registration.group is HookGroup.USER
     assert registration.critical is False
 
 
@@ -36,6 +45,102 @@ def test_hook_registry_validates_constructor_registrations() -> None:
                     capability=HookCapability.OBSERVE_ONLY,
                     handler_name="observe_finalize",
                     handler=observe_finalize,
+                    critical=True,
+                )
+            ]
+        )
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_orders_group_then_order_then_registration() -> None:
+    seen: list[str] = []
+
+    def handler(name: str):
+        async def _run(payload: dict) -> dict:
+            seen.append(name)
+            return payload
+
+        return _run
+
+    registry = HookRegistry(
+        registrations=[
+            HookRegistration(
+                phase=HookPhase.BEFORE_LLM,
+                group=HookGroup.USER,
+                capability=HookCapability.TRANSFORM,
+                handler_name="user_second",
+                handler=handler("user_second"),
+                order=200,
+            ),
+            HookRegistration(
+                phase=HookPhase.BEFORE_LLM,
+                group=HookGroup.SYSTEM,
+                capability=HookCapability.TRANSFORM,
+                handler_name="system_first",
+                handler=handler("system_first"),
+                order=100,
+            ),
+            HookRegistration(
+                phase=HookPhase.BEFORE_LLM,
+                group=HookGroup.RUNTIME_ADAPTER,
+                capability=HookCapability.TRANSFORM,
+                handler_name="adapter_middle",
+                handler=handler("adapter_middle"),
+                order=100,
+            ),
+        ]
+    )
+
+    await registry._dispatch(
+        HookPhase.BEFORE_LLM,
+        {
+            "messages": [{"role": "user", "content": "hi"}],
+            "context": object(),
+            "model_settings_override": None,
+            "llm_advice": None,
+        },
+        allow_transform=True,
+    )
+
+    assert seen == ["system_first", "adapter_middle", "user_second"]
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_rejects_transform_fields_outside_phase_allowlist() -> None:
+    async def bad_transform(payload: dict) -> dict:
+        updated = dict(payload)
+        updated["illegal_field"] = "boom"
+        return updated
+
+    registry = HookRegistry(
+        registrations=[transform(HookPhase.BEFORE_TOOL_CALL, "bad", bad_transform)]
+    )
+
+    with pytest.raises(ValueError, match="illegal_field"):
+        await registry._dispatch(
+            HookPhase.BEFORE_TOOL_CALL,
+            {
+                "tool_call_id": "call-1",
+                "tool_name": "bash",
+                "parameters": {"cmd": "pwd"},
+                "context": object(),
+                "tool_advice": None,
+            },
+            allow_transform=True,
+        )
+
+
+def test_hook_registry_rejects_critical_after_phase() -> None:
+    async def after_llm(payload: dict) -> None:
+        del payload
+
+    with pytest.raises(ValueError, match="Critical hooks"):
+        HookRegistry(
+            registrations=[
+                observe(
+                    HookPhase.AFTER_LLM,
+                    "after_llm",
+                    after_llm,
                     critical=True,
                 )
             ]

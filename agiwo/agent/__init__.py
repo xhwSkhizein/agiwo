@@ -10,6 +10,7 @@ from agiwo.agent.models.config import (
 )
 from agiwo.agent.hooks import (
     HookCapability,
+    HookGroup,
     HookPhase,
     HookRegistration,
     HookRegistry,
@@ -119,6 +120,7 @@ __all__ = [
     "MessageContent",
     "MessageRole",
     "HookCapability",
+    "HookGroup",
     "HookPhase",
     "HookRegistration",
     "HookRegistry",

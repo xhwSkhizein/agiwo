@@ -100,7 +100,7 @@ async def test_early_hooks_receive_initialized_context() -> None:
             )
         )
         payload = dict(payload)
-        payload["before_run_result"] = None
+        payload["prelude_text"] = None
         return payload
 
     async def memory_retrieve(payload):
