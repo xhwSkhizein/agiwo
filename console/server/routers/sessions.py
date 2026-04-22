@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from fastapi import APIRouter, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
-from agiwo.scheduler.commands import RouteStreamMode
+from agiwo.scheduler.commands import RouteResult, RouteStreamMode
 
 from server.dependencies import (
     ConsoleRuntimeDep,
@@ -95,7 +95,7 @@ def _scheduler_ack_payload(
 
 async def _session_input_event_stream(
     *,
-    dispatch,
+    dispatch: RouteResult,
     runtime_service: SessionRuntimeService,
     session_id: str,
 ) -> AsyncIterator[dict[str, str]]:

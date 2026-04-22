@@ -156,6 +156,7 @@ class RunnerCompletionHandler:
         state: AgentState,
         text: str | None,
     ) -> bool:
+        # No save_state here: the sleep tool/caller already persisted WAITING state.
         await self._ctx.emit_event_to_parent(
             state,
             SchedulerEventType.CHILD_SLEEP_RESULT,

@@ -346,7 +346,9 @@ class Scheduler:
                 self._ctx,
                 root_state_id=agent.id,
                 action="submitted",
-                timeout=deadline_remaining(deadline) if deadline else timeout,
+                timeout=(
+                    deadline_remaining(deadline) if deadline is not None else timeout
+                ),
                 include_child_events=include_child_events,
                 close_on_root_run_end=close_on_root_run_end,
                 operation=do_submit,

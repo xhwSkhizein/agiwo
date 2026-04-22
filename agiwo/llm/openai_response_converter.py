@@ -65,8 +65,11 @@ def _convert_assistant_message(
                 "Unsupported assistant tool call payload for openai-response provider"
             )
 
+        raw_tool_call_id = tool_call.get("id")
         tool_call_id = (
-            tool_call.get("id") or f"assistant_tool_call_{message_index}_{tool_index}"
+            raw_tool_call_id
+            if isinstance(raw_tool_call_id, str) and raw_tool_call_id
+            else f"assistant_tool_call_{message_index}_{tool_index}"
         )
         tool_name = function_payload.get("name")
         if not isinstance(tool_name, str) or not tool_name:

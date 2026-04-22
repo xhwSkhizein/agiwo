@@ -55,17 +55,15 @@ class RunQueryService:
         limit: int,
         order: str,
     ) -> PageSlice[StepView]:
-        fetch_limit = 5001 if order == "desc" else limit + 1
         raw_steps = await self.run_storage.list_step_views(
             session_id=session_id,
             start_seq=start_seq,
             end_seq=end_seq,
             run_id=run_id,
             agent_id=agent_id,
-            limit=fetch_limit,
+            limit=limit + 1,
+            order=order,
         )
-        if order == "desc":
-            raw_steps = list(reversed(raw_steps))
         has_more = len(raw_steps) > limit
         total = None
         if (

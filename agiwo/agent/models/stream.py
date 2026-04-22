@@ -1,5 +1,6 @@
 """Public agent stream event payloads."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias
@@ -345,15 +346,44 @@ def _stream_item_from_runtime_entry(
     return item
 
 
-def stream_items_from_entries(entries: list[RunLogEntry]) -> list["AgentStreamItem"]:
-    items: list[AgentStreamItem] = []
-    run_contexts: dict[str, dict[str, Any]] = {}
+def _collect_run_contexts(
+    entries: list[RunLogEntry],
+    *,
+    initial_run_contexts: Mapping[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    run_contexts = {
+        run_id: dict(context)
+        for run_id, context in (initial_run_contexts or {}).items()
+    }
     for entry in entries:
         if isinstance(entry, RunStarted):
             run_contexts[entry.run_id] = {
                 "parent_run_id": entry.parent_run_id,
                 "depth": entry.depth,
             }
+        elif isinstance(entry, CommittedStep):
+            run_contexts.setdefault(
+                entry.run_id,
+                {
+                    "parent_run_id": entry.parent_run_id,
+                    "depth": entry.depth,
+                },
+            )
+    return run_contexts
+
+
+def stream_items_from_entries(
+    entries: list[RunLogEntry],
+    *,
+    run_contexts: Mapping[str, dict[str, Any]] | None = None,
+) -> list["AgentStreamItem"]:
+    items: list[AgentStreamItem] = []
+    resolved_run_contexts = _collect_run_contexts(
+        entries,
+        initial_run_contexts=run_contexts,
+    )
+    for entry in entries:
+        if isinstance(entry, RunStarted):
             base_kwargs = _base_kwargs_from_entry(entry)
             base_kwargs["parent_run_id"] = entry.parent_run_id
             base_kwargs["depth"] = entry.depth
@@ -362,7 +392,7 @@ def stream_items_from_entries(entries: list[RunLogEntry]) -> list["AgentStreamIt
             entry,
             (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
         ):
-            base_kwargs = _base_kwargs_with_run_context(entry, run_contexts)
+            base_kwargs = _base_kwargs_with_run_context(entry, resolved_run_contexts)
             base_kwargs["parent_run_id"] = entry.parent_run_id
             base_kwargs["depth"] = entry.depth
             items.append(
@@ -372,7 +402,10 @@ def stream_items_from_entries(entries: list[RunLogEntry]) -> list["AgentStreamIt
                 )
             )
         else:
-            item = _stream_item_from_runtime_entry(entry, run_contexts=run_contexts)
+            item = _stream_item_from_runtime_entry(
+                entry,
+                run_contexts=resolved_run_contexts,
+            )
             if item is not None:
                 items.append(item)
     return items

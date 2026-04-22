@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 
@@ -24,7 +25,11 @@ class _FixedResponseModel(Model):
         super().__init__(id="fixed-model", name="fixed-model", temperature=0.0)
         self._response = response
 
-    async def arun_stream(self, messages, tools=None) -> AsyncIterator[StreamChunk]:
+    async def arun_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[StreamChunk]:
         del messages, tools
         yield StreamChunk(content=self._response)
         yield StreamChunk(finish_reason="stop")

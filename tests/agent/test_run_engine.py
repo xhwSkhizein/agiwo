@@ -3,8 +3,9 @@ from collections.abc import AsyncIterator
 import pytest
 
 from agiwo.agent import Agent, AgentConfig, TerminationReason
-from agiwo.agent.models.log import RunLogEntryKind
+from agiwo.agent.models.log import AssistantStepCommitted, RunFinished, RunLogEntryKind
 from agiwo.agent.models.stream import stream_items_from_entries
+from agiwo.agent.models.step import MessageRole
 from agiwo.llm.base import Model, StreamChunk
 
 
@@ -51,3 +52,36 @@ async def test_agent_run_writes_basic_run_log_entries() -> None:
         item for item in replayed if item.type == "termination_decided"
     )
     assert termination_event.termination_reason == TerminationReason.COMPLETED
+
+
+def test_stream_items_from_entries_reuses_nested_run_context_without_run_started() -> (
+    None
+):
+    items = stream_items_from_entries(
+        [
+            AssistantStepCommitted(
+                sequence=2,
+                session_id="sess-1",
+                run_id="child-run",
+                agent_id="agent-1",
+                step_id="step-2",
+                role=MessageRole.ASSISTANT,
+                content="done",
+                parent_run_id="parent-run",
+                depth=1,
+            ),
+            RunFinished(
+                sequence=3,
+                session_id="sess-1",
+                run_id="child-run",
+                agent_id="agent-1",
+                response="done",
+                termination_reason=TerminationReason.COMPLETED,
+            ),
+        ]
+    )
+
+    assert items[0].parent_run_id == "parent-run"
+    assert items[0].depth == 1
+    assert items[1].parent_run_id == "parent-run"
+    assert items[1].depth == 1

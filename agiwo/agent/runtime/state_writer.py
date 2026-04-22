@@ -140,8 +140,10 @@ def build_hook_failed_entry(
     *,
     sequence: int,
     phase: str,
-    hook_name: str,
-    error: Exception,
+    handler_name: str,
+    critical: bool,
+    error: str,
+    traceback: str | None = None,
 ) -> HookFailed:
     return HookFailed(
         sequence=sequence,
@@ -149,8 +151,10 @@ def build_hook_failed_entry(
         run_id=state.run_id,
         agent_id=state.agent_id,
         phase=phase,
-        hook_name=hook_name,
-        error=str(error),
+        handler_name=handler_name,
+        critical=critical,
+        error=error,
+        traceback=traceback,
     )
 
 

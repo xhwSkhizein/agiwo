@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Add the Source Deploy Script
+## Task 1: Add the Source Deploy Script
 
 **Files:**
 - Create: `scripts/deploy_console.sh`
@@ -236,7 +236,7 @@ git commit -m "feat: add console source deploy script"
 
 Expected: commit succeeds with only the new deploy script staged for this task.
 
-### Task 2: Document the Source-Repo Deploy Flow
+## Task 2: Document the Source-Repo Deploy Flow
 
 **Files:**
 - Modify: `docs/console/docker.md`
@@ -297,7 +297,7 @@ git commit -m "docs: add console source deploy instructions"
 
 Expected: commit succeeds with only the Docker deployment doc staged for this task.
 
-### Task 3: Validate the Shortcut End to End
+## Task 3: Validate the Shortcut End to End
 
 **Files:**
 - Verify: `scripts/deploy_console.sh`

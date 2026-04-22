@@ -40,3 +40,20 @@ async def test_in_memory_run_log_storage_appends_and_replays() -> None:
 
     replay = await storage.list_entries(session_id="sess-1")
     assert replay == [entry1, entry2, entry3]
+
+
+@pytest.mark.asyncio
+async def test_in_memory_run_log_storage_rejects_duplicate_sequences() -> None:
+    storage = InMemoryRunLogStorage()
+    entry = RunStarted(
+        sequence=1,
+        session_id="sess-1",
+        run_id="run-1",
+        agent_id="agent-1",
+        user_input="hello",
+    )
+
+    await storage.append_entries([entry])
+
+    with pytest.raises(ValueError):
+        await storage.append_entries([entry])

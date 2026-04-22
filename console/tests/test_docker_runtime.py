@@ -160,7 +160,7 @@ def test_build_docker_run_command_rewrites_loopback_proxy_env_before_explicit_en
     assert "--add-host" in command
     assert "host.docker.internal:host-gateway" in command
     assert "HTTP_PROXY=http://host.docker.internal:7890" in command
-    assert "HTTPS_PROXY=" not in command
+    assert not any(arg.startswith("HTTPS_PROXY=") for arg in command)
     assert command.index("HTTP_PROXY=http://host.docker.internal:7890") < command.index(
         "OPENAI_API_KEY=test"
     )

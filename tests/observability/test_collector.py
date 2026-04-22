@@ -201,7 +201,7 @@ async def test_collector_records_runtime_run_log_entries() -> None:
 async def test_build_trace_from_run_log_entries() -> None:
     collector = AgentTraceCollector()
 
-    trace = await collector.build_from_entries(
+    trace = collector.build_from_entries(
         [
             RunStarted(
                 sequence=1,

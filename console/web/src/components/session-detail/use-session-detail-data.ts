@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   getSessionDetail,
@@ -130,6 +130,7 @@ type StepsState = {
 };
 
 export function useSessionStepsFeed(sessionId: string) {
+  const activeSessionId = useRef(sessionId);
   const [state, setState] = useState<StepsState>({
     key: null,
     steps: [],
@@ -139,6 +140,7 @@ export function useSessionStepsFeed(sessionId: string) {
   const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
+    activeSessionId.current = sessionId;
     let cancelled = false;
     getSessionSteps(sessionId, { limit: 100, order: "desc" })
       .then((page) => {
@@ -173,6 +175,7 @@ export function useSessionStepsFeed(sessionId: string) {
     if (state.steps.length === 0 || loadingMore) {
       return;
     }
+    const requestedSession = sessionId;
     const oldestSequence = state.steps[0]?.sequence;
     if (!oldestSequence || oldestSequence <= 1) {
       setState((current) => ({ ...current, hasMore: false }));
@@ -185,18 +188,26 @@ export function useSessionStepsFeed(sessionId: string) {
         order: "desc",
         end_seq: oldestSequence - 1,
       });
+      if (requestedSession !== activeSessionId.current) {
+        return;
+      }
       setState((current) => ({
         ...current,
-        steps: [...nextPage.items.reverse(), ...current.steps],
+        steps: [...[...nextPage.items].reverse(), ...current.steps],
         hasMore: nextPage.has_more,
       }));
     } catch (err) {
+      if (requestedSession !== activeSessionId.current) {
+        return;
+      }
       setState((current) => ({
         ...current,
         error: err instanceof Error ? err.message : "Failed to load older steps",
       }));
     } finally {
-      setLoadingMore(false);
+      if (requestedSession === activeSessionId.current) {
+        setLoadingMore(false);
+      }
     }
   }
 

@@ -1,9 +1,8 @@
 """Console session read models assembled from the run query facade and scheduler."""
 
-from agiwo.agent import RuntimeDecisionState
-from agiwo.agent import RunView
+from agiwo.agent import RuntimeDecisionState, RunView, UserMessage
 from agiwo.scheduler.engine import Scheduler
-from agiwo.agent.models.input import UserMessage
+from agiwo.scheduler.models import AgentState
 
 from server.models.metrics import RunMetricsSummary
 from server.models.session import (
@@ -187,7 +186,7 @@ class SessionViewService:
         return self._root_state_status(state)
 
     @staticmethod
-    def _root_state_status(state) -> str | None:
+    def _root_state_status(state: AgentState | None) -> str | None:
         if state is None:
             return None
         return (

@@ -199,17 +199,24 @@ class TerminationDecided(RunLogEntry):
 @dataclass(frozen=True, kw_only=True)
 class HookFailed(RunLogEntry):
     phase: str
-    hook_name: str
+    handler_name: str
+    critical: bool = False
     error: str
+    traceback: str | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.HOOK_FAILED)
 
 
 def build_committed_step_entry(step: StepView) -> CommittedStep:
+    if step.agent_id is None:
+        raise ValueError(
+            "Committed step requires a non-null agent_id: "
+            f"step_id={step.id or '<pending>'} run_id={step.run_id}"
+        )
     common = {
         "sequence": step.sequence,
         "session_id": step.session_id,
         "run_id": step.run_id,
-        "agent_id": step.agent_id or "",
+        "agent_id": step.agent_id,
         "step_id": step.id,
         "role": step.role,
         "content": step.content,

@@ -50,20 +50,17 @@ async def resolve_routable_state(
     state_id: str,
     deadline: float | None,
 ) -> AgentState | None:
-    while True:
-        state = await store.get_state(state_id)
-        if state is None:
-            return None
-        if state.status != AgentStateStatus.PENDING:
-            return state
-        state = await wait_until_not_pending(
-            store=store,
-            rt=rt,
-            state_id=state.id,
-            deadline=deadline,
-        )
-        if state is None:
-            return None
+    state = await store.get_state(state_id)
+    if state is None:
+        return None
+    if state.status != AgentStateStatus.PENDING:
+        return state
+    return await wait_until_not_pending(
+        store=store,
+        rt=rt,
+        state_id=state.id,
+        deadline=deadline,
+    )
 
 
 async def wait_until_not_pending(

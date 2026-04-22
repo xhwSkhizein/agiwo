@@ -25,7 +25,7 @@ async def prepare_run_context(
     *,
     context: RunContext,
     runtime: RunRuntime,
-    user_input: UserInput,
+    user_input: UserInput | None,
     system_prompt: str,
 ) -> RunBootstrapResult:
     """Build all state needed before the main loop starts."""
@@ -33,7 +33,10 @@ async def prepare_run_context(
     memories = await _retrieve_memories(context, user_input)
 
     user_step = await _build_user_step(context, user_input)
-    compact_start_seq = await _resolve_compact_start_seq(context)
+    latest_compact = await context.session_runtime.get_latest_compact_metadata(
+        context.agent_id
+    )
+    compact_start_seq = latest_compact.end_seq + 1 if latest_compact is not None else 0
     existing_steps = await _load_existing_steps(
         context=context,
         compact_start_seq=compact_start_seq,
@@ -63,10 +66,7 @@ async def prepare_run_context(
         ]
     )
     set_tool_schemas(context, _build_tool_schemas(runtime))
-    last_compact = await context.session_runtime.get_latest_compact_metadata(
-        context.agent_id
-    )
-    record_compaction_metadata(context, last_compact)
+    record_compaction_metadata(context, latest_compact)
 
     return RunBootstrapResult(
         user_step=user_step,
@@ -90,7 +90,7 @@ def _build_tool_schemas(runtime: RunRuntime) -> list[dict[str, object]] | None:
 
 async def _retrieve_memories(
     context: RunContext,
-    user_input: UserInput,
+    user_input: UserInput | None,
 ) -> list[MemoryRecord]:
     if user_input is None:
         return []
@@ -99,7 +99,7 @@ async def _retrieve_memories(
 
 async def _build_user_step(
     context: RunContext,
-    user_input: UserInput,
+    user_input: UserInput | None,
 ) -> StepView:
     user_step = StepView.user(
         context,
@@ -108,13 +108,6 @@ async def _build_user_step(
     )
     context.ledger.run_start_seq = user_step.sequence
     return user_step
-
-
-async def _resolve_compact_start_seq(context: RunContext) -> int:
-    last_compact = await context.session_runtime.get_latest_compact_metadata(
-        context.agent_id
-    )
-    return last_compact.end_seq + 1 if last_compact is not None else 0
 
 
 async def _load_existing_steps(

@@ -93,6 +93,53 @@ async def test_run_query_service_lists_session_steps_and_total() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_query_service_lists_desc_step_pages_without_magic_tail_fetch() -> (
+    None
+):
+    storage = InMemoryRunLogStorage()
+    await storage.append_entries(
+        [
+            UserStepCommitted(
+                sequence=1,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                step_id="step-1",
+                role=MessageRole.USER,
+                content="one",
+                user_input="one",
+            ),
+            UserStepCommitted(
+                sequence=2,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                step_id="step-2",
+                role=MessageRole.USER,
+                content="two",
+                user_input="two",
+            ),
+            UserStepCommitted(
+                sequence=3,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                step_id="step-3",
+                role=MessageRole.USER,
+                content="three",
+                user_input="three",
+            ),
+        ]
+    )
+    service = RunQueryService(run_storage=storage)
+
+    page = await service.list_session_steps("sess-1", limit=2, order="desc")
+
+    assert [step.sequence for step in page.items] == [3, 2]
+    assert page.has_more is True
+
+
+@pytest.mark.asyncio
 async def test_run_query_service_exposes_runtime_decision_state() -> None:
     storage = InMemoryRunLogStorage()
     await storage.append_entries(

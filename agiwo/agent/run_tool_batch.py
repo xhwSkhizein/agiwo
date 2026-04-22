@@ -89,6 +89,7 @@ async def _apply_retrospect_outcome(
         affected_step_ids=outcome.affected_step_ids,
         feedback=outcome.feedback,
         replacement=outcome.replacement,
+        trigger=outcome.trigger.value if outcome.trigger is not None else None,
     )
     await context.session_runtime.append_run_log_entries(
         [rebuilt_entry, retrospect_entry]
@@ -107,7 +108,7 @@ async def _apply_retrospect_outcome(
             affected_step_ids=outcome.affected_step_ids,
             feedback=outcome.feedback,
             replacement=outcome.replacement,
-            trigger=None,
+            trigger=outcome.trigger.value if outcome.trigger is not None else None,
         )
     )
 

@@ -30,16 +30,16 @@ def build_last_run_result(
 
 
 def is_failed_output(output: RunOutput) -> bool:
-    return output.termination_reason in _FAILED_TERMINATIONS
+    return any(output.termination_reason is reason for reason in _FAILED_TERMINATIONS)
 
 
 def is_sleeping_output(output: RunOutput) -> bool:
-    return output.termination_reason == TerminationReason.SLEEPING
+    return output.termination_reason is TerminationReason.SLEEPING
 
 
 def periodic_wait_seconds(action: DispatchAction) -> float | None:
     wake_condition = action.state.wake_condition
-    if wake_condition is None or wake_condition.type != WakeType.PERIODIC:
+    if wake_condition is None or wake_condition.type is not WakeType.PERIODIC:
         return None
     return wake_condition.to_seconds()
 
@@ -50,7 +50,7 @@ def is_periodic_wake(action: DispatchAction) -> bool:
 
 def is_normal_completion(action: DispatchAction, output: RunOutput) -> bool:
     return (
-        output.termination_reason == TerminationReason.COMPLETED
+        output.termination_reason is TerminationReason.COMPLETED
         and not is_periodic_wake(action)
     )
 

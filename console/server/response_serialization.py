@@ -115,7 +115,7 @@ def run_response_from_sdk(run: RunView) -> RunResponse:
             steps_count=metrics.steps_count,
             tool_calls_count=metrics.tool_calls_count,
         )
-        if (metrics := run.metrics)
+        if (metrics := run.metrics) is not None
         else None,
         created_at=run.created_at.isoformat() if run.created_at else None,
         updated_at=run.updated_at.isoformat() if run.updated_at else None,

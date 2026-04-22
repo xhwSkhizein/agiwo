@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
+import traceback as traceback_lib
 from typing import Any, Protocol
 
 from agiwo.agent.models.input import UserInput, UserMessage
@@ -69,6 +70,19 @@ class HookRegistry:
         HookPhase.BEFORE_LLM,
         HookPhase.BEFORE_TOOL_BATCH,
     }
+    _LATE_FINAL_PHASES = {
+        HookPhase.AFTER_STEP_COMMIT,
+        HookPhase.AFTER_COMPACTION,
+        HookPhase.COMPACTION_FAILED,
+        HookPhase.AFTER_RETROSPECT,
+        HookPhase.AFTER_TERMINATION,
+        HookPhase.RUN_FINALIZED,
+        HookPhase.MEMORY_PERSIST,
+    }
+
+    def __post_init__(self) -> None:
+        for registration in self.registrations:
+            self._validate_registration(registration)
 
     def for_phase(self, phase: HookPhase) -> list[HookRegistration]:
         return sorted(
@@ -83,6 +97,10 @@ class HookRegistry:
         return any(item.handler_name == handler_name for item in self.registrations)
 
     def add(self, registration: HookRegistration) -> None:
+        self._validate_registration(registration)
+        self.registrations.append(registration)
+
+    def _validate_registration(self, registration: HookRegistration) -> None:
         if (
             registration.capability is not HookCapability.OBSERVE_ONLY
             and registration.phase not in self._MUTATING_PHASES
@@ -91,7 +109,48 @@ class HookRegistry:
                 "Only observe-only hooks are allowed for "
                 f"{registration.phase.value}: {registration.handler_name}"
             )
-        self.registrations.append(registration)
+        if (
+            registration.capability is HookCapability.OBSERVE_ONLY
+            and registration.critical
+            and registration.phase in self._LATE_FINAL_PHASES
+        ):
+            raise ValueError(
+                "Observe-only hooks cannot be critical in late/final phases: "
+                f"{registration.phase.value}: {registration.handler_name}"
+            )
+
+    async def _record_hook_failed(
+        self,
+        payload: dict[str, Any],
+        *,
+        phase: HookPhase,
+        registration: HookRegistration,
+        error: Exception,
+    ) -> None:
+        context = payload.get("context")
+        if context is None or not hasattr(context, "session_runtime"):
+            return
+        session_runtime = getattr(context, "session_runtime", None)
+        if session_runtime is None:
+            return
+
+        from agiwo.agent.runtime.state_writer import (  # noqa: PLC0415
+            build_hook_failed_entry,
+        )
+
+        traceback_text = "".join(
+            traceback_lib.format_exception(type(error), error, error.__traceback__)
+        ).strip()
+        entry = build_hook_failed_entry(
+            context,
+            sequence=await session_runtime.allocate_sequence(),
+            phase=phase.value,
+            handler_name=registration.handler_name,
+            critical=registration.critical,
+            error=str(error),
+            traceback=traceback_text or None,
+        )
+        await session_runtime.append_run_log_entries([entry])
 
     async def _dispatch(
         self,
@@ -112,6 +171,12 @@ class HookRegistry:
                     critical=registration.critical,
                     error=str(error),
                 )
+                await self._record_hook_failed(
+                    payload,
+                    phase=phase,
+                    registration=registration,
+                    error=error,
+                )
                 if registration.critical:
                     raise
                 continue
@@ -127,7 +192,11 @@ class HookRegistry:
                     current.update(result)
         return current
 
-    async def before_run(self, user_input: UserInput, context: object) -> str | None:
+    async def before_run(
+        self,
+        user_input: UserInput | None,
+        context: object,
+    ) -> str | None:
         payload = await self._dispatch(
             HookPhase.PREPARE,
             {"user_input": user_input, "context": context, "before_run_result": None},
@@ -138,7 +207,7 @@ class HookRegistry:
 
     async def memory_retrieve(
         self,
-        user_input: UserInput,
+        user_input: UserInput | None,
         context: object,
     ) -> list[MemoryRecord]:
         payload = await self._dispatch(

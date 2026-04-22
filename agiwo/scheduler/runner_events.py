@@ -40,15 +40,14 @@ def build_parent_pending_event(
         )
 
     if event_type == SchedulerEventType.CHILD_SLEEP_RESULT:
+        explain_value = payload.get("explain")
         return PendingEvent.create_child_sleep_result(
             id=str(uuid4()),
             target_agent_id=parent_agent_id,
             session_id=session_id,
             child_agent_id=child_agent_id,
             result=str(payload.get("result", "")),
-            explain=payload.get("explain")
-            if isinstance(payload.get("explain"), str)
-            else None,
+            explain=explain_value if isinstance(explain_value, str) else None,
             periodic=bool(payload.get("periodic", False)),
             created_at=created_at,
             source_agent_id=source_agent_id,

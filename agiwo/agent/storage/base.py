@@ -3,6 +3,7 @@
 import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Literal
 
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
@@ -134,6 +135,7 @@ class RunLogStorage(ABC):
         agent_id: str | None = None,
         include_rolled_back: bool = False,
         limit: int = 1000,
+        order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
         """List committed step views in ascending sequence order."""
         ...
@@ -236,6 +238,11 @@ class InMemoryRunLogStorage(RunLogStorage):
     async def append_entries(self, entries: list[RunLogEntry]) -> None:
         for entry in entries:
             bucket = self.run_log_entries.setdefault(entry.session_id, [])
+            if any(existing.sequence == entry.sequence for existing in bucket):
+                raise ValueError(
+                    "Duplicate run-log sequence for session "
+                    f"{entry.session_id}: {entry.sequence}"
+                )
             bucket.append(entry)
             bucket.sort(key=lambda item: item.sequence)
             current = self._sequence_counters.get(entry.session_id, 0)
@@ -333,6 +340,7 @@ class InMemoryRunLogStorage(RunLogStorage):
         agent_id: str | None = None,
         include_rolled_back: bool = False,
         limit: int = 1000,
+        order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
         entries = await self.list_entries(
             session_id=session_id,
@@ -348,6 +356,8 @@ class InMemoryRunLogStorage(RunLogStorage):
             step_views = [step for step in step_views if step.sequence >= start_seq]
         if end_seq is not None:
             step_views = [step for step in step_views if step.sequence <= end_seq]
+        if order == "desc":
+            step_views = list(reversed(step_views))
         return step_views[:limit]
 
     async def append_step_condensed_content(

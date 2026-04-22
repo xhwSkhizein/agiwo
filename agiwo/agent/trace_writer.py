@@ -810,7 +810,7 @@ class AgentTraceCollector:
                 run_spans=self._run_spans,
             )
 
-    async def build_from_entries(self, entries: list[RunLogEntry]) -> Trace:
+    def build_from_entries(self, entries: list[RunLogEntry]) -> Trace:
         trace = Trace()
         run_spans: dict[str, Span] = {}
         llm_started: dict[str, LLMCallStarted] = {}

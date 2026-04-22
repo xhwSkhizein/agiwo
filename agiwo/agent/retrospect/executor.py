@@ -8,6 +8,7 @@ from typing import Any
 import aiofiles
 
 from agiwo.agent.models.run import RunLedger
+from agiwo.agent.retrospect.triggers import RetrospectTrigger
 from agiwo.agent.storage.base import RunLogStorage
 from agiwo.utils.logging import get_logger
 
@@ -29,6 +30,7 @@ class RetrospectOutcome:
     affected_step_ids: list[str] = field(default_factory=list)
     feedback: str | None = None
     replacement: str | None = None
+    trigger: RetrospectTrigger | None = None
 
 
 async def offload_to_disk(content: str, path: Path) -> str:
@@ -50,6 +52,7 @@ async def execute_retrospect(
     agent_id: str,
     offload_dir: Path,
     step_lookup: dict[str, dict[str, Any]],
+    trigger: RetrospectTrigger | None = None,
 ) -> RetrospectOutcome:
     """Execute a retrospect pass and return the outcome.
 
@@ -146,6 +149,7 @@ async def execute_retrospect(
         affected_step_ids=affected_step_ids,
         feedback=feedback,
         replacement=replacement if isinstance(replacement, str) else None,
+        trigger=trigger,
     )
 
 
