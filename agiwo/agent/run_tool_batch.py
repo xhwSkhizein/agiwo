@@ -8,11 +8,7 @@ from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import StepView
 from agiwo.agent.retrospect import RetrospectBatch
 from agiwo.agent.runtime.context import RunContext, RunRuntime
-from agiwo.agent.runtime.state_ops import replace_messages
-from agiwo.agent.runtime.state_writer import (
-    build_messages_rebuilt_entry,
-    build_retrospect_applied_entry,
-)
+from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.agent.tool_executor import execute_tool_batch
 
@@ -28,6 +24,7 @@ async def execute_tool_batch_cycle(
     set_termination_reason: ToolTerminationWriter,
 ) -> bool:
     """Execute one tool batch and apply retrospect-driven message rebuilds."""
+    writer = RunStateWriter(context)
     tool_results = await execute_tool_batch(
         tool_calls,
         tools_map=runtime.tools_map,
@@ -63,36 +60,30 @@ async def execute_tool_batch_cycle(
             await set_termination_reason(result.termination_reason, result.tool_name)
             terminated = True
 
-    await _apply_retrospect_outcome(context, batch)
+    await _apply_retrospect_outcome(context, batch, writer=writer)
     return terminated or context.is_terminal
 
 
 async def _apply_retrospect_outcome(
     context: RunContext,
     batch: RetrospectBatch,
+    *,
+    writer: RunStateWriter,
 ) -> None:
     outcome = await batch.finalize()
     if not outcome.applied:
         return
 
-    replace_messages(context, outcome.messages)
-    rebuilt_entry = build_messages_rebuilt_entry(
-        context,
-        sequence=await context.session_runtime.allocate_sequence(),
+    await writer.rebuild_messages(
         reason="retrospect",
-        messages=context.snapshot_messages(),
+        messages=outcome.messages,
     )
-    retrospect_entry = build_retrospect_applied_entry(
-        context,
-        sequence=await context.session_runtime.allocate_sequence(),
+    await writer.record_retrospect_applied(
         affected_sequences=outcome.affected_sequences,
         affected_step_ids=outcome.affected_step_ids,
         feedback=outcome.feedback,
         replacement=outcome.replacement,
         trigger=outcome.trigger.value if outcome.trigger is not None else None,
-    )
-    await context.session_runtime.append_run_log_entries(
-        [rebuilt_entry, retrospect_entry]
     )
     await context.session_runtime.publish(
         MessagesRebuiltEvent.from_context(

@@ -297,6 +297,13 @@ class RunLoopOrchestrator:
         if result.failed:
             failure_count = increment_compaction_failure(self.context)
             err = result.error or ""
+            terminal = failure_count >= 3
+            await self.writer.record_compaction_failed(
+                error=err,
+                attempt=failure_count,
+                max_attempts=3,
+                terminal=terminal,
+            )
             await self.context.hooks.compaction_failed(
                 self.context.run_id, err, failure_count, self.context
             )
@@ -306,7 +313,7 @@ class RunLoopOrchestrator:
                 error=err,
                 failure_count=failure_count,
             )
-            if failure_count >= 3:
+            if terminal:
                 await self._set_termination_reason(
                     TerminationReason.MAX_INPUT_TOKENS_PER_CALL,
                     phase="compaction",

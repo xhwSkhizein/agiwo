@@ -20,15 +20,8 @@ from agiwo.agent.models.stream import (
 )
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
-from agiwo.agent.runtime.state_ops import (
-    record_compaction_metadata,
-    replace_messages,
-)
+from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.runtime.step_committer import commit_step
-from agiwo.agent.runtime.state_writer import (
-    build_compaction_applied_entry,
-    build_messages_rebuilt_entry,
-)
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator
 from agiwo.config.settings import get_settings
@@ -299,6 +292,7 @@ async def _compact(
     compact_start_seq: int,
     root_path: str,
 ) -> CompactMetadata:
+    writer = RunStateWriter(state)
     metrics_resolver = ModelUsageEstimator(model)
     current_messages = state.snapshot_messages()
     before_token_estimate = metrics_resolver.estimate_messages_tokens(current_messages)
@@ -381,22 +375,11 @@ async def _compact(
         compact_tokens=(step.metrics.total_tokens if step.metrics else 0),
     )
 
-    replace_messages(state, compacted_messages)
-    record_compaction_metadata(state, metadata)
-    rebuilt_entry = build_messages_rebuilt_entry(
-        state,
-        sequence=await state.session_runtime.allocate_sequence(),
+    await writer.rebuild_messages(
         reason="compaction",
-        messages=state.snapshot_messages(),
+        messages=compacted_messages,
     )
-    compaction_entry = build_compaction_applied_entry(
-        state,
-        sequence=await state.session_runtime.allocate_sequence(),
-        metadata=metadata,
-    )
-    await state.session_runtime.append_run_log_entries(
-        [rebuilt_entry, compaction_entry]
-    )
+    await writer.record_compaction_applied(metadata)
     await state.session_runtime.publish(
         MessagesRebuiltEvent.from_context(
             state,

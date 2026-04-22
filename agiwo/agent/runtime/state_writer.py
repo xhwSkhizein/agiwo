@@ -5,6 +5,7 @@ from typing import Any
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
+    CompactionFailed,
     ContextAssembled,
     HookFailed,
     LLMCallCompleted,
@@ -24,6 +25,7 @@ from agiwo.agent.models.run import CompactMetadata, RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.state_ops import (
+    record_compaction_metadata,
     replace_messages,
     set_termination_reason,
     track_step_state,
@@ -92,6 +94,24 @@ class RunStateWriter:
             ]
         )
 
+    async def rebuild_messages(
+        self,
+        *,
+        reason: str,
+        messages: list[dict[str, Any]],
+    ) -> list[object]:
+        replace_messages(self._state, messages)
+        return await self.append_entries(
+            [
+                build_messages_rebuilt_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    reason=reason,
+                    messages=self._state.snapshot_messages(),
+                )
+            ]
+        )
+
     async def record_llm_call_started(
         self,
         *,
@@ -153,6 +173,66 @@ class RunStateWriter:
                     termination_reason=termination_reason,
                     phase=phase,
                     source=source,
+                )
+            ]
+        )
+
+    async def record_compaction_applied(
+        self,
+        metadata: CompactMetadata,
+    ) -> list[object]:
+        record_compaction_metadata(self._state, metadata)
+        return await self.append_entries(
+            [
+                build_compaction_applied_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    metadata=metadata,
+                )
+            ]
+        )
+
+    async def record_compaction_failed(
+        self,
+        *,
+        error: str,
+        attempt: int,
+        max_attempts: int,
+        terminal: bool,
+    ) -> list[object]:
+        self._state.ledger.compaction.failure_count = attempt
+        return await self.append_entries(
+            [
+                build_compaction_failed_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    error=error,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    terminal=terminal,
+                )
+            ]
+        )
+
+    async def record_retrospect_applied(
+        self,
+        *,
+        affected_sequences: list[int],
+        affected_step_ids: list[str],
+        feedback: str | None,
+        replacement: str | None,
+        trigger: str | None = None,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_retrospect_applied_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    affected_sequences=affected_sequences,
+                    affected_step_ids=affected_step_ids,
+                    feedback=feedback,
+                    replacement=replacement,
+                    trigger=trigger,
                 )
             ]
         )
@@ -333,6 +413,27 @@ def build_compaction_applied_entry(
     )
 
 
+def build_compaction_failed_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    error: str,
+    attempt: int,
+    max_attempts: int,
+    terminal: bool,
+) -> CompactionFailed:
+    return CompactionFailed(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        error=error,
+        attempt=attempt,
+        max_attempts=max_attempts,
+        terminal=terminal,
+    )
+
+
 def build_retrospect_applied_entry(
     state: RunContext,
     *,
@@ -378,6 +479,7 @@ def build_termination_decided_entry(
 __all__ = [
     "RunStateWriter",
     "build_compaction_applied_entry",
+    "build_compaction_failed_entry",
     "build_context_assembled_entry",
     "build_hook_failed_entry",
     "build_llm_call_completed_entry",
