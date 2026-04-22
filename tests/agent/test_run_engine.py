@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from agiwo.agent import Agent, AgentConfig, TerminationReason
+from agiwo.agent.hooks import HookPhase, HookRegistry, transform
 from agiwo.agent.models.log import AssistantStepCommitted, RunFinished, RunLogEntryKind
 from agiwo.agent.models.stream import stream_items_from_entries
 from agiwo.agent.models.step import MessageRole
@@ -18,6 +19,15 @@ class _FixedResponseModel(Model):
         del messages, tools
         yield StreamChunk(content=self._response)
         yield StreamChunk(finish_reason="stop")
+
+
+class _NeverCalledModel(Model):
+    def __init__(self) -> None:
+        super().__init__(id="never", name="never", temperature=0.0)
+
+    async def arun_stream(self, messages, tools=None) -> AsyncIterator[StreamChunk]:
+        del messages, tools
+        raise AssertionError("llm should not run when prepare fails")
 
 
 @pytest.mark.asyncio
@@ -52,6 +62,34 @@ async def test_agent_run_writes_basic_run_log_entries() -> None:
         item for item in replayed if item.type == "termination_decided"
     )
     assert termination_event.termination_reason == TerminationReason.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_prepare_failure_after_run_started_writes_run_failed() -> None:
+    async def explode(payload: dict) -> dict:
+        del payload
+        raise RuntimeError("prepare boom")
+
+    agent = Agent(
+        AgentConfig(name="strict-run", description="strict run"),
+        model=_NeverCalledModel(),
+        hooks=HookRegistry(
+            [
+                transform(
+                    HookPhase.PREPARE,
+                    "explode",
+                    explode,
+                    critical=True,
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="prepare boom"):
+        await agent.run("hello", session_id="strict-run-session")
+
+    entries = await agent.run_log_storage.list_entries(session_id="strict-run-session")
+    assert [entry.kind.value for entry in entries][-1] == "run_failed"
 
 
 def test_stream_items_from_entries_reuses_nested_run_context_without_run_started() -> (

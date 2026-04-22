@@ -1,4 +1,4 @@
-"""Helpers for writing run-log entries from runtime state."""
+"""Helpers and write coordinator for runtime-truth run-log writes."""
 
 from typing import Any
 
@@ -23,6 +23,139 @@ from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import CompactMetadata, RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.state_ops import (
+    replace_messages,
+    set_termination_reason,
+    track_step_state,
+)
+
+
+class RunStateWriter:
+    """Own committed state updates plus canonical run-log writes."""
+
+    def __init__(self, state: RunContext) -> None:
+        self._state = state
+
+    async def append_entries(self, entries: list[object]) -> list[object]:
+        typed_entries = list(entries)
+        await self._state.session_runtime.append_run_log_entries(typed_entries)
+        return typed_entries
+
+    async def start_run(self, user_input: UserInput) -> list[object]:
+        return await self.append_entries(
+            [
+                build_run_started_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    user_input=user_input,
+                )
+            ]
+        )
+
+    async def finish_run(self, result: RunOutput) -> list[object]:
+        return await self.append_entries(
+            [
+                build_run_finished_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    result=result,
+                )
+            ]
+        )
+
+    async def fail_run(self, error: Exception) -> list[object]:
+        return await self.append_entries(
+            [
+                build_run_failed_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    error=error,
+                )
+            ]
+        )
+
+    async def record_context_assembled(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        memory_count: int,
+    ) -> list[object]:
+        replace_messages(self._state, messages)
+        return await self.append_entries(
+            [
+                build_context_assembled_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    messages=self._state.snapshot_messages(),
+                    memory_count=memory_count,
+                )
+            ]
+        )
+
+    async def record_llm_call_started(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_llm_call_started_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    messages=messages,
+                    tools=tools,
+                )
+            ]
+        )
+
+    async def record_llm_call_completed(
+        self,
+        *,
+        step: StepView,
+        llm: LLMCallContext,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_llm_call_completed_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    step=step,
+                    llm=llm,
+                )
+            ]
+        )
+
+    async def commit_step(
+        self,
+        step: StepView,
+        *,
+        append_message: bool = True,
+        track_state: bool = True,
+    ) -> list[object]:
+        if track_state:
+            track_step_state(self._state, step, append_message=append_message)
+        return await self.append_entries([build_step_log_entry(step)])
+
+    async def record_termination_decided(
+        self,
+        *,
+        termination_reason: TerminationReason,
+        phase: str,
+        source: str,
+    ) -> list[object]:
+        set_termination_reason(self._state, termination_reason)
+        return await self.append_entries(
+            [
+                build_termination_decided_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    termination_reason=termination_reason,
+                    phase=phase,
+                    source=source,
+                )
+            ]
+        )
 
 
 def build_run_started_entry(
@@ -240,3 +373,20 @@ def build_termination_decided_entry(
         phase=phase,
         source=source,
     )
+
+
+__all__ = [
+    "RunStateWriter",
+    "build_compaction_applied_entry",
+    "build_context_assembled_entry",
+    "build_hook_failed_entry",
+    "build_llm_call_completed_entry",
+    "build_llm_call_started_entry",
+    "build_messages_rebuilt_entry",
+    "build_retrospect_applied_entry",
+    "build_run_failed_entry",
+    "build_run_finished_entry",
+    "build_run_started_entry",
+    "build_step_log_entry",
+    "build_termination_decided_entry",
+]

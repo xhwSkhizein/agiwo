@@ -11,6 +11,7 @@ from agiwo.agent.runtime.state_ops import (
     set_termination_reason,
     track_step_state,
 )
+from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.agent import (
     StepMetrics,
@@ -76,6 +77,19 @@ def test_track_step_state_skips_message_append_when_disabled() -> None:
     assert ledger.steps.total == 1
     assert ledger.steps.assistant == 0
     assert ledger.messages == []
+
+
+@pytest.mark.asyncio
+async def test_run_state_writer_commit_step_updates_state_and_returns_entry() -> None:
+    state = _make_state()
+    writer = RunStateWriter(state)
+    step = StepView.user(state, sequence=1, user_input="hello")
+
+    committed = await writer.commit_step(step)
+
+    assert committed[0].kind.value == "user_step_committed"
+    assert state.ledger.steps.total == 1
+    assert state.ledger.messages[-1]["role"] == "user"
 
 
 def test_runtime_state_ops_only_touch_mutable_ledger_state() -> None:

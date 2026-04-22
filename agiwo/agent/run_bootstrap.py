@@ -9,10 +9,9 @@ from agiwo.agent.prompt import assemble_run_messages
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.state_ops import (
     record_compaction_metadata,
-    replace_messages,
     set_tool_schemas,
 )
-from agiwo.agent.runtime.state_writer import build_context_assembled_entry
+from agiwo.agent.runtime.state_writer import RunStateWriter
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +26,7 @@ async def prepare_run_context(
     runtime: RunRuntime,
     user_input: UserInput | None,
     system_prompt: str,
+    writer: RunStateWriter,
 ) -> RunBootstrapResult:
     """Build all state needed before the main loop starts."""
     before_run_hook_result = await context.hooks.before_run(user_input, context)
@@ -45,25 +45,16 @@ async def prepare_run_context(
     existing_steps.sort(key=lambda step: step.sequence)
 
     user_message = UserMessage.from_value(user_input)
-    replace_messages(
-        context,
-        assemble_run_messages(
-            system_prompt,
-            existing_steps,
-            memories,
-            before_run_hook_result,
-            channel_context=user_message.context,
-        ),
+    assembled_messages = assemble_run_messages(
+        system_prompt,
+        existing_steps,
+        memories,
+        before_run_hook_result,
+        channel_context=user_message.context,
     )
-    await context.session_runtime.append_run_log_entries(
-        [
-            build_context_assembled_entry(
-                context,
-                sequence=await context.session_runtime.allocate_sequence(),
-                messages=context.snapshot_messages(),
-                memory_count=len(memories),
-            )
-        ]
+    await writer.record_context_assembled(
+        messages=assembled_messages,
+        memory_count=len(memories),
     )
     set_tool_schemas(context, _build_tool_schemas(runtime))
     record_compaction_metadata(context, latest_compact)

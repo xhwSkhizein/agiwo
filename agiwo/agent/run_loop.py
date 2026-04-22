@@ -39,17 +39,9 @@ from agiwo.agent.models.step import (
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.state_ops import (
     replace_messages,
-    set_termination_reason,
 )
 from agiwo.agent.runtime.step_committer import commit_step
-from agiwo.agent.runtime.state_writer import (
-    build_llm_call_completed_entry,
-    build_llm_call_started_entry,
-    build_run_failed_entry,
-    build_run_finished_entry,
-    build_run_started_entry,
-    build_termination_decided_entry,
-)
+from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.models.stream import (
     RunCompletedEvent,
     RunFailedEvent,
@@ -84,6 +76,7 @@ class RunLoopOrchestrator:
     ):
         self.context = context
         self.runtime = runtime
+        self.writer = RunStateWriter(context)
 
     async def execute_run(
         self,
@@ -92,18 +85,19 @@ class RunLoopOrchestrator:
         pending_tool_calls: list[dict] | None = None,
     ) -> RunOutput:
         """Execute a single agent run with the orchestrator."""
-        # Start the run
-        await self._start_run(user_input)
-
-        # Prepare run context after the run has a persisted identity.
-        bootstrap = await prepare_run_context(
-            context=self.context,
-            runtime=self.runtime,
-            user_input=user_input,
-            system_prompt=system_prompt,
-        )
-
         try:
+            # Start the run
+            await self._start_run(user_input)
+
+            # Prepare run context after the run has a persisted identity.
+            bootstrap = await prepare_run_context(
+                context=self.context,
+                runtime=self.runtime,
+                user_input=user_input,
+                system_prompt=system_prompt,
+                writer=self.writer,
+            )
+
             # Commit user step
             await commit_step(
                 self.context,
@@ -133,15 +127,7 @@ class RunLoopOrchestrator:
                 session_id=self.context.session_id,
                 parent_run_id=self.context.parent_run_id,
             )
-        await self.context.session_runtime.append_run_log_entries(
-            [
-                build_run_started_entry(
-                    self.context,
-                    sequence=await self.context.session_runtime.allocate_sequence(),
-                    user_input=user_input,
-                )
-            ]
-        )
+        await self.writer.start_run(user_input)
         await self.context.session_runtime.publish(
             RunStartedEvent.from_context(self.context)
         )
@@ -153,15 +139,7 @@ class RunLoopOrchestrator:
                 result,
                 run_id=self.context.run_id,
             )
-        await self.context.session_runtime.append_run_log_entries(
-            [
-                build_run_finished_entry(
-                    self.context,
-                    sequence=await self.context.session_runtime.allocate_sequence(),
-                    result=result,
-                )
-            ]
-        )
+        await self.writer.finish_run(result)
         await self.context.session_runtime.publish(
             RunCompletedEvent.from_context(
                 self.context,
@@ -178,15 +156,7 @@ class RunLoopOrchestrator:
                 error,
                 run_id=self.context.run_id,
             )
-        await self.context.session_runtime.append_run_log_entries(
-            [
-                build_run_failed_entry(
-                    self.context,
-                    sequence=await self.context.session_runtime.allocate_sequence(),
-                    error=error,
-                )
-            ]
-        )
+        await self.writer.fail_run(error)
         await self.context.session_runtime.publish(
             RunFailedEvent.from_context(self.context, error=str(error)),
         )
@@ -214,15 +184,11 @@ class RunLoopOrchestrator:
     ) -> None:
         if self.context.ledger.termination_reason == reason:
             return
-        set_termination_reason(self.context, reason)
-        entry = build_termination_decided_entry(
-            self.context,
-            sequence=await self.context.session_runtime.allocate_sequence(),
+        await self.writer.record_termination_decided(
             termination_reason=reason,
             phase=phase,
             source=source,
         )
-        await self.context.session_runtime.append_run_log_entries([entry])
         await self.context.session_runtime.publish(
             TerminationDecidedEvent.from_context(
                 self.context,
@@ -385,15 +351,9 @@ class RunLoopOrchestrator:
         )
         if modified is not None:
             replace_messages(self.context, modified)
-        await self.context.session_runtime.append_run_log_entries(
-            [
-                build_llm_call_started_entry(
-                    self.context,
-                    sequence=await self.context.session_runtime.allocate_sequence(),
-                    messages=self.context.snapshot_messages(),
-                    tools=self.context.copy_tool_schemas(),
-                )
-            ]
+        await self.writer.record_llm_call_started(
+            messages=self.context.snapshot_messages(),
+            tools=self.context.copy_tool_schemas(),
         )
 
         step, llm_context = await stream_assistant_step(
@@ -402,16 +362,7 @@ class RunLoopOrchestrator:
             self.runtime.abort_signal,
         )
         await commit_step(self.context, step, llm=llm_context)
-        await self.context.session_runtime.append_run_log_entries(
-            [
-                build_llm_call_completed_entry(
-                    self.context,
-                    sequence=await self.context.session_runtime.allocate_sequence(),
-                    step=step,
-                    llm=llm_context,
-                )
-            ]
-        )
+        await self.writer.record_llm_call_completed(step=step, llm=llm_context)
 
         await self.context.hooks.after_llm_call(step, self.context)
         return step, llm_context
