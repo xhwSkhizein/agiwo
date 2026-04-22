@@ -671,7 +671,7 @@ def _apply_entry_to_trace(
 
 
 class AgentTraceCollector:
-    """Construct a Trace from explicit run and step callbacks."""
+    """Construct a Trace from committed run-log entries."""
 
     PREVIEW_LENGTH = 500
 
@@ -680,6 +680,10 @@ class AgentTraceCollector:
         self._trace: Trace | None = None
         self._run_spans: dict[str, Span] = {}
         self._assistant_cache: OrderedDict[str, StepView] = OrderedDict()
+        self._assistant_committed_cache: OrderedDict[str, AssistantStepCommitted] = (
+            OrderedDict()
+        )
+        self._llm_started: dict[str, LLMCallStarted] = {}
 
     @property
     def trace_id(self) -> str | None:
@@ -702,6 +706,8 @@ class AgentTraceCollector:
         )
         self._run_spans = {}
         self._assistant_cache = OrderedDict()
+        self._assistant_committed_cache = OrderedDict()
+        self._llm_started = {}
 
     def on_run_started(
         self,
@@ -793,21 +799,21 @@ class AgentTraceCollector:
         self._trace = None
         self._run_spans = {}
         self._assistant_cache = OrderedDict()
+        self._assistant_committed_cache = OrderedDict()
+        self._llm_started = {}
 
     async def on_run_log_entries(self, entries: list[RunLogEntry]) -> None:
         trace = self._trace
         if trace is None:
             return
         for entry in entries:
-            if not isinstance(
-                entry,
-                (CompactionApplied, RetrospectApplied, TerminationDecided),
-            ):
-                continue
-            _append_runtime_entry_to_trace(
+            _apply_entry_to_trace(
                 trace,
                 entry,
                 run_spans=self._run_spans,
+                llm_started=self._llm_started,
+                assistant_cache=self._assistant_committed_cache,
+                preview_length=self.PREVIEW_LENGTH,
             )
 
     def build_from_entries(self, entries: list[RunLogEntry]) -> Trace:

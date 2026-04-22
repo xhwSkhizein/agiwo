@@ -42,12 +42,6 @@ from agiwo.agent.runtime.state_ops import (
 )
 from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.agent.runtime.state_writer import RunStateWriter
-from agiwo.agent.models.stream import (
-    RunCompletedEvent,
-    RunFailedEvent,
-    RunStartedEvent,
-    TerminationDecidedEvent,
-)
 from agiwo.agent.termination.limits import (
     check_non_recoverable_limits,
     check_post_llm_limits,
@@ -120,45 +114,35 @@ class RunLoopOrchestrator:
 
     async def _start_run(self, user_input: UserInput) -> None:
         """Initialize and start the run."""
-        if self.context.session_runtime.trace_runtime is not None:
-            self.context.session_runtime.trace_runtime.on_run_started(
-                run_id=self.context.run_id,
-                agent_id=self.context.agent_id,
-                session_id=self.context.session_id,
-                parent_run_id=self.context.parent_run_id,
-            )
-        await self.writer.start_run(user_input)
-        await self.context.session_runtime.publish(
-            RunStartedEvent.from_context(self.context)
+        entries = await self.writer.start_run(user_input)
+        await self.context.session_runtime.project_run_log_entries(
+            entries,
+            run_id=self.context.run_id,
+            agent_id=self.context.agent_id,
+            parent_run_id=self.context.parent_run_id,
+            depth=self.context.depth,
         )
 
     async def _complete_run(self, result: RunOutput) -> None:
         """Complete the run successfully."""
-        if self.context.session_runtime.trace_runtime is not None:
-            await self.context.session_runtime.trace_runtime.on_run_completed(
-                result,
-                run_id=self.context.run_id,
-            )
-        await self.writer.finish_run(result)
-        await self.context.session_runtime.publish(
-            RunCompletedEvent.from_context(
-                self.context,
-                response=result.response,
-                metrics=result.metrics,
-                termination_reason=result.termination_reason,
-            ),
+        entries = await self.writer.finish_run(result)
+        await self.context.session_runtime.project_run_log_entries(
+            entries,
+            run_id=self.context.run_id,
+            agent_id=self.context.agent_id,
+            parent_run_id=self.context.parent_run_id,
+            depth=self.context.depth,
         )
 
     async def _fail_run(self, error: Exception) -> None:
         """Handle run failure."""
-        if self.context.session_runtime.trace_runtime is not None:
-            await self.context.session_runtime.trace_runtime.on_run_failed(
-                error,
-                run_id=self.context.run_id,
-            )
-        await self.writer.fail_run(error)
-        await self.context.session_runtime.publish(
-            RunFailedEvent.from_context(self.context, error=str(error)),
+        entries = await self.writer.fail_run(error)
+        await self.context.session_runtime.project_run_log_entries(
+            entries,
+            run_id=self.context.run_id,
+            agent_id=self.context.agent_id,
+            parent_run_id=self.context.parent_run_id,
+            depth=self.context.depth,
         )
 
     def _build_output(self) -> RunOutput:
@@ -184,18 +168,17 @@ class RunLoopOrchestrator:
     ) -> None:
         if self.context.ledger.termination_reason == reason:
             return
-        await self.writer.record_termination_decided(
+        entries = await self.writer.record_termination_decided(
             termination_reason=reason,
             phase=phase,
             source=source,
         )
-        await self.context.session_runtime.publish(
-            TerminationDecidedEvent.from_context(
-                self.context,
-                termination_reason=reason,
-                phase=phase,
-                source=source,
-            )
+        await self.context.session_runtime.project_run_log_entries(
+            entries,
+            run_id=self.context.run_id,
+            agent_id=self.context.agent_id,
+            parent_run_id=self.context.parent_run_id,
+            depth=self.context.depth,
         )
 
     async def _finalize_run(self, user_input: UserInput) -> RunOutput:
@@ -298,11 +281,18 @@ class RunLoopOrchestrator:
             failure_count = increment_compaction_failure(self.context)
             err = result.error or ""
             terminal = failure_count >= 3
-            await self.writer.record_compaction_failed(
+            entries = await self.writer.record_compaction_failed(
                 error=err,
                 attempt=failure_count,
                 max_attempts=3,
                 terminal=terminal,
+            )
+            await self.context.session_runtime.project_run_log_entries(
+                entries,
+                run_id=self.context.run_id,
+                agent_id=self.context.agent_id,
+                parent_run_id=self.context.parent_run_id,
+                depth=self.context.depth,
             )
             await self.context.hooks.compaction_failed(
                 self.context.run_id, err, failure_count, self.context
@@ -358,9 +348,16 @@ class RunLoopOrchestrator:
         )
         if modified is not None:
             replace_messages(self.context, modified)
-        await self.writer.record_llm_call_started(
+        entries = await self.writer.record_llm_call_started(
             messages=self.context.snapshot_messages(),
             tools=self.context.copy_tool_schemas(),
+        )
+        await self.context.session_runtime.project_run_log_entries(
+            entries,
+            run_id=self.context.run_id,
+            agent_id=self.context.agent_id,
+            parent_run_id=self.context.parent_run_id,
+            depth=self.context.depth,
         )
 
         step, llm_context = await stream_assistant_step(
@@ -369,7 +366,16 @@ class RunLoopOrchestrator:
             self.runtime.abort_signal,
         )
         await commit_step(self.context, step, llm=llm_context)
-        await self.writer.record_llm_call_completed(step=step, llm=llm_context)
+        entries = await self.writer.record_llm_call_completed(
+            step=step, llm=llm_context
+        )
+        await self.context.session_runtime.project_run_log_entries(
+            entries,
+            run_id=self.context.run_id,
+            agent_id=self.context.agent_id,
+            parent_run_id=self.context.parent_run_id,
+            depth=self.context.depth,
+        )
 
         await self.context.hooks.after_llm_call(step, self.context)
         return step, llm_context

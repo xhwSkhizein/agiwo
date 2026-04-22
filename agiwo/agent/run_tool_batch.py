@@ -3,7 +3,6 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from agiwo.agent.models.stream import MessagesRebuiltEvent, RetrospectAppliedEvent
 from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import StepView
 from agiwo.agent.retrospect import RetrospectBatch
@@ -74,33 +73,23 @@ async def _apply_retrospect_outcome(
     if not outcome.applied:
         return
 
-    await writer.rebuild_messages(
+    rebuilt_entries = await writer.rebuild_messages(
         reason="retrospect",
         messages=outcome.messages,
     )
-    await writer.record_retrospect_applied(
+    retrospect_entries = await writer.record_retrospect_applied(
         affected_sequences=outcome.affected_sequences,
         affected_step_ids=outcome.affected_step_ids,
         feedback=outcome.feedback,
         replacement=outcome.replacement,
         trigger=outcome.trigger.value if outcome.trigger is not None else None,
     )
-    await context.session_runtime.publish(
-        MessagesRebuiltEvent.from_context(
-            context,
-            reason="retrospect",
-            message_count=len(context.snapshot_messages()),
-        )
-    )
-    await context.session_runtime.publish(
-        RetrospectAppliedEvent.from_context(
-            context,
-            affected_sequences=outcome.affected_sequences,
-            affected_step_ids=outcome.affected_step_ids,
-            feedback=outcome.feedback,
-            replacement=outcome.replacement,
-            trigger=outcome.trigger.value if outcome.trigger is not None else None,
-        )
+    await context.session_runtime.project_run_log_entries(
+        [*rebuilt_entries, *retrospect_entries],
+        run_id=context.run_id,
+        agent_id=context.agent_id,
+        parent_run_id=context.parent_run_id,
+        depth=context.depth,
     )
 
 

@@ -3,7 +3,6 @@
 from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.state_writer import RunStateWriter
-from agiwo.agent.models.stream import StepCompletedEvent
 
 
 async def commit_step(
@@ -15,17 +14,19 @@ async def commit_step(
     track_state: bool = True,
 ) -> StepView:
     writer = RunStateWriter(state)
-    await writer.commit_step(
+    entries = await writer.commit_step(
         step,
         append_message=append_message,
         track_state=track_state,
     )
-    if state.session_runtime.trace_runtime is not None:
-        await state.session_runtime.trace_runtime.on_step(step, llm)
-    await state.hooks.on_step(step, state)
-    await state.session_runtime.publish(
-        StepCompletedEvent.from_context(state, step=step),
+    await state.session_runtime.project_run_log_entries(
+        entries,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        parent_run_id=state.parent_run_id,
+        depth=state.depth,
     )
+    await state.hooks.on_step(step, state)
     return step
 
 

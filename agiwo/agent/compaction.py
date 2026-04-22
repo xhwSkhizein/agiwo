@@ -14,10 +14,6 @@ import aiofiles
 
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.llm_caller import stream_assistant_step
-from agiwo.agent.models.stream import (
-    CompactionAppliedEvent,
-    MessagesRebuiltEvent,
-)
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.state_writer import RunStateWriter
@@ -375,26 +371,17 @@ async def _compact(
         compact_tokens=(step.metrics.total_tokens if step.metrics else 0),
     )
 
-    await writer.rebuild_messages(
+    rebuilt_entries = await writer.rebuild_messages(
         reason="compaction",
         messages=compacted_messages,
     )
-    await writer.record_compaction_applied(metadata)
-    await state.session_runtime.publish(
-        MessagesRebuiltEvent.from_context(
-            state,
-            reason="compaction",
-            message_count=len(state.snapshot_messages()),
-        )
-    )
-    await state.session_runtime.publish(
-        CompactionAppliedEvent.from_context(
-            state,
-            start_sequence=metadata.start_seq,
-            end_sequence=metadata.end_seq,
-            transcript_path=metadata.transcript_path,
-            summary=metadata.get_summary() or None,
-        )
+    applied_entries = await writer.record_compaction_applied(metadata)
+    await state.session_runtime.project_run_log_entries(
+        [*rebuilt_entries, *applied_entries],
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        parent_run_id=state.parent_run_id,
+        depth=state.depth,
     )
 
     return metadata

@@ -9,7 +9,7 @@ from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.storage.base import (
     RunLogStorage,
 )
-from agiwo.agent.models.stream import AgentStreamItem
+from agiwo.agent.models.stream import AgentStreamItem, stream_items_from_entries
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
@@ -126,6 +126,24 @@ class SessionRuntime:
                 except asyncio.QueueFull:
                     pass
                 logger.warning("subscriber_dropped_slow_consumer")
+
+    async def project_run_log_entries(
+        self,
+        entries: list[RunLogEntry],
+        *,
+        run_id: str,
+        agent_id: str,
+        parent_run_id: str | None,
+        depth: int,
+    ) -> None:
+        run_contexts = {
+            run_id: {
+                "parent_run_id": parent_run_id,
+                "depth": depth,
+            }
+        }
+        for item in stream_items_from_entries(entries, run_contexts=run_contexts):
+            await self.publish(item)
 
     async def close(self) -> None:
         if self._closed:
