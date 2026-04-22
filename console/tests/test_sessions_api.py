@@ -1,6 +1,6 @@
 """Integration tests for sessions and runs API envelopes and detail views."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -10,11 +10,13 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     RunFinished,
     RunStarted,
+    TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
 )
 from agiwo.agent.models.run import RunMetrics
 from agiwo.agent.models.step import MessageRole, StepMetrics
+from agiwo.observability.trace import SpanStatus, Trace
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
     AgentState,
@@ -184,6 +186,20 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
             ),
         ]
     )
+    await runtime.trace_storage.save_trace(
+        Trace(
+            trace_id="trace-a2",
+            agent_id="agent-alpha",
+            session_id="session-a",
+            status=SpanStatus.OK,
+            total_tokens=12,
+            total_llm_calls=1,
+            start_time=now + timedelta(seconds=1),
+            duration_ms=15.0,
+            input_query="again",
+            final_output="done again",
+        )
+    )
     await runtime.run_log_storage.append_entries(
         [
             RunStarted(
@@ -192,7 +208,7 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
                 run_id="run-a2",
                 agent_id="agent-alpha",
                 user_input="again",
-                created_at=now,
+                created_at=now + timedelta(seconds=1),
             ),
             RunFinished(
                 sequence=4,
@@ -210,7 +226,17 @@ async def _seed_runs_and_steps(client: AsyncClient) -> None:
                     steps_count=4,
                     tool_calls_count=2,
                 ).to_dict(),
-                created_at=now,
+                created_at=now + timedelta(seconds=1),
+            ),
+            TerminationDecided(
+                sequence=5,
+                session_id="session-a",
+                run_id="run-a2",
+                agent_id="agent-alpha",
+                termination_reason=TerminationReason.COMPLETED,
+                phase="after_tool_batch",
+                source="finished",
+                created_at=now + timedelta(seconds=1),
             ),
         ]
     )
@@ -356,21 +382,28 @@ async def test_get_session_detail_returns_summary_session_and_root_scheduler_sta
     assert (
         payload["scheduler_state"]["last_run_result"]["termination_reason"] == "timeout"
     )
+    assert payload["observability"]["recent_traces"][0]["trace_id"] == "trace-a2"
+    assert payload["observability"]["decision_events"][0]["kind"] == "termination"
+    assert (
+        payload["observability"]["decision_events"][0]["details"]["reason"]
+        == "completed"
+    )
 
 
 @pytest.mark.asyncio
 async def test_list_runs_returns_page_envelope(client) -> None:
     await _seed_runs_and_steps(client)
 
-    response = await client.get("/api/runs?limit=2&offset=0")
+    response = await client.get("/api/runs?session_id=session-a&limit=2&offset=0")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["limit"] == 2
     assert payload["offset"] == 0
-    assert payload["has_more"] is True
+    assert payload["has_more"] is False
     assert payload["total"] is None
     assert len(payload["items"]) == 2
+    assert [item["id"] for item in payload["items"]] == ["run-a2", "run-a1"]
 
 
 @pytest.mark.asyncio
@@ -386,3 +419,15 @@ async def test_get_session_steps_supports_order_and_has_more(client) -> None:
     assert payload["has_more"] is False
     assert payload["total"] is None
     assert [item["sequence"] for item in payload["items"]] == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_get_session_steps_reports_total_for_unfiltered_session(client) -> None:
+    await _seed_runs_and_steps(client)
+
+    response = await client.get("/api/sessions/session-a/steps?limit=10&order=asc")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 3
+    assert [item["sequence"] for item in payload["items"]] == [1, 2, 3]

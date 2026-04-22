@@ -248,12 +248,12 @@ async def test_agent_runtime_cache_uses_session_id_as_runtime_identity(
     scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=True))
     built_agent = FakeAgent("sess-1")
 
-    async def fake_build_agent(*args, **kwargs):
+    async def fake_materialize_agent(*args, **kwargs):
         return built_agent
 
     monkeypatch.setattr(
-        "server.services.runtime.agent_runtime_cache.build_agent",
-        fake_build_agent,
+        "server.services.runtime.agent_runtime_cache.materialize_agent",
+        fake_materialize_agent,
     )
 
     pool = AgentRuntimeCache(
@@ -294,12 +294,12 @@ async def test_agent_runtime_cache_defers_refresh_while_state_active(
     scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=False))
     replacement_agent = FakeAgent("sess-1")
 
-    async def fake_build_agent(*args, **kwargs):
+    async def fake_materialize_agent(*args, **kwargs):
         return replacement_agent
 
     monkeypatch.setattr(
-        "server.services.runtime.agent_runtime_cache.build_agent",
-        fake_build_agent,
+        "server.services.runtime.agent_runtime_cache.materialize_agent",
+        fake_materialize_agent,
     )
 
     pool = AgentRuntimeCache(
@@ -350,7 +350,7 @@ async def test_agent_runtime_cache_refreshes_when_allowed_skills_change(
     second_agent = FakeAgent("sess-1-b")
 
     monkeypatch.setattr(
-        "server.services.runtime.agent_runtime_cache.build_agent",
+        "server.services.runtime.agent_runtime_cache.materialize_agent",
         AsyncMock(side_effect=[first_agent, second_agent]),
     )
 

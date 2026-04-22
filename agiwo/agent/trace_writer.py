@@ -378,6 +378,105 @@ def _build_runtime_span_from_entry(
     return span
 
 
+def _append_runtime_entry_to_trace(
+    trace: Trace,
+    entry: CompactionApplied | RetrospectApplied | TerminationDecided,
+    *,
+    run_spans: dict[str, Span],
+) -> None:
+    trace.add_span(
+        _build_runtime_span_from_entry(
+            trace.trace_id,
+            entry,
+            run_spans.get(entry.run_id),
+        )
+    )
+
+
+def _create_run_span(
+    trace: Trace,
+    *,
+    run_id: str,
+    agent_id: str,
+    session_id: str,
+    parent_run_id: str | None,
+    run_spans: dict[str, Span],
+    created_at: datetime | None = None,
+    depth_hint: int = 0,
+) -> Span:
+    parent = run_spans.get(parent_run_id) if parent_run_id else None
+    is_root = trace.root_span_id is None
+    span = Span(
+        trace_id=trace.trace_id,
+        parent_span_id=parent.span_id if parent is not None else None,
+        kind=SpanKind.AGENT,
+        name=agent_id,
+        depth=(parent.depth + 1)
+        if parent is not None
+        else (0 if is_root else depth_hint),
+        attributes={
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "nested": not is_root,
+            "parent_run_id": parent_run_id,
+        },
+        run_id=run_id,
+        start_time=created_at or datetime.now(timezone.utc),
+    )
+    if trace.root_span_id is None:
+        trace.root_span_id = span.span_id
+        if created_at is not None:
+            trace.start_time = created_at
+    trace.add_span(span)
+    run_spans[run_id] = span
+    return span
+
+
+def _complete_run_span(
+    span: Span | None,
+    *,
+    completed_at: datetime | None = None,
+    status: SpanStatus,
+    preview_length: int,
+    response: str | None = None,
+    error_message: str | None = None,
+) -> None:
+    if span is None:
+        return
+    if completed_at is None:
+        span.complete(
+            status=status,
+            error_message=error_message,
+            output_preview=response[:preview_length] if response else None,
+        )
+        return
+
+    span.end_time = completed_at
+    span.duration_ms = (completed_at - span.start_time).total_seconds() * 1000
+    span.status = status
+    span.error_message = error_message
+    span.output_preview = response[:preview_length] if response else None
+
+
+def _complete_root_trace(
+    trace: Trace,
+    span: Span | None,
+    *,
+    completed_at: datetime | None = None,
+    status: SpanStatus,
+    response: str | None = None,
+) -> None:
+    if span is None or span.span_id != trace.root_span_id:
+        return
+    if completed_at is None:
+        trace.complete(status=status, final_output=response)
+        return
+    trace.end_time = completed_at
+    trace.status = status
+    trace.final_output = response
+    trace.duration_ms = (completed_at - span.start_time).total_seconds() * 1000
+
+
 def _start_run_span_from_entry(
     trace: Trace,
     entry: RunStarted,
@@ -389,30 +488,16 @@ def _start_run_span_from_entry(
         trace.session_id = entry.session_id
     if trace.input_query is None and entry.user_input is not None:
         trace.input_query = str(entry.user_input)
-    parent = run_spans.get(entry.parent_run_id) if entry.parent_run_id else None
-    is_root = trace.root_span_id is None
-    span = Span(
-        trace_id=trace.trace_id,
-        parent_span_id=parent.span_id if parent is not None else None,
-        kind=SpanKind.AGENT,
-        name=entry.agent_id,
-        depth=(parent.depth + 1)
-        if parent is not None
-        else (0 if is_root else entry.depth),
-        attributes={
-            "agent_id": entry.agent_id,
-            "session_id": entry.session_id,
-            "nested": not is_root,
-            "parent_run_id": entry.parent_run_id,
-        },
+    _create_run_span(
+        trace,
         run_id=entry.run_id,
-        start_time=entry.created_at,
+        agent_id=entry.agent_id,
+        session_id=entry.session_id,
+        parent_run_id=entry.parent_run_id,
+        run_spans=run_spans,
+        created_at=entry.created_at,
+        depth_hint=entry.depth,
     )
-    if trace.root_span_id is None:
-        trace.root_span_id = span.span_id
-        trace.start_time = entry.created_at
-    trace.add_span(span)
-    run_spans[entry.run_id] = span
 
 
 def _complete_trace_from_run_finished(
@@ -422,20 +507,20 @@ def _complete_trace_from_run_finished(
     preview_length: int,
 ) -> None:
     span = run_spans.get(entry.run_id)
-    if span is not None:
-        span.end_time = entry.created_at
-        span.duration_ms = (entry.created_at - span.start_time).total_seconds() * 1000
-        span.status = SpanStatus.OK
-        span.output_preview = (
-            entry.response[:preview_length] if entry.response else None
-        )
-        if span.span_id == trace.root_span_id:
-            trace.end_time = entry.created_at
-            trace.status = SpanStatus.OK
-            trace.final_output = entry.response
-            trace.duration_ms = (
-                entry.created_at - span.start_time
-            ).total_seconds() * 1000
+    _complete_run_span(
+        span,
+        completed_at=entry.created_at,
+        status=SpanStatus.OK,
+        preview_length=preview_length,
+        response=entry.response,
+    )
+    _complete_root_trace(
+        trace,
+        span,
+        completed_at=entry.created_at,
+        status=SpanStatus.OK,
+        response=entry.response,
+    )
 
 
 def _complete_trace_from_run_failed(
@@ -444,17 +529,19 @@ def _complete_trace_from_run_failed(
     entry: RunFailedEntry,
 ) -> None:
     span = run_spans.get(entry.run_id)
-    if span is not None:
-        span.end_time = entry.created_at
-        span.duration_ms = (entry.created_at - span.start_time).total_seconds() * 1000
-        span.status = SpanStatus.ERROR
-        span.error_message = entry.error
-        if span.span_id == trace.root_span_id:
-            trace.end_time = entry.created_at
-            trace.status = SpanStatus.ERROR
-            trace.duration_ms = (
-                entry.created_at - span.start_time
-            ).total_seconds() * 1000
+    _complete_run_span(
+        span,
+        completed_at=entry.created_at,
+        status=SpanStatus.ERROR,
+        preview_length=0,
+        error_message=entry.error,
+    )
+    _complete_root_trace(
+        trace,
+        span,
+        completed_at=entry.created_at,
+        status=SpanStatus.ERROR,
+    )
 
 
 def _apply_run_entry_to_trace(
@@ -537,12 +624,10 @@ def _apply_runtime_entry_to_trace(
         entry, (CompactionApplied, RetrospectApplied, TerminationDecided)
     ):
         return False
-    trace.add_span(
-        _build_runtime_span_from_entry(
-            trace.trace_id,
-            entry,
-            run_spans.get(entry.run_id),
-        )
+    _append_runtime_entry_to_trace(
+        trace,
+        entry,
+        run_spans=run_spans,
     )
     return True
 
@@ -628,25 +713,14 @@ class AgentTraceCollector:
     ) -> str:
         trace = self._require_trace()
         run_trace_id = trace.trace_id
-        parent = self._run_spans.get(parent_run_id) if parent_run_id else None
-        span = Span(
-            trace_id=trace.trace_id,
-            parent_span_id=parent.span_id if parent else None,
-            kind=SpanKind.AGENT,
-            name=agent_id,
-            depth=(parent.depth + 1) if parent else 0,
-            attributes={
-                "agent_id": agent_id,
-                "session_id": session_id,
-                "nested": parent_run_id is not None,
-                "parent_run_id": parent_run_id,
-            },
+        _create_run_span(
+            trace,
             run_id=run_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            parent_run_id=parent_run_id,
+            run_spans=self._run_spans,
         )
-        if trace.root_span_id is None:
-            trace.root_span_id = span.span_id
-        trace.add_span(span)
-        self._run_spans[run_id] = span
         return run_trace_id
 
     async def on_step(self, step: StepView, llm: LLMCallContext | None = None) -> None:
@@ -680,24 +754,34 @@ class AgentTraceCollector:
     async def on_run_completed(self, output: RunOutput, *, run_id: str) -> None:
         trace = self._require_trace()
         span = self._run_spans.get(run_id)
-        if span is not None:
-            span.complete(
-                status=SpanStatus.OK,
-                output_preview=output.response[: self.PREVIEW_LENGTH]
-                if output.response
-                else None,
-            )
-        if span is not None and span.parent_span_id is None:
-            trace.complete(status=SpanStatus.OK, final_output=output.response)
+        _complete_run_span(
+            span,
+            status=SpanStatus.OK,
+            preview_length=self.PREVIEW_LENGTH,
+            response=output.response,
+        )
+        _complete_root_trace(
+            trace,
+            span,
+            status=SpanStatus.OK,
+            response=output.response,
+        )
         await self._save_trace()
 
     async def on_run_failed(self, error: Exception, *, run_id: str) -> None:
         trace = self._require_trace()
         span = self._run_spans.get(run_id)
-        if span is not None:
-            span.complete(status=SpanStatus.ERROR, error_message=str(error))
-        if span is not None and span.parent_span_id is None:
-            trace.complete(status=SpanStatus.ERROR)
+        _complete_run_span(
+            span,
+            status=SpanStatus.ERROR,
+            preview_length=0,
+            error_message=str(error),
+        )
+        _complete_root_trace(
+            trace,
+            span,
+            status=SpanStatus.ERROR,
+        )
         await self._save_trace()
 
     async def stop(self) -> None:
@@ -720,9 +804,10 @@ class AgentTraceCollector:
                 (CompactionApplied, RetrospectApplied, TerminationDecided),
             ):
                 continue
-            run_span = self._run_spans.get(entry.run_id)
-            trace.add_span(
-                _build_runtime_span_from_entry(trace.trace_id, entry, run_span)
+            _append_runtime_entry_to_trace(
+                trace,
+                entry,
+                run_spans=self._run_spans,
             )
 
     async def build_from_entries(self, entries: list[RunLogEntry]) -> Trace:

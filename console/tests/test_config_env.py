@@ -13,6 +13,7 @@ from agiwo.skill.loader import SkillLoader
 from agiwo.skill.registry import SkillRegistry
 from agiwo.skill.skill_tool import SkillTool
 import server.services.runtime.agent_factory as agent_factory_module
+import agiwo.tool.builtin.bash_tool.sandbox as bash_sandbox_module
 from server.config import ConsoleConfig, DefaultAgentConfig
 from server.models.agent_config import AgentOptionsInput
 from server.models.view import AgentConfigPayload
@@ -23,9 +24,9 @@ from server.services.agent_registry import (
 )
 from server.services.runtime.agent_factory import (
     agent_options_input_to_agent_options,
-    build_agent,
     build_default_agent_record,
     build_model,
+    materialize_agent,
 )
 from server.services.storage_wiring import (
     build_run_log_storage_config,
@@ -392,14 +393,22 @@ def test_build_model_uses_shared_model_factory_for_compatible_provider(
 
 
 @pytest.mark.asyncio
-async def test_build_agent_preserves_empty_allowed_skills(
+async def test_materialize_agent_preserves_empty_allowed_skills(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     monkeypatch.setattr(
         agent_factory_module,
         "build_model",
         lambda _config: MockModel(id="mock", name="mock", provider="openai"),
     )
+    monkeypatch.setenv("AGIWO_ROOT_PATH", str(tmp_path / ".agiwo"))
+    monkeypatch.setattr(
+        bash_sandbox_module.settings,
+        "root_path",
+        str(tmp_path / ".agiwo"),
+    )
+    bash_sandbox_module._SHARED_LOCAL_EXECUTORS.clear()
     console_config = ConsoleConfig(
         storage={
             "run_log_type": "memory",
@@ -408,7 +417,7 @@ async def test_build_agent_preserves_empty_allowed_skills(
         }
     )
 
-    agent = await build_agent(
+    agent = await materialize_agent(
         AgentConfigRecord(
             name="tester",
             model_provider="openai",
@@ -424,9 +433,10 @@ async def test_build_agent_preserves_empty_allowed_skills(
 
 
 @pytest.mark.asyncio
-async def test_build_agent_tool_preserves_delegate_skill_access(
+async def test_materialize_agent_tool_preserves_delegate_skill_access(
     monkeypatch: pytest.MonkeyPatch,
     stub_skill_manager: DummySkillManager,
+    tmp_path,
 ) -> None:
     del stub_skill_manager
     monkeypatch.setattr(
@@ -434,6 +444,13 @@ async def test_build_agent_tool_preserves_delegate_skill_access(
         "build_model",
         lambda _config: MockModel(id="mock", name="mock", provider="openai"),
     )
+    monkeypatch.setenv("AGIWO_ROOT_PATH", str(tmp_path / ".agiwo"))
+    monkeypatch.setattr(
+        bash_sandbox_module.settings,
+        "root_path",
+        str(tmp_path / ".agiwo"),
+    )
+    bash_sandbox_module._SHARED_LOCAL_EXECUTORS.clear()
     console_config = ConsoleConfig(
         storage={
             "run_log_type": "memory",
@@ -456,7 +473,7 @@ async def test_build_agent_tool_preserves_delegate_skill_access(
         allowed_tools=["agent:child"],
     )
 
-    agent = await build_agent(
+    agent = await materialize_agent(
         parent,
         console_config,
         DummyRegistry({"child": child}),

@@ -24,7 +24,7 @@ sleep_and_wait(
 )
 ```
 
-系统收到 `no_progress` 后，删除本轮产生的所有 steps，agent 回到 WAITING 状态。下次唤醒时上下文恢复到本轮之前，就像这轮空转从未发生过。
+系统收到 `no_progress` 后，不会物理删除 canonical `RunLog`。scheduler 会追加一条 `RunRolledBack` fact，默认 step replay 会隐藏该范围内的 steps，agent 回到 WAITING 状态。下次唤醒时上下文恢复到本轮之前，就像这轮空转从未发生过；若运维或调试需要查看原始轨迹，可以在读取 `RunLog` 时显式打开 `include_rolled_back=True`。
 
 ### 配置
 
@@ -112,10 +112,10 @@ AgentOptions(
 
 ### Storage 双写
 
-`StepRecord` 的 `content` 字段永远保留原始内容。retrospect 只写入 `condensed_content` 字段。
+canonical `RunLog` 中的 committed step `content` 永远保留原始内容。retrospect/condense 只会追加 `StepCondensedContentUpdated` 这类 metadata fact，不会回写修改原始 step entry。
 
 - 加载历史 steps 构建 messages 时，`condensed_content` 优先（`condensed_content or content`）
-- Console/trace 可同时展示原始和精简内容
+- Console/trace/replay 可同时展示原始和精简内容
 - 跨 run 重新加载历史时自动使用精简版
 
 ### 约束

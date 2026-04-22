@@ -13,6 +13,7 @@ from agiwo.agent.models.log import (
     RunFailed,
     RunFinished,
     RunLogEntry,
+    RunRolledBack,
     RunStarted,
     TerminationDecided,
     ToolStepCommitted,
@@ -157,6 +158,21 @@ class TerminationDecidedEvent(AgentStreamItemBase):
 
 
 @dataclass(kw_only=True)
+class RunRolledBackEvent(AgentStreamItemBase):
+    start_sequence: int
+    end_sequence: int
+    reason: str
+    type: Literal["run_rolled_back"] = "run_rolled_back"
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self._base_dict()
+        payload["start_sequence"] = self.start_sequence
+        payload["end_sequence"] = self.end_sequence
+        payload["reason"] = self.reason
+        return payload
+
+
+@dataclass(kw_only=True)
 class RunCompletedEvent(AgentStreamItemBase):
     response: str | None = None
     metrics: RunMetrics | None = None
@@ -259,6 +275,76 @@ def _run_metrics_from_dict(data: dict[str, Any] | None) -> RunMetrics | None:
     return RunMetrics(**data)
 
 
+def _base_kwargs_with_run_context(
+    entry: RunLogEntry,
+    run_contexts: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    base_kwargs = _base_kwargs_from_entry(entry)
+    context = run_contexts.get(entry.run_id)
+    if context is not None:
+        base_kwargs.update(context)
+    return base_kwargs
+
+
+def _stream_item_from_runtime_entry(
+    entry: RunLogEntry,
+    *,
+    run_contexts: dict[str, dict[str, Any]],
+) -> "AgentStreamItem | None":
+    base_kwargs = _base_kwargs_with_run_context(entry, run_contexts)
+    item: AgentStreamItem | None = None
+    if isinstance(entry, MessagesRebuilt):
+        item = MessagesRebuiltEvent(
+            **base_kwargs,
+            reason=entry.reason,
+            message_count=len(entry.messages),
+        )
+    elif isinstance(entry, CompactionApplied):
+        item = CompactionAppliedEvent(
+            **base_kwargs,
+            start_sequence=entry.start_sequence,
+            end_sequence=entry.end_sequence,
+            transcript_path=entry.transcript_path,
+            summary=entry.summary,
+        )
+    elif isinstance(entry, RetrospectApplied):
+        item = RetrospectAppliedEvent(
+            **base_kwargs,
+            affected_sequences=list(entry.affected_sequences),
+            affected_step_ids=list(entry.affected_step_ids),
+            feedback=entry.feedback,
+            replacement=entry.replacement,
+            trigger=entry.trigger,
+        )
+    elif isinstance(entry, TerminationDecided):
+        item = TerminationDecidedEvent(
+            **base_kwargs,
+            termination_reason=entry.termination_reason,
+            phase=entry.phase,
+            source=entry.source,
+        )
+    elif isinstance(entry, RunRolledBack):
+        item = RunRolledBackEvent(
+            **base_kwargs,
+            start_sequence=entry.start_sequence,
+            end_sequence=entry.end_sequence,
+            reason=entry.reason,
+        )
+    elif isinstance(entry, RunFinished):
+        item = RunCompletedEvent(
+            **base_kwargs,
+            response=entry.response,
+            metrics=_run_metrics_from_dict(entry.metrics),
+            termination_reason=entry.termination_reason,
+        )
+    elif isinstance(entry, RunFailed):
+        item = RunFailedEvent(
+            **base_kwargs,
+            error=entry.error,
+        )
+    return item
+
+
 def stream_items_from_entries(entries: list[RunLogEntry]) -> list["AgentStreamItem"]:
     items: list[AgentStreamItem] = []
     run_contexts: dict[str, dict[str, Any]] = {}
@@ -276,7 +362,7 @@ def stream_items_from_entries(entries: list[RunLogEntry]) -> list["AgentStreamIt
             entry,
             (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
         ):
-            base_kwargs = _base_kwargs_from_entry(entry)
+            base_kwargs = _base_kwargs_with_run_context(entry, run_contexts)
             base_kwargs["parent_run_id"] = entry.parent_run_id
             base_kwargs["depth"] = entry.depth
             items.append(
@@ -285,84 +371,10 @@ def stream_items_from_entries(entries: list[RunLogEntry]) -> list["AgentStreamIt
                     step=_step_from_entry(entry),
                 )
             )
-        elif isinstance(entry, MessagesRebuilt):
-            base_kwargs = _base_kwargs_from_entry(entry)
-            context = run_contexts.get(entry.run_id)
-            if context is not None:
-                base_kwargs.update(context)
-            items.append(
-                MessagesRebuiltEvent(
-                    **base_kwargs,
-                    reason=entry.reason,
-                    message_count=len(entry.messages),
-                )
-            )
-        elif isinstance(entry, CompactionApplied):
-            base_kwargs = _base_kwargs_from_entry(entry)
-            context = run_contexts.get(entry.run_id)
-            if context is not None:
-                base_kwargs.update(context)
-            items.append(
-                CompactionAppliedEvent(
-                    **base_kwargs,
-                    start_sequence=entry.start_sequence,
-                    end_sequence=entry.end_sequence,
-                    transcript_path=entry.transcript_path,
-                    summary=entry.summary,
-                )
-            )
-        elif isinstance(entry, RetrospectApplied):
-            base_kwargs = _base_kwargs_from_entry(entry)
-            context = run_contexts.get(entry.run_id)
-            if context is not None:
-                base_kwargs.update(context)
-            items.append(
-                RetrospectAppliedEvent(
-                    **base_kwargs,
-                    affected_sequences=list(entry.affected_sequences),
-                    affected_step_ids=list(entry.affected_step_ids),
-                    feedback=entry.feedback,
-                    replacement=entry.replacement,
-                    trigger=entry.trigger,
-                )
-            )
-        elif isinstance(entry, TerminationDecided):
-            base_kwargs = _base_kwargs_from_entry(entry)
-            context = run_contexts.get(entry.run_id)
-            if context is not None:
-                base_kwargs.update(context)
-            items.append(
-                TerminationDecidedEvent(
-                    **base_kwargs,
-                    termination_reason=entry.termination_reason,
-                    phase=entry.phase,
-                    source=entry.source,
-                )
-            )
-        elif isinstance(entry, RunFinished):
-            base_kwargs = _base_kwargs_from_entry(entry)
-            context = run_contexts.get(entry.run_id)
-            if context is not None:
-                base_kwargs.update(context)
-            items.append(
-                RunCompletedEvent(
-                    **base_kwargs,
-                    response=entry.response,
-                    metrics=_run_metrics_from_dict(entry.metrics),
-                    termination_reason=entry.termination_reason,
-                )
-            )
-        elif isinstance(entry, RunFailed):
-            base_kwargs = _base_kwargs_from_entry(entry)
-            context = run_contexts.get(entry.run_id)
-            if context is not None:
-                base_kwargs.update(context)
-            items.append(
-                RunFailedEvent(
-                    **base_kwargs,
-                    error=entry.error,
-                )
-            )
+        else:
+            item = _stream_item_from_runtime_entry(entry, run_contexts=run_contexts)
+            if item is not None:
+                items.append(item)
     return items
 
 
@@ -374,6 +386,7 @@ AgentStreamItem: TypeAlias = (
     | CompactionAppliedEvent
     | RetrospectAppliedEvent
     | TerminationDecidedEvent
+    | RunRolledBackEvent
     | RunCompletedEvent
     | RunFailedEvent
 )
@@ -385,6 +398,7 @@ __all__ = [
     "CompactionAppliedEvent",
     "MessagesRebuiltEvent",
     "RetrospectAppliedEvent",
+    "RunRolledBackEvent",
     "RunCompletedEvent",
     "RunFailedEvent",
     "RunStartedEvent",

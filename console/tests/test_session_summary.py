@@ -6,8 +6,13 @@ from agiwo.agent import ContentPart, ContentType, UserMessage
 from agiwo.agent.models.log import RunFinished, RunStarted
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.agent.models.run import RunMetrics
+from agiwo.observability.trace import SpanStatus, Trace
+from server.config import ConsoleConfig
 from server.models.session import Session
+from server.services.runtime.run_query_service import RunQueryService
+from server.services.runtime.trace_query_service import TraceQueryService
 from server.services.runtime.session_view_service import SessionViewService
+from server.services.storage_wiring import create_trace_storage
 
 
 class FakeSessionStore:
@@ -37,6 +42,17 @@ def _make_session(session_id: str, agent_id: str = "agent-a") -> Session:
         created_at=now,
         updated_at=now,
     )
+
+
+def _make_trace_query_service() -> TraceQueryService:
+    config = ConsoleConfig(
+        storage={
+            "run_log_type": "memory",
+            "trace_type": "memory",
+            "metadata_type": "memory",
+        }
+    )
+    return TraceQueryService(trace_storage=create_trace_storage(config))
 
 
 async def _append_run_view_entries(
@@ -97,7 +113,8 @@ async def test_list_sessions_returns_summary_with_latest_run() -> None:
     )
 
     service = SessionViewService(
-        run_storage=storage,
+        run_queries=RunQueryService(run_storage=storage),
+        trace_queries=_make_trace_query_service(),
         session_store=store,
         scheduler=None,
     )
@@ -138,9 +155,20 @@ async def test_get_session_detail_populates_metrics() -> None:
         response="world",
         metrics=metrics,
     )
+    trace_queries = _make_trace_query_service()
+    await trace_queries.trace_storage.save_trace(
+        Trace(
+            trace_id="trace-1",
+            agent_id="agent-a",
+            session_id="sess-1",
+            status=SpanStatus.OK,
+            total_tokens=15,
+        )
+    )
 
     service = SessionViewService(
-        run_storage=storage,
+        run_queries=RunQueryService(run_storage=storage),
+        trace_queries=trace_queries,
         session_store=store,
         scheduler=None,
     )
@@ -153,6 +181,9 @@ async def test_get_session_detail_populates_metrics() -> None:
     assert detail.summary.metrics.token_cost == pytest.approx(0.01)
     assert detail.session is not None
     assert detail.session.id == "sess-1"
+    assert detail.observability is not None
+    assert len(detail.observability.recent_traces) == 1
+    assert detail.observability.recent_traces[0].trace_id == "trace-1"
 
 
 @pytest.mark.asyncio
@@ -161,7 +192,8 @@ async def test_get_session_detail_returns_none_for_missing() -> None:
     storage = InMemoryRunLogStorage()
 
     service = SessionViewService(
-        run_storage=storage,
+        run_queries=RunQueryService(run_storage=storage),
+        trace_queries=_make_trace_query_service(),
         session_store=store,
         scheduler=None,
     )

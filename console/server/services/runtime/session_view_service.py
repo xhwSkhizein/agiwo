@@ -1,30 +1,37 @@
-"""Console session read models assembled from storage and scheduler state."""
+"""Console session read models assembled from the run query facade and scheduler."""
 
-from agiwo.agent import RunLogStorage, RunView
-from agiwo.agent.models.input import UserMessage
+from agiwo.agent import RuntimeDecisionState
+from agiwo.agent import RunView
 from agiwo.scheduler.engine import Scheduler
+from agiwo.agent.models.input import UserMessage
 
 from server.models.metrics import RunMetricsSummary
 from server.models.session import (
     ChannelChatContext,
     ChannelChatSessionStore,
     PageSlice,
+    RuntimeDecisionRecord,
     Session,
     SessionDetailRecord,
+    SessionObservabilityRecord,
     SessionSummaryRecord,
 )
 from server.services.metrics import add_run_to_summary
+from server.services.runtime.run_query_service import RunQueryService
+from server.services.runtime.trace_query_service import TraceQueryService
 
 
 class SessionViewService:
     def __init__(
         self,
         *,
-        run_storage: RunLogStorage,
+        run_queries: RunQueryService,
+        trace_queries: TraceQueryService,
         session_store: ChannelChatSessionStore | None,
         scheduler: Scheduler | None,
     ) -> None:
-        self._run_storage = run_storage
+        self._run_queries = run_queries
+        self._trace_queries = trace_queries
         self._session_store = session_store
         self._scheduler = scheduler
 
@@ -72,19 +79,17 @@ class SessionViewService:
         if session is None:
             return None
 
-        stats = await self._run_storage.get_session_run_stats(session_id)
-        metrics = RunMetricsSummary()
-        for run in stats.run_views:
-            add_run_to_summary(metrics, run)
+        stats = await self._run_queries.get_session_run_snapshot(session_id)
+        metrics = self._build_metrics_summary(stats.run_views)
+        scheduler_state = await self._get_scheduler_state(session_id)
         summary = self._assemble_summary(
             session,
             last_run=stats.run_views[0] if stats.run_views else None,
             run_count=len(stats.run_views),
             step_count=stats.committed_step_count,
-            root_state_status=await self._get_root_state_status(session_id),
+            root_state_status=self._root_state_status(scheduler_state),
             metrics=metrics,
         )
-        scheduler_state = await self._get_scheduler_state(session_id)
         chat_context = await self._get_chat_context(session)
 
         return SessionDetailRecord(
@@ -92,19 +97,25 @@ class SessionViewService:
             session=session,
             chat_context=chat_context,
             scheduler_state=scheduler_state,
+            observability=await self._build_observability(
+                session_id=session_id,
+                runtime_decisions=stats.runtime_decisions,
+            ),
         )
 
     # -- Internal helpers ------------------------------------------------------
 
+    @staticmethod
+    def _build_metrics_summary(run_views: list[RunView]) -> RunMetricsSummary:
+        metrics = RunMetricsSummary()
+        for run in run_views:
+            add_run_to_summary(metrics, run)
+        return metrics
+
     async def _batch_fetch_summaries(
         self, session_ids: list[str]
     ) -> tuple[dict[str, int], dict[str, int], dict[str, RunView | None]]:
-        run_counts = await self._run_storage.batch_count_run_views(session_ids)
-        step_counts = await self._run_storage.batch_get_committed_step_counts(
-            session_ids
-        )
-        latest_runs = await self._run_storage.batch_get_latest_run_views(session_ids)
-        return run_counts, step_counts, latest_runs
+        return await self._run_queries.batch_get_session_summaries(session_ids)
 
     @staticmethod
     def _assemble_summary(
@@ -173,8 +184,123 @@ class SessionViewService:
         if self._scheduler is None:
             return None
         state = await self._scheduler.get_state(session_id)
+        return self._root_state_status(state)
+
+    @staticmethod
+    def _root_state_status(state) -> str | None:
         if state is None:
             return None
         return (
             state.status.value if hasattr(state.status, "value") else str(state.status)
         )
+
+    async def _build_observability(
+        self,
+        *,
+        session_id: str,
+        runtime_decisions: RuntimeDecisionState,
+    ) -> SessionObservabilityRecord:
+        return SessionObservabilityRecord(
+            recent_traces=await self._trace_queries.list_session_recent_traces(
+                session_id
+            ),
+            decision_events=self._build_runtime_decision_records(runtime_decisions),
+        )
+
+    @staticmethod
+    def _build_runtime_decision_records(
+        runtime_decisions: RuntimeDecisionState,
+    ) -> list[RuntimeDecisionRecord]:
+        decisions: list[RuntimeDecisionRecord] = []
+
+        if runtime_decisions.latest_termination is not None:
+            decision = runtime_decisions.latest_termination
+            decisions.append(
+                RuntimeDecisionRecord(
+                    kind="termination",
+                    sequence=decision.sequence,
+                    run_id=decision.run_id,
+                    agent_id=decision.agent_id,
+                    created_at=decision.created_at,
+                    summary=f"{decision.reason.value} via {decision.source}",
+                    details={
+                        "reason": decision.reason.value,
+                        "phase": decision.phase,
+                        "source": decision.source,
+                    },
+                )
+            )
+
+        if runtime_decisions.latest_compaction is not None:
+            decision = runtime_decisions.latest_compaction
+            decisions.append(
+                RuntimeDecisionRecord(
+                    kind="compaction",
+                    sequence=decision.sequence,
+                    run_id=decision.run_id,
+                    agent_id=decision.agent_id,
+                    created_at=decision.created_at,
+                    summary=(
+                        f"seq {decision.metadata.start_seq}-{decision.metadata.end_seq} "
+                        f"{decision.metadata.before_token_estimate} -> "
+                        f"{decision.metadata.after_token_estimate} tokens"
+                    ),
+                    details={
+                        "start_sequence": decision.metadata.start_seq,
+                        "end_sequence": decision.metadata.end_seq,
+                        "before_token_estimate": decision.metadata.before_token_estimate,
+                        "after_token_estimate": decision.metadata.after_token_estimate,
+                        "message_count": decision.metadata.message_count,
+                        "summary": decision.summary,
+                    },
+                )
+            )
+
+        if runtime_decisions.latest_retrospect is not None:
+            decision = runtime_decisions.latest_retrospect
+            decisions.append(
+                RuntimeDecisionRecord(
+                    kind="retrospect",
+                    sequence=decision.sequence,
+                    run_id=decision.run_id,
+                    agent_id=decision.agent_id,
+                    created_at=decision.created_at,
+                    summary=(
+                        f"{len(decision.affected_step_ids)} steps / "
+                        f"{len(decision.affected_sequences)} sequences revised"
+                    ),
+                    details={
+                        "trigger": decision.trigger,
+                        "feedback": decision.feedback,
+                        "replacement": decision.replacement,
+                        "affected_step_ids": list(decision.affected_step_ids),
+                        "affected_sequences": list(decision.affected_sequences),
+                    },
+                )
+            )
+
+        if runtime_decisions.latest_rollback is not None:
+            decision = runtime_decisions.latest_rollback
+            decisions.append(
+                RuntimeDecisionRecord(
+                    kind="rollback",
+                    sequence=decision.sequence,
+                    run_id=decision.run_id,
+                    agent_id=decision.agent_id,
+                    created_at=decision.created_at,
+                    summary=(
+                        f"seq {decision.start_sequence}-{decision.end_sequence} hidden"
+                    ),
+                    details={
+                        "start_sequence": decision.start_sequence,
+                        "end_sequence": decision.end_sequence,
+                        "reason": decision.reason,
+                    },
+                )
+            )
+
+        decisions.sort(
+            key=lambda item: (item.created_at, item.sequence),
+            reverse=True,
+        )
+        return decisions

@@ -11,6 +11,7 @@ from agiwo.scheduler.models import (
     TimeUnit,
 )
 from agiwo.scheduler.engine import Scheduler
+from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.store.base import AgentStateStorage
 
 __all__ = [
@@ -20,6 +21,7 @@ __all__ = [
     "AgentStateStorageConfig",
     "Scheduler",
     "SchedulerConfig",
+    "SchedulerRuntimeFacts",
     "TaskGuard",
     "TaskLimits",
     "TimeUnit",

@@ -11,6 +11,25 @@
 
 本文档整理当前问题、根因分析，以及推荐的重构方向。
 
+## 当前落地状态（2026-04-22）
+
+Phase 1、Phase 2、Phase 3 已完成。当前已经落地的运行时语义有：
+
+- agent 的 canonical 运行记录已经统一为 append-only `RunLog`
+- scheduler 的 periodic `no_progress` rollback 不再删除 steps，而是追加 `RunRolledBack` fact，并由 replay 默认隐藏该范围内的 steps
+- scheduler 侧的 `wait_for()`、child result summary、`query_spawned_agent`、`list_agents` 开始优先读取 replayed runtime facts（`RunView` / `StepView`），`AgentState.last_run_result` 仅在 runtime agent 已销毁时作为 fallback
+- `termination`、`compaction`、`retrospect` 与 rollback 的最新决策态已经有稳定的 replay 读模型，不需要 scheduler/console 直接扫描 raw `RunLog` entry families
+- console 的 run/session/step 查询已经统一收口到 `RunLog`-backed `RunQueryService`
+- session summary/detail 与 timeline endpoints 共享同一套 query facade，而不是在 router 中直接操作 `run_log_storage`
+- console 侧 canonical agent 构造已经改成显式 `materialize_agent(...)` 命名，session runtime cache / persistent state create / resume 路径统一复用这条入口
+
+因此，本文后续的“推荐方案”里，凡是提到运行记录、rollback、terminal 读取的地方，应以当前 `RunLog + SchedulerRuntimeFacts` 实现为准。
+
+当前 hardening 结论：
+
+- 旧文档里的 `TimelineView` 说法已经不再作为目标接口；实际稳定读面是 `RunView`、`StepView`、replayed `AgentStreamItem` 与 runtime-decision views
+- 剩余优化主要集中在查询一致性验证与局部维护性收口，而不是重新设计 runtime 架构
+
 ## 当前实现概览
 
 当前 Console 和 Scheduler 的协作大致如下：

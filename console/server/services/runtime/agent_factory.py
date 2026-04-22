@@ -74,7 +74,7 @@ def build_model(config: AgentConfigRecord) -> Model:
     )
 
 
-async def build_agent(
+async def materialize_agent(
     config: AgentConfigRecord,
     console_config: ConsoleConfig,
     registry: AgentRegistry,
@@ -115,7 +115,7 @@ async def build_agent(
                 child_config = await registry.get_agent(ref.agent_id)
                 if child_config is None:
                     continue
-                child_agent = await build_agent(
+                child_agent = await materialize_agent(
                     child_config,
                     console_config,
                     registry,
@@ -132,7 +132,7 @@ async def build_agent(
         allowed_tools=config.allowed_tools,
     )
     logger.info(
-        "build_agent",
+        "materialize_agent",
         agent=config.id,
         allowed_tools=config.allowed_tools,
         extra_tools=[t.name for t in agent_tools],
@@ -158,7 +158,7 @@ async def rehydrate_agent(
             f"config '{config_id}' not found in registry"
         )
 
-    return await build_agent(
+    return await materialize_agent(
         config,
         console_config,
         registry,

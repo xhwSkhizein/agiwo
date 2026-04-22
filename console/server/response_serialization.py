@@ -20,8 +20,10 @@ from agiwo.scheduler.models import (
 from server.models.metrics import RunMetricsSummary
 from server.models.session import (
     ChannelChatContext,
+    RuntimeDecisionRecord,
     Session,
     SessionDetailRecord,
+    SessionObservabilityRecord,
     SessionSummaryRecord,
 )
 from server.models.view import (
@@ -31,11 +33,13 @@ from server.models.view import (
     PendingEventResponse,
     RunMetricsResponse,
     RunResponse,
+    RuntimeDecisionResponse,
     SchedulerTreeNodeResponse,
     SchedulerRunResultResponse,
     SchedulerTreeResponse,
     SchedulerTreeStatsResponse,
     SessionDetailResponse,
+    SessionObservabilityResponse,
     SessionRecordResponse,
     SessionSummaryResponse,
     SpanResponse,
@@ -170,6 +174,34 @@ def session_summary_response_from_record(
     )
 
 
+def runtime_decision_response_from_record(
+    decision: RuntimeDecisionRecord,
+) -> RuntimeDecisionResponse:
+    return RuntimeDecisionResponse(
+        kind=decision.kind,
+        sequence=decision.sequence,
+        run_id=decision.run_id,
+        agent_id=decision.agent_id,
+        created_at=decision.created_at.isoformat(),
+        summary=decision.summary,
+        details=dict(decision.details),
+    )
+
+
+def session_observability_response_from_record(
+    observability: SessionObservabilityRecord,
+) -> SessionObservabilityResponse:
+    return SessionObservabilityResponse(
+        recent_traces=[
+            trace_list_item_from_sdk(trace) for trace in observability.recent_traces
+        ],
+        decision_events=[
+            runtime_decision_response_from_record(decision)
+            for decision in observability.decision_events
+        ],
+    )
+
+
 def session_detail_response_from_record(
     detail: SessionDetailRecord,
 ) -> SessionDetailResponse:
@@ -188,6 +220,11 @@ def session_detail_response_from_record(
         scheduler_state=(
             agent_state_response_from_sdk(detail.scheduler_state)
             if detail.scheduler_state is not None
+            else None
+        ),
+        observability=(
+            session_observability_response_from_record(detail.observability)
+            if detail.observability is not None
             else None
         ),
     )

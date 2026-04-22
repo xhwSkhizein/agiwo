@@ -19,6 +19,7 @@ class RunLogEntryKind(str, Enum):
     RUN_STARTED = "run_started"
     RUN_FINISHED = "run_finished"
     RUN_FAILED = "run_failed"
+    RUN_ROLLED_BACK = "run_rolled_back"
     CONTEXT_ASSEMBLED = "context_assembled"
     MESSAGES_REBUILT = "messages_rebuilt"
     LLM_CALL_STARTED = "llm_call_started"
@@ -64,6 +65,14 @@ class RunFinished(RunLogEntry):
 class RunFailed(RunLogEntry):
     error: str
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_FAILED)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunRolledBack(RunLogEntry):
+    start_sequence: int
+    end_sequence: int
+    reason: str
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_ROLLED_BACK)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -252,6 +261,7 @@ __all__ = [
     "LLMCallStarted",
     "MessagesRebuilt",
     "RetrospectApplied",
+    "RunRolledBack",
     "StepCondensedContentUpdated",
     "RunFailed",
     "RunFinished",

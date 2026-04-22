@@ -14,7 +14,9 @@ from agiwo.agent import RunCompletedEvent, TerminationReason
 from agiwo.agent import HookPhase, HookRegistry, transform
 from agiwo.agent import ChannelContext, ContentPart, ContentType
 from agiwo.agent import build_committed_step_entry
+from agiwo.agent import RunFinished, RunStarted
 from agiwo.agent.models.step import MessageRole, StepView, UserMessage
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.scheduler._tick import propagate_signals
@@ -960,6 +962,61 @@ class TestSchedulerQueuedMailbox:
 
         assert result.termination_reason == TerminationReason.CANCELLED
         assert result.error == "cancelled by user"
+        await scheduler.stop()
+
+    @pytest.mark.asyncio
+    async def test_wait_for_prefers_runtime_run_view_when_runtime_agent_exists(self):
+        scheduler = Scheduler(_fast_config())
+        storage = InMemoryRunLogStorage()
+
+        class RuntimeAgentStub:
+            def __init__(self, run_log_storage):
+                self.run_log_storage = run_log_storage
+
+            async def close(self):
+                return None
+
+        scheduler._rt.agents["root"] = RuntimeAgentStub(storage)
+        await storage.append_entries(
+            [
+                RunStarted(
+                    sequence=1,
+                    session_id="sess",
+                    run_id="run-1",
+                    agent_id="root",
+                    user_input="initial",
+                ),
+                RunFinished(
+                    sequence=2,
+                    session_id="sess",
+                    run_id="run-1",
+                    agent_id="root",
+                    response="fresh response",
+                    termination_reason=TerminationReason.COMPLETED,
+                ),
+            ]
+        )
+        await scheduler._store.save_state(
+            AgentState(
+                id="root",
+                session_id="sess",
+                status=AgentStateStatus.IDLE,
+                task="initial",
+                is_persistent=True,
+                result_summary="stale summary",
+                last_run_result=SchedulerRunResult(
+                    run_id="run-old",
+                    termination_reason=TerminationReason.COMPLETED,
+                    summary="stale summary",
+                ),
+            )
+        )
+
+        result = await scheduler.wait_for("root", timeout=_TEST_RUN_TIMEOUT)
+
+        assert result.run_id == "run-1"
+        assert result.response == "fresh response"
+        assert result.termination_reason == TerminationReason.COMPLETED
         await scheduler.stop()
 
     @pytest.mark.asyncio

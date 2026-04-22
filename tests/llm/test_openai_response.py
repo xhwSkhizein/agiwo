@@ -11,6 +11,8 @@ from agiwo.llm.openai_response_converter import (
     convert_tools_to_responses_tools,
     split_system_instructions,
 )
+from agiwo.tool.builtin.web_reader.web_reader_tool import WebReaderTool
+from agiwo.tool.storage.citation import CitationStoreConfig
 
 
 def _event(event_type: str, **kwargs):
@@ -64,6 +66,18 @@ class _MockHTTPXResponse:
             yield line
 
 
+def _collect_keys(payload: object) -> set[str]:
+    keys: set[str] = set()
+    if isinstance(payload, dict):
+        keys.update(payload.keys())
+        for value in payload.values():
+            keys.update(_collect_keys(value))
+    elif isinstance(payload, list):
+        for item in payload:
+            keys.update(_collect_keys(item))
+    return keys
+
+
 def test_split_system_instructions_collects_system_messages() -> None:
     instructions, remaining = split_system_instructions(
         [
@@ -107,13 +121,92 @@ def test_convert_messages_to_responses_input_maps_user_assistant_tool_flow() -> 
     }
     assert items[1]["type"] == "function_call"
     assert items[1]["call_id"] == "call_123"
+    assert "id" not in items[1]
+    assert "status" not in items[1]
     assert items[2]["type"] == "function_call_output"
     assert items[2]["call_id"] == "call_123"
+    assert "id" not in items[2]
+    assert "status" not in items[2]
     assert items[3]["type"] == "message"
     assert items[3]["role"] == "assistant"
-    assert items[3]["content"] == [
-        {"type": "output_text", "text": "It is 21C.", "annotations": []}
+    assert "id" not in items[3]
+    assert "status" not in items[3]
+    assert items[3]["content"] == [{"type": "output_text", "text": "It is 21C."}]
+
+
+def test_convert_messages_to_responses_input_multi_turn_history_stays_compatible() -> (
+    None
+):
+    items = convert_messages_to_responses_input(
+        [
+            {"role": "user", "content": "first"},
+            {
+                "role": "assistant",
+                "content": "ack",
+                "id": "resp_1",
+                "status": "completed",
+                "annotations": [{"type": "citation"}],
+            },
+            {"role": "user", "content": "use tool"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "weather_lookup",
+                            "arguments": {"city": "Paris"},
+                        },
+                    }
+                ],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": {"temp_c": 21}},
+            {
+                "role": "assistant",
+                "content": "done",
+                "id": "resp_2",
+                "status": "completed",
+                "annotations": [],
+            },
+        ]
+    )
+
+    assert [item["type"] for item in items] == [
+        "message",
+        "message",
+        "message",
+        "function_call",
+        "function_call_output",
+        "message",
     ]
+    assert items[1] == {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "ack"}],
+    }
+    assert items[3] == {
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "weather_lookup",
+        "arguments": '{"city": "Paris"}',
+    }
+    assert items[4] == {
+        "type": "function_call_output",
+        "call_id": "call_1",
+        "output": '{"temp_c": 21}',
+    }
+    assert items[5] == {
+        "type": "message",
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "done"}],
+    }
+
+    all_keys = _collect_keys(items)
+    assert "id" not in all_keys
+    assert "status" not in all_keys
+    assert "annotations" not in all_keys
 
 
 def test_convert_tools_to_responses_tools_flattens_function_schema() -> None:
@@ -144,6 +237,77 @@ def test_convert_tools_to_responses_tools_flattens_function_schema() -> None:
             },
         }
     ]
+
+
+def test_build_params_multi_turn_payload_matches_provider_compatible_shape() -> None:
+    model = OpenAIResponsesModel(
+        id="gpt-5.4",
+        name="gpt-5.4",
+        api_key="test-key",
+        base_url="https://example.test/v1",
+    )
+    web_reader_tool = WebReaderTool(
+        citation_store_config=CitationStoreConfig(storage_type="memory")
+    )
+
+    params = model._build_params(
+        messages=[
+            {"role": "system", "content": "system instructions"},
+            {"role": "user", "content": "first"},
+            {
+                "role": "assistant",
+                "content": "ack",
+                "id": "resp_1",
+                "status": "completed",
+                "annotations": [{"type": "citation"}],
+            },
+            {"role": "user", "content": "use tool"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "web_reader",
+                            "arguments": '{"url":"https://example.com"}',
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "body",
+            },
+        ],
+        tools=[web_reader_tool.to_openai_schema()],
+    )
+
+    assert params["instructions"] == "system instructions"
+    assert [item["type"] for item in params["input"]] == [
+        "message",
+        "message",
+        "message",
+        "function_call",
+        "function_call_output",
+    ]
+    input_keys = _collect_keys(params["input"])
+    assert "id" not in input_keys
+    assert "status" not in input_keys
+    assert "annotations" not in input_keys
+
+    assert params["tools"] == [
+        {
+            "type": "function",
+            "name": "web_reader",
+            "description": web_reader_tool.description,
+            "parameters": web_reader_tool.get_parameters(),
+        }
+    ]
+    tool_keys = _collect_keys(params["tools"])
+    assert "oneOf" not in tool_keys
 
 
 def test_convert_messages_to_responses_input_rejects_unknown_role() -> None:

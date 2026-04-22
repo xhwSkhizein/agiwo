@@ -2,7 +2,7 @@
 
 **Goal:** Rebuild the core `agiwo.agent` runtime so that execution flow is easier to reason about, hooks are deterministic and robust, runtime facts have a single source of truth, and later scheduler/console migrations can build on a cleaner runtime protocol without preserving legacy internals.
 
-**Architecture:** Replace the current `run_loop + Run + StepRecord + AgentHooks` execution model with a `RunEngine` centered runtime. The new runtime writes strongly typed `RunLog` entries as the only persisted source of truth. `termination`, `compaction`, and `retrospect` are first-class runtime decisions. `trace` and `stream` are replayable views built from `RunLog`, not peer decision layers.
+**Architecture:** Replace the current `run_loop + Run + StepRecord + AgentHooks` execution model with a `RunEngine` centered runtime. In the shipped code, `RunEngine` maps to `RunLoopOrchestrator` as the canonical runtime-facing name. The new runtime writes strongly typed `RunLog` entries as the only persisted source of truth. `termination`, `compaction`, and `retrospect` are first-class runtime decisions. `trace` and `stream` are replayable views built from `RunLog`, not peer decision layers.
 
 **Tech Stack:** Python 3.10+, existing `Model` and `BaseTool` abstractions, existing scheduler/console integration surfaces, new `RunLogStorage` facade replacing `RunStepStorage`
 
@@ -401,9 +401,10 @@ The intended public read models are:
 
 1. `RunView`
 2. `StepView`
-3. `TimelineView`
-4. `RunMetrics`
-5. `RunOutput`
+3. replayed `AgentStreamItem`
+4. explicit runtime-decision views for latest `termination`, `compaction`, `retrospect`, and rollback state
+5. `RunMetrics`
+6. `RunOutput`
 
 Console and scheduler should consume these views through a stable facade rather than learn `RunLog` layout details themselves.
 
@@ -456,6 +457,13 @@ It includes:
 7. deleting `StepRecord`
 8. deleting `AgentHooks`
 9. moving trace and stream publication to `RunLog`-driven builders
+
+Implementation mapping:
+
+- `RunEngine` maps to the shipped `RunLoopOrchestrator`
+- `HookDispatcher` maps to `agiwo.agent.hooks.HookRegistry`
+- `RunLogWriter` maps to `SessionRuntime.append_run_log_entries(...)` plus typed entry builders
+- the shipped stable read surface is `RunView`, `StepView`, replayed `AgentStreamItem`, and runtime-decision views, not a separate `TimelineView`
 
 Completion criteria:
 

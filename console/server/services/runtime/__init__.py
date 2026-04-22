@@ -5,9 +5,9 @@ from server.services.runtime.agent_factory import (
     PersistentAgentResumeError,
     PersistentAgentValidationError,
     agent_options_input_to_agent_options,
-    build_agent,
     build_default_agent_record,
     build_model,
+    materialize_agent,
     rehydrate_agent,
     resume_persistent_agent,
 )
@@ -22,6 +22,11 @@ from server.services.runtime.scheduler_tree_view_service import (
     SchedulerTreeValidationError,
     SchedulerTreeViewService,
 )
+from server.services.runtime.run_query_service import (
+    RunQueryService,
+    SessionRunSnapshot,
+)
+from server.services.runtime.trace_query_service import TraceQueryService
 from server.services.runtime.session_runtime_service import SessionRuntimeService
 from server.services.runtime.session_service import (
     SessionContextResolution,
@@ -35,9 +40,12 @@ __all__ = [
     "PersistentAgentNotFoundError",
     "PersistentAgentResumeError",
     "PersistentAgentValidationError",
+    "RunQueryService",
     "SessionContextResolution",
     "SessionContextService",
+    "SessionRunSnapshot",
     "SessionRuntimeService",
+    "TraceQueryService",
     "SchedulerTreeError",
     "SchedulerTreeNotFoundError",
     "SchedulerTreeTooLargeError",
@@ -45,9 +53,9 @@ __all__ = [
     "SchedulerTreeViewService",
     "SessionViewService",
     "agent_options_input_to_agent_options",
-    "build_agent",
     "build_default_agent_record",
     "build_model",
+    "materialize_agent",
     "rehydrate_agent",
     "resume_persistent_agent",
 ]

@@ -1,9 +1,11 @@
 """Single-run execution engine — the core run loop."""
 
 import asyncio
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from agiwo.agent.compaction import CompactResult, compact_if_needed
+from agiwo.agent.run_bootstrap import prepare_run_context
+from agiwo.agent.run_tool_batch import execute_tool_batch_cycle
 from agiwo.agent.runtime.context import RunContext
 
 
@@ -22,10 +24,9 @@ def increment_compaction_failure(context: RunContext) -> int:
 
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import HookRegistration, HookRegistry
-from agiwo.agent.models.input import UserInput, UserMessage
+from agiwo.agent.models.input import UserInput
 from agiwo.agent.llm_caller import stream_assistant_step
-from agiwo.agent.models.run import MemoryRecord
-from agiwo.agent.prompt import apply_steering_messages, assemble_run_messages
+from agiwo.agent.prompt import apply_steering_messages
 from agiwo.agent.models.run import (
     RunMetrics,
     RunOutput,
@@ -37,26 +38,19 @@ from agiwo.agent.models.step import (
 )
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.state_ops import (
-    record_compaction_metadata,
     replace_messages,
-    set_tool_schemas,
     set_termination_reason,
 )
 from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.agent.runtime.state_writer import (
-    build_context_assembled_entry,
     build_llm_call_completed_entry,
     build_llm_call_started_entry,
-    build_messages_rebuilt_entry,
     build_run_failed_entry,
     build_run_finished_entry,
     build_run_started_entry,
-    build_retrospect_applied_entry,
     build_termination_decided_entry,
 )
 from agiwo.agent.models.stream import (
-    MessagesRebuiltEvent,
-    RetrospectAppliedEvent,
     RunCompletedEvent,
     RunFailedEvent,
     RunStartedEvent,
@@ -67,7 +61,6 @@ from agiwo.agent.termination.limits import (
     check_post_llm_limits,
 )
 from agiwo.agent.termination.summarizer import maybe_generate_termination_summary
-from agiwo.agent.tool_executor import execute_tool_batch
 from agiwo.tool.base import BaseTool
 from agiwo.config.settings import settings
 from agiwo.llm.base import Model
@@ -76,7 +69,6 @@ from agiwo.llm.limits import (
     resolve_max_input_tokens_per_call,
 )
 from agiwo.utils.abort_signal import AbortSignal
-from agiwo.agent.retrospect import RetrospectBatch
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -104,8 +96,10 @@ class RunLoopOrchestrator:
         await self._start_run(user_input)
 
         # Prepare run context after the run has a persisted identity.
-        user_step, compact_start_seq = await self._prepare_run_context(
-            user_input,
+        bootstrap = await prepare_run_context(
+            context=self.context,
+            runtime=self.runtime,
+            user_input=user_input,
             system_prompt=system_prompt,
         )
 
@@ -113,13 +107,13 @@ class RunLoopOrchestrator:
             # Commit user step
             await commit_step(
                 self.context,
-                user_step,
+                bootstrap.user_step,
                 append_message=False,
                 track_state=False,
             )
 
             # Execute the main loop
-            self.runtime.compact_start_seq = compact_start_seq
+            self.runtime.compact_start_seq = bootstrap.compact_start_seq
             await self._run_loop(pending_tool_calls=pending_tool_calls)
 
             # Finalize and return result
@@ -237,79 +231,6 @@ class RunLoopOrchestrator:
                 source=source,
             )
         )
-
-    async def _prepare_run_context(
-        self,
-        user_input: UserInput,
-        system_prompt: str,
-    ) -> tuple[StepView, int]:
-        """Build all state needed before the main loop starts."""
-        tools_map = self.runtime.tools_map
-        tool_schemas = [
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.get_definition().name,
-                    "description": tool.get_definition().description,
-                    "parameters": tool.get_definition().parameters,
-                },
-            }
-            for tool in tools_map.values()
-        ] or None
-
-        before_run_hook_result = None
-        before_run_hook_result = await self.context.hooks.before_run(
-            user_input, self.context
-        )
-        memories: list[MemoryRecord] = []
-        if user_input is not None:
-            memories = await self.context.hooks.memory_retrieve(
-                user_input, self.context
-            )
-
-        run_log_storage = self.context.session_runtime.run_log_storage
-        user_step = StepView.user(
-            self.context,
-            sequence=await self.context.session_runtime.allocate_sequence(),
-            user_input=user_input,
-        )
-        self.context.ledger.run_start_seq = user_step.sequence
-        last_compact = await self.context.session_runtime.get_latest_compact_metadata(
-            self.context.agent_id
-        )
-        compact_start_seq = last_compact.end_seq + 1 if last_compact is not None else 0
-        existing_steps = await run_log_storage.list_step_views(
-            session_id=self.context.session_id,
-            agent_id=self.context.agent_id,
-            start_seq=compact_start_seq if compact_start_seq > 0 else None,
-        )
-        existing_steps.append(user_step)
-        existing_steps.sort(key=lambda step: step.sequence)
-        user_message = UserMessage.from_value(user_input)
-        replace_messages(
-            self.context,
-            assemble_run_messages(
-                system_prompt,
-                existing_steps,
-                memories,
-                before_run_hook_result,
-                channel_context=user_message.context,
-            ),
-        )
-        await self.context.session_runtime.append_run_log_entries(
-            [
-                build_context_assembled_entry(
-                    self.context,
-                    sequence=await self.context.session_runtime.allocate_sequence(),
-                    messages=self.context.snapshot_messages(),
-                    memory_count=len(memories),
-                )
-            ]
-        )
-        set_tool_schemas(self.context, tool_schemas)
-        record_compaction_metadata(self.context, last_compact)
-
-        return user_step, compact_start_seq
 
     async def _finalize_run(self, user_input: UserInput) -> RunOutput:
         """Generate summary, build output, and complete the run."""
@@ -528,90 +449,26 @@ class RunLoopOrchestrator:
 
     async def _execute_tool_calls(
         self,
-        tool_calls: list[dict[str, Any]],
+        tool_calls: list[dict[str, object]],
     ) -> bool:
         """Execute a batch of tool calls."""
-        tool_results = await execute_tool_batch(
-            tool_calls,
-            tools_map=self.runtime.tools_map,
+
+        async def _set_tool_termination(
+            reason: TerminationReason,
+            source: str,
+        ) -> None:
+            await self._set_termination_reason(
+                reason,
+                phase="tool_result",
+                source=source,
+            )
+
+        return await execute_tool_batch_cycle(
             context=self.context,
-            abort_signal=self.runtime.abort_signal,
+            runtime=self.runtime,
+            tool_calls=tool_calls,
+            set_termination_reason=_set_tool_termination,
         )
-        terminated = False
-        batch = RetrospectBatch(self.context, self.runtime.tools_map)
-
-        for result in tool_results:
-            call_id = result.tool_call_id or ""
-
-            await self.context.hooks.after_tool_call(
-                call_id,
-                result.tool_name,
-                result.input_args or {},
-                result,
-                self.context,
-            )
-
-            content = batch.process_result(result)
-
-            tool_step = StepView.tool(
-                self.context,
-                sequence=await self.context.session_runtime.allocate_sequence(),
-                tool_call_id=call_id,
-                name=result.tool_name,
-                content=content,
-                content_for_user=result.content_for_user,
-                is_error=not result.is_success,
-            )
-            batch.register_step(call_id, tool_step.id, tool_step.sequence)
-            await commit_step(self.context, tool_step)
-
-            if not terminated and result.termination_reason is not None:
-                await self._set_termination_reason(
-                    result.termination_reason,
-                    phase="tool_result",
-                    source=result.tool_name,
-                )
-                terminated = True
-
-        outcome = await batch.finalize()
-        if outcome.applied:
-            replace_messages(self.context, outcome.messages)
-            rebuilt_entry = build_messages_rebuilt_entry(
-                self.context,
-                sequence=await self.context.session_runtime.allocate_sequence(),
-                reason="retrospect",
-                messages=self.context.snapshot_messages(),
-            )
-            retrospect_entry = build_retrospect_applied_entry(
-                self.context,
-                sequence=await self.context.session_runtime.allocate_sequence(),
-                affected_sequences=outcome.affected_sequences,
-                affected_step_ids=outcome.affected_step_ids,
-                feedback=outcome.feedback,
-                replacement=outcome.replacement,
-            )
-            await self.context.session_runtime.append_run_log_entries(
-                [rebuilt_entry, retrospect_entry]
-            )
-            await self.context.session_runtime.publish(
-                MessagesRebuiltEvent.from_context(
-                    self.context,
-                    reason="retrospect",
-                    message_count=len(self.context.snapshot_messages()),
-                )
-            )
-            await self.context.session_runtime.publish(
-                RetrospectAppliedEvent.from_context(
-                    self.context,
-                    affected_sequences=outcome.affected_sequences,
-                    affected_step_ids=outcome.affected_step_ids,
-                    feedback=outcome.feedback,
-                    replacement=outcome.replacement,
-                    trigger=None,
-                )
-            )
-
-        return terminated or self.context.is_terminal
 
 
 async def execute_run(

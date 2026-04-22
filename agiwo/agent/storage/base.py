@@ -8,14 +8,17 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
     RunLogEntry,
+    RunRolledBack,
     StepCondensedContentUpdated,
     ToolStepCommitted,
     UserStepCommitted,
     build_compact_metadata_from_entry,
 )
+from agiwo.agent.models.runtime_decision import RuntimeDecisionState
 from agiwo.agent.models.run import CompactMetadata, RunView
 from agiwo.agent.models.step import StepView
 from agiwo.agent.storage.serialization import (
+    build_runtime_decision_state_from_entries,
     build_run_view_from_entries,
     build_run_views_from_entries,
     build_step_views_from_entries,
@@ -80,6 +83,17 @@ class RunLogStorage(ABC):
             run_views=run_views,
         )
 
+    @abstractmethod
+    async def get_runtime_decision_state(
+        self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> RuntimeDecisionState:
+        """Return the latest replayed runtime decision state for the filter."""
+        ...
+
     async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
         result: dict[str, int] = {}
         for session_id in session_ids:
@@ -104,10 +118,10 @@ class RunLogStorage(ABC):
     async def batch_get_committed_step_counts(
         self, session_ids: list[str]
     ) -> dict[str, int]:
-        result: dict[str, int] = {}
-        for session_id in session_ids:
-            result[session_id] = await self.get_committed_step_count(session_id)
-        return result
+        return {
+            session_id: await self.get_committed_step_count(session_id)
+            for session_id in session_ids
+        }
 
     @abstractmethod
     async def list_step_views(
@@ -118,10 +132,36 @@ class RunLogStorage(ABC):
         end_seq: int | None = None,
         run_id: str | None = None,
         agent_id: str | None = None,
+        include_rolled_back: bool = False,
         limit: int = 1000,
     ) -> list[StepView]:
         """List committed step views in ascending sequence order."""
         ...
+
+    async def append_run_rollback(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        agent_id: str,
+        start_sequence: int,
+        end_sequence: int,
+        reason: str,
+    ) -> None:
+        sequence = await self.allocate_sequence(session_id)
+        await self.append_entries(
+            [
+                RunRolledBack(
+                    sequence=sequence,
+                    session_id=session_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    start_sequence=start_sequence,
+                    end_sequence=end_sequence,
+                    reason=reason,
+                )
+            ]
+        )
 
     @abstractmethod
     async def append_step_condensed_content(
@@ -249,6 +289,16 @@ class InMemoryRunLogStorage(RunLogStorage):
     async def get_committed_step_count(self, session_id: str) -> int:
         return len(await self.list_step_views(session_id=session_id, limit=100_000))
 
+    async def batch_get_committed_step_counts(
+        self, session_ids: list[str]
+    ) -> dict[str, int]:
+        return {
+            session_id: len(
+                build_step_views_from_entries(self.run_log_entries.get(session_id, []))
+            )
+            for session_id in session_ids
+        }
+
     async def get_session_run_stats(self, session_id: str) -> SessionRunStats:
         entries = list(self.run_log_entries.get(session_id, []))
         run_views = build_run_views_from_entries(entries)
@@ -258,6 +308,21 @@ class InMemoryRunLogStorage(RunLogStorage):
             run_views=run_views,
         )
 
+    async def get_runtime_decision_state(
+        self,
+        *,
+        session_id: str,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> RuntimeDecisionState:
+        entries = await self.list_entries(
+            session_id=session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            limit=100_000,
+        )
+        return build_runtime_decision_state_from_entries(entries)
+
     async def list_step_views(
         self,
         *,
@@ -266,6 +331,7 @@ class InMemoryRunLogStorage(RunLogStorage):
         end_seq: int | None = None,
         run_id: str | None = None,
         agent_id: str | None = None,
+        include_rolled_back: bool = False,
         limit: int = 1000,
     ) -> list[StepView]:
         entries = await self.list_entries(
@@ -274,7 +340,10 @@ class InMemoryRunLogStorage(RunLogStorage):
             agent_id=agent_id,
             limit=100_000,
         )
-        step_views = build_step_views_from_entries(entries)
+        step_views = build_step_views_from_entries(
+            entries,
+            include_rolled_back=include_rolled_back,
+        )
         if start_seq is not None:
             step_views = [step for step in step_views if step.sequence >= start_seq]
         if end_seq is not None:

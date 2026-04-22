@@ -35,18 +35,6 @@ def _serialize_json_string(value: object) -> str:
     return json.dumps(value, ensure_ascii=True)
 
 
-def _assistant_message_id(message_index: int) -> str:
-    return f"assistant_msg_{message_index}"
-
-
-def _assistant_tool_call_id(message_index: int, tool_index: int) -> str:
-    return f"assistant_tool_call_{message_index}_{tool_index}"
-
-
-def _tool_output_id(message_index: int) -> str:
-    return f"tool_output_{message_index}"
-
-
 def _convert_user_message(message: OpenAIMessage) -> ResponsesInputItem:
     content = message.get("content")
     if not isinstance(content, str):
@@ -77,8 +65,8 @@ def _convert_assistant_message(
                 "Unsupported assistant tool call payload for openai-response provider"
             )
 
-        tool_call_id = tool_call.get("id") or _assistant_tool_call_id(
-            message_index, tool_index
+        tool_call_id = (
+            tool_call.get("id") or f"assistant_tool_call_{message_index}_{tool_index}"
         )
         tool_name = function_payload.get("name")
         if not isinstance(tool_name, str) or not tool_name:
@@ -87,13 +75,11 @@ def _convert_assistant_message(
         items.append(
             {
                 "type": "function_call",
-                "id": _assistant_tool_call_id(message_index, tool_index),
                 "call_id": tool_call_id,
                 "name": tool_name,
                 "arguments": _serialize_json_string(
                     function_payload.get("arguments", "")
                 ),
-                "status": "completed",
             }
         )
 
@@ -104,14 +90,11 @@ def _convert_assistant_message(
         items.append(
             {
                 "type": "message",
-                "id": _assistant_message_id(message_index),
                 "role": "assistant",
-                "status": "completed",
                 "content": [
                     {
                         "type": "output_text",
                         "text": content,
-                        "annotations": [],
                     }
                 ],
             }
@@ -120,20 +103,14 @@ def _convert_assistant_message(
     return items
 
 
-def _convert_tool_message(
-    message: OpenAIMessage,
-    *,
-    message_index: int,
-) -> ResponsesInputItem:
+def _convert_tool_message(message: OpenAIMessage) -> ResponsesInputItem:
     tool_call_id = message.get("tool_call_id")
     if not isinstance(tool_call_id, str) or not tool_call_id:
         raise ValueError("Tool message missing tool_call_id for openai-response")
     return {
         "type": "function_call_output",
-        "id": _tool_output_id(message_index),
         "call_id": tool_call_id,
         "output": _serialize_json_string(message.get("content")),
-        "status": "completed",
     }
 
 
@@ -153,7 +130,7 @@ def convert_messages_to_responses_input(
             )
             continue
         if role == "tool":
-            items.append(_convert_tool_message(message, message_index=message_index))
+            items.append(_convert_tool_message(message))
             continue
         raise ValueError(
             f"Unsupported message role for openai-response provider: {role}"

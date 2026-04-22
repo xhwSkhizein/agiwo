@@ -20,11 +20,20 @@ from agiwo.agent.models.log import (
     RunFinished,
     RunLogEntry,
     RunLogEntryKind,
+    RunRolledBack,
     RunStarted,
     StepCondensedContentUpdated,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
+    build_compact_metadata_from_entry,
+)
+from agiwo.agent.models.runtime_decision import (
+    CompactionDecisionView,
+    RetrospectDecisionView,
+    RollbackDecisionView,
+    RuntimeDecisionState,
+    TerminationDecisionView,
 )
 from agiwo.agent.models.run import RunMetrics, RunStatus, RunView, TerminationReason
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
@@ -33,6 +42,7 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.RUN_STARTED: RunStarted,
     RunLogEntryKind.RUN_FINISHED: RunFinished,
     RunLogEntryKind.RUN_FAILED: RunFailed,
+    RunLogEntryKind.RUN_ROLLED_BACK: RunRolledBack,
     RunLogEntryKind.CONTEXT_ASSEMBLED: ContextAssembled,
     RunLogEntryKind.MESSAGES_REBUILT: MessagesRebuilt,
     RunLogEntryKind.LLM_CALL_STARTED: LLMCallStarted,
@@ -105,7 +115,10 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
         normalized["user_input"] = UserMessage.from_storage_value(
             normalized.get("user_input")
         )
-    if entry_type is RunFinished and "termination_reason" in normalized:
+    if (
+        entry_type in {RunFinished, TerminationDecided}
+        and "termination_reason" in normalized
+    ):
         reason = normalized.get("termination_reason")
         if isinstance(reason, str):
             normalized["termination_reason"] = TerminationReason(reason)
@@ -231,34 +244,140 @@ def build_step_view_from_entry(entry: CommittedStep) -> StepView:
     )
 
 
-def build_step_views_from_entries(entries: list[RunLogEntry]) -> list[StepView]:
-    condensation_by_step_id: dict[str, str] = {}
-    step_views_by_id: dict[str, StepView] = {}
-    step_views: list[StepView] = []
+def _build_condensation_map(entries: list[RunLogEntry]) -> dict[str, str]:
+    return {
+        entry.step_id: entry.condensed_content
+        for entry in entries
+        if isinstance(entry, StepCondensedContentUpdated)
+    }
+
+
+def _build_hidden_sequences(
+    entries: list[RunLogEntry],
+    *,
+    include_rolled_back: bool,
+) -> set[int]:
+    if include_rolled_back:
+        return set()
+    hidden_sequences: set[int] = set()
     for entry in entries:
-        if isinstance(entry, StepCondensedContentUpdated):
-            condensation_by_step_id[entry.step_id] = entry.condensed_content
-            existing = step_views_by_id.get(entry.step_id)
-            if existing is not None:
-                existing.condensed_content = entry.condensed_content
+        if isinstance(entry, RunRolledBack):
+            hidden_sequences.update(range(entry.start_sequence, entry.end_sequence + 1))
+    return hidden_sequences
+
+
+def _iter_visible_committed_steps(
+    entries: list[RunLogEntry],
+    *,
+    hidden_sequences: set[int],
+):
+    for entry in entries:
+        if isinstance(entry, (StepCondensedContentUpdated, RunRolledBack)):
             continue
         if not isinstance(
             entry,
             (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
         ):
             continue
+        if entry.sequence in hidden_sequences:
+            continue
+        yield entry
+
+
+def build_step_views_from_entries(
+    entries: list[RunLogEntry],
+    *,
+    include_rolled_back: bool = False,
+) -> list[StepView]:
+    condensation_by_step_id = _build_condensation_map(entries)
+    hidden_sequences = _build_hidden_sequences(
+        entries,
+        include_rolled_back=include_rolled_back,
+    )
+
+    step_views: list[StepView] = []
+    for entry in _iter_visible_committed_steps(
+        entries,
+        hidden_sequences=hidden_sequences,
+    ):
         step_view = build_step_view_from_entry(entry)
         condensed_content = condensation_by_step_id.get(step_view.id)
         if condensed_content is not None:
             step_view.condensed_content = condensed_content
-        step_views_by_id[step_view.id] = step_view
         step_views.append(step_view)
     return step_views
+
+
+def build_runtime_decision_state_from_entries(
+    entries: list[RunLogEntry],
+) -> RuntimeDecisionState:
+    latest_termination: TerminationDecisionView | None = None
+    latest_compaction: CompactionDecisionView | None = None
+    latest_retrospect: RetrospectDecisionView | None = None
+    latest_rollback: RollbackDecisionView | None = None
+
+    for entry in entries:
+        if isinstance(entry, TerminationDecided):
+            latest_termination = TerminationDecisionView(
+                session_id=entry.session_id,
+                run_id=entry.run_id,
+                agent_id=entry.agent_id,
+                sequence=entry.sequence,
+                created_at=entry.created_at,
+                reason=entry.termination_reason,
+                phase=entry.phase,
+                source=entry.source,
+            )
+            continue
+        if isinstance(entry, CompactionApplied):
+            latest_compaction = CompactionDecisionView(
+                session_id=entry.session_id,
+                run_id=entry.run_id,
+                agent_id=entry.agent_id,
+                sequence=entry.sequence,
+                created_at=entry.created_at,
+                metadata=build_compact_metadata_from_entry(entry),
+                summary=entry.summary,
+            )
+            continue
+        if isinstance(entry, RetrospectApplied):
+            latest_retrospect = RetrospectDecisionView(
+                session_id=entry.session_id,
+                run_id=entry.run_id,
+                agent_id=entry.agent_id,
+                sequence=entry.sequence,
+                created_at=entry.created_at,
+                affected_sequences=tuple(entry.affected_sequences),
+                affected_step_ids=tuple(entry.affected_step_ids),
+                feedback=entry.feedback,
+                replacement=entry.replacement,
+                trigger=entry.trigger,
+            )
+            continue
+        if isinstance(entry, RunRolledBack):
+            latest_rollback = RollbackDecisionView(
+                session_id=entry.session_id,
+                run_id=entry.run_id,
+                agent_id=entry.agent_id,
+                sequence=entry.sequence,
+                created_at=entry.created_at,
+                start_sequence=entry.start_sequence,
+                end_sequence=entry.end_sequence,
+                reason=entry.reason,
+            )
+
+    return RuntimeDecisionState(
+        latest_termination=latest_termination,
+        latest_compaction=latest_compaction,
+        latest_retrospect=latest_retrospect,
+        latest_rollback=latest_rollback,
+    )
 
 
 __all__ = [
     "build_run_view_from_entries",
     "build_run_views_from_entries",
+    "build_runtime_decision_state_from_entries",
     "build_step_view_from_entry",
     "build_step_views_from_entries",
     "deserialize_run_log_entry_from_storage",

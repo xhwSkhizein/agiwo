@@ -3,6 +3,7 @@ from datetime import datetime
 from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
 from agiwo.agent import StepCompletedEvent
 from agiwo.agent.models.log import RunFinished, RunStarted, UserStepCommitted
+from agiwo.agent.models.log import AssistantStepCommitted, RunRolledBack
 from agiwo.agent.models.run import RunIdentity
 from agiwo.agent.models.step import StepView as InternalStepView
 from agiwo.agent.runtime.context import RunContext
@@ -240,3 +241,68 @@ def test_build_run_and_step_views_from_run_log_entries() -> None:
     assert len(step_views) == 1
     assert step_views[0].id == "step-2"
     assert step_views[0].content == "hello"
+
+
+def test_build_step_views_hides_steps_covered_by_rollback_fact() -> None:
+    entries = [
+        UserStepCommitted(
+            sequence=10,
+            session_id="sess-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            step_id="step-10",
+            role=MessageRole.USER,
+            content="u1",
+            user_input="u1",
+        ),
+        AssistantStepCommitted(
+            sequence=11,
+            session_id="sess-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            step_id="step-11",
+            role=MessageRole.ASSISTANT,
+            content="a1",
+        ),
+        RunRolledBack(
+            sequence=12,
+            session_id="sess-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            start_sequence=10,
+            end_sequence=11,
+            reason="no_progress",
+        ),
+    ]
+
+    assert build_step_views_from_entries(entries) == []
+
+
+def test_build_step_views_can_include_rolled_back_steps() -> None:
+    entries = [
+        UserStepCommitted(
+            sequence=10,
+            session_id="sess-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            step_id="step-10",
+            role=MessageRole.USER,
+            content="u1",
+            user_input="u1",
+        ),
+        RunRolledBack(
+            sequence=11,
+            session_id="sess-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            start_sequence=10,
+            end_sequence=10,
+            reason="no_progress",
+        ),
+    ]
+
+    visible = build_step_views_from_entries(entries)
+    all_steps = build_step_views_from_entries(entries, include_rolled_back=True)
+
+    assert visible == []
+    assert [step.id for step in all_steps] == ["step-10"]
