@@ -28,7 +28,9 @@ class HookPhase(str, Enum):
     BEFORE_TERMINATION = "before_termination"
     AFTER_TERMINATION = "after_termination"
     AFTER_STEP_COMMIT = "after_step_commit"
-    FINALIZE = "finalize"
+    RUN_FINALIZED = "run_finalized"
+    MEMORY_PERSIST = "memory_persist"
+    COMPACTION_FAILED = "compaction_failed"
 
 
 class HookCapability(str, Enum):
@@ -61,6 +63,13 @@ class HookRegistration:
 class HookRegistry:
     registrations: list[HookRegistration] = field(default_factory=list)
 
+    _MUTATING_PHASES = {
+        HookPhase.PREPARE,
+        HookPhase.ASSEMBLE_CONTEXT,
+        HookPhase.BEFORE_LLM,
+        HookPhase.BEFORE_TOOL_BATCH,
+    }
+
     def for_phase(self, phase: HookPhase) -> list[HookRegistration]:
         return sorted(
             [item for item in self.registrations if item.phase == phase],
@@ -74,6 +83,14 @@ class HookRegistry:
         return any(item.handler_name == handler_name for item in self.registrations)
 
     def add(self, registration: HookRegistration) -> None:
+        if (
+            registration.capability is not HookCapability.OBSERVE_ONLY
+            and registration.phase not in self._MUTATING_PHASES
+        ):
+            raise ValueError(
+                "Only observe-only hooks are allowed for "
+                f"{registration.phase.value}: {registration.handler_name}"
+            )
         self.registrations.append(registration)
 
     async def _dispatch(
@@ -194,7 +211,7 @@ class HookRegistry:
 
     async def after_run(self, result: object, context: object) -> None:
         await self._dispatch(
-            HookPhase.FINALIZE,
+            HookPhase.RUN_FINALIZED,
             {"result": result, "context": context},
             allow_transform=False,
         )
@@ -206,7 +223,7 @@ class HookRegistry:
         context: object,
     ) -> None:
         await self._dispatch(
-            HookPhase.FINALIZE,
+            HookPhase.MEMORY_PERSIST,
             {"user_input": user_input, "result": result, "context": context},
             allow_transform=False,
         )
@@ -226,7 +243,7 @@ class HookRegistry:
         context: object | None = None,
     ) -> None:
         await self._dispatch(
-            HookPhase.AFTER_COMPACTION,
+            HookPhase.COMPACTION_FAILED,
             {
                 "run_id": run_id,
                 "error": error,

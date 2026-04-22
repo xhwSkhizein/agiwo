@@ -195,6 +195,8 @@ class TestExecuteRetrospect:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
@@ -241,6 +243,8 @@ class TestExecuteRetrospect:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
@@ -283,6 +287,8 @@ class TestExecuteRetrospect:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
@@ -323,6 +329,8 @@ class TestExecuteRetrospect:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
@@ -410,6 +418,8 @@ class TestRemoveRetrospectMultiCall:
             ledger=ledger,
             storage=storage,
             session_id=session_id,
+            run_id="run-1",
+            agent_id="agent-1",
             offload_dir=tmp_path / "offload",
             step_lookup=step_lookup,
         )
@@ -425,9 +435,9 @@ class TestRemoveRetrospectMultiCall:
         assert "tc-r" not in tool_ids
 
 
-class TestStorageUpdateCondensedContent:
+class TestStorageAppendCondensedContent:
     @pytest.mark.asyncio
-    async def test_in_memory_update(self):
+    async def test_in_memory_append(self):
         storage = InMemoryRunLogStorage()
         step = StepView(
             session_id="s1",
@@ -440,15 +450,17 @@ class TestStorageUpdateCondensedContent:
         )
         await storage.append_entries([build_committed_step_entry(step)])
 
-        updated = await storage.update_step_condensed_content(
-            "s1", step.id, "condensed"
+        updated = await storage.append_step_condensed_content(
+            "s1", "r1", "agent-1", step.id, "condensed"
         )
         assert updated is True
         steps = await storage.list_step_views(session_id="s1")
         assert steps[0].condensed_content == "condensed"
 
     @pytest.mark.asyncio
-    async def test_in_memory_update_nonexistent(self):
+    async def test_in_memory_append_nonexistent(self):
         storage = InMemoryRunLogStorage()
-        updated = await storage.update_step_condensed_content("s1", "ghost", "x")
+        updated = await storage.append_step_condensed_content(
+            "s1", "r1", "agent-1", "ghost", "x"
+        )
         assert updated is False

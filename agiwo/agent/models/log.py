@@ -28,6 +28,7 @@ class RunLogEntryKind(str, Enum):
     TOOL_STEP_COMMITTED = "tool_step_committed"
     COMPACTION_APPLIED = "compaction_applied"
     RETROSPECT_APPLIED = "retrospect_applied"
+    STEP_CONDENSED_CONTENT_UPDATED = "step_condensed_content_updated"
     TERMINATION_DECIDED = "termination_decided"
     HOOK_FAILED = "hook_failed"
 
@@ -167,6 +168,16 @@ class RetrospectApplied(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
+class StepCondensedContentUpdated(RunLogEntry):
+    step_id: str
+    condensed_content: str
+    kind: RunLogEntryKind = field(
+        init=False,
+        default=RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class TerminationDecided(RunLogEntry):
     termination_reason: TerminationReason
     phase: str
@@ -241,6 +252,7 @@ __all__ = [
     "LLMCallStarted",
     "MessagesRebuilt",
     "RetrospectApplied",
+    "StepCondensedContentUpdated",
     "RunFailed",
     "RunFinished",
     "RunLogEntry",

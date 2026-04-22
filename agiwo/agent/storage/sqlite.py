@@ -8,11 +8,12 @@ from agiwo.agent.models.log import (
     CompactionApplied,
     RunLogEntry,
     RunLogEntryKind,
+    StepCondensedContentUpdated,
     build_compact_metadata_from_entry,
 )
 from agiwo.agent.models.run import CompactMetadata, RunView
 from agiwo.agent.models.step import StepView
-from agiwo.agent.storage.base import RunLogStorage
+from agiwo.agent.storage.base import RunLogStorage, SessionRunStats
 from agiwo.agent.storage.serialization import (
     build_run_view_from_entries,
     build_run_views_from_entries,
@@ -123,7 +124,7 @@ class SQLiteRunLogStorage(RunLogStorage):
             )
         await conn.executemany(
             """
-            INSERT OR REPLACE INTO run_log_entries
+            INSERT INTO run_log_entries
             (session_id, sequence, run_id, agent_id, kind, payload)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
@@ -202,34 +203,55 @@ class SQLiteRunLogStorage(RunLogStorage):
         conn = await self._ensure_connection()
         query = "SELECT payload FROM run_log_entries WHERE kind = ?"
         params: list[object] = [RunLogEntryKind.RUN_STARTED.value]
+        if user_id is not None:
+            query += " AND json_extract(payload, '$.user_id') = ?"
+            params.append(user_id)
         if session_id is not None:
             query += " AND session_id = ?"
             params.append(session_id)
-        query += " ORDER BY sequence ASC"
+        query += " ORDER BY sequence DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
 
         started_entries: list[RunLogEntry] = []
         async with conn.execute(query, params) as cursor:
             async for row in cursor:
                 started_entries.append(self._deserialize_run_log_entry(row))
 
-        run_views = build_run_views_from_entries(started_entries)
-        if user_id is not None:
-            run_views = [view for view in run_views if view.user_id == user_id]
-        selected = run_views[offset : offset + limit]
-        if not selected:
+        if not started_entries:
             return []
 
         entries_by_run_id = await self._load_entries_for_run_ids(
-            [view.run_id for view in selected]
+            [entry.run_id for entry in started_entries]
         )
         return [
             view
             for view in (
-                build_run_view_from_entries(entries_by_run_id.get(item.run_id, []))
-                for item in selected
+                build_run_view_from_entries(entries_by_run_id.get(entry.run_id, []))
+                for entry in started_entries
             )
             if view is not None
         ]
+
+    async def get_session_run_stats(self, session_id: str) -> SessionRunStats:
+        conn = await self._ensure_connection()
+        entries: list[RunLogEntry] = []
+        async with conn.execute(
+            """
+            SELECT payload FROM run_log_entries
+            WHERE session_id = ?
+            ORDER BY sequence ASC
+            """,
+            (session_id,),
+        ) as cursor:
+            async for row in cursor:
+                entries.append(self._deserialize_run_log_entry(row))
+
+        run_views = build_run_views_from_entries(entries)
+        step_count = len(build_step_views_from_entries(entries))
+        return SessionRunStats(
+            committed_step_count=step_count,
+            run_views=run_views,
+        )
 
     async def get_committed_step_count(self, session_id: str) -> int:
         conn = await self._ensure_connection()
@@ -237,6 +259,7 @@ class SQLiteRunLogStorage(RunLogStorage):
             RunLogEntryKind.USER_STEP_COMMITTED.value,
             RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
             RunLogEntryKind.TOOL_STEP_COMMITTED.value,
+            RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED.value,
         ]
         placeholders = ",".join("?" for _ in kinds)
         async with conn.execute(
@@ -328,18 +351,19 @@ class SQLiteRunLogStorage(RunLogStorage):
         if agent_id is not None:
             query += " AND agent_id = ?"
             params.append(agent_id)
-        query += " ORDER BY sequence ASC LIMIT ?"
-        params.append(limit)
+        query += " ORDER BY sequence ASC"
 
         entries: list[RunLogEntry] = []
         async with conn.execute(query, params) as cursor:
             async for row in cursor:
                 entries.append(self._deserialize_run_log_entry(row))
-        return build_step_views_from_entries(entries)
+        return build_step_views_from_entries(entries)[:limit]
 
-    async def update_step_condensed_content(
+    async def append_step_condensed_content(
         self,
         session_id: str,
+        run_id: str,
+        agent_id: str,
         step_id: str,
         condensed_content: str,
     ) -> bool:
@@ -352,33 +376,30 @@ class SQLiteRunLogStorage(RunLogStorage):
         placeholders = ",".join("?" for _ in kinds)
         async with conn.execute(
             f"""
-            SELECT sequence, payload FROM run_log_entries
+            SELECT 1 FROM run_log_entries
             WHERE session_id = ? AND kind IN ({placeholders})
-            ORDER BY sequence ASC
+              AND json_extract(payload, '$.step_id') = ?
+            LIMIT 1
             """,
-            [session_id, *kinds],
+            [session_id, *kinds, step_id],
         ) as cursor:
-            rows = await cursor.fetchall()
-        for row in rows:
-            payload = self._loads(row["payload"])
-            if payload.get("step_id") != step_id:
-                continue
-            payload["condensed_content"] = condensed_content
-            await conn.execute(
-                """
-                UPDATE run_log_entries
-                SET payload = ?
-                WHERE session_id = ? AND sequence = ?
-                """,
-                (
-                    json.dumps(payload, ensure_ascii=False, default=str),
-                    session_id,
-                    row["sequence"],
-                ),
-            )
-            await conn.commit()
-            return True
-        return False
+            row = await cursor.fetchone()
+        if row is None:
+            return False
+        sequence = await self.allocate_sequence(session_id)
+        await self.append_entries(
+            [
+                StepCondensedContentUpdated(
+                    sequence=sequence,
+                    session_id=session_id,
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    step_id=step_id,
+                    condensed_content=condensed_content,
+                )
+            ]
+        )
+        return True
 
     async def get_latest_compact_metadata(
         self, session_id: str, agent_id: str

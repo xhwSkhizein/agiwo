@@ -31,7 +31,7 @@ class TestStepViewCondensedContent:
         msg = step.to_message()
         assert msg["content"] == "[archived] Retrospect: short summary"
 
-    def test_assistant_message_ignores_condensed(self):
+    def test_assistant_message_uses_condensed_content(self):
         """condensed_content applies to all roles via to_message()."""
         step = StepView(
             session_id="s1",

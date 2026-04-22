@@ -4,7 +4,7 @@
 
 **Goal:** Replace the current `agiwo.agent` runtime internals with a `RunLog`-based execution core while keeping `Agent.start()/run()/run_stream()/run_child()` usable and the repository green.
 
-**Architecture:** Phase 1 replaces `Run`, `StepRecord`, `AgentHooks`, and `RunStepStorage` as canonical runtime models inside `agiwo.agent`. A new `RunEngine` writes strongly typed `RunLog` entries through `RunLogStorage`, and trace/stream/read views are rebuilt from those entries. Scheduler and console do not get their full architecture migration in this phase, but they must be updated enough to read the new runtime views without depending on deleted source models.
+**Architecture:** Phase 1 replaces `Run`, `StepRecord`, `AgentHooks`, and `RunStepStorage` as canonical runtime models inside `agiwo.agent`. A new `RunLoopOrchestrator` writes strongly typed `RunLog` entries through `RunLogStorage`, and trace/stream/read views are rebuilt from those entries. Scheduler and console do not get their full architecture migration in this phase, but they must be updated enough to read the new runtime views without depending on deleted source models.
 
 **Tech Stack:** Python 3.10+, dataclasses, existing `Model` and `BaseTool` abstractions, SQLite/in-memory storage, existing trace and SSE protocols
 
@@ -133,13 +133,13 @@ Expected: FAIL with `ImportError` because `RunLogEntryKind` and the new entry cl
 # agiwo/agent/models/log.py
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from enum import StrEnum
+from enum import Enum
 from typing import Any
 
 from agiwo.config.termination import TerminationReason
 
 
-class RunLogEntryKind(StrEnum):
+class RunLogEntryKind(str, Enum):
     RUN_STARTED = "run_started"
     RUN_FINISHED = "run_finished"
     RUN_FAILED = "run_failed"
@@ -349,11 +349,11 @@ Expected: FAIL with `ImportError` because the new phase-based hook types do not 
 ```python
 # agiwo/agent/hooks.py
 from dataclasses import dataclass, field
-from enum import StrEnum
+from enum import Enum
 from typing import Any, Awaitable, Callable, Protocol
 
 
-class HookPhase(StrEnum):
+class HookPhase(str, Enum):
     PREPARE = "prepare"
     ASSEMBLE_CONTEXT = "assemble_context"
     BEFORE_LLM = "before_llm"
@@ -367,10 +367,12 @@ class HookPhase(StrEnum):
     BEFORE_TERMINATION = "before_termination"
     AFTER_TERMINATION = "after_termination"
     AFTER_STEP_COMMIT = "after_step_commit"
-    FINALIZE = "finalize"
+    RUN_FINALIZED = "run_finalized"
+    MEMORY_PERSIST = "memory_persist"
+    COMPACTION_FAILED = "compaction_failed"
 
 
-class HookCapability(StrEnum):
+class HookCapability(str, Enum):
     OBSERVE_ONLY = "observe_only"
     TRANSFORM = "transform"
     DECISION_SUPPORT = "decision_support"
@@ -583,7 +585,7 @@ git add agiwo/agent/models/config.py agiwo/agent/storage/base.py agiwo/agent/sto
 git commit -m "refactor: replace run step storage with run log storage"
 ```
 
-## Task 4: Introduce `RunEngine`, `HookDispatcher`, And `RunStateWriter`
+## Task 4: Introduce `RunLoopOrchestrator`, `HookRegistry`, And `RunStateWriter`
 
 **Files:**
 - Create: `agiwo/agent/runtime/run_engine.py`
@@ -617,13 +619,13 @@ async def test_run_engine_writes_started_llm_and_finished_entries(fake_runtime, 
 - [ ] **Step 2: Run the engine test to verify it fails**
 
 Run: `uv run pytest tests/agent/test_run_engine.py -v`
-Expected: FAIL because `RunEngine` does not exist and `run_loop.py` still owns execution.
+Expected: FAIL because `RunLoopOrchestrator` does not exist and `run_loop.py` still owns execution.
 
 - [ ] **Step 3: Add the new runtime components**
 
 ```python
 # agiwo/agent/runtime/hook_dispatcher.py
-class HookDispatcher:
+class HookRegistry:
     def __init__(self, registry: HookRegistry, writer: "RunStateWriter") -> None:
         self._registry = registry
         self._writer = writer
@@ -670,12 +672,12 @@ class RunStateWriter:
 
 ```python
 # agiwo/agent/runtime/run_engine.py
-class RunEngine:
+class RunLoopOrchestrator:
     def __init__(self, context: RunContext, runtime: RunRuntime) -> None:
         self._context = context
         self._runtime = runtime
         self._writer = RunStateWriter(context)
-        self._hooks = HookDispatcher(runtime.hooks, self._writer)
+        self._hooks = runtime.hooks
 
     async def execute(self, user_input: UserInput, *, system_prompt: str, pending_tool_calls: list[dict] | None = None) -> RunOutput:
         await self._writer.append_entry(
@@ -751,7 +753,7 @@ async def execute_run(
         abort_signal=abort_signal,
         root_path=root_path,
     )
-    return await RunEngine(context, runtime).execute(
+    return await RunLoopOrchestrator(context, runtime).execute(
         user_input,
         system_prompt=system_prompt,
         pending_tool_calls=pending_tool_calls,
@@ -878,9 +880,13 @@ def stream_items_from_entries(entries: list[RunLogEntry]) -> list[AgentStreamIte
     items: list[AgentStreamItem] = []
     for entry in entries:
         if entry.kind is RunLogEntryKind.USER_STEP_COMMITTED:
-            items.append(StepCompletedEvent(type="step_completed", step=entry))
+            items.append(
+                StepCompletedEvent(type="step_completed", step=_step_from_entry(entry))
+            )
         elif entry.kind is RunLogEntryKind.ASSISTANT_STEP_COMMITTED:
-            items.append(StepCompletedEvent(type="step_completed", step=entry))
+            items.append(
+                StepCompletedEvent(type="step_completed", step=_step_from_entry(entry))
+            )
         elif entry.kind is RunLogEntryKind.TERMINATION_DECIDED:
             items.append(
                 RunCompletedEvent(
@@ -1174,7 +1180,7 @@ The plan uses these names consistently across tasks:
 2. `RunLogStorage`
 3. `InMemoryRunLogStorage`
 4. `SQLiteRunLogStorage`
-5. `RunEngine`
+5. `RunLoopOrchestrator`
 6. `HookRegistry`
 7. `HookRegistration`
 8. `RunStateWriter`

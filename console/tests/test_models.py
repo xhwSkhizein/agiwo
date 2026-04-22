@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agiwo.agent.models.run import RunMetrics, RunView
+from agiwo.agent.models.run import RunMetrics, RunStatus, RunView
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 from agiwo.scheduler.models import TimeUnit
 
@@ -332,7 +332,7 @@ class TestRunResponseFromSdk:
             session_id="session-1",
             user_id="user-1",
             last_user_input="hello",
-            status="completed",
+            status=RunStatus.COMPLETED,
             response="world",
             metrics=RunMetrics(duration_ms=10.0, total_tokens=3),
             created_at=now,
@@ -348,13 +348,16 @@ class TestRunResponseFromSdk:
         assert response.response_content == "world"
         assert response.parent_run_id == "parent-run-1"
         assert response.created_at == now.isoformat()
+        assert response.metrics is not None
+        assert response.metrics.duration_ms == 10.0
+        assert response.metrics.total_tokens == 3
 
     def test_from_sdk_handles_run_view_without_metrics(self):
         run = RunView(
             run_id="run-view-2",
             agent_id="agent-1",
             session_id="session-1",
-            status="running",
+            status=RunStatus.RUNNING,
             last_user_input="test",
         )
 

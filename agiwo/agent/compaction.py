@@ -99,7 +99,7 @@ async def save_transcript(
     transcript_dir = Path(root) / "compaction" / "transcripts" / agent_id / session_id
     transcript_dir.mkdir(parents=True, exist_ok=True)
 
-    date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     filename = f"{start_seq}_{end_seq}_{date_str}.jsonl"
     filepath = transcript_dir / filename
 

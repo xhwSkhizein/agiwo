@@ -3,9 +3,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
-from agiwo.agent import RunStatus
-from agiwo.agent.models.run import RunView
-from agiwo.agent.storage.base import RunLogStorage
+from agiwo.agent import RunLogStorage, RunStatus, RunView
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.trace import Trace
 
@@ -32,7 +30,7 @@ class TraceAggregateSummary:
 
 def add_run_to_summary(summary: RunMetricsSummary, run: RunView) -> None:
     summary.run_count += 1
-    if run.status == RunStatus.COMPLETED.value:
+    if run.status is RunStatus.COMPLETED:
         summary.completed_run_count += 1
     metrics = run.metrics
     if metrics is None:

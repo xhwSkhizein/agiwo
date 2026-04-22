@@ -188,7 +188,7 @@ class RunView:
     run_id: str
     session_id: str
     agent_id: str
-    status: str
+    status: RunStatus
     user_id: str | None = None
     response: str | None = None
     termination_reason: TerminationReason | None = None

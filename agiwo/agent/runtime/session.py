@@ -50,7 +50,15 @@ class SessionRuntime:
     async def append_run_log_entries(self, entries: list[RunLogEntry]) -> None:
         await self.run_log_storage.append_entries(entries)
         if self.trace_runtime is not None:
-            await self.trace_runtime.on_run_log_entries(entries)
+            try:
+                await self.trace_runtime.on_run_log_entries(entries)
+            except Exception as error:  # noqa: BLE001 - trace publication boundary
+                logger.warning(
+                    "trace_run_log_dispatch_failed",
+                    session_id=self.session_id,
+                    entry_count=len(entries),
+                    error=str(error),
+                )
 
     async def list_run_log_entries(
         self,

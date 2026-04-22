@@ -2,7 +2,7 @@
 
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.hook_dispatcher import HookDispatcher
-from agiwo.agent.runtime.run_engine import RunEngine
+from agiwo.agent.runtime.run_engine import RunEngine, RunLoopOrchestrator
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.runtime.state_ops import (
     append_message,
@@ -31,6 +31,7 @@ from agiwo.agent.runtime.step_committer import commit_step
 __all__ = [
     "HookDispatcher",
     "RunEngine",
+    "RunLoopOrchestrator",
     "RunContext",
     "SessionRuntime",
     "append_message",

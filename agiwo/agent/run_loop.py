@@ -82,8 +82,8 @@ from agiwo.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-class RunEngine:
-    """RunEngine is the single-run execution owner."""
+class RunLoopOrchestrator:
+    """RunLoopOrchestrator is the single-run execution owner."""
 
     def __init__(
         self,
@@ -100,14 +100,14 @@ class RunEngine:
         pending_tool_calls: list[dict] | None = None,
     ) -> RunOutput:
         """Execute a single agent run with the orchestrator."""
-        # Prepare run context
+        # Start the run
+        await self._start_run(user_input)
+
+        # Prepare run context after the run has a persisted identity.
         user_step, compact_start_seq = await self._prepare_run_context(
             user_input,
             system_prompt=system_prompt,
         )
-
-        # Start the run
-        await self._start_run(user_input)
 
         try:
             # Commit user step
@@ -653,7 +653,7 @@ async def execute_run(
         compact_prompt=options.compact_prompt,
     )
 
-    orchestrator = RunEngine(context, runtime)
+    orchestrator = RunLoopOrchestrator(context, runtime)
     return await orchestrator.execute_run(
         user_input,
         system_prompt,
@@ -661,7 +661,7 @@ async def execute_run(
     )
 
 
-RunLoopOrchestrator = RunEngine
+RunEngine = RunLoopOrchestrator
 
 
 __all__ = ["execute_run", "RunEngine", "RunLoopOrchestrator"]

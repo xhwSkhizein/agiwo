@@ -46,14 +46,16 @@ async def test_create_app_starts_and_lists_agents() -> None:
         ),
     )
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/api/agents")
-        assert resp.status_code == 200
-
-    clear_console_runtime(app)
-    await registry.close()
-    await run_log_storage.close()
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/agents")
+            assert resp.status_code == 200
+    finally:
+        clear_console_runtime(app)
+        await registry.close()
+        await run_log_storage.close()
+        await trace_storage.close()
 
 
 @pytest.mark.asyncio
@@ -117,6 +119,8 @@ async def test_lifespan_closes_session_store(
 
     session_store.connect.assert_awaited_once()
     session_store.close.assert_awaited_once()
+    run_log_storage.close.assert_awaited_once()
+    trace_storage.close.assert_awaited_once()
     scheduler.stop.assert_awaited_once()
 
 

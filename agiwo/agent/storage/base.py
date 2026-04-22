@@ -1,13 +1,14 @@
 """Replayable run-log storage interfaces and in-memory implementation."""
 
 import asyncio
-from dataclasses import replace
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
     RunLogEntry,
+    StepCondensedContentUpdated,
     ToolStepCommitted,
     UserStepCommitted,
     build_compact_metadata_from_entry,
@@ -19,6 +20,12 @@ from agiwo.agent.storage.serialization import (
     build_run_views_from_entries,
     build_step_views_from_entries,
 )
+
+
+@dataclass(frozen=True)
+class SessionRunStats:
+    committed_step_count: int
+    run_views: list[RunView]
 
 
 class RunLogStorage(ABC):
@@ -66,6 +73,13 @@ class RunLogStorage(ABC):
         runs = await self.list_run_views(session_id=session_id, limit=1)
         return runs[0] if runs else None
 
+    async def get_session_run_stats(self, session_id: str) -> SessionRunStats:
+        run_views = await self.list_run_views(session_id=session_id, limit=100_000)
+        return SessionRunStats(
+            committed_step_count=await self.get_committed_step_count(session_id),
+            run_views=run_views,
+        )
+
     async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
         result: dict[str, int] = {}
         for session_id in session_ids:
@@ -110,13 +124,15 @@ class RunLogStorage(ABC):
         ...
 
     @abstractmethod
-    async def update_step_condensed_content(
+    async def append_step_condensed_content(
         self,
         session_id: str,
+        run_id: str,
+        agent_id: str,
         step_id: str,
         condensed_content: str,
     ) -> bool:
-        """Update condensed content inside the canonical committed-step entry."""
+        """Append a step-condensation fact for an existing committed step."""
         ...
 
     async def get_step_by_tool_call_id(
@@ -233,6 +249,15 @@ class InMemoryRunLogStorage(RunLogStorage):
     async def get_committed_step_count(self, session_id: str) -> int:
         return len(await self.list_step_views(session_id=session_id, limit=100_000))
 
+    async def get_session_run_stats(self, session_id: str) -> SessionRunStats:
+        entries = list(self.run_log_entries.get(session_id, []))
+        run_views = build_run_views_from_entries(entries)
+        step_count = len(build_step_views_from_entries(entries))
+        return SessionRunStats(
+            committed_step_count=step_count,
+            run_views=run_views,
+        )
+
     async def list_step_views(
         self,
         *,
@@ -256,23 +281,36 @@ class InMemoryRunLogStorage(RunLogStorage):
             step_views = [step for step in step_views if step.sequence <= end_seq]
         return step_views[:limit]
 
-    async def update_step_condensed_content(
+    async def append_step_condensed_content(
         self,
         session_id: str,
+        run_id: str,
+        agent_id: str,
         step_id: str,
         condensed_content: str,
     ) -> bool:
         bucket = self.run_log_entries.get(session_id, [])
-        for index, entry in enumerate(bucket):
+        for entry in bucket:
             if not isinstance(
                 entry,
                 (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
             ):
                 continue
-            if entry.step_id != step_id:
-                continue
-            bucket[index] = replace(entry, condensed_content=condensed_content)
-            return True
+            if entry.step_id == step_id:
+                sequence = await self.allocate_sequence(session_id)
+                await self.append_entries(
+                    [
+                        StepCondensedContentUpdated(
+                            sequence=sequence,
+                            session_id=session_id,
+                            run_id=run_id,
+                            agent_id=agent_id,
+                            step_id=step_id,
+                            condensed_content=condensed_content,
+                        )
+                    ]
+                )
+                return True
         return False
 
     async def get_max_sequence(self, session_id: str) -> int:
@@ -294,4 +332,5 @@ class InMemoryRunLogStorage(RunLogStorage):
 __all__ = [
     "InMemoryRunLogStorage",
     "RunLogStorage",
+    "SessionRunStats",
 ]

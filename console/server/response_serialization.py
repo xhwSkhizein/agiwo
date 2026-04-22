@@ -3,11 +3,13 @@
 import json
 from typing import Any
 
-from agiwo.agent import AgentStreamItem, StepCompletedEvent
-
-from agiwo.agent.models import step
-from agiwo.agent.models.run import RunView
-from agiwo.agent.models.step import StepView
+from agiwo.agent import (
+    AgentStreamItem,
+    RunView,
+    StepCompletedEvent,
+    StepMetrics,
+    StepView,
+)
 from agiwo.observability.trace import Trace
 from agiwo.scheduler.models import (
     AgentState,
@@ -46,7 +48,7 @@ from server.models.view import (
 from server.services.runtime.scheduler_tree_view_service import SchedulerTreeRecord
 
 
-def step_metrics_response_from_sdk(metrics: step.StepMetrics) -> StepMetricsResponse:
+def step_metrics_response_from_sdk(metrics: StepMetrics) -> StepMetricsResponse:
     return StepMetricsResponse(
         duration_ms=metrics.duration_ms,
         input_tokens=metrics.input_tokens,
@@ -62,26 +64,30 @@ def step_metrics_response_from_sdk(metrics: step.StepMetrics) -> StepMetricsResp
     )
 
 
-def step_response_from_sdk(step: StepView) -> StepResponse:
+def step_response_from_sdk(step_view: StepView) -> StepResponse:
     return StepResponse(
-        id=step.id or f"{step.run_id}:{step.sequence}",
-        session_id=step.session_id,
-        run_id=step.run_id,
-        sequence=step.sequence,
-        role=step.role.value,
-        agent_id=step.agent_id,
-        content=step.content,
-        content_for_user=step.content_for_user,
-        reasoning_content=step.reasoning_content,
-        user_input=step.user_input,
-        tool_calls=step.tool_calls if step.tool_calls else None,
-        tool_call_id=step.tool_call_id,
-        name=step.name,
-        condensed_content=step.condensed_content,
-        metrics=step_metrics_response_from_sdk(step.metrics) if step.metrics else None,
-        created_at=step.created_at.isoformat() if step.created_at else None,
-        parent_run_id=step.parent_run_id,
-        depth=step.depth,
+        id=step_view.id or f"{step_view.run_id}:{step_view.sequence}",
+        session_id=step_view.session_id,
+        run_id=step_view.run_id,
+        sequence=step_view.sequence,
+        role=step_view.role.value,
+        agent_id=step_view.agent_id,
+        content=step_view.content,
+        content_for_user=step_view.content_for_user,
+        reasoning_content=step_view.reasoning_content,
+        user_input=step_view.user_input,
+        tool_calls=step_view.tool_calls if step_view.tool_calls else None,
+        tool_call_id=step_view.tool_call_id,
+        name=step_view.name,
+        condensed_content=step_view.condensed_content,
+        metrics=(
+            step_metrics_response_from_sdk(step_view.metrics)
+            if step_view.metrics
+            else None
+        ),
+        created_at=step_view.created_at.isoformat() if step_view.created_at else None,
+        parent_run_id=step_view.parent_run_id,
+        depth=step_view.depth,
     )
 
 
@@ -92,7 +98,7 @@ def run_response_from_sdk(run: RunView) -> RunResponse:
         session_id=run.session_id,
         user_id=run.user_id,
         user_input=run.last_user_input,
-        status=run.status,
+        status=run.status.value,
         response_content=run.response,
         metrics=RunMetricsResponse(
             duration_ms=metrics.duration_ms,

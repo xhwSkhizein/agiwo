@@ -52,14 +52,14 @@ async def _append_run_view_entries(
     await storage.append_entries(
         [
             RunStarted(
-                sequence=1 if run_id.endswith("1") else 2,
+                sequence=1 if run_id.endswith("1") else 101,
                 session_id=session_id,
                 run_id=run_id,
                 agent_id=agent_id,
                 user_input=user_input,
             ),
             RunFinished(
-                sequence=100 if run_id.endswith("1") else 101,
+                sequence=100 if run_id.endswith("1") else 200,
                 session_id=session_id,
                 run_id=run_id,
                 agent_id=agent_id,

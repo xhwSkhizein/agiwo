@@ -389,22 +389,28 @@ def _start_run_span_from_entry(
         trace.session_id = entry.session_id
     if trace.input_query is None and entry.user_input is not None:
         trace.input_query = str(entry.user_input)
+    parent = run_spans.get(entry.parent_run_id) if entry.parent_run_id else None
+    is_root = trace.root_span_id is None
     span = Span(
         trace_id=trace.trace_id,
+        parent_span_id=parent.span_id if parent is not None else None,
         kind=SpanKind.AGENT,
         name=entry.agent_id,
-        depth=0,
+        depth=(parent.depth + 1)
+        if parent is not None
+        else (0 if is_root else entry.depth),
         attributes={
             "agent_id": entry.agent_id,
             "session_id": entry.session_id,
-            "nested": False,
-            "parent_run_id": None,
+            "nested": not is_root,
+            "parent_run_id": entry.parent_run_id,
         },
         run_id=entry.run_id,
         start_time=entry.created_at,
     )
     if trace.root_span_id is None:
         trace.root_span_id = span.span_id
+        trace.start_time = entry.created_at
     trace.add_span(span)
     run_spans[entry.run_id] = span
 
@@ -423,10 +429,13 @@ def _complete_trace_from_run_finished(
         span.output_preview = (
             entry.response[:preview_length] if entry.response else None
         )
-    trace.end_time = entry.created_at
-    trace.status = SpanStatus.OK
-    trace.final_output = entry.response
-    trace.duration_ms = (trace.end_time - trace.start_time).total_seconds() * 1000
+        if span.span_id == trace.root_span_id:
+            trace.end_time = entry.created_at
+            trace.status = SpanStatus.OK
+            trace.final_output = entry.response
+            trace.duration_ms = (
+                entry.created_at - span.start_time
+            ).total_seconds() * 1000
 
 
 def _complete_trace_from_run_failed(
@@ -440,9 +449,12 @@ def _complete_trace_from_run_failed(
         span.duration_ms = (entry.created_at - span.start_time).total_seconds() * 1000
         span.status = SpanStatus.ERROR
         span.error_message = entry.error
-    trace.end_time = entry.created_at
-    trace.status = SpanStatus.ERROR
-    trace.duration_ms = (trace.end_time - trace.start_time).total_seconds() * 1000
+        if span.span_id == trace.root_span_id:
+            trace.end_time = entry.created_at
+            trace.status = SpanStatus.ERROR
+            trace.duration_ms = (
+                entry.created_at - span.start_time
+            ).total_seconds() * 1000
 
 
 def _apply_run_entry_to_trace(

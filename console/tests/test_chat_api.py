@@ -96,6 +96,8 @@ async def client():
     await scheduler.stop()
     await registry.close()
     await run_log_storage.close()
+    await trace_storage.close()
+    await session_store.close()
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,7 @@
 """Console session read models assembled from storage and scheduler state."""
 
+from agiwo.agent import RunLogStorage, RunView
 from agiwo.agent.models.input import UserMessage
-from agiwo.agent.models.run import RunView
-from agiwo.agent.storage.base import RunLogStorage
 from agiwo.scheduler.engine import Scheduler
 
 from server.models.metrics import RunMetricsSummary
@@ -14,7 +13,7 @@ from server.models.session import (
     SessionDetailRecord,
     SessionSummaryRecord,
 )
-from server.services.metrics import summarize_run_views_paginated
+from server.services.metrics import add_run_to_summary
 
 
 class SessionViewService:
@@ -73,15 +72,15 @@ class SessionViewService:
         if session is None:
             return None
 
-        metrics = await summarize_run_views_paginated(
-            self._run_storage, session_id=session_id
-        )
-        last_run = await self._run_storage.get_latest_run_view(session_id)
+        stats = await self._run_storage.get_session_run_stats(session_id)
+        metrics = RunMetricsSummary()
+        for run in stats.run_views:
+            add_run_to_summary(metrics, run)
         summary = self._assemble_summary(
             session,
-            last_run=last_run,
-            run_count=metrics.run_count,
-            step_count=await self._run_storage.get_committed_step_count(session_id),
+            last_run=stats.run_views[0] if stats.run_views else None,
+            run_count=len(stats.run_views),
+            step_count=stats.committed_step_count,
             root_state_status=await self._get_root_state_status(session_id),
             metrics=metrics,
         )

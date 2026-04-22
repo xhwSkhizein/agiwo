@@ -21,6 +21,7 @@ from agiwo.agent import (
     MessageRole,
     RunMetrics,
     RunOutput,
+    RunStatus,
     StepView,
     StepMetrics,
     TerminationReason,
@@ -94,22 +95,20 @@ def _make_context():
 
 
 def test_step_view_direct_user_construction_derives_content() -> None:
-    step = StepView(
-        id="step-direct-user",
-        session_id="session-1",
-        run_id="run-1",
+    step = StepView.user(
+        _make_context(),
         sequence=1,
-        role=MessageRole.USER,
-        user_input=[
+        content=[
             ContentPart(type=ContentType.TEXT, text="hello"),
             ContentPart(type=ContentType.IMAGE, url="https://example.com/a.png"),
         ],
-        created_at=datetime(2026, 3, 8, 12, 0, 0),
     )
+    step.id = "step-direct-user"
+    step.created_at = datetime(2026, 3, 8, 12, 0, 0)
 
     assert isinstance(step.content, list)
-    assert step.content[0]["text"] == "hello"
-    assert step.content[1]["type"] == "image_url"
+    assert step.content[0].text == "hello"
+    assert step.content[1].type is ContentType.IMAGE
     assert step.to_message()["content"] == step.content
 
 
@@ -235,7 +234,7 @@ def test_build_run_and_step_views_from_run_log_entries() -> None:
     assert run_view.run_id == "run-1"
     assert run_view.response == "world"
     assert run_view.last_user_input == "hello"
-    assert run_view.status == "completed"
+    assert run_view.status == RunStatus.COMPLETED
     assert run_view.user_id == "user-1"
     assert run_view.parent_run_id == "parent-run-1"
     assert len(step_views) == 1

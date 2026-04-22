@@ -46,6 +46,8 @@ async def execute_retrospect(
     ledger: RunLedger,
     storage: RunLogStorage,
     session_id: str,
+    run_id: str,
+    agent_id: str,
     offload_dir: Path,
     step_lookup: dict[str, dict[str, Any]],
 ) -> RetrospectOutcome:
@@ -89,8 +91,12 @@ async def execute_retrospect(
             step_id = step_info.get("id", "")
             if step_id:
                 affected_step_ids.append(step_id)
-                await storage.update_step_condensed_content(
-                    session_id, step_id, placeholder
+                await storage.append_step_condensed_content(
+                    session_id,
+                    run_id,
+                    agent_id,
+                    step_id,
+                    placeholder,
                 )
 
     if last_tool_call_id is not None and feedback:
@@ -102,6 +108,8 @@ async def execute_retrospect(
             step_lookup,
             storage,
             session_id,
+            run_id,
+            agent_id,
         )
         replacement = next(
             (
@@ -149,6 +157,8 @@ async def _persist_feedback(
     step_lookup: dict[str, Any],
     storage: RunLogStorage,
     session_id: str,
+    run_id: str,
+    agent_id: str,
 ) -> None:
     """Append retrospect feedback to the last tool message and persist.
 
@@ -170,8 +180,12 @@ async def _persist_feedback(
         if step_info is not None:
             step_id = step_info.get("id", "")
             if step_id:
-                await storage.update_step_condensed_content(
-                    session_id, step_id, combined
+                await storage.append_step_condensed_content(
+                    session_id,
+                    run_id,
+                    agent_id,
+                    step_id,
+                    combined,
                 )
         break
 

@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agiwo.agent import RunStatus
 from server.services.metrics import (
     summarize_run_views_paginated,
     summarize_traces_paginated,
@@ -67,7 +68,7 @@ async def test_summarize_run_views_paginated_aggregates_all_pages() -> None:
                 session_id="sess-1",
                 agent_id="agent-a",
                 user_id="user-1",
-                status="completed",
+                status=RunStatus.COMPLETED,
                 metrics=SimpleNamespace(
                     steps_count=1,
                     tool_calls_count=1,
@@ -84,7 +85,7 @@ async def test_summarize_run_views_paginated_aggregates_all_pages() -> None:
                 session_id="sess-1",
                 agent_id="agent-a",
                 user_id="user-1",
-                status="completed",
+                status=RunStatus.COMPLETED,
                 metrics=SimpleNamespace(
                     steps_count=1,
                     tool_calls_count=0,
@@ -101,7 +102,7 @@ async def test_summarize_run_views_paginated_aggregates_all_pages() -> None:
                 session_id="sess-1",
                 agent_id="agent-b",
                 user_id="user-2",
-                status="running",
+                status=RunStatus.RUNNING,
                 metrics=SimpleNamespace(
                     steps_count=1,
                     tool_calls_count=0,

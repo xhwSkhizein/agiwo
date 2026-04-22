@@ -94,6 +94,8 @@ class RetrospectBatch:
             ledger=self._state.ledger,
             storage=self._state.session_runtime.run_log_storage,
             session_id=self._state.session_id,
+            run_id=self._state.run_id,
+            agent_id=self._state.agent_id,
             offload_dir=offload_dir,
             step_lookup=self._step_lookup,
         )

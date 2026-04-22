@@ -68,7 +68,7 @@ def build_agent_hooks(
         resolved = HookRegistry(list(hooks.registrations))
     else:
         resolved = HookRegistry(list(hooks or []))
-    if not resolved.has_handler("default_memory_retrieve"):
+    if not resolved.has_phase(HookPhase.ASSEMBLE_CONTEXT):
         memory_hook = DefaultMemoryHook(
             root_path=config.options.get_effective_root_path()
         )

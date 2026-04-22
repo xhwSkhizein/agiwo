@@ -74,6 +74,7 @@ from agiwo.agent.models.stream import (
     TerminationDecidedEvent,
     stream_items_from_entries,
 )
+from agiwo.agent.storage.base import RunLogStorage
 
 __all__ = [
     "Agent",
@@ -117,6 +118,7 @@ __all__ = [
     "RunStartedEvent",
     "RunStatus",
     "RunLogStorageConfig",
+    "RunLogStorage",
     "RunView",
     "RetrospectApplied",
     "RetrospectAppliedEvent",

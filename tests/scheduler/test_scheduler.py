@@ -499,12 +499,15 @@ class TestSchedulerCreateChildAgent:
         assert parent_state is not None
         # Root agent session_id is auto-generated UUID
         parent_session_id = parent_state.resolve_runtime_session_id()
+        next_sequence = await parent_runtime.run_log_storage.get_max_sequence(
+            parent_session_id
+        )
 
         # Add some history steps to parent agent's session
         step1 = StepView(
             session_id=parent_session_id,
             run_id="run-1",
-            sequence=1,
+            sequence=next_sequence + 1,
             role=MessageRole.USER,
             agent_id="parent-fork",
             content="Initial user message",
@@ -513,7 +516,7 @@ class TestSchedulerCreateChildAgent:
         step2 = StepView(
             session_id=parent_session_id,
             run_id="run-1",
-            sequence=2,
+            sequence=next_sequence + 2,
             role=MessageRole.ASSISTANT,
             agent_id="parent-fork",
             content="Assistant response",

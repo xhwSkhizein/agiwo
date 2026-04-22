@@ -90,6 +90,11 @@ The new runtime is organized around these responsibilities:
 
 `RunEngine` is the only execution owner for a single run. It owns:
 
+Implementation mapping:
+- `HookDispatcher` in this document maps to the shipped `agiwo.agent.hooks.HookRegistry` phase registry plus its dispatch helpers.
+- `RunLogWriter` in this document maps to `SessionRuntime.append_run_log_entries(...)` and the typed entry builders in `agiwo.agent.runtime.state_writer`.
+- `RunEngine` remains the single authoritative phase-decider in the implementation, with `RunLoopOrchestrator` kept as the canonical runtime-facing name.
+
 1. phase progression
 2. calling `termination`, `compaction`, and `retrospect` policies
 3. deciding when the run continues, pauses, or finishes

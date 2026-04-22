@@ -237,7 +237,7 @@ class TestSQLiteUserInputStorage:
                         sequence=step.sequence,
                         session_id=step.session_id,
                         run_id=step.run_id,
-                        agent_id=step.agent_id or "",
+                        agent_id=step.agent_id if step.agent_id is not None else "",
                         step_id=step.id,
                         role=MessageRole.USER,
                         user_input=step.user_input,
@@ -254,30 +254,59 @@ class TestSQLiteUserInputStorage:
             assert retrieved[0].user_input.context.source == "api"
 
     @pytest.mark.asyncio
-    async def test_save_run_log_entry_with_user_message(self):
+    async def test_save_run_log_entry_with_user_message_replays_ordered_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             storage = SQLiteRunLogStorage(db_path=db_path)
 
-            entry = RunStarted(
-                sequence=1,
-                session_id="test-session",
-                run_id="test-run",
-                agent_id="test-agent",
-                user_input=UserMessage(
-                    content=[ContentPart(type=ContentType.TEXT, text="hello")],
-                    context=ChannelContext(source="api", metadata={"channel": "test"}),
+            entries = [
+                RunStarted(
+                    sequence=1,
+                    session_id="test-session",
+                    run_id="test-run-1",
+                    agent_id="test-agent",
+                    user_input=UserMessage(
+                        content=[ContentPart(type=ContentType.TEXT, text="hello")],
+                        context=ChannelContext(
+                            source="api", metadata={"channel": "test"}
+                        ),
+                    ),
                 ),
-            )
+                RunStarted(
+                    sequence=2,
+                    session_id="test-session",
+                    run_id="test-run-2",
+                    agent_id="test-agent",
+                    user_input=UserMessage(
+                        content=[ContentPart(type=ContentType.TEXT, text="world")],
+                        context=ChannelContext(
+                            source="api", metadata={"channel": "test-2"}
+                        ),
+                    ),
+                ),
+                RunStarted(
+                    sequence=1,
+                    session_id="other-session",
+                    run_id="test-run-3",
+                    agent_id="test-agent",
+                    user_input=UserMessage(
+                        content=[ContentPart(type=ContentType.TEXT, text="ignored")],
+                        context=ChannelContext(source="api"),
+                    ),
+                ),
+            ]
 
-            await storage.append_entries([entry])
+            await storage.append_entries(entries)
             loaded = await storage.list_entries(session_id="test-session")
 
-            assert len(loaded) == 1
+            assert len(loaded) == 2
             assert isinstance(loaded[0], RunStarted)
             assert isinstance(loaded[0].user_input, UserMessage)
             assert loaded[0].user_input.context is not None
             assert loaded[0].user_input.context.source == "api"
+            assert loaded[1].run_id == "test-run-2"
+            assert loaded[1].user_input.context is not None
+            assert loaded[1].user_input.context.metadata == {"channel": "test-2"}
 
 
 if __name__ == "__main__":

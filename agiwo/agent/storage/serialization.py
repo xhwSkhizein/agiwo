@@ -21,12 +21,13 @@ from agiwo.agent.models.log import (
     RunLogEntry,
     RunLogEntryKind,
     RunStarted,
+    StepCondensedContentUpdated,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
 )
-from agiwo.agent.models.run import RunMetrics, RunView
-from agiwo.agent.models.step import StepView
+from agiwo.agent.models.run import RunMetrics, RunStatus, RunView, TerminationReason
+from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 
 _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.RUN_STARTED: RunStarted,
@@ -41,6 +42,7 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.TOOL_STEP_COMMITTED: ToolStepCommitted,
     RunLogEntryKind.COMPACTION_APPLIED: CompactionApplied,
     RunLogEntryKind.RETROSPECT_APPLIED: RetrospectApplied,
+    RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED: StepCondensedContentUpdated,
     RunLogEntryKind.TERMINATION_DECIDED: TerminationDecided,
     RunLogEntryKind.HOOK_FAILED: HookFailed,
 }
@@ -96,10 +98,28 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
     normalized = dict(data)
     kind = RunLogEntryKind(normalized["kind"])
     entry_type = _RUN_LOG_TYPES[kind]
+    created_at = normalized.get("created_at")
+    if isinstance(created_at, str):
+        normalized["created_at"] = datetime.fromisoformat(created_at)
     if "user_input" in normalized:
         normalized["user_input"] = UserMessage.from_storage_value(
             normalized.get("user_input")
         )
+    if entry_type is RunFinished and "termination_reason" in normalized:
+        reason = normalized.get("termination_reason")
+        if isinstance(reason, str):
+            normalized["termination_reason"] = TerminationReason(reason)
+    if issubclass(entry_type, CommittedStep):
+        role = normalized.get("role")
+        if isinstance(role, str):
+            normalized["role"] = MessageRole(role)
+        metrics = normalized.get("metrics")
+        if isinstance(metrics, dict):
+            normalized["metrics"] = StepMetrics(**metrics)
+    if entry_type is LLMCallCompleted:
+        metrics = normalized.get("metrics")
+        if isinstance(metrics, dict):
+            normalized["metrics"] = StepMetrics(**metrics)
     normalized.pop("kind", None)
     return entry_type(**normalized)
 
@@ -132,20 +152,20 @@ def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
         None,
     )
 
-    status = "running"
+    status = RunStatus.RUNNING
     updated_at = entries[-1].created_at
     response: str | None = None
     termination_reason = None
     metrics: RunMetrics | None = None
 
     if finished is not None:
-        status = "completed"
+        status = RunStatus.COMPLETED
         response = finished.response
         termination_reason = finished.termination_reason
         metrics = RunMetrics(**finished.metrics) if finished.metrics else None
         updated_at = finished.created_at
     elif failed is not None:
-        status = "failed"
+        status = RunStatus.FAILED
         updated_at = failed.created_at
 
     if (
@@ -212,14 +232,28 @@ def build_step_view_from_entry(entry: CommittedStep) -> StepView:
 
 
 def build_step_views_from_entries(entries: list[RunLogEntry]) -> list[StepView]:
-    return [
-        build_step_view_from_entry(entry)
-        for entry in entries
-        if isinstance(
+    condensation_by_step_id: dict[str, str] = {}
+    step_views_by_id: dict[str, StepView] = {}
+    step_views: list[StepView] = []
+    for entry in entries:
+        if isinstance(entry, StepCondensedContentUpdated):
+            condensation_by_step_id[entry.step_id] = entry.condensed_content
+            existing = step_views_by_id.get(entry.step_id)
+            if existing is not None:
+                existing.condensed_content = entry.condensed_content
+            continue
+        if not isinstance(
             entry,
             (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
-        )
-    ]
+        ):
+            continue
+        step_view = build_step_view_from_entry(entry)
+        condensed_content = condensation_by_step_id.get(step_view.id)
+        if condensed_content is not None:
+            step_view.condensed_content = condensed_content
+        step_views_by_id[step_view.id] = step_view
+        step_views.append(step_view)
+    return step_views
 
 
 __all__ = [

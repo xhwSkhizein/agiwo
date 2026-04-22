@@ -123,6 +123,10 @@ class TestAgentAutoInjectMemoryHook:
         )
 
         assert agent.hooks.has_handler("custom_memory_retrieve")
+        handlers = agent.hooks.for_phase(HookPhase.ASSEMBLE_CONTEXT)
+        assert len(handlers) == 1
+        assert handlers[0].handler_name == "custom_memory_retrieve"
+        assert handlers[0].handler is custom_hook
 
     def test_agent_preserves_other_hooks_when_injecting(self):
         """Test that auto-inject preserves other user hooks."""
