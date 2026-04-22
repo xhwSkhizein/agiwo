@@ -237,6 +237,29 @@ class RunStateWriter:
             ]
         )
 
+    async def record_hook_failed(
+        self,
+        *,
+        phase: str,
+        handler_name: str,
+        critical: bool,
+        error: str,
+        traceback: str | None = None,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_hook_failed_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    phase=phase,
+                    handler_name=handler_name,
+                    critical=critical,
+                    error=error,
+                    traceback=traceback,
+                )
+            ]
+        )
+
 
 def build_run_started_entry(
     state: RunContext,

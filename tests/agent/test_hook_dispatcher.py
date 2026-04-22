@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
+import agiwo.agent.runtime.state_writer as state_writer_module
 from agiwo.agent.hooks import (
     HookCapability,
     HookGroup,
@@ -199,3 +200,53 @@ async def test_hook_registry_records_hook_failed_entries_for_noncritical_errors(
     assert hook_failed.critical is False
     assert hook_failed.error == "boom"
     assert hook_failed.traceback is not None
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_routes_hook_failed_recording_through_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def broken_handler(payload: dict) -> None:
+        del payload
+        raise RuntimeError("boom")
+
+    recorded: dict[str, object] = {}
+
+    class _SpyWriter:
+        def __init__(self, state: object) -> None:
+            recorded["state"] = state
+
+        async def record_hook_failed(self, **kwargs: object) -> list[object]:
+            recorded["kwargs"] = kwargs
+            return []
+
+    @dataclass
+    class _FakeContext:
+        session_runtime: object
+
+    monkeypatch.setattr(state_writer_module, "RunStateWriter", _SpyWriter)
+    registry = HookRegistry(
+        registrations=[
+            HookRegistration(
+                phase=HookPhase.AFTER_LLM,
+                capability=HookCapability.OBSERVE_ONLY,
+                handler_name="broken",
+                handler=broken_handler,
+            )
+        ]
+    )
+
+    await registry._dispatch(
+        HookPhase.AFTER_LLM,
+        {"context": _FakeContext(session_runtime=object()), "step": object()},
+        allow_transform=False,
+    )
+
+    assert "state" in recorded
+    kwargs = recorded["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["phase"] == HookPhase.AFTER_LLM.value
+    assert kwargs["handler_name"] == "broken"
+    assert kwargs["critical"] is False
+    assert kwargs["error"] == "boom"
+    assert kwargs["traceback"] is not None

@@ -4,7 +4,13 @@ import pytest
 
 from agiwo.agent import Agent, AgentConfig, TerminationReason
 from agiwo.agent.hooks import HookPhase, HookRegistry, transform
-from agiwo.agent.models.log import AssistantStepCommitted, RunFinished, RunLogEntryKind
+from agiwo.agent.models.log import (
+    AssistantStepCommitted,
+    LLMCallStarted,
+    MessagesRebuilt,
+    RunFinished,
+    RunLogEntryKind,
+)
 from agiwo.agent.models.stream import stream_items_from_entries
 from agiwo.agent.models.step import MessageRole
 from agiwo.llm.base import Model, StreamChunk
@@ -90,6 +96,44 @@ async def test_prepare_failure_after_run_started_writes_run_failed() -> None:
 
     entries = await agent.run_log_storage.list_entries(session_id="strict-run-session")
     assert [entry.kind.value for entry in entries][-1] == "run_failed"
+
+
+@pytest.mark.asyncio
+async def test_before_llm_message_rewrite_becomes_messages_rebuilt_fact() -> None:
+    async def rewrite_messages(payload: dict) -> dict:
+        updated = dict(payload)
+        messages = list(payload["messages"])
+        messages.append({"role": "user", "content": "steered follow-up"})
+        updated["messages"] = messages
+        return updated
+
+    agent = Agent(
+        AgentConfig(name="rewrite-test", description="rewrite test"),
+        model=_FixedResponseModel(),
+        hooks=HookRegistry(
+            [
+                transform(
+                    HookPhase.BEFORE_LLM,
+                    "rewrite_messages",
+                    rewrite_messages,
+                )
+            ]
+        ),
+    )
+
+    result = await agent.run("hello", session_id="rewrite-session")
+
+    assert result.response == "ok"
+    entries = await agent.run_log_storage.list_entries(session_id="rewrite-session")
+    rebuilt = next(entry for entry in entries if isinstance(entry, MessagesRebuilt))
+    llm_started = next(entry for entry in entries if isinstance(entry, LLMCallStarted))
+
+    assert rebuilt.reason == "before_llm"
+    assert rebuilt.messages[-1] == {
+        "role": "user",
+        "content": "steered follow-up",
+    }
+    assert llm_started.messages == rebuilt.messages
 
 
 def test_stream_items_from_entries_reuses_nested_run_context_without_run_started() -> (

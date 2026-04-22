@@ -37,9 +37,6 @@ from agiwo.agent.models.step import (
     StepView,
 )
 from agiwo.agent.runtime.context import RunContext, RunRuntime
-from agiwo.agent.runtime.state_ops import (
-    replace_messages,
-)
 from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.termination.limits import (
@@ -71,6 +68,15 @@ class RunLoopOrchestrator:
         self.context = context
         self.runtime = runtime
         self.writer = RunStateWriter(context)
+
+    async def _project_entries(self, entries: list[object]) -> None:
+        await self.context.session_runtime.project_run_log_entries(
+            entries,
+            run_id=self.context.run_id,
+            agent_id=self.context.agent_id,
+            parent_run_id=self.context.parent_run_id,
+            depth=self.context.depth,
+        )
 
     async def execute_run(
         self,
@@ -115,35 +121,17 @@ class RunLoopOrchestrator:
     async def _start_run(self, user_input: UserInput) -> None:
         """Initialize and start the run."""
         entries = await self.writer.start_run(user_input)
-        await self.context.session_runtime.project_run_log_entries(
-            entries,
-            run_id=self.context.run_id,
-            agent_id=self.context.agent_id,
-            parent_run_id=self.context.parent_run_id,
-            depth=self.context.depth,
-        )
+        await self._project_entries(entries)
 
     async def _complete_run(self, result: RunOutput) -> None:
         """Complete the run successfully."""
         entries = await self.writer.finish_run(result)
-        await self.context.session_runtime.project_run_log_entries(
-            entries,
-            run_id=self.context.run_id,
-            agent_id=self.context.agent_id,
-            parent_run_id=self.context.parent_run_id,
-            depth=self.context.depth,
-        )
+        await self._project_entries(entries)
 
     async def _fail_run(self, error: Exception) -> None:
         """Handle run failure."""
         entries = await self.writer.fail_run(error)
-        await self.context.session_runtime.project_run_log_entries(
-            entries,
-            run_id=self.context.run_id,
-            agent_id=self.context.agent_id,
-            parent_run_id=self.context.parent_run_id,
-            depth=self.context.depth,
-        )
+        await self._project_entries(entries)
 
     def _build_output(self) -> RunOutput:
         """Build the run output from the current state."""
@@ -173,13 +161,7 @@ class RunLoopOrchestrator:
             phase=phase,
             source=source,
         )
-        await self.context.session_runtime.project_run_log_entries(
-            entries,
-            run_id=self.context.run_id,
-            agent_id=self.context.agent_id,
-            parent_run_id=self.context.parent_run_id,
-            depth=self.context.depth,
-        )
+        await self._project_entries(entries)
 
     async def _finalize_run(self, user_input: UserInput) -> RunOutput:
         """Generate summary, build output, and complete the run."""
@@ -287,13 +269,7 @@ class RunLoopOrchestrator:
                 max_attempts=3,
                 terminal=terminal,
             )
-            await self.context.session_runtime.project_run_log_entries(
-                entries,
-                run_id=self.context.run_id,
-                agent_id=self.context.agent_id,
-                parent_run_id=self.context.parent_run_id,
-                depth=self.context.depth,
-            )
+            await self._project_entries(entries)
             await self.context.hooks.compaction_failed(
                 self.context.run_id, err, failure_count, self.context
             )
@@ -335,30 +311,27 @@ class RunLoopOrchestrator:
 
     async def _run_assistant_turn(self) -> tuple[StepView, LLMCallContext]:
         """Execute an assistant turn (LLM call)."""
-        replace_messages(
-            self.context,
-            apply_steering_messages(
-                self.context.snapshot_messages(),
-                self.context.session_runtime.steering_queue,
-            ),
+        original_messages = self.context.snapshot_messages()
+        request_messages = apply_steering_messages(
+            original_messages,
+            self.context.session_runtime.steering_queue,
         )
         modified = await self.context.hooks.before_llm_call(
-            self.context.snapshot_messages(),
-            self.context,
+            request_messages, self.context
         )
         if modified is not None:
-            replace_messages(self.context, modified)
+            request_messages = modified
+        if request_messages != original_messages:
+            rebuilt_entries = await self.writer.rebuild_messages(
+                reason="before_llm",
+                messages=request_messages,
+            )
+            await self._project_entries(rebuilt_entries)
         entries = await self.writer.record_llm_call_started(
             messages=self.context.snapshot_messages(),
             tools=self.context.copy_tool_schemas(),
         )
-        await self.context.session_runtime.project_run_log_entries(
-            entries,
-            run_id=self.context.run_id,
-            agent_id=self.context.agent_id,
-            parent_run_id=self.context.parent_run_id,
-            depth=self.context.depth,
-        )
+        await self._project_entries(entries)
 
         step, llm_context = await stream_assistant_step(
             self.runtime.model,
@@ -369,13 +342,7 @@ class RunLoopOrchestrator:
         entries = await self.writer.record_llm_call_completed(
             step=step, llm=llm_context
         )
-        await self.context.session_runtime.project_run_log_entries(
-            entries,
-            run_id=self.context.run_id,
-            agent_id=self.context.agent_id,
-            parent_run_id=self.context.parent_run_id,
-            depth=self.context.depth,
-        )
+        await self._project_entries(entries)
 
         await self.context.hooks.after_llm_call(step, self.context)
         return step, llm_context

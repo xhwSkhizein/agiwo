@@ -204,22 +204,20 @@ class HookRegistry:
             return
 
         from agiwo.agent.runtime.state_writer import (  # noqa: PLC0415
-            build_hook_failed_entry,
+            RunStateWriter,
         )
 
         traceback_text = "".join(
             traceback_lib.format_exception(type(error), error, error.__traceback__)
         ).strip()
-        entry = build_hook_failed_entry(
-            context,
-            sequence=await session_runtime.allocate_sequence(),
+        writer = RunStateWriter(context)
+        await writer.record_hook_failed(
             phase=phase.value,
             handler_name=registration.handler_name,
             critical=registration.critical,
             error=str(error),
             traceback=traceback_text or None,
         )
-        await session_runtime.append_run_log_entries([entry])
 
     async def _dispatch(
         self,
