@@ -9,6 +9,7 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CommittedStep,
     CompactionApplied,
+    CompactionFailed,
     MessagesRebuilt,
     RetrospectApplied,
     RunFailed,
@@ -121,6 +122,23 @@ class CompactionAppliedEvent(AgentStreamItemBase):
         payload["end_sequence"] = self.end_sequence
         payload["transcript_path"] = self.transcript_path
         payload["summary"] = self.summary
+        return payload
+
+
+@dataclass(kw_only=True)
+class CompactionFailedEvent(AgentStreamItemBase):
+    error: str
+    attempt: int
+    max_attempts: int
+    terminal: bool
+    type: Literal["compaction_failed"] = "compaction_failed"
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self._base_dict()
+        payload["error"] = self.error
+        payload["attempt"] = self.attempt
+        payload["max_attempts"] = self.max_attempts
+        payload["terminal"] = self.terminal
         return payload
 
 
@@ -308,6 +326,14 @@ def _stream_item_from_runtime_entry(
             transcript_path=entry.transcript_path,
             summary=entry.summary,
         )
+    elif isinstance(entry, CompactionFailed):
+        item = CompactionFailedEvent(
+            **base_kwargs,
+            error=entry.error,
+            attempt=entry.attempt,
+            max_attempts=entry.max_attempts,
+            terminal=entry.terminal,
+        )
     elif isinstance(entry, RetrospectApplied):
         item = RetrospectAppliedEvent(
             **base_kwargs,
@@ -417,6 +443,7 @@ AgentStreamItem: TypeAlias = (
     | StepCompletedEvent
     | MessagesRebuiltEvent
     | CompactionAppliedEvent
+    | CompactionFailedEvent
     | RetrospectAppliedEvent
     | TerminationDecidedEvent
     | RunRolledBackEvent
@@ -429,6 +456,7 @@ __all__ = [
     "AgentStreamItem",
     "AgentStreamItemBase",
     "CompactionAppliedEvent",
+    "CompactionFailedEvent",
     "MessagesRebuiltEvent",
     "RetrospectAppliedEvent",
     "RunRolledBackEvent",

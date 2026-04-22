@@ -10,6 +10,7 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CommittedStep,
     CompactionApplied,
+    CompactionFailed,
     ContextAssembled,
     HookFailed,
     LLMCallCompleted,
@@ -30,6 +31,7 @@ from agiwo.agent.models.log import (
 )
 from agiwo.agent.models.runtime_decision import (
     CompactionDecisionView,
+    CompactionFailureDecisionView,
     RetrospectDecisionView,
     RollbackDecisionView,
     RuntimeDecisionState,
@@ -51,6 +53,7 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.ASSISTANT_STEP_COMMITTED: AssistantStepCommitted,
     RunLogEntryKind.TOOL_STEP_COMMITTED: ToolStepCommitted,
     RunLogEntryKind.COMPACTION_APPLIED: CompactionApplied,
+    RunLogEntryKind.COMPACTION_FAILED: CompactionFailed,
     RunLogEntryKind.RETROSPECT_APPLIED: RetrospectApplied,
     RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED: StepCondensedContentUpdated,
     RunLogEntryKind.TERMINATION_DECIDED: TerminationDecided,
@@ -313,6 +316,7 @@ def build_runtime_decision_state_from_entries(
 ) -> RuntimeDecisionState:
     latest_termination: TerminationDecisionView | None = None
     latest_compaction: CompactionDecisionView | None = None
+    latest_compaction_failure: CompactionFailureDecisionView | None = None
     latest_retrospect: RetrospectDecisionView | None = None
     latest_rollback: RollbackDecisionView | None = None
 
@@ -338,6 +342,19 @@ def build_runtime_decision_state_from_entries(
                 created_at=entry.created_at,
                 metadata=build_compact_metadata_from_entry(entry),
                 summary=entry.summary,
+            )
+            continue
+        if isinstance(entry, CompactionFailed):
+            latest_compaction_failure = CompactionFailureDecisionView(
+                session_id=entry.session_id,
+                run_id=entry.run_id,
+                agent_id=entry.agent_id,
+                sequence=entry.sequence,
+                created_at=entry.created_at,
+                error=entry.error,
+                attempt=entry.attempt,
+                max_attempts=entry.max_attempts,
+                terminal=entry.terminal,
             )
             continue
         if isinstance(entry, RetrospectApplied):
@@ -369,6 +386,7 @@ def build_runtime_decision_state_from_entries(
     return RuntimeDecisionState(
         latest_termination=latest_termination,
         latest_compaction=latest_compaction,
+        latest_compaction_failure=latest_compaction_failure,
         latest_retrospect=latest_retrospect,
         latest_rollback=latest_rollback,
     )

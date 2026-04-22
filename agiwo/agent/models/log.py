@@ -28,6 +28,7 @@ class RunLogEntryKind(str, Enum):
     ASSISTANT_STEP_COMMITTED = "assistant_step_committed"
     TOOL_STEP_COMMITTED = "tool_step_committed"
     COMPACTION_APPLIED = "compaction_applied"
+    COMPACTION_FAILED = "compaction_failed"
     RETROSPECT_APPLIED = "retrospect_applied"
     STEP_CONDENSED_CONTENT_UPDATED = "step_condensed_content_updated"
     TERMINATION_DECIDED = "termination_decided"
@@ -165,6 +166,15 @@ class CompactionApplied(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
+class CompactionFailed(RunLogEntry):
+    error: str
+    attempt: int
+    max_attempts: int
+    terminal: bool = False
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.COMPACTION_FAILED)
+
+
+@dataclass(frozen=True, kw_only=True)
 class RetrospectApplied(RunLogEntry):
     affected_sequences: list[int] = field(default_factory=list)
     affected_step_ids: list[str] = field(default_factory=list)
@@ -262,6 +272,7 @@ __all__ = [
     "build_committed_step_entry",
     "CommittedStep",
     "CompactionApplied",
+    "CompactionFailed",
     "ContextAssembled",
     "HookFailed",
     "LLMCallCompleted",

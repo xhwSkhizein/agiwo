@@ -2,7 +2,12 @@ from datetime import datetime
 
 from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
 from agiwo.agent import StepCompletedEvent
-from agiwo.agent.models.log import RunFinished, RunStarted, UserStepCommitted
+from agiwo.agent.models.log import (
+    CompactionFailed,
+    RunFinished,
+    RunStarted,
+    UserStepCommitted,
+)
 from agiwo.agent.models.log import AssistantStepCommitted, RunRolledBack
 from agiwo.agent.models.run import RunIdentity
 from agiwo.agent.models.step import StepView as InternalStepView
@@ -190,6 +195,28 @@ def test_run_log_entry_storage_round_trip_restores_structured_user_input() -> No
     assert restored.user_input.content[0].text == "hello"
     assert restored.user_id == "user-1"
     assert restored.parent_run_id == "parent-run-1"
+
+
+def test_compaction_failed_round_trips_through_storage() -> None:
+    entry = CompactionFailed(
+        sequence=7,
+        session_id="sess-1",
+        run_id="run-1",
+        agent_id="agent-1",
+        error="compact boom",
+        attempt=2,
+        max_attempts=3,
+        terminal=False,
+    )
+
+    payload = serialize_run_log_entry_for_storage(entry)
+    restored = deserialize_run_log_entry_from_storage(payload)
+
+    assert isinstance(restored, CompactionFailed)
+    assert restored.error == "compact boom"
+    assert restored.attempt == 2
+    assert restored.max_attempts == 3
+    assert restored.terminal is False
 
 
 def test_build_run_and_step_views_from_run_log_entries() -> None:

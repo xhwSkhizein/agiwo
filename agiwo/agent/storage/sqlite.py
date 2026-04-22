@@ -301,6 +301,7 @@ class SQLiteRunLogStorage(RunLogStorage):
         decision_kinds = (
             RunLogEntryKind.TERMINATION_DECIDED,
             RunLogEntryKind.COMPACTION_APPLIED,
+            RunLogEntryKind.COMPACTION_FAILED,
             RunLogEntryKind.RETROSPECT_APPLIED,
             RunLogEntryKind.RUN_ROLLED_BACK,
         )

@@ -4,6 +4,7 @@ import pytest
 
 from agiwo.agent import (
     CompactionApplied,
+    CompactionFailed,
     RetrospectApplied,
     RunRolledBack,
     TerminationDecided,
@@ -41,8 +42,19 @@ def _decision_entries() -> list:
             summary="short summary",
             created_at=now,
         ),
-        RetrospectApplied(
+        CompactionFailed(
             sequence=3,
+            session_id="sess-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            error="compact retry failed",
+            attempt=1,
+            max_attempts=3,
+            terminal=False,
+            created_at=now,
+        ),
+        RetrospectApplied(
+            sequence=4,
             session_id="sess-1",
             run_id="run-1",
             agent_id="agent-1",
@@ -54,7 +66,7 @@ def _decision_entries() -> list:
             created_at=now,
         ),
         RunRolledBack(
-            sequence=4,
+            sequence=5,
             session_id="sess-1",
             run_id="run-1",
             agent_id="agent-1",
@@ -64,7 +76,7 @@ def _decision_entries() -> list:
             created_at=now,
         ),
         TerminationDecided(
-            sequence=5,
+            sequence=6,
             session_id="sess-1",
             run_id="run-2",
             agent_id="agent-1",
@@ -85,6 +97,9 @@ def test_build_runtime_decision_state_from_entries_replays_latest_views() -> Non
     assert state.latest_compaction is not None
     assert state.latest_compaction.metadata.start_seq == 1
     assert state.latest_compaction.summary == "short summary"
+    assert state.latest_compaction_failure is not None
+    assert state.latest_compaction_failure.error == "compact retry failed"
+    assert state.latest_compaction_failure.attempt == 1
     assert state.latest_retrospect is not None
     assert state.latest_retrospect.affected_sequences == (7, 8)
     assert state.latest_retrospect.trigger == "token_threshold"
@@ -136,6 +151,8 @@ async def test_storage_get_runtime_decision_state_filters_latest_entries(
         assert state.latest_retrospect.replacement == "summary"
         assert state.latest_compaction is not None
         assert state.latest_compaction.metadata.after_token_estimate == 200
+        assert state.latest_compaction_failure is not None
+        assert state.latest_compaction_failure.max_attempts == 3
         assert state.latest_rollback is not None
         assert state.latest_rollback.reason == "scheduler_no_progress_periodic"
 
