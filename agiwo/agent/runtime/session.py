@@ -30,13 +30,12 @@ class SessionRuntime:
         run_log_storage: RunLogStorage,
         trace_runtime: AgentTraceCollector | None = None,
         abort_signal: AbortSignal | None = None,
-        steering_queue: asyncio.Queue[object] | None = None,
     ) -> None:
         self.session_id = session_id
         self.run_log_storage = run_log_storage
         self.trace_runtime = trace_runtime
         self.abort_signal = abort_signal or AbortSignal()
-        self.steering_queue = steering_queue or asyncio.Queue()
+        self._pending_steer_inputs: list[UserMessage] = []
         self._subscribers: set[asyncio.Queue[AgentStreamItem | object]] = set()
         self._closed = False
 
@@ -110,8 +109,16 @@ class SessionRuntime:
         message = UserMessage.from_value(user_input)
         if not message.has_content():
             return False
-        await self.steering_queue.put(message)
+        self._pending_steer_inputs.append(message)
         return True
+
+    def peek_pending_steer_inputs(self) -> list[UserMessage]:
+        return [UserMessage.from_value(item) for item in self._pending_steer_inputs]
+
+    def ack_pending_steer_inputs(self, count: int) -> None:
+        if count <= 0:
+            return
+        del self._pending_steer_inputs[:count]
 
     async def publish(self, item: AgentStreamItem) -> None:
         if self._closed:

@@ -25,10 +25,20 @@ class InMemoryTraceStorage(BaseTraceStorage):
         self._traces: deque[Trace] = deque(maxlen=buffer_size)
 
     async def save_trace(self, trace: Trace) -> None:
+        existing = next(
+            (
+                index
+                for index, item in enumerate(self._traces)
+                if item.trace_id == trace.trace_id
+            ),
+            None,
+        )
+        if existing is not None:
+            del self._traces[existing]
         self._traces.append(trace)
 
     async def get_trace(self, trace_id: str) -> Trace | None:
-        for trace in self._traces:
+        for trace in reversed(self._traces):
             if trace.trace_id == trace_id:
                 return trace
         return None

@@ -16,12 +16,6 @@ class CompactionCycleResult(NamedTuple):
     should_continue: bool
 
 
-def increment_compaction_failure(context: RunContext) -> int:
-    """Increment compaction failure count and return the new count."""
-    context.ledger.compaction.failure_count += 1
-    return context.ledger.compaction.failure_count
-
-
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.models.input import UserInput
@@ -36,7 +30,7 @@ from agiwo.agent.models.step import (
     LLMCallContext,
     StepView,
 )
-from agiwo.agent.runtime.context import RunContext, RunRuntime
+from agiwo.agent.runtime.context import RunRuntime
 from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.termination.limits import (
@@ -260,7 +254,7 @@ class RunLoopOrchestrator:
             root_path=self.runtime.root_path,
         )
         if result.failed:
-            failure_count = increment_compaction_failure(self.context)
+            failure_count = self.writer.next_compaction_failure_attempt()
             err = result.error or ""
             terminal = failure_count >= 3
             entries = await self.writer.record_compaction_failed(
@@ -311,17 +305,23 @@ class RunLoopOrchestrator:
 
     async def _run_assistant_turn(self) -> tuple[StepView, LLMCallContext]:
         """Execute an assistant turn (LLM call)."""
-        original_messages = self.context.snapshot_messages()
-        request_messages = apply_steering_messages(
-            original_messages,
-            self.context.session_runtime.steering_queue,
-        )
+        request_messages = self.context.snapshot_messages()
+        pending_steer = self.context.session_runtime.peek_pending_steer_inputs()
+        if pending_steer:
+            request_messages = apply_steering_messages(request_messages, pending_steer)
+            rebuilt_entries = await self.writer.rebuild_messages(
+                reason="before_llm",
+                messages=request_messages,
+            )
+            await self._project_entries(rebuilt_entries)
+            self.context.session_runtime.ack_pending_steer_inputs(len(pending_steer))
+        request_messages = self.context.snapshot_messages()
         modified = await self.context.hooks.before_llm_call(
             request_messages, self.context
         )
         if modified is not None:
             request_messages = modified
-        if request_messages != original_messages:
+        if request_messages != self.context.snapshot_messages():
             rebuilt_entries = await self.writer.rebuild_messages(
                 reason="before_llm",
                 messages=request_messages,

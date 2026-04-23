@@ -92,6 +92,40 @@ async def test_run_state_writer_commit_step_updates_state_and_returns_entry() ->
     assert state.ledger.messages[-1]["role"] == "user"
 
 
+@pytest.mark.asyncio
+async def test_run_state_writer_owns_bootstrap_state_mutations() -> None:
+    state = _make_state()
+    writer = RunStateWriter(state)
+    metadata = CompactMetadata(
+        session_id="session-1",
+        agent_id="agent-1",
+        start_seq=1,
+        end_seq=2,
+        before_token_estimate=100,
+        after_token_estimate=10,
+        message_count=2,
+        transcript_path="/tmp/t.jsonl",
+        analysis={"summary": "summary"},
+        created_at=datetime(2026, 3, 26, 12, 0, 0),
+    )
+
+    entries = await writer.record_context_assembled(
+        messages=[{"role": "system", "content": "sys"}],
+        memory_count=0,
+        run_start_seq=7,
+        tool_schemas=[{"type": "function", "function": {"name": "bash"}}],
+        latest_compaction=metadata,
+    )
+
+    assert entries[0].kind.value == "context_assembled"
+    assert state.ledger.messages == [{"role": "system", "content": "sys"}]
+    assert state.ledger.run_start_seq == 7
+    assert state.ledger.tool_schemas == [
+        {"type": "function", "function": {"name": "bash"}}
+    ]
+    assert state.ledger.compaction.last_metadata == metadata
+
+
 def test_runtime_state_ops_only_touch_mutable_ledger_state() -> None:
     state = _make_state()
 

@@ -1,4 +1,4 @@
-"""Agent trace collector — build Trace/Span trees from run-log and step callbacks."""
+"""Agent trace collector — build Trace/Span trees from committed run-log entries."""
 
 import json
 from collections import OrderedDict
@@ -19,8 +19,6 @@ from agiwo.agent.models.log import (
     TerminationDecided,
     ToolStepCommitted,
 )
-from agiwo.agent.models.run import RunOutput
-from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 
@@ -33,160 +31,6 @@ def _utc(value: datetime | None) -> datetime | None:
     return (
         value.replace(tzinfo=timezone.utc) if value and value.tzinfo is None else value
     )
-
-
-def _resolve_parent(
-    step: StepView,
-    run_spans: dict[str, Span],
-    fallback: Span | None,
-) -> tuple[str | None, int]:
-    parent = run_spans.get(step.run_id)
-    if not parent and step.parent_run_id:
-        parent = run_spans.get(step.parent_run_id)
-    parent = parent or fallback
-    return (parent.span_id, parent.depth) if parent else (None, 0)
-
-
-def _extract_tool_args(step: StepView, cache: dict[str, StepView]) -> dict[str, Any]:
-    if not step.tool_call_id:
-        return {}
-    assistant = cache.get(step.tool_call_id)
-    if not assistant or not assistant.tool_calls:
-        return {}
-    for tc in assistant.tool_calls:
-        if tc.get("id") != step.tool_call_id:
-            continue
-        raw = tc.get("function", {}).get("arguments", "{}")
-        if isinstance(raw, str):
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError:
-                return {}
-        return raw if isinstance(raw, dict) else {}
-    return {}
-
-
-def _build_tool_span(
-    trace_id: str,
-    step: StepView,
-    cache: dict[str, StepView],
-    run_spans: dict[str, Span],
-    fallback: Span | None,
-) -> Span:
-    m = step.metrics
-    start = _utc((m.start_at if m and m.start_at else None) or step.created_at)
-    end = _utc(m.end_at if m else None)
-    dur = m.duration_ms if m else None
-    parent_id, parent_depth = _resolve_parent(step, run_spans, fallback)
-    is_error = step.is_error
-
-    span = Span(
-        trace_id=trace_id,
-        parent_span_id=parent_id,
-        kind=SpanKind.TOOL_CALL,
-        name=step.name or "tool",
-        depth=parent_depth + 1,
-        attributes={"tool_name": step.name, "tool_call_id": step.tool_call_id},
-        tool_details={
-            "tool_name": step.name,
-            "tool_call_id": step.tool_call_id,
-            "input_args": _extract_tool_args(step, cache),
-            "output": step.content,
-            "content_for_user": step.content_for_user,
-            "error": step.content if is_error else None,
-            "status": "error" if is_error else "completed",
-            **({"metrics": {"duration_ms": dur}} if m else {}),
-        },
-        step_id=step.id,
-        run_id=step.run_id,
-        start_time=start,
-        end_time=end,
-        duration_ms=dur,
-        status=SpanStatus.ERROR if is_error else SpanStatus.OK,
-        error_message=step.content if is_error else None,
-    )
-    if m:
-        span.metrics = {"tool.exec_time_ms": dur, "duration_ms": span.duration_ms}
-    return span
-
-
-def _build_assistant_span(
-    trace_id: str,
-    step: StepView,
-    llm: LLMCallContext | None,
-    run_spans: dict[str, Span],
-    fallback: Span | None,
-    preview_length: int,
-) -> Span:
-    m = step.metrics
-    start = _utc((m.start_at if m and m.start_at else None) or step.created_at)
-    end = _utc(m.end_at if m else None)
-    dur = m.duration_ms if m else None
-    parent_id, parent_depth = _resolve_parent(step, run_spans, fallback)
-    name = m.model_name if m and m.model_name else "llm"
-
-    llm_details: dict[str, Any] = {}
-    if llm:
-        llm_details = {
-            "request": llm.request_params or {},
-            "messages": llm.messages,
-            "tools": llm.tools,
-            "response_content": step.content,
-            "response_tool_calls": step.tool_calls,
-            "finish_reason": llm.finish_reason,
-            "status": "completed",
-        }
-        if m:
-            llm_details["metrics"] = {
-                "duration_ms": dur,
-                "first_token_ms": m.first_token_latency_ms,
-                "input_tokens": m.input_tokens,
-                "output_tokens": m.output_tokens,
-                "total_tokens": m.total_tokens,
-                "cache_read_tokens": m.cache_read_tokens,
-                "cache_creation_tokens": m.cache_creation_tokens,
-                "usage_source": m.usage_source,
-            }
-
-    span = Span(
-        trace_id=trace_id,
-        parent_span_id=parent_id,
-        kind=SpanKind.LLM_CALL,
-        name=name,
-        depth=parent_depth + 1,
-        attributes={
-            "model_name": m.model_name if m else None,
-            "provider": m.provider if m else None,
-            "has_tool_calls": bool(step.tool_calls),
-        },
-        step_id=step.id,
-        run_id=step.run_id,
-        start_time=start,
-        end_time=end,
-        duration_ms=dur,
-        status=SpanStatus.OK,
-        llm_details=llm_details,
-        output_preview=(
-            step.content[:preview_length]
-            if isinstance(step.content, str) and step.content
-            else None
-        ),
-    )
-    if m:
-        span.metrics = {
-            "tokens.input": m.input_tokens,
-            "tokens.output": m.output_tokens,
-            "tokens.total": m.total_tokens,
-            "tokens.cache_read": m.cache_read_tokens,
-            "tokens.cache_creation": m.cache_creation_tokens,
-            "token_cost": m.token_cost,
-            "first_token_ms": m.first_token_latency_ms,
-            "duration_ms": dur,
-            "model": m.model_name,
-            "provider": m.provider,
-            "usage_source": m.usage_source,
-        }
-    return span
 
 
 def _build_assistant_span_from_entries(
@@ -584,6 +428,7 @@ def _apply_llm_entry_to_trace(
                 preview_length,
             )
         )
+        llm_started.pop(entry.run_id, None)
         return True
     return False
 
@@ -674,12 +519,12 @@ class AgentTraceCollector:
     """Construct a Trace from committed run-log entries."""
 
     PREVIEW_LENGTH = 500
+    _CACHE_MAX_SIZE = 10_000
 
     def __init__(self, store: BaseTraceStorage | None = None) -> None:
         self.store = store
         self._trace: Trace | None = None
         self._run_spans: dict[str, Span] = {}
-        self._assistant_cache: OrderedDict[str, StepView] = OrderedDict()
         self._assistant_committed_cache: OrderedDict[str, AssistantStepCommitted] = (
             OrderedDict()
         )
@@ -705,90 +550,8 @@ class AgentTraceCollector:
             input_query=input_query,
         )
         self._run_spans = {}
-        self._assistant_cache = OrderedDict()
         self._assistant_committed_cache = OrderedDict()
         self._llm_started = {}
-
-    def on_run_started(
-        self,
-        *,
-        run_id: str,
-        agent_id: str,
-        session_id: str,
-        parent_run_id: str | None,
-    ) -> str:
-        trace = self._require_trace()
-        run_trace_id = trace.trace_id
-        _create_run_span(
-            trace,
-            run_id=run_id,
-            agent_id=agent_id,
-            session_id=session_id,
-            parent_run_id=parent_run_id,
-            run_spans=self._run_spans,
-        )
-        return run_trace_id
-
-    async def on_step(self, step: StepView, llm: LLMCallContext | None = None) -> None:
-        trace = self._require_trace()
-        self._cache_tool_calls(step)
-        fallback = self._run_spans.get(step.run_id) or (
-            self._run_spans.get(step.parent_run_id) if step.parent_run_id else None
-        )
-        if step.role.value == "assistant":
-            trace.add_span(
-                _build_assistant_span(
-                    trace.trace_id,
-                    step,
-                    llm,
-                    self._run_spans,
-                    fallback,
-                    self.PREVIEW_LENGTH,
-                )
-            )
-        elif step.role.value == "tool":
-            trace.add_span(
-                _build_tool_span(
-                    trace.trace_id,
-                    step,
-                    self._assistant_cache,
-                    self._run_spans,
-                    fallback,
-                )
-            )
-
-    async def on_run_completed(self, output: RunOutput, *, run_id: str) -> None:
-        trace = self._require_trace()
-        span = self._run_spans.get(run_id)
-        _complete_run_span(
-            span,
-            status=SpanStatus.OK,
-            preview_length=self.PREVIEW_LENGTH,
-            response=output.response,
-        )
-        _complete_root_trace(
-            trace,
-            span,
-            status=SpanStatus.OK,
-            response=output.response,
-        )
-        await self._save_trace()
-
-    async def on_run_failed(self, error: Exception, *, run_id: str) -> None:
-        trace = self._require_trace()
-        span = self._run_spans.get(run_id)
-        _complete_run_span(
-            span,
-            status=SpanStatus.ERROR,
-            preview_length=0,
-            error_message=str(error),
-        )
-        _complete_root_trace(
-            trace,
-            span,
-            status=SpanStatus.ERROR,
-        )
-        await self._save_trace()
 
     async def stop(self) -> None:
         if self._trace is None:
@@ -798,7 +561,6 @@ class AgentTraceCollector:
         await self._save_trace()
         self._trace = None
         self._run_spans = {}
-        self._assistant_cache = OrderedDict()
         self._assistant_committed_cache = OrderedDict()
         self._llm_started = {}
 
@@ -815,6 +577,11 @@ class AgentTraceCollector:
                 assistant_cache=self._assistant_committed_cache,
                 preview_length=self.PREVIEW_LENGTH,
             )
+            while len(self._assistant_committed_cache) > self._CACHE_MAX_SIZE:
+                self._assistant_committed_cache.popitem(last=False)
+            if isinstance(entry, (RunFinished, RunFailedEntry)):
+                self._purge_run_correlation_state(entry.run_id)
+        await self._save_trace()
 
     def build_from_entries(self, entries: list[RunLogEntry]) -> Trace:
         trace = Trace()
@@ -839,17 +606,16 @@ class AgentTraceCollector:
             raise RuntimeError("trace_not_started")
         return self._trace
 
-    _CACHE_MAX_SIZE = 10_000
-
-    def _cache_tool_calls(self, step: StepView) -> None:
-        if step.role.value != "assistant" or not step.tool_calls:
-            return
-        for tc in step.tool_calls:
-            tid = tc.get("id")
-            if tid:
-                self._assistant_cache[tid] = step
-        while len(self._assistant_cache) > self._CACHE_MAX_SIZE:
-            self._assistant_cache.popitem(last=False)
+    def _purge_run_correlation_state(self, run_id: str) -> None:
+        self._run_spans.pop(run_id, None)
+        self._llm_started.pop(run_id, None)
+        stale_tool_calls = [
+            tool_call_id
+            for tool_call_id, assistant in self._assistant_committed_cache.items()
+            if assistant.run_id == run_id
+        ]
+        for tool_call_id in stale_tool_calls:
+            self._assistant_committed_cache.pop(tool_call_id, None)
 
     async def _save_trace(self) -> None:
         if self._trace is None or self.store is None:

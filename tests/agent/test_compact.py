@@ -11,7 +11,12 @@ from agiwo.agent.compaction import (
     compact_if_needed,
 )
 from agiwo.agent.hooks import HookPhase, HookRegistry, observe
-from agiwo.agent.models.log import CompactionFailed, RunLogEntryKind
+from agiwo.agent.models.log import (
+    CompactionFailed,
+    LLMCallCompleted,
+    LLMCallStarted,
+    RunLogEntryKind,
+)
 from agiwo.agent.models.run import CompactMetadata, RunIdentity
 from agiwo.agent.run_loop import RunLoopOrchestrator
 from agiwo.agent.runtime.context import RunContext, RunRuntime
@@ -164,8 +169,18 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
     assert persisted == metadata
     entries = await session_runtime.list_run_log_entries(run_id="run-1")
     kinds = [entry.kind for entry in entries]
+    llm_started = [entry for entry in entries if isinstance(entry, LLMCallStarted)]
+    llm_completed = [entry for entry in entries if isinstance(entry, LLMCallCompleted)]
     assert RunLogEntryKind.MESSAGES_REBUILT in kinds
     assert RunLogEntryKind.COMPACTION_APPLIED in kinds
+    assert len(llm_started) == 1
+    assert len(llm_completed) == 1
+    assert (
+        llm_started[0]
+        .messages[-1]["content"]
+        .startswith("**IMPORTANT: Context Compression Required**")
+    )
+    assert llm_completed[0].content == '{"summary": "compressed"}'
     assert [
         item.type
         for item in published

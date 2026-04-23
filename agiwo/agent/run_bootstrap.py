@@ -7,10 +7,6 @@ from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.step import StepView
 from agiwo.agent.prompt import assemble_run_messages
 from agiwo.agent.runtime.context import RunContext, RunRuntime
-from agiwo.agent.runtime.state_ops import (
-    record_compaction_metadata,
-    set_tool_schemas,
-)
 from agiwo.agent.runtime.state_writer import RunStateWriter
 
 
@@ -55,9 +51,10 @@ async def prepare_run_context(
     await writer.record_context_assembled(
         messages=assembled_messages,
         memory_count=len(memories),
+        run_start_seq=user_step.sequence,
+        tool_schemas=_build_tool_schemas(runtime),
+        latest_compaction=latest_compact,
     )
-    set_tool_schemas(context, _build_tool_schemas(runtime))
-    record_compaction_metadata(context, latest_compact)
 
     return RunBootstrapResult(
         user_step=user_step,
@@ -92,13 +89,11 @@ async def _build_user_step(
     context: RunContext,
     user_input: UserInput | None,
 ) -> StepView:
-    user_step = StepView.user(
+    return StepView.user(
         context,
         sequence=await context.session_runtime.allocate_sequence(),
         user_input=user_input,
     )
-    context.ledger.run_start_seq = user_step.sequence
-    return user_step
 
 
 async def _load_existing_steps(
