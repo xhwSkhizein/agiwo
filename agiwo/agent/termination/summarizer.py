@@ -1,11 +1,10 @@
 """Termination-summary execution for interrupted agent runs."""
 
-from collections.abc import Awaitable, Callable
-
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.step_commit import StepCommitter
 from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.termination.prompts import (
     DEFAULT_TERMINATION_USER_PROMPT,
@@ -17,9 +16,6 @@ from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-StepCommitter = Callable[..., Awaitable[StepView]]
 
 
 async def maybe_generate_termination_summary(
@@ -74,17 +70,6 @@ async def maybe_generate_termination_summary(
         )
         step.name = "summary"
         await commit_step(step, llm=llm_context, append_message=False)
-        completed_entries = await writer.record_llm_call_completed(
-            step=step,
-            llm=llm_context,
-        )
-        await state.session_runtime.project_run_log_entries(
-            completed_entries,
-            run_id=state.run_id,
-            agent_id=state.agent_id,
-            parent_run_id=state.parent_run_id,
-            depth=state.depth,
-        )
 
         logger.info(
             "summary_generated",

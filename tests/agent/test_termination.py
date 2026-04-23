@@ -98,13 +98,19 @@ async def _commit_step_for_test(
     append_message: bool = True,
     track_state: bool = True,
 ) -> StepView:
-    del llm
     writer = RunStateWriter(state)
     entries = await writer.commit_step(
         step,
         append_message=append_message,
         track_state=track_state,
     )
+    if llm is not None:
+        entries.extend(
+            await writer.record_llm_call_completed(
+                step=step,
+                llm=llm,
+            )
+        )
     await state.session_runtime.project_run_log_entries(
         entries,
         run_id=state.run_id,

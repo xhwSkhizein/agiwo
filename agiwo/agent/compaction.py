@@ -6,7 +6,6 @@ Merges compaction/runtime.py + messages.py + parser.py + prompt.py + transcript.
 
 import copy
 import json
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +17,7 @@ from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.step_commit import StepCommitter
 from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator
@@ -69,9 +69,6 @@ Respond ONLY with the JSON object, no additional text.
 DEFAULT_ASSISTANT_RESPONSE = (
     "Understood. I have the context from the summary. Continuing."
 )
-
-
-StepCommitter = Callable[..., Awaitable[StepView]]
 
 
 # ---------------------------------------------------------------------------
@@ -343,17 +340,6 @@ async def _compact(
         name="compact",
     )
     await commit_step(step, llm=llm_context, append_message=False)
-    completed_entries = await writer.record_llm_call_completed(
-        step=step,
-        llm=llm_context,
-    )
-    await state.session_runtime.project_run_log_entries(
-        completed_entries,
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        parent_run_id=state.parent_run_id,
-        depth=state.depth,
-    )
 
     response_content = step.content or ""
     analysis = parse_compact_response(response_content)

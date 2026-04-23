@@ -7,11 +7,11 @@ from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import StepView
 from agiwo.agent.retrospect import RetrospectBatch
 from agiwo.agent.runtime.context import RunContext, RunRuntime
+from agiwo.agent.runtime.step_commit import StepCommitter
 from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.tool_executor import execute_tool_batch
 
 
-StepCommitter = Callable[..., Awaitable[StepView]]
 ToolTerminationWriter = Callable[[TerminationReason, str], Awaitable[None]]
 
 
