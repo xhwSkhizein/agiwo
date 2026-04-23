@@ -1,11 +1,12 @@
 """Termination-summary execution for interrupted agent runs."""
 
+from collections.abc import Awaitable, Callable
+
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.state_writer import RunStateWriter
-from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.agent.termination.prompts import (
     DEFAULT_TERMINATION_USER_PROMPT,
     TERMINATION_SUMMARY_REASONS,
@@ -18,12 +19,16 @@ from agiwo.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+StepCommitter = Callable[..., Awaitable[StepView]]
+
+
 async def maybe_generate_termination_summary(
     *,
     state: RunContext,
     options: AgentOptions,
     model: Model,
     abort_signal: AbortSignal | None,
+    commit_step: StepCommitter,
 ) -> None:
     if not options.enable_termination_summary:
         return
@@ -46,7 +51,7 @@ async def maybe_generate_termination_summary(
         content=user_prompt,
         name="summary_request",
     )
-    await commit_step(state, summary_user_step, append_message=True)
+    await commit_step(summary_user_step, append_message=True)
 
     try:
         started_entries = await writer.record_llm_call_started(
@@ -68,7 +73,7 @@ async def maybe_generate_termination_summary(
             use_state_tools=False,
         )
         step.name = "summary"
-        await commit_step(state, step, llm=llm_context, append_message=False)
+        await commit_step(step, llm=llm_context, append_message=False)
         completed_entries = await writer.record_llm_call_completed(
             step=step,
             llm=llm_context,

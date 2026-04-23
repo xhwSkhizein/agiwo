@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 import pytest
 
 from agiwo.agent import Agent, AgentConfig, TerminationReason
-from agiwo.agent.hooks import HookPhase, HookRegistry, transform
+from agiwo.agent.hooks import HookPhase, HookRegistry, observe, transform
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
     HookFailed,
@@ -16,6 +16,7 @@ from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.run import RunIdentity
 from agiwo.agent.models.stream import stream_items_from_entries
 from agiwo.agent.models.step import MessageRole
+from agiwo.agent.models.step import StepView
 from agiwo.agent.run_loop import RunLoopOrchestrator
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.session import SessionRuntime
@@ -41,6 +42,69 @@ class _NeverCalledModel(Model):
     async def arun_stream(self, messages, tools=None) -> AsyncIterator[StreamChunk]:
         del messages, tools
         raise AssertionError("llm should not run when prepare fails")
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_commit_step_writes_projects_and_dispatches_hook() -> None:
+    storage = InMemoryRunLogStorage()
+    session_runtime = SessionRuntime(
+        session_id="commit-session",
+        run_log_storage=storage,
+    )
+    published = []
+
+    async def publish(item):
+        published.append(item)
+
+    session_runtime.publish = publish  # type: ignore[method-assign]
+    seen_steps = []
+
+    async def capture_step(payload: dict) -> None:
+        seen_steps.append(payload["step"].role.value)
+
+    hooks = HookRegistry(
+        [
+            observe(
+                HookPhase.AFTER_STEP_COMMIT,
+                "capture_step",
+                capture_step,
+            )
+        ]
+    )
+    context = RunContext(
+        identity=RunIdentity(
+            run_id="run-1",
+            agent_id="agent-1",
+            agent_name="agent",
+        ),
+        session_runtime=session_runtime,
+    )
+    context.hooks = hooks
+    runtime = RunRuntime(
+        session_runtime=session_runtime,
+        config=AgentOptions(),
+        hooks=hooks,
+        model=_FixedResponseModel(),
+        tools_map={},
+        abort_signal=None,
+        root_path=".",
+        compact_start_seq=0,
+        max_input_tokens_per_call=0,
+        max_context_window=None,
+        compact_prompt=None,
+    )
+    orchestrator = RunLoopOrchestrator(context, runtime)
+    step = StepView.user(context, sequence=1, user_input="hello")
+
+    committed = await orchestrator._commit_step(step)
+
+    assert committed is step
+    entries = await session_runtime.list_run_log_entries(run_id="run-1")
+    assert [entry.kind.value for entry in entries] == ["user_step_committed"]
+    assert [item.type for item in published] == ["step_completed"]
+    assert seen_steps == ["user"]
+    assert context.ledger.messages[-1]["role"] == "user"
+    assert context.ledger.messages[-1]["content"] == "hello"
 
 
 @pytest.mark.asyncio

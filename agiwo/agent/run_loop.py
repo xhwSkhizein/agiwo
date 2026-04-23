@@ -31,7 +31,6 @@ from agiwo.agent.models.step import (
     StepView,
 )
 from agiwo.agent.runtime.context import RunRuntime
-from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.termination.limits import (
     check_non_recoverable_limits,
@@ -72,6 +71,24 @@ class RunLoopOrchestrator:
             depth=self.context.depth,
         )
 
+    async def _commit_step(
+        self,
+        step: StepView,
+        *,
+        llm: LLMCallContext | None = None,
+        append_message: bool = True,
+        track_state: bool = True,
+    ) -> StepView:
+        del llm
+        entries = await self.writer.commit_step(
+            step,
+            append_message=append_message,
+            track_state=track_state,
+        )
+        await self._project_entries(entries)
+        await self.context.hooks.on_step(step, self.context)
+        return step
+
     async def execute_run(
         self,
         user_input: UserInput,
@@ -93,8 +110,7 @@ class RunLoopOrchestrator:
             )
 
             # Commit user step
-            await commit_step(
-                self.context,
+            await self._commit_step(
                 bootstrap.user_step,
                 append_message=False,
                 track_state=False,
@@ -164,6 +180,7 @@ class RunLoopOrchestrator:
             options=self.runtime.config,
             model=self.runtime.model,
             abort_signal=self.runtime.abort_signal,
+            commit_step=self._commit_step,
         )
         result = self._build_output()
         await self.context.hooks.after_run(result, self.context)
@@ -249,6 +266,7 @@ class RunLoopOrchestrator:
             model=self.runtime.model,
             abort_signal=self.runtime.abort_signal,
             max_context_window=self.runtime.max_context_window,
+            commit_step=self._commit_step,
             compact_prompt=self.runtime.compact_prompt,
             compact_start_seq=self.runtime.compact_start_seq,
             root_path=self.runtime.root_path,
@@ -338,7 +356,7 @@ class RunLoopOrchestrator:
             self.context,
             self.runtime.abort_signal,
         )
-        await commit_step(self.context, step, llm=llm_context)
+        await self._commit_step(step, llm=llm_context)
         entries = await self.writer.record_llm_call_completed(
             step=step, llm=llm_context
         )
@@ -399,6 +417,7 @@ class RunLoopOrchestrator:
             runtime=self.runtime,
             tool_calls=tool_calls,
             set_termination_reason=_set_tool_termination,
+            commit_step=self._commit_step,
         )
 
 
@@ -449,7 +468,4 @@ async def execute_run(
     )
 
 
-RunEngine = RunLoopOrchestrator
-
-
-__all__ = ["execute_run", "RunEngine", "RunLoopOrchestrator"]
+__all__ = ["execute_run", "RunLoopOrchestrator"]
