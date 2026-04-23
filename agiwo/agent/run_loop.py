@@ -4,9 +4,31 @@ import asyncio
 from typing import NamedTuple
 
 from agiwo.agent.compaction import CompactResult, compact_if_needed
+from agiwo.agent.hooks import HookRegistration, HookRegistry
+from agiwo.agent.llm_caller import stream_assistant_step
+from agiwo.agent.models.config import AgentOptions
+from agiwo.agent.models.input import UserInput
+from agiwo.agent.models.run import RunMetrics, RunOutput, TerminationReason
+from agiwo.agent.models.step import LLMCallContext, StepView
+from agiwo.agent.prompt import apply_steering_messages
 from agiwo.agent.run_bootstrap import prepare_run_context
 from agiwo.agent.run_tool_batch import execute_tool_batch_cycle
-from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.context import RunContext, RunRuntime
+from agiwo.agent.runtime.state_writer import RunStateWriter
+from agiwo.agent.termination.limits import (
+    check_non_recoverable_limits,
+    check_post_llm_limits,
+)
+from agiwo.agent.termination.summarizer import maybe_generate_termination_summary
+from agiwo.config.settings import settings
+from agiwo.llm.base import Model
+from agiwo.llm.limits import (
+    resolve_max_context_window,
+    resolve_max_input_tokens_per_call,
+)
+from agiwo.tool.base import BaseTool
+from agiwo.utils.abort_signal import AbortSignal
+from agiwo.utils.logging import get_logger
 
 
 class CompactionCycleResult(NamedTuple):
@@ -15,38 +37,6 @@ class CompactionCycleResult(NamedTuple):
     compact_start_seq: int
     should_continue: bool
 
-
-from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.hooks import HookRegistration, HookRegistry
-from agiwo.agent.models.input import UserInput
-from agiwo.agent.llm_caller import stream_assistant_step
-from agiwo.agent.prompt import apply_steering_messages
-from agiwo.agent.models.run import (
-    RunMetrics,
-    RunOutput,
-    TerminationReason,
-)
-from agiwo.agent.models.step import (
-    LLMCallContext,
-    StepView,
-)
-from agiwo.agent.runtime.context import RunRuntime
-from agiwo.agent.runtime.step_committer import commit_step
-from agiwo.agent.runtime.state_writer import RunStateWriter
-from agiwo.agent.termination.limits import (
-    check_non_recoverable_limits,
-    check_post_llm_limits,
-)
-from agiwo.agent.termination.summarizer import maybe_generate_termination_summary
-from agiwo.tool.base import BaseTool
-from agiwo.config.settings import settings
-from agiwo.llm.base import Model
-from agiwo.llm.limits import (
-    resolve_max_context_window,
-    resolve_max_input_tokens_per_call,
-)
-from agiwo.utils.abort_signal import AbortSignal
-from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -72,6 +62,30 @@ class RunLoopOrchestrator:
             depth=self.context.depth,
         )
 
+    async def _commit_step(
+        self,
+        step: StepView,
+        *,
+        llm: LLMCallContext | None = None,
+        append_message: bool = True,
+        track_state: bool = True,
+    ) -> StepView:
+        entries = await self.writer.commit_step(
+            step,
+            append_message=append_message,
+            track_state=track_state,
+        )
+        if llm is not None:
+            entries.extend(
+                await self.writer.record_llm_call_completed(
+                    step=step,
+                    llm=llm,
+                )
+            )
+        await self._project_entries(entries)
+        await self.context.hooks.on_step(step, self.context)
+        return step
+
     async def execute_run(
         self,
         user_input: UserInput,
@@ -93,8 +107,7 @@ class RunLoopOrchestrator:
             )
 
             # Commit user step
-            await commit_step(
-                self.context,
+            await self._commit_step(
                 bootstrap.user_step,
                 append_message=False,
                 track_state=False,
@@ -164,6 +177,7 @@ class RunLoopOrchestrator:
             options=self.runtime.config,
             model=self.runtime.model,
             abort_signal=self.runtime.abort_signal,
+            commit_step=self._commit_step,
         )
         result = self._build_output()
         await self.context.hooks.after_run(result, self.context)
@@ -249,6 +263,7 @@ class RunLoopOrchestrator:
             model=self.runtime.model,
             abort_signal=self.runtime.abort_signal,
             max_context_window=self.runtime.max_context_window,
+            commit_step=self._commit_step,
             compact_prompt=self.runtime.compact_prompt,
             compact_start_seq=self.runtime.compact_start_seq,
             root_path=self.runtime.root_path,
@@ -338,12 +353,7 @@ class RunLoopOrchestrator:
             self.context,
             self.runtime.abort_signal,
         )
-        await commit_step(self.context, step, llm=llm_context)
-        entries = await self.writer.record_llm_call_completed(
-            step=step, llm=llm_context
-        )
-        await self._project_entries(entries)
-
+        await self._commit_step(step, llm=llm_context)
         await self.context.hooks.after_llm_call(step, self.context)
         return step, llm_context
 
@@ -399,6 +409,7 @@ class RunLoopOrchestrator:
             runtime=self.runtime,
             tool_calls=tool_calls,
             set_termination_reason=_set_tool_termination,
+            commit_step=self._commit_step,
         )
 
 
@@ -449,7 +460,4 @@ async def execute_run(
     )
 
 
-RunEngine = RunLoopOrchestrator
-
-
-__all__ = ["execute_run", "RunEngine", "RunLoopOrchestrator"]
+__all__ = ["execute_run", "RunLoopOrchestrator"]

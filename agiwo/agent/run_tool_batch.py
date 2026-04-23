@@ -7,8 +7,8 @@ from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import StepView
 from agiwo.agent.retrospect import RetrospectBatch
 from agiwo.agent.runtime.context import RunContext, RunRuntime
+from agiwo.agent.runtime.step_commit import StepCommitter
 from agiwo.agent.runtime.state_writer import RunStateWriter
-from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.agent.tool_executor import execute_tool_batch
 
 
@@ -21,6 +21,7 @@ async def execute_tool_batch_cycle(
     runtime: RunRuntime,
     tool_calls: list[dict[str, Any]],
     set_termination_reason: ToolTerminationWriter,
+    commit_step: StepCommitter,
 ) -> bool:
     """Execute one tool batch and apply retrospect-driven message rebuilds."""
     writer = RunStateWriter(context)
@@ -53,7 +54,7 @@ async def execute_tool_batch_cycle(
             is_error=not result.is_success,
         )
         batch.register_step(call_id, tool_step.id, tool_step.sequence)
-        await commit_step(context, tool_step)
+        await commit_step(tool_step)
 
         if not terminated and result.termination_reason is not None:
             await set_termination_reason(result.termination_reason, result.tool_name)

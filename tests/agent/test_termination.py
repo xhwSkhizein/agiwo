@@ -15,6 +15,7 @@ from agiwo.agent.models.step import LLMCallContext, StepMetrics, StepView
 from agiwo.agent import TerminationReason
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.agent.termination.summarizer import maybe_generate_termination_summary
 from agiwo.llm.base import Model, StreamChunk
@@ -89,6 +90,38 @@ def _make_context() -> RunContext:
     )
 
 
+async def _commit_step_for_test(
+    state: RunContext,
+    step: StepView,
+    *,
+    llm=None,
+    append_message: bool = True,
+    track_state: bool = True,
+) -> StepView:
+    writer = RunStateWriter(state)
+    entries = await writer.commit_step(
+        step,
+        append_message=append_message,
+        track_state=track_state,
+    )
+    if llm is not None:
+        entries.extend(
+            await writer.record_llm_call_completed(
+                step=step,
+                llm=llm,
+            )
+        )
+    await state.session_runtime.project_run_log_entries(
+        entries,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        parent_run_id=state.parent_run_id,
+        depth=state.depth,
+    )
+    await state.hooks.on_step(step, state)
+    return step
+
+
 def test_check_non_recoverable_limits_returns_max_steps_reason() -> None:
     limits_module = importlib.import_module("agiwo.agent.termination.limits")
     state = _make_context()
@@ -157,6 +190,11 @@ async def test_termination_summary_writes_canonical_llm_call_facts() -> None:
         options=AgentOptions(enable_termination_summary=True),
         model=_FixedResponseModel(response="summary response"),
         abort_signal=None,
+        commit_step=lambda step, **kwargs: _commit_step_for_test(
+            state,
+            step,
+            **kwargs,
+        ),
     )
 
     entries = await state.session_runtime.list_run_log_entries(run_id="run-1")

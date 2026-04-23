@@ -17,8 +17,8 @@ from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.step_commit import StepCommitter
 from agiwo.agent.runtime.state_writer import RunStateWriter
-from agiwo.agent.runtime.step_committer import commit_step
 from agiwo.llm.base import Model
 from agiwo.llm.usage_resolver import ModelUsageEstimator
 from agiwo.config.settings import get_settings
@@ -219,6 +219,7 @@ async def compact_if_needed(
     model: Model,
     abort_signal: AbortSignal | None,
     max_context_window: int | None,
+    commit_step: StepCommitter,
     compact_prompt: str | None = None,
     compact_start_seq: int,
     root_path: str | None = None,
@@ -243,6 +244,7 @@ async def compact_if_needed(
                 state,
                 model,
                 abort_signal,
+                commit_step=commit_step,
                 compact_prompt=compact_prompt,
                 compact_start_seq=compact_start_seq,
                 root_path=resolved_root_path,
@@ -285,6 +287,7 @@ async def _compact(
     model: Model,
     abort_signal: AbortSignal | None,
     *,
+    commit_step: StepCommitter,
     compact_prompt: str | None,
     compact_start_seq: int,
     root_path: str,
@@ -313,7 +316,7 @@ async def _compact(
         content=compact_prompt_content,
         name="compact_request",
     )
-    await commit_step(state, compact_user_step, append_message=True)
+    await commit_step(compact_user_step, append_message=True)
     snapshot_messages = state.snapshot_messages()
 
     started_entries = await writer.record_llm_call_started(
@@ -336,18 +339,7 @@ async def _compact(
         use_state_tools=False,
         name="compact",
     )
-    await commit_step(state, step, llm=llm_context, append_message=False)
-    completed_entries = await writer.record_llm_call_completed(
-        step=step,
-        llm=llm_context,
-    )
-    await state.session_runtime.project_run_log_entries(
-        completed_entries,
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        parent_run_id=state.parent_run_id,
-        depth=state.depth,
-    )
+    await commit_step(step, llm=llm_context, append_message=False)
 
     response_content = step.content or ""
     analysis = parse_compact_response(response_content)

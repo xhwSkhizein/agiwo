@@ -18,9 +18,11 @@ from agiwo.agent.models.log import (
     RunLogEntryKind,
 )
 from agiwo.agent.models.run import CompactMetadata, RunIdentity
+from agiwo.agent.models.step import StepView
 from agiwo.agent.run_loop import RunLoopOrchestrator
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.session import SessionRuntime
+from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.llm.base import Model, StreamChunk
 
@@ -87,6 +89,38 @@ class TestDefaultPrompt:
         assert "Understood" in messages[2]["content"]
 
 
+async def _commit_step_for_test(
+    state: RunContext,
+    step: StepView,
+    *,
+    llm=None,
+    append_message: bool = True,
+    track_state: bool = True,
+) -> StepView:
+    writer = RunStateWriter(state)
+    entries = await writer.commit_step(
+        step,
+        append_message=append_message,
+        track_state=track_state,
+    )
+    if llm is not None:
+        entries.extend(
+            await writer.record_llm_call_completed(
+                step=step,
+                llm=llm,
+            )
+        )
+    await state.session_runtime.project_run_log_entries(
+        entries,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        parent_run_id=state.parent_run_id,
+        depth=state.depth,
+    )
+    await state.hooks.on_step(step, state)
+    return step
+
+
 @pytest.mark.asyncio
 async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
     tmp_path,
@@ -138,6 +172,11 @@ async def test_compact_if_needed_uses_the_same_step_commit_pipeline_as_run_loop(
         ),
         abort_signal=None,
         max_context_window=1,
+        commit_step=lambda step, **kwargs: _commit_step_for_test(
+            state,
+            step,
+            **kwargs,
+        ),
         compact_prompt=None,
         compact_start_seq=1,
         root_path=str(tmp_path),
