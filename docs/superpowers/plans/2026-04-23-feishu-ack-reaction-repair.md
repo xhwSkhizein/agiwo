@@ -20,8 +20,8 @@
   Add regression tests for the three ACK branches.
 - Modify: `console/tests/test_config_env.py`
   Add coverage for the new default ACK reaction value.
-- Create: `/tmp/agiwo-console-redeploy.env`
-  Export the current container environment into a temporary env file for replacement deployment.
+- Create: a secure temporary env file (for example `${ENV_FILE}` created via `mktemp`)
+  Export the current container environment into a temporary env file for replacement deployment, then remove it after verification.
 
 ## Task 1: Lock In the ACK Contract With Tests
 
@@ -154,10 +154,13 @@ class FeishuConfig(BaseModel):
 
 ```python
     async def send_ack(self, inbound: InboundMessage) -> None:
+        reaction_emoji = self._config.channels.feishu.ack_reaction_emoji
+        fallback_text = self._config.channels.feishu.ack_fallback_text
+
         try:
             await self._api.add_message_reaction(
                 inbound.message_id,
-                self._config.feishu_ack_reaction_emoji,
+                reaction_emoji,
             )
             logger.info(
                 "feishu_ack_sent",
@@ -178,7 +181,7 @@ class FeishuConfig(BaseModel):
         try:
             await self._api.reply_text(
                 inbound.message_id,
-                self._config.feishu_ack_fallback_text,
+                fallback_text,
             )
             logger.info(
                 "feishu_ack_sent",
@@ -187,7 +190,7 @@ class FeishuConfig(BaseModel):
                 chat_type=inbound.chat_type,
                 chat_id=inbound.chat_id,
                 message_id=inbound.message_id,
-                text=self._truncate_for_log(self._config.feishu_ack_fallback_text),
+                text=self._truncate_for_log(fallback_text),
             )
             return
         except Exception as exc:  # noqa: BLE001
@@ -200,7 +203,7 @@ class FeishuConfig(BaseModel):
         try:
             await self._api.create_text_message(
                 inbound.chat_id,
-                self._config.feishu_ack_fallback_text,
+                fallback_text,
             )
             logger.info(
                 "feishu_ack_sent",
@@ -209,7 +212,7 @@ class FeishuConfig(BaseModel):
                 chat_type=inbound.chat_type,
                 chat_id=inbound.chat_id,
                 message_id=inbound.message_id,
-                text=self._truncate_for_log(self._config.feishu_ack_fallback_text),
+                text=self._truncate_for_log(fallback_text),
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
@@ -265,7 +268,7 @@ No repo files change in this task. Keep the test output in the work log and do n
 ## Task 4: Redeploy the Managed Console Container
 
 **Files:**
-- Create: `/tmp/agiwo-console-redeploy.env`
+- Create: a secure temporary env file (for example `${ENV_FILE}`)
 - Modify: none
 
 - [ ] **Step 1: Export the current container environment to a temporary env file**
@@ -273,8 +276,13 @@ No repo files change in this task. Keep the test output in the work log and do n
 Run:
 
 ```bash
+: "${ENV_FILE:=$(mktemp /tmp/agiwo-console-redeploy.XXXXXX.env)}"
+chmod 600 "${ENV_FILE}"
+export ENV_FILE
+
 docker inspect agiwo-console --format '{{range .Config.Env}}{{println .}}{{end}}' \
   | python - <<'PY'
+import os
 import sys
 from pathlib import Path
 
@@ -288,38 +296,46 @@ for raw in sys.stdin:
         continue
     keep.append(f"{key}={value}")
 
-path = Path("/tmp/agiwo-console-redeploy.env")
+path = Path(os.environ["ENV_FILE"])
 path.write_text("\\n".join(keep) + "\\n", encoding="utf-8")
-print(path)
+path.chmod(0o600)
+print(f"{path}  # secure temp file; remove it after Step 4")
 PY
 ```
 
-Expected: prints `/tmp/agiwo-console-redeploy.env` and creates a reusable env file containing the current Console and provider settings.
+Expected: prints the concrete `${ENV_FILE}` path, keeps the file at mode `600`, and creates a reusable env file containing the current Console and provider settings.
 
 - [ ] **Step 2: Rebuild and replace the managed container from the current source tree**
 
 Run:
 
 ```bash
+: "${ENV_FILE:?Run Step 1 first to create ENV_FILE}"
+DATA_DIR="${DATA_DIR:-$HOME/.agiwo-console-data}"
+HOST_REPO_PATH="${HOST_REPO_PATH:-$(pwd)}"
+CONSOLE_NAME="${CONSOLE_NAME:-agiwo-console}"
+CONSOLE_IMAGE="${CONSOLE_IMAGE:-agiwo-console:local}"
+
 scripts/deploy_console.sh \
-  --env-file /tmp/agiwo-console-redeploy.env \
-  --data-dir /home/hongv/.agiwo-console-data \
-  --name agiwo-console \
-  --image agiwo-console:local \
+  --env-file "${ENV_FILE}" \
+  --data-dir "${DATA_DIR}" \
+  --name "${CONSOLE_NAME}" \
+  --image "${CONSOLE_IMAGE}" \
   --network-mode host \
-  --mount /home/hongv/workspace/agiwo:agiwo-repo
+  --mount "${HOST_REPO_PATH}:agiwo-repo"
 ```
 
-Expected: image rebuild completes, the existing `agiwo-console` container is replaced, and the script prints `deployment complete`.
+Expected: image rebuild completes, the existing `${CONSOLE_NAME}` container is replaced, and the script prints `deployment complete`. Defaults are `${HOME}/.agiwo-console-data` for `DATA_DIR`, the current repo for `HOST_REPO_PATH`, `agiwo-console` for `CONSOLE_NAME`, and `agiwo-console:local` for `CONSOLE_IMAGE`.
 
 - [ ] **Step 3: Verify container health and the ACK runtime config**
 
 Run:
 
 ```bash
-docker inspect agiwo-console --format '{{.State.Health.Status}}'
+: "${CONSOLE_NAME:=agiwo-console}"
+docker inspect "${CONSOLE_NAME}" --format '{{.State.Health.Status}}'
 curl -fsS http://127.0.0.1:8422/api/health
-docker inspect agiwo-console --format '{{range .Config.Env}}{{println .}}{{end}}' | rg 'AGIWO_CONSOLE_CHANNELS__FEISHU__ACK_REACTION_EMOJI'
+docker inspect "${CONSOLE_NAME}" --format '{{range .Config.Env}}{{println .}}{{end}}' | rg 'AGIWO_CONSOLE_CHANNELS__FEISHU__ACK_REACTION_EMOJI'
 ```
 
 Expected:
@@ -333,7 +349,8 @@ Expected:
 Run:
 
 ```bash
-docker exec agiwo-console python - <<'PY'
+: "${CONSOLE_NAME:=agiwo-console}"
+docker exec "${CONSOLE_NAME}" python - <<'PY'
 from server.config import ConsoleConfig
 print(ConsoleConfig().channels.feishu.ack_reaction_emoji)
 PY
@@ -341,7 +358,18 @@ PY
 
 Expected: prints `OnIt`.
 
-- [ ] **Step 5: Commit the deployment helper command updates if any repo files changed**
+- [ ] **Step 5: Remove the temporary env file after verification**
+
+Run:
+
+```bash
+: "${ENV_FILE:?Run Step 1 first to create ENV_FILE}"
+rm -f "${ENV_FILE}"
+```
+
+Expected: the secure temp file from Step 1 is deleted after deployment and verification complete.
+
+- [ ] **Step 6: Commit the deployment helper command updates if any repo files changed**
 
 ```bash
 git status --short

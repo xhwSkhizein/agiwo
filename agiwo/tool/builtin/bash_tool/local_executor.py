@@ -348,7 +348,6 @@ class LocalExecutor(Sandbox):
             if not process_done.is_set():
                 loop.remove_reader(master_fd)
                 process_done.set()
-            await process_done.wait()
             try:
                 os.close(master_fd)
             except OSError:

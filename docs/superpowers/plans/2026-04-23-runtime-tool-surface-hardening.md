@@ -1,5 +1,10 @@
 # Runtime Tool Surface Hardening Implementation Plan
 
+> **Status:** Completed and archived.
+> Created: 2026-04-23
+> Verified against current code: 2026-04-24
+> Archival note: `stdin: ""` normalization, `SpawnChildAgentTool`, `allowed_tools`, and the `spawn_child_agent` / `fork_child_agent` split are already implemented in the current codebase. Use this plan as historical context, not as pending work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the ambiguous `spawn_agent` runtime tool with explicit `spawn_child_agent` and `fork_child_agent`, expose `allowed_tools` for regular child spawning, and normalize empty bash stdin so `stdin: ""` no longer falsely requires PTY mode.
@@ -43,14 +48,14 @@
 - Modify: `website/src/content/docs/docs/concepts/tool.mdx`
   Update scheduler runtime tool examples.
 
-## Task 1: Harden Bash Empty Stdin Handling
+## Task 1: Verify Bash Empty Stdin Handling
 
 **Files:**
 - Modify: `tests/tool/test_bash_tool.py`
 - Modify: `agiwo/tool/builtin/bash_tool/parameter_parser.py`
 - Modify: `agiwo/tool/builtin/bash_tool/tool.py`
 
-- [ ] **Step 1: Add a failing test for empty stdin normalization**
+- [x] **Step 1: Verify the empty-stdin regression test already exists**
 
 ```python
 async def test_empty_stdin_does_not_require_pty(self, bash_tool, mock_context):
@@ -64,13 +69,13 @@ async def test_empty_stdin_does_not_require_pty(self, bash_tool, mock_context):
     assert call["stdin"] is None
 ```
 
-- [ ] **Step 2: Run the focused bash test file to verify the new case fails**
+- [x] **Step 2: Run the focused bash test file to verify the current behavior**
 
 Run: `uv run pytest tests/tool/test_bash_tool.py -v`
 
-Expected: FAIL on `test_empty_stdin_does_not_require_pty` because `stdin=""` is currently treated as present input and the tool returns `stdin requires pty=true`.
+Expected: PASS, including `test_empty_stdin_does_not_require_pty`, because `stdin=""` is already normalized to `None`.
 
-- [ ] **Step 3: Normalize empty-string stdin in the parser**
+- [x] **Step 3: Confirm the parser already normalizes empty-string stdin**
 
 ```python
 def parse_stdin(self, parameters: dict[str, Any]) -> str | None | ParseError:
@@ -85,7 +90,7 @@ def parse_stdin(self, parameters: dict[str, Any]) -> str | None | ParseError:
     return stdin_value
 ```
 
-- [ ] **Step 4: Keep the execution guard strict for non-empty stdin**
+- [x] **Step 4: Confirm the execution guard remains strict for non-empty stdin**
 
 ```python
 if background and stdin is not None:
@@ -100,13 +105,13 @@ if stdin is not None and not use_pty:
     )
 ```
 
-Use the existing logic in `agiwo/tool/builtin/bash_tool/tool.py` unchanged unless lint or type cleanup is required. The point is to verify that parser normalization, not execution relaxation, fixes the false-positive failure.
+The current implementation already uses parser normalization rather than relaxing the execution guard. Keep `agiwo/tool/builtin/bash_tool/tool.py` unchanged unless unrelated cleanup is required.
 
-- [ ] **Step 5: Re-run the bash tests**
+- [x] **Step 5: Re-run the bash tests after verification**
 
 Run: `uv run pytest tests/tool/test_bash_tool.py -v`
 
-Expected: PASS, including the existing `test_stdin_requires_pty` case for non-empty stdin and the new empty-stdin normalization case.
+Expected: PASS, including the existing `test_stdin_requires_pty` case for non-empty stdin and the empty-stdin normalization case.
 
 - [ ] **Step 6: Commit the bash hardening slice**
 
@@ -188,16 +193,44 @@ async def test_fork_child_sets_fork_without_custom_overrides(
     assert state.config_overrides.get("allowed_skills") is None
 ```
 
-- [ ] **Step 3: Run the scheduler tool tests to verify the new cases fail**
+- [x] **Step 3: Run the scheduler tool tests to verify the split-tool behavior**
 
 Run: `uv run pytest tests/scheduler/test_tools.py -v`
 
-Expected: FAIL because `SpawnChildAgentTool` and `ForkChildAgentTool` do not exist yet and because `SpawnAgentTool` is still the active runtime tool implementation.
+Expected: PASS because `SpawnChildAgentTool` and `ForkChildAgentTool` already exist and the old `SpawnAgentTool` has already been removed.
 
-- [ ] **Step 4: Replace `SpawnAgentTool` with two concrete tools**
+- [x] **Step 4: Reference the current shared-base implementation**
 
 ```python
-class SpawnChildAgentTool(BaseTool):
+class _BaseSpawnChildTool(BaseTool):
+    _fork: bool = False
+    _success_verb = "Spawned"
+
+    def __init__(self, port: SchedulerToolControl) -> None:
+        self._port = port
+        super().__init__()
+
+    async def gate(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+    ) -> ToolGateDecision:
+        del parameters
+        if context.depth > 0:
+            return ToolGateDecision.deny("Child agents cannot spawn further agents.")
+        return ToolGateDecision.allow()
+
+    async def execute(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> ToolResult:
+        del abort_signal
+        ...
+
+
+class SpawnChildAgentTool(_BaseSpawnChildTool):
     name = "spawn_child_agent"
     description = """Spawn a child agent to handle an independent sub-task asynchronously.
 Use this when you want a fresh child agent with optional instruction, tool restrictions,
@@ -215,10 +248,6 @@ or skill restrictions. The child agent cannot spawn further child agents."""
                     "type": "string",
                     "description": "Optional child-specific execution guidance.",
                 },
-                "child_id": {
-                    "type": "string",
-                    "description": "Optional explicit child agent id.",
-                },
                 "allowed_tools": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -233,52 +262,35 @@ or skill restrictions. The child agent cannot spawn further child agents."""
             "required": ["task"],
         }
 
-    async def execute(
-        self,
-        parameters: dict[str, Any],
-        context: ToolContext,
-        abort_signal: AbortSignal | None = None,
-    ) -> ToolResult:
-        del abort_signal
-        start_time = time.time()
-        parent_agent_id = context.agent_id
-        task = parameters.get("task", "")
-        state = await self._port.spawn_child(
-            SpawnChildRequest(
-                parent_agent_id=parent_agent_id,
-                session_id=context.session_id,
-                task=task,
-                instruction=parameters.get("instruction"),
-                custom_child_id=parameters.get("child_id"),
-                allowed_tools=parameters.get("allowed_tools"),
-                allowed_skills=parameters.get("allowed_skills"),
-                fork=False,
-            )
+    def _get_instruction(self, parameters: dict[str, Any]) -> str | None:
+        instruction = parameters.get("instruction")
+        return instruction if isinstance(instruction, str) else None
+
+    def _get_allowed_skills(self, parameters: dict[str, Any]) -> list[str] | None:
+        return _parse_optional_string_list(
+            parameters.get("allowed_skills"),
+            field_name="allowed_skills",
         )
-        return ToolResult.success(
-            tool_name=self.name,
-            tool_call_id=context.tool_call_id,
-            input_args={"task": task, "child_id": state.id},
-            content=f"Spawned child agent '{state.id}' for task: {task}",
-            output={"child_id": state.id, "status": "pending"},
-            start_time=start_time,
+
+    def _get_allowed_tools(self, parameters: dict[str, Any]) -> list[str] | None:
+        return _parse_optional_string_list(
+            parameters.get("allowed_tools"),
+            field_name="allowed_tools",
         )
 
 
-class ForkChildAgentTool(BaseTool):
+class ForkChildAgentTool(_BaseSpawnChildTool):
     name = "fork_child_agent"
     description = """Fork the current agent into a child agent that inherits the parent
 conversation context. Use this when the child should continue from the parent's context
 instead of starting fresh. The child agent cannot spawn further child agents."""
+    _fork = True
+    _success_verb = "Forked"
 
     def get_parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "child_id": {
-                    "type": "string",
-                    "description": "Optional explicit child agent id.",
-                },
                 "task": {
                     "type": "string",
                     "description": "Brief task for the forked child to continue from the parent's context.",
@@ -286,37 +298,9 @@ instead of starting fresh. The child agent cannot spawn further child agents."""
             },
             "required": ["task"],
         }
-
-    async def execute(
-        self,
-        parameters: dict[str, Any],
-        context: ToolContext,
-        abort_signal: AbortSignal | None = None,
-    ) -> ToolResult:
-        del abort_signal
-        start_time = time.time()
-        parent_agent_id = context.agent_id
-        task = parameters.get("task", "")
-        state = await self._port.spawn_child(
-            SpawnChildRequest(
-                parent_agent_id=parent_agent_id,
-                session_id=context.session_id,
-                task=task,
-                custom_child_id=parameters.get("child_id"),
-                fork=True,
-            )
-        )
-        return ToolResult.success(
-            tool_name=self.name,
-            tool_call_id=context.tool_call_id,
-            input_args={"task": task, "child_id": state.id},
-            content=f"Spawned fork child agent '{state.id}' for task: {task}",
-            output={"child_id": state.id, "status": "pending"},
-            start_time=start_time,
-        )
 ```
 
-Keep the existing `context.depth > 0` denial in both tools so child agents still cannot create further child agents.
+`_BaseSpawnChildTool` owns `__init__(port)`, `gate()`, and the shared `execute()` flow so the depth-check gate and base spawn logic stay aligned. `ForkChildAgentTool` only switches `_fork = True` and `_success_verb = "Forked"` while keeping the base plumbing intact.
 
 - [ ] **Step 5: Update the tests to use the new tool classes and names**
 

@@ -123,6 +123,6 @@ class TestLocalExecutorPtyExecution:
         )
 
         assert find_result.exit_code == 0
-        assert "." in find_result.stdout
+        assert find_result.stdout.splitlines()[0].strip() == "."
         assert pwd_result.exit_code == 0
         assert str(executor.workspace_path) in pwd_result.stdout
