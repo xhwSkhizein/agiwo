@@ -145,7 +145,7 @@
 - `SessionRuntime` 统一负责 sequence 分配、run-log 追加、把同一批 committed entries 喂给 trace writer，并基于同批 entries 投影 replayable `AgentStreamItem`；`trace`/`stream` 是 `RunLog` 的 view builder，不得各自维护独立 runtime 真相。
 - `StepDeltaEvent` 是当前唯一允许保留的 live-only stream 例外；除它之外，所有可重放 stream 事件都应由 committed `RunLog` entries 投影产生。
 - Agent 运行记录通过 session runtime 统一提交；流式输出通过 `Agent.start()` 返回的 handle 暴露 `AgentStreamItem`。
-- `BaseTraceStorage` 支持查询和实时订阅。
+- `BaseTraceStorage` 当前提供 `save_trace` / `get_trace` / `query_traces` / `close` 基础接口；live trace 更新由 agent runtime 通过 committed `RunLog` entry batches 驱动写入。
 
 ## Architecture Boundaries
 

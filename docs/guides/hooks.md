@@ -1,174 +1,290 @@
 # Hooks
 
-Hooks let you observe and intercept agent lifecycle events. They're optional callbacks organized in a dataclass.
+Hooks are registered through the phase-based `HookRegistry`. The old
+single-slot `AgentHooks` dataclass is no longer part of the public API.
 
-## Hook Types
+## Quick Start
 
 ```python
-from agiwo.agent import AgentHooks
-
-hooks = AgentHooks(
-    on_before_run=my_before_run_hook,
-    on_after_run=my_after_run_hook,
-    on_before_tool_call=my_before_tool_call_hook,
-    on_after_tool_call=my_after_tool_call_hook,
-    on_before_llm_call=my_before_llm_call_hook,
-    on_after_llm_call=my_after_llm_call_hook,
-    on_step=my_on_step_hook,
-    on_memory_write=my_memory_write_hook,
-    on_memory_retrieve=my_memory_retrieve_hook,
-    on_compaction_failed=my_compaction_failed_hook,
+from agiwo.agent import (
+    Agent,
+    AgentConfig,
+    HookPhase,
+    HookRegistry,
+    observe,
+    transform,
 )
-```
 
-## Available Hooks
 
-### Run Lifecycle
+async def add_prelude(payload: dict) -> dict:
+    updated = dict(payload)
+    updated["prelude_text"] = "Please be concise."
+    return updated
 
-```python
-async def on_before_run(user_input, context) -> str | None:
-    """Called before a run starts."""
-    print(f"Run {context.run_id} starting")
-    return None
 
-async def on_after_run(result, context) -> None:
-    """Called after a run completes."""
-    preview = (result.response or "")[:100]
-    print(f"Run {context.run_id} ended: {preview}")
-```
+async def log_step(payload: dict) -> None:
+    step = payload["step"]
+    print(f"{step.role.value} step committed: {step.sequence}")
 
-### Tool Execution
 
-```python
-async def on_before_tool_call(tool_call_id, tool_name, parameters) -> dict | None:
-    """Called before a tool executes."""
-    print(f"Tool {tool_name} starting with {parameters}")
-    return None
+hooks = HookRegistry(
+    [
+        transform(HookPhase.PREPARE, "add_prelude", add_prelude),
+        observe(HookPhase.AFTER_STEP_COMMIT, "log_step", log_step),
+    ]
+)
 
-async def on_after_tool_call(tool_call_id, tool_name, parameters, result) -> None:
-    """Called after a tool completes."""
-    print(f"Tool {result.tool_name} finished in {result.duration:.2f}s")
-```
-
-### LLM Calls
-
-```python
-async def on_before_llm_call(messages) -> list[dict] | None:
-    """Called before an LLM request."""
-    print(f"LLM call with {len(messages)} messages")
-    return None
-
-async def on_after_llm_call(step) -> None:
-    """Called after an assistant step is committed."""
-    print(f"Assistant step finished: {step.id}")
-```
-
-### Steps
-
-```python
-async def on_step(step) -> None:
-    """Called when any step (user/assistant/tool) is committed."""
-    print(f"Committed {step.role.value} step {step.sequence}")
-```
-
-### Memory
-
-```python
-async def on_memory_write(user_input, result, context) -> None:
-    """Called after a successful run to persist external memory."""
-    print(f"Persisting memory for run {context.run_id}")
-
-async def on_memory_retrieve(user_input, context) -> list[MemoryRecord]:
-    """Called before execution to fetch memories.
-    Return a list of MemoryRecord objects, or empty list."""
-    from agiwo.agent.models.run import MemoryRecord
-    print(f"Retrieving memories for run {context.run_id}")
-    return []
-```
-
-### Compaction Failure
-
-```python
-async def on_compaction_failed(error, context) -> None:
-    """Called when context compaction fails."""
-    print(f"Compaction failed: {error}")
-```
-
-## Using Hooks
-
-Pass hooks when creating an Agent:
-
-```python
 agent = Agent(
-    AgentConfig(name="assistant", description="...", system_prompt="..."),
+    AgentConfig(name="assistant", description="..."),
     model=model,
-    hooks=my_hooks,
+    hooks=hooks,
 )
 ```
 
-Or update hooks after creation:
+## Core Types
 
 ```python
-agent.hooks = new_hooks
+from agiwo.agent import (
+    HookCapability,
+    HookGroup,
+    HookPhase,
+    HookRegistration,
+    HookRegistry,
+    decision_support,
+    observe,
+    transform,
+)
 ```
 
-## Use Cases
+- `HookPhase`: lifecycle phase enum
+- `HookCapability`: `observe_only`, `transform`, `decision_support`
+- `HookGroup`: execution group ordering (`system`, `runtime_adapter`, `user`)
+- `HookRegistration`: one registered phase handler
+- `HookRegistry`: ordered collection of registrations
 
-### Logging and Tracing
+## Ordering And Failure Rules
+
+- Execution order is `group -> order -> registration order`.
+- Only early phases may be marked `critical=True`:
+  - `prepare`
+  - `assemble_context`
+  - `before_llm`
+  - `before_tool_call`
+- Non-critical hook failures are isolated, logged, and recorded as `HookFailed`
+  run-log facts.
+- Critical hook failures are re-raised and fail the run.
+
+## Public Phases
 
 ```python
-async def tracing_on_after_tool_call(tool_call_id, tool_name, parameters, result):
-    logger.info(
-        "tool_executed",
-        tool_call_id=tool_call_id,
-        tool=tool_name,
-        parameters=parameters,
-        duration=result.duration,
-        success=result.is_success,
+from agiwo.agent import HookPhase
+
+HookPhase.PREPARE
+HookPhase.ASSEMBLE_CONTEXT
+HookPhase.BEFORE_LLM
+HookPhase.AFTER_LLM
+HookPhase.BEFORE_TOOL_CALL
+HookPhase.AFTER_TOOL_CALL
+HookPhase.BEFORE_COMPACTION
+HookPhase.AFTER_COMPACTION
+HookPhase.BEFORE_RETROSPECT
+HookPhase.AFTER_RETROSPECT
+HookPhase.BEFORE_TERMINATION
+HookPhase.AFTER_TERMINATION
+HookPhase.AFTER_STEP_COMMIT
+HookPhase.RUN_FINALIZED
+HookPhase.MEMORY_PERSIST
+HookPhase.COMPACTION_FAILED
+```
+
+## Payload Contracts
+
+Handlers always receive a single `payload: dict[str, Any]`.
+
+### Transform Phases
+
+These phases may return a partial dict that only changes allowlisted fields.
+
+#### `prepare`
+
+Input payload:
+
+```python
+{
+    "user_input": user_input,
+    "context": context,
+    "prelude_text": None,
+}
+```
+
+Allowlisted output fields:
+
+```python
+{"prelude_text": "Please answer in Chinese."}
+```
+
+#### `assemble_context`
+
+Input payload:
+
+```python
+{
+    "user_input": user_input,
+    "context": context,
+    "memories": [],
+    "context_additions": [],
+}
+```
+
+Allowlisted output fields:
+
+```python
+{"memories": memories, "context_additions": []}
+```
+
+#### `before_llm`
+
+Input payload:
+
+```python
+{
+    "messages": messages,
+    "context": context,
+    "model_settings_override": None,
+    "llm_advice": None,
+}
+```
+
+Allowlisted transform fields:
+
+```python
+{"messages": updated_messages, "model_settings_override": None}
+```
+
+#### `before_tool_call`
+
+Input payload:
+
+```python
+{
+    "tool_call_id": tool_call_id,
+    "tool_name": tool_name,
+    "parameters": parameters,
+    "context": context,
+    "tool_advice": None,
+}
+```
+
+Allowlisted transform fields:
+
+```python
+{"parameters": updated_parameters}
+```
+
+### Decision-Support Phases
+
+Decision-support handlers also return partial dicts, but may only write the
+phase-specific `*_advice` field:
+
+- `before_llm`: `llm_advice`
+- `before_tool_call`: `tool_advice`
+- `before_compaction`: `compaction_advice`
+- `before_retrospect`: `retrospect_advice`
+- `before_termination`: `termination_advice`
+
+### Observe-Only Phases
+
+These phases should return nothing useful; results are ignored.
+
+- `after_llm`
+- `after_tool_call`
+- `after_compaction`
+- `after_retrospect`
+- `after_termination`
+- `after_step_commit`
+- `run_finalized`
+- `memory_persist`
+- `compaction_failed`
+
+## Examples
+
+### Rewrite Messages Before LLM
+
+```python
+from agiwo.agent import HookPhase, HookRegistry, transform
+
+
+async def prepend_notice(payload: dict) -> dict:
+    updated = dict(payload)
+    messages = list(payload["messages"])
+    messages.append({"role": "user", "content": "Double-check file paths."})
+    updated["messages"] = messages
+    return updated
+
+
+hooks = HookRegistry(
+    [transform(HookPhase.BEFORE_LLM, "prepend_notice", prepend_notice)]
+)
+```
+
+### Observe Each Tool Call
+
+```python
+from agiwo.agent import HookPhase, HookRegistry, observe
+
+
+async def log_tool_call(payload: dict) -> None:
+    print(
+        payload["tool_call_id"],
+        payload["tool_name"],
+        payload["parameters"],
     )
+
+
+hooks = HookRegistry(
+    [observe(HookPhase.BEFORE_TOOL_CALL, "log_tool_call", log_tool_call)]
+)
 ```
 
-### Cost Tracking
+### Track Committed Steps
 
 ```python
-total_tokens = 0
+from agiwo.agent import HookPhase, HookRegistry, observe
 
-async def cost_on_after_llm(step):
-    global total_tokens
-    if step.metrics and step.metrics.total_tokens:
-        total_tokens += step.metrics.total_tokens
-        print(f"Total tokens so far: {total_tokens}")
+
+async def log_step(payload: dict) -> None:
+    step = payload["step"]
+    print(step.role.value, step.sequence, step.id)
+
+
+hooks = HookRegistry(
+    [observe(HookPhase.AFTER_STEP_COMMIT, "log_step", log_step)]
+)
 ```
 
-### Rate Limiting
+### Persist External Memory
 
 ```python
-import asyncio
-import time
+from agiwo.agent import HookPhase, HookRegistry, observe
 
-last_call = 0
 
-async def rate_limit_on_before_llm(messages):
-    global last_call
-    elapsed = time.time() - last_call
-    if elapsed < 1.0:
-        await asyncio.sleep(1.0 - elapsed)
-    last_call = time.time()
-```
+async def write_external_memory(payload: dict) -> None:
+    user_input = payload["user_input"]
+    result = payload["result"]
+    context = payload["context"]
+    print(context.run_id, user_input, result.response)
 
-### Debugging
 
-```python
-async def debug_on_step(step):
-    print(f"=== Step {step.sequence} ({step.role.value}) ===")
-    print(f"Content: {step.content}")
-    print(f"Tool calls: {step.tool_calls}")
-    print()
+hooks = HookRegistry(
+    [observe(HookPhase.MEMORY_PERSIST, "write_external_memory", write_external_memory)]
+)
 ```
 
 ## Notes
 
-- All hooks are async functions
-- Each lifecycle point has a single callback slot on `AgentHooks`
-- Hook exceptions propagate and will fail the run unless you handle them yourself
-- Hook context provides run_id, session_id, agent_id, and other runtime metadata
+- Prefer `observe(...)`, `transform(...)`, and `decision_support(...)` over
+  constructing `HookRegistration` directly.
+- If a transform hook returns fields outside the phase allowlist, registration
+  succeeds but dispatch fails with a validation error when the hook runs.
+- `context` is included in runtime payloads so hooks can inspect run/session
+  metadata without importing agent internals directly.

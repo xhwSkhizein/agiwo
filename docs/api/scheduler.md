@@ -31,40 +31,6 @@ await scheduler.stop()
 
 ## Core Orchestration Methods
 
-### `run()`
-
-```python
-async def run(
-    self,
-    agent: Agent,
-    user_input: UserInput,
-    *,
-    session_id: str | None = None,
-    timeout: float | None = None,
-    abort_signal: AbortSignal | None = None,
-    persistent: bool = False,
-) -> RunOutput
-```
-
-提交 root 并等待结果。
-
-### `submit()`
-
-```python
-async def submit(
-    self,
-    agent: Agent,
-    user_input: UserInput,
-    *,
-    session_id: str | None = None,
-    abort_signal: AbortSignal | None = None,
-    persistent: bool = False,
-    agent_config_id: str | None = None,
-) -> str
-```
-
-立即创建并启动 root，返回 `state_id`。
-
 ### `enqueue_input()`
 
 ```python
@@ -77,7 +43,7 @@ async def enqueue_input(
 ) -> None
 ```
 
-给 persistent root 的下一轮输入赋值。当前只接受 `IDLE` 或 `FAILED` 的 persistent root。
+给 persistent root 的下一轮输入赋值。当前只接受 `IDLE` 或 `FAILED` 的 persistent root；它不是消息队列，也不会并发堆积多条待处理输入。
 
 ### `route_root_input()`
 
@@ -94,34 +60,22 @@ async def route_root_input(
     agent_config_id: str | None = None,
     timeout: float | None = None,
     include_child_events: bool = True,
+    stream_mode: RouteStreamMode = RouteStreamMode.RUN_END,
 ) -> RouteResult
 ```
 
-集成侧高层入口。它会根据当前 root state 自动决定：
+集成侧 canonical 高层入口。它会根据当前 root state 自动决定：
 
 - `submitted`
 - `enqueued`
 - `steered`
 
-### `stream()`
+返回值里的 `RouteResult.stream` 是对应 root 的流式事件迭代器。对同一个 root `state_id`，同时只允许一个活跃 subscriber。
 
-```python
-async def stream(
-    self,
-    user_input: UserInput,
-    *,
-    agent: Agent | None = None,
-    state_id: str | None = None,
-    session_id: str | None = None,
-    abort_signal: AbortSignal | None = None,
-    persistent: bool = False,
-    agent_config_id: str | None = None,
-    timeout: float | None = None,
-    include_child_events: bool = True,
-) -> AsyncIterator[AgentStreamItem]
-```
+`stream_mode` 控制 stream 生命周期：
 
-流式消费 root 执行事件。对同一个 root `state_id`，同时只允许一个活跃 subscriber。
+- `RouteStreamMode.RUN_END`：root 当前这次 run 结束就关闭 stream
+- `RouteStreamMode.UNTIL_SETTLED`：持续到 root 收敛到 `IDLE` / `COMPLETED` / `FAILED`
 
 ### `wait_for()`
 
@@ -193,7 +147,7 @@ async def steer(
 ) -> bool
 ```
 
-对 `RUNNING` root 直接转给 live handle；对 `WAITING/QUEUED` root 会落成 `USER_HINT` event。
+对 `RUNNING` state 直接转给 live handle；否则会把输入记录成 `USER_HINT` event 并唤醒 scheduler loop。
 
 ### `cancel()`
 
@@ -246,6 +200,7 @@ class SchedulerConfig:
     task_limits: TaskLimits = ...
     event_debounce_min_count: int = 3
     event_debounce_max_wait_seconds: float = 10.0
+    state_list_page_size: int = 1000
 ```
 
 `state_storage.storage_type` 当前支持：
@@ -285,6 +240,16 @@ class RouteResult:
     action: Literal["submitted", "enqueued", "steered"]
     state_id: str
     stream: AsyncIterator[AgentStreamItem] | None = None
+```
+
+`route_root_input()` 在所有非 `RUNNING` 路径都会返回非空 `stream`。只有 `steered + RUNNING` 场景下，`stream` 为 `None`，因为原有 live subscriber 会继续消费同一 root 的流。
+
+### `RouteStreamMode`
+
+```python
+class RouteStreamMode(str, Enum):
+    RUN_END = "run_end"
+    UNTIL_SETTLED = "until_settled"
 ```
 
 ### `DispatchAction`

@@ -15,7 +15,7 @@
 ```mermaid
 flowchart LR
     Caller["Caller / Console"] --> Facade["Scheduler"]
-    Facade --> Engine["SchedulerEngine"]
+    Facade --> Engine["Engine Helpers"]
     Engine --> Store["AgentState + PendingEvent"]
     Engine --> Runtime["RuntimeState"]
     Engine --> Runner["SchedulerRunner"]
@@ -25,7 +25,7 @@ flowchart LR
 可以把 scheduler 看成两层：
 
 - 持久化层：`AgentState` + `PendingEvent`
-- 执行层：`SchedulerEngine` 决定谁该跑，`SchedulerRunner` 负责把一轮 run 跑完
+- 执行层：engine helpers 决定谁该跑，`SchedulerRunner` 负责把一轮 run 跑完
 
 ## Quick Start
 
@@ -48,7 +48,12 @@ async def main() -> None:
     )
 
     async with Scheduler() as scheduler:
-        result = await scheduler.run(agent, "Research two approaches and compare them.")
+        route = await scheduler.route_root_input(
+            "Research two approaches and compare them.",
+            agent=agent,
+            persistent=False,
+        )
+        result = await scheduler.wait_for(route.state_id)
         print(result.response)
 
 
@@ -60,14 +65,23 @@ asyncio.run(main())
 ### One-shot root
 
 ```python
-result = await scheduler.run(agent, "Do something complex")
+route = await scheduler.route_root_input(
+    "Do something complex",
+    agent=agent,
+    persistent=False,
+)
+result = await scheduler.wait_for(route.state_id)
 ```
 
-### Submit and wait later
+### Route and wait later
 
 ```python
-state_id = await scheduler.submit(agent, "Background work")
-result = await scheduler.wait_for(state_id, timeout=30)
+route = await scheduler.route_root_input(
+    "Background work",
+    agent=agent,
+    persistent=False,
+)
+result = await scheduler.wait_for(route.state_id, timeout=30)
 ```
 
 ### Persistent root
@@ -75,7 +89,12 @@ result = await scheduler.wait_for(state_id, timeout=30)
 `enqueue_input()` 只接受 `IDLE` 或 `FAILED` 的 persistent root，不是消息队列。
 
 ```python
-state_id = await scheduler.submit(agent, "First message", persistent=True)
+route = await scheduler.route_root_input(
+    "First message",
+    agent=agent,
+    persistent=True,
+)
+state_id = route.state_id
 await scheduler.wait_for(state_id)
 
 await scheduler.enqueue_input(state_id, "Second message")
@@ -84,7 +103,7 @@ await scheduler.wait_for(state_id)
 
 ### Route root input from an integration
 
-`route_root_input()` 是 Console/Channel 集成用的高层入口。它会根据当前 root state 自动决定 `submit` / `enqueue_input` / `steer`。
+`route_root_input()` 是 Console/Channel 集成用的高层入口。它会根据当前 root state 自动决定返回 `submitted` / `enqueued` / `steered`。
 
 ```python
 result = await scheduler.route_root_input(
@@ -100,7 +119,14 @@ print(result.state_id)
 ### Stream output
 
 ```python
-async for item in scheduler.stream("Write a summary", agent=agent):
+route = await scheduler.route_root_input(
+    "Write a summary",
+    agent=agent,
+    persistent=False,
+)
+assert route.stream is not None
+
+async for item in route.stream:
     if item.type == "step_delta" and item.delta.content:
         print(item.delta.content, end="", flush=True)
 ```
@@ -121,7 +147,7 @@ async for item in scheduler.stream("Write a summary", agent=agent):
 
 ```mermaid
 stateDiagram-v2
-    [*] --> RUNNING: submit(root)
+    [*] --> RUNNING: route_root_input(submitted)
     RUNNING --> WAITING: sleep_and_wait(...)
     RUNNING --> IDLE: persistent root finished
     IDLE --> QUEUED: enqueue_input(...)
@@ -140,13 +166,13 @@ stateDiagram-v2
 
 ## Tick Model
 
-后台 loop 会周期性调用 `engine.tick()`，但 `submit()` 是直接启动，不等 tick。
+后台 loop 会周期性调用 `tick()`；初次 root submit 会直接 dispatch，而 `QUEUED` / `WAITING` 的后续推进由 tick 驱动。
 
 ```mermaid
 flowchart TD
-    Loop["Scheduler._loop()"] --> Tick["engine.tick()"]
+    Loop["Scheduler._loop()"] --> Tick["tick()"]
     Tick --> Plan["plan DispatchAction"]
-    Plan --> Dispatch["runner.run(action)"]
+    Plan --> Dispatch["dispatch_action(...) / runner"]
     Dispatch --> Loop
 ```
 
@@ -168,6 +194,7 @@ flowchart TD
 | `query_spawned_agent` | 查看 child state |
 | `cancel_agent` | 取消 child subtree |
 | `list_agents` | 列出直接 child |
+| `retrospect_tool_result` | 对最近一次工具结果写回 retrospect 反馈 |
 
 这些 tools 由 `Scheduler` 自动注入，不需要手动注册。
 
@@ -192,7 +219,7 @@ RuntimeState(
 
 1. `route_root_input()` 决定 root 输入怎么进入系统
 2. `tick()` 决定哪些 state 该被 dispatch
-3. `runner.run()` 执行一次 dispatch action，并把结果翻译回 state
+3. dispatch path 执行一次 action，并把结果翻译回 state
 
 ## Console and Feishu Integration
 
