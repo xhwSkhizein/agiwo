@@ -22,9 +22,7 @@ from agiwo.agent import (
 
 
 async def add_prelude(payload: dict) -> dict:
-    updated = dict(payload)
-    updated["prelude_text"] = "Please be concise."
-    return updated
+    return {"prelude_text": "Please be concise."}
 
 
 async def log_step(payload: dict) -> None:

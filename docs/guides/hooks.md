@@ -17,9 +17,7 @@ from agiwo.agent import (
 
 
 async def add_prelude(payload: dict) -> dict:
-    updated = dict(payload)
-    updated["prelude_text"] = "Please be concise."
-    return updated
+    return {"prelude_text": "Please be concise."}
 
 
 async def log_step(payload: dict) -> None:
@@ -215,11 +213,9 @@ from agiwo.agent import HookPhase, HookRegistry, transform
 
 
 async def prepend_notice(payload: dict) -> dict:
-    updated = dict(payload)
     messages = list(payload["messages"])
     messages.append({"role": "user", "content": "Double-check file paths."})
-    updated["messages"] = messages
-    return updated
+    return {"messages": messages}
 
 
 hooks = HookRegistry(

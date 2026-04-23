@@ -572,16 +572,9 @@ class TestSchedulerCreateChildAgent:
         parent_has_fork = "fork_child_agent" in parent_tool_names
         child_has_fork = "fork_child_agent" in child_tool_names
 
-        if parent_has_spawn and not child_has_spawn:
+        if parent_has_spawn != child_has_spawn or parent_has_fork != child_has_fork:
             mismatches.append(
-                f"TOOLS MISMATCH: Parent has spawn_child_agent but child does not.\n"
-                f"  Parent tools: {parent_tool_names}\n"
-                f"  Child tools:  {child_tool_names}"
-            )
-
-        if parent_has_fork and not child_has_fork:
-            mismatches.append(
-                f"TOOLS MISMATCH: Parent has fork_child_agent but child does not.\n"
+                "TOOLS MISMATCH:\n"
                 f"  Parent tools: {parent_tool_names}\n"
                 f"  Child tools:  {child_tool_names}"
             )
