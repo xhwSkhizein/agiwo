@@ -342,9 +342,12 @@ class LocalExecutor(Sandbox):
                 exit_code=1,
             )
         finally:
-            # Wait for the reader to finish before cleaning up
-            await process_done.wait()
-            loop.remove_reader(master_fd)
+            # `process.wait()` can finish before the PTY reader observes EOF.
+            # If we wait on `process_done` unconditionally, short-lived PTY
+            # commands can hang forever during cleanup.
+            if not process_done.is_set():
+                loop.remove_reader(master_fd)
+                process_done.set()
             try:
                 os.close(master_fd)
             except OSError:

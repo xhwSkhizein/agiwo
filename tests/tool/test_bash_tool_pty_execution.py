@@ -1,5 +1,6 @@
 """Integration tests for PTY execution in LocalExecutor."""
 
+import asyncio
 import time
 
 import pytest
@@ -103,3 +104,25 @@ class TestLocalExecutorPtyExecution:
                 use_pty=True,
                 timeout=0.1,
             )
+
+    @pytest.mark.asyncio
+    async def test_parallel_pty_commands_do_not_hang(self, executor):
+        """Regression test for PTY cleanup when concurrent commands finish quickly."""
+        find_result, pwd_result = await asyncio.wait_for(
+            asyncio.gather(
+                executor.execute_command(
+                    "find . -maxdepth 1 -type d | sort",
+                    use_pty=True,
+                ),
+                executor.execute_command(
+                    "pwd",
+                    use_pty=True,
+                ),
+            ),
+            timeout=2.0,
+        )
+
+        assert find_result.exit_code == 0
+        assert find_result.stdout.splitlines()[0].strip() == "."
+        assert pwd_result.exit_code == 0
+        assert str(executor.workspace_path) in pwd_result.stdout
