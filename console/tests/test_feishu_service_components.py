@@ -262,6 +262,66 @@ async def test_delivery_service_falls_back_to_create_message_for_group_reply() -
 
 
 @pytest.mark.asyncio
+async def test_delivery_service_send_ack_stops_after_reaction_success() -> None:
+    api = SimpleNamespace(
+        add_message_reaction=AsyncMock(),
+        reply_text=AsyncMock(),
+        create_text_message=AsyncMock(),
+    )
+    delivery = FeishuDeliveryService(
+        api=api,
+        config=ConsoleConfig(),
+        truncate_for_log=lambda text: text,
+    )
+
+    await delivery.send_ack(_inbound_message())
+
+    api.add_message_reaction.assert_awaited_once_with("msg-1", "OnIt")
+    api.reply_text.assert_not_called()
+    api.create_text_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_send_ack_falls_back_to_reply_text() -> None:
+    api = SimpleNamespace(
+        add_message_reaction=AsyncMock(side_effect=RuntimeError("reaction failed")),
+        reply_text=AsyncMock(),
+        create_text_message=AsyncMock(),
+    )
+    delivery = FeishuDeliveryService(
+        api=api,
+        config=ConsoleConfig(),
+        truncate_for_log=lambda text: text,
+    )
+
+    await delivery.send_ack(_inbound_message())
+
+    api.add_message_reaction.assert_awaited_once_with("msg-1", "OnIt")
+    api.reply_text.assert_awaited_once_with("msg-1", "收到，正在处理。")
+    api.create_text_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delivery_service_send_ack_falls_back_to_create_message() -> None:
+    api = SimpleNamespace(
+        add_message_reaction=AsyncMock(side_effect=RuntimeError("reaction failed")),
+        reply_text=AsyncMock(side_effect=RuntimeError("reply failed")),
+        create_text_message=AsyncMock(),
+    )
+    delivery = FeishuDeliveryService(
+        api=api,
+        config=ConsoleConfig(),
+        truncate_for_log=lambda text: text,
+    )
+
+    await delivery.send_ack(_inbound_message())
+
+    api.add_message_reaction.assert_awaited_once_with("msg-1", "OnIt")
+    api.reply_text.assert_awaited_once_with("msg-1", "收到，正在处理。")
+    api.create_text_message.assert_awaited_once_with("chat-1", "收到，正在处理。")
+
+
+@pytest.mark.asyncio
 async def test_inbound_handler_executes_commands_before_ack_or_enqueue() -> None:
     parser = SimpleNamespace(
         parse_inbound_message=AsyncMock(return_value=_inbound_message()),

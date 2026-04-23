@@ -114,6 +114,12 @@ def test_console_config_reads_uppercase_env(monkeypatch: pytest.MonkeyPatch) -> 
     assert config.channels.feishu.enabled is True
 
 
+def test_console_config_uses_safe_default_feishu_ack_reaction() -> None:
+    config = ConsoleConfig()
+
+    assert config.channels.feishu.ack_reaction_emoji == "OnIt"
+
+
 def test_console_config_rejects_legacy_default_agent_group_env_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
