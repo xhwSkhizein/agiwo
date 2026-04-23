@@ -99,7 +99,7 @@ class FeishuConfig(BaseModel):
     debounce_ms: int = 3000
     max_batch_window_ms: int = 15000
     scheduler_wait_timeout: int = 900
-    ack_reaction_emoji: str = "Typing"
+    ack_reaction_emoji: str = "OnIt"
     ack_fallback_text: str = "收到，正在处理。"
 
 

@@ -24,10 +24,13 @@ class FeishuDeliveryService:
         self._truncate_for_log = truncate_for_log
 
     async def send_ack(self, inbound: InboundMessage) -> None:
+        reaction_emoji = self._config.channels.feishu.ack_reaction_emoji
+        fallback_text = self._config.channels.feishu.ack_fallback_text
+
         try:
             await self._api.add_message_reaction(
                 inbound.message_id,
-                self._config.feishu_ack_reaction_emoji,
+                reaction_emoji,
             )
             logger.info(
                 "feishu_ack_sent",
@@ -48,7 +51,7 @@ class FeishuDeliveryService:
         try:
             await self._api.reply_text(
                 inbound.message_id,
-                self._config.feishu_ack_fallback_text,
+                fallback_text,
             )
             logger.info(
                 "feishu_ack_sent",
@@ -57,12 +60,35 @@ class FeishuDeliveryService:
                 chat_type=inbound.chat_type,
                 chat_id=inbound.chat_id,
                 message_id=inbound.message_id,
-                text=self._truncate_for_log(self._config.feishu_ack_fallback_text),
+                text=self._truncate_for_log(fallback_text),
             )
+            return
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "feishu_ack_fallback_failed",
                 message_id=inbound.message_id,
+                error=str(exc),
+            )
+
+        try:
+            await self._api.create_text_message(
+                inbound.chat_id,
+                fallback_text,
+            )
+            logger.info(
+                "feishu_ack_sent",
+                channel="feishu",
+                mode="create_message_fallback",
+                chat_type=inbound.chat_type,
+                chat_id=inbound.chat_id,
+                message_id=inbound.message_id,
+                text=self._truncate_for_log(fallback_text),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "feishu_ack_create_message_failed",
+                message_id=inbound.message_id,
+                chat_id=inbound.chat_id,
                 error=str(exc),
             )
 
