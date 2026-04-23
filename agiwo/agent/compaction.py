@@ -340,6 +340,17 @@ async def _compact(
         name="compact",
     )
     await commit_step(step, llm=llm_context, append_message=False)
+    completed_entries = await writer.record_llm_call_completed(
+        step=step,
+        llm=llm_context,
+    )
+    await state.session_runtime.project_run_log_entries(
+        completed_entries,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        parent_run_id=state.parent_run_id,
+        depth=state.depth,
+    )
 
     response_content = step.content or ""
     analysis = parse_compact_response(response_content)

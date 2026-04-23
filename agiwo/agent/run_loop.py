@@ -70,18 +70,12 @@ class RunLoopOrchestrator:
         append_message: bool = True,
         track_state: bool = True,
     ) -> StepView:
+        del llm
         entries = await self.writer.commit_step(
             step,
             append_message=append_message,
             track_state=track_state,
         )
-        if llm is not None:
-            entries.extend(
-                await self.writer.record_llm_call_completed(
-                    step=step,
-                    llm=llm,
-                )
-            )
         await self._project_entries(entries)
         await self.context.hooks.on_step(step, self.context)
         return step
@@ -354,6 +348,10 @@ class RunLoopOrchestrator:
             self.runtime.abort_signal,
         )
         await self._commit_step(step, llm=llm_context)
+        entries = await self.writer.record_llm_call_completed(
+            step=step, llm=llm_context
+        )
+        await self._project_entries(entries)
         await self.context.hooks.after_llm_call(step, self.context)
         return step, llm_context
 
