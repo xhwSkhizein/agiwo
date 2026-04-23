@@ -1,36 +1,41 @@
 # Storage & Observability
 
-Agiwo separates storage into two independent concerns: run/step persistence and trace collection.
+Agiwo separates storage into two independent concerns: run-log persistence and
+trace collection.
 
 ## Storage Layers
 
 | Layer | Purpose | Interface |
 |-------|---------|-----------|
-| Run/Step Storage | Persist agent run and step records | `RunStepStorage` |
-| Trace Storage | Distributed traces for observability | `BaseTraceStorage` |
+| Run Log Storage | Persist canonical runtime facts and replayable views | `RunLogStorage` |
+| Trace Storage | Persist trace snapshots built from committed run-log facts | `BaseTraceStorage` |
 
-## Run/Step Storage
+## Run Log Storage
 
-Records every agent execution with full step details:
+Records canonical runtime facts as append-only `RunLog` entries:
 
 ```python
-from agiwo.agent import RunStepStorageConfig
-from agiwo.agent.storage.factory import create_run_step_storage
+from agiwo.agent import RunLogStorageConfig
+from agiwo.agent.storage.factory import create_run_log_storage
 
 # SQLite backend
-storage = create_run_step_storage(
-    RunStepStorageConfig(storage_type="sqlite", config={"db_path": "runs.db"})
+storage = create_run_log_storage(
+    RunLogStorageConfig(storage_type="sqlite", config={"db_path": "runs.db"})
 )
 
 # Memory backend (for testing)
-storage = create_run_step_storage(RunStepStorageConfig(storage_type="memory"))
+storage = create_run_log_storage(RunLogStorageConfig(storage_type="memory"))
 ```
 
 ### What gets stored
 
-- **Run records**: input, output, timestamps, token usage, status
-- **Step records**: LLM messages, tool calls, tool results, intermediate reasoning
-- **Cost tracking**: per-step and per-run token counts and estimated costs
+- **Run facts**: `RunStarted`, `RunFinished`, `RunFailed`, `TerminationDecided`
+- **LLM facts**: `LLMCallStarted`, `LLMCallCompleted`
+- **Committed step facts**: user, assistant, and tool step commits
+- **Runtime decisions**: compaction, retrospect, rollback, hook failures
+
+Replay/query helpers such as `list_step_views(...)`, `list_run_views(...)`, and
+`get_runtime_decision_state(...)` are rebuilt from the stored `RunLog`.
 
 ## Session Storage
 
@@ -38,7 +43,7 @@ The SDK does not expose a standalone session storage abstraction. Session lifecy
 
 ## Trace Storage
 
-Collects distributed traces for debugging and monitoring:
+Collects trace snapshots for debugging and monitoring:
 
 ```python
 from agiwo.agent import TraceStorageConfig
@@ -85,7 +90,7 @@ agent = Agent(
 ### Trace Structure
 
 ```
-Trace (one per run)
+Trace (one per session/runtime trace id)
 ├── Span: Agent Execution
 │   ├── Span: LLM Call (with token usage)
 │   ├── Span: Tool Execution (with duration)
@@ -119,12 +124,12 @@ traces = await trace_storage.query_traces(
 Storage constructors are config-driven:
 
 ```python
-from agiwo.agent import RunStepStorageConfig, TraceStorageConfig
-from agiwo.agent.storage.factory import create_run_step_storage
+from agiwo.agent import RunLogStorageConfig, TraceStorageConfig
+from agiwo.agent.storage.factory import create_run_log_storage
 from agiwo.observability import create_trace_storage
 
-run_step_storage = create_run_step_storage(
-    RunStepStorageConfig(
+run_log_storage = create_run_log_storage(
+    RunLogStorageConfig(
         storage_type="sqlite",
         config={"db_path": "./data/runs.db"},
     )
@@ -137,6 +142,34 @@ trace_storage = create_trace_storage(
             "db_path": "./data/traces.db",
         },
     )
+)
+```
+
+Or configure storage through `AgentOptions.storage`:
+
+```python
+from agiwo.agent import (
+    AgentConfig,
+    AgentOptions,
+    AgentStorageOptions,
+    RunLogStorageConfig,
+    TraceStorageConfig,
+)
+
+config = AgentConfig(
+    name="assistant",
+    options=AgentOptions(
+        storage=AgentStorageOptions(
+            run_log_storage=RunLogStorageConfig(
+                storage_type="sqlite",
+                config={"db_path": "./data/runs.db"},
+            ),
+            trace_storage=TraceStorageConfig(
+                storage_type="sqlite",
+                config={"db_path": "./data/traces.db"},
+            ),
+        )
+    ),
 )
 ```
 
@@ -157,5 +190,5 @@ model = OpenAIModel(
 # After run:
 result = await agent.run("Hello")
 print(result.metrics)  # Token counts and cost
-# Cost is recorded in run/step storage
+# Cost is reflected in committed step/run facts
 ```

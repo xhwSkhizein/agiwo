@@ -50,15 +50,16 @@ The supported public composition API is `Agent.as_tool()`. If you need child age
 For long-running, persistent multi-agent setups, use the Scheduler:
 
 ```python
-from agiwo.scheduler import Scheduler, SchedulerConfig
+from agiwo.scheduler import Scheduler
 
 async with Scheduler() as scheduler:
-    # Submit a persistent orchestrator
-    orchestrator_id = await scheduler.submit(
-        orchestrator,
+    # Create a persistent root via the canonical routing entrypoint
+    route = await scheduler.route_root_input(
         "Coordinate the research pipeline",
+        agent=orchestrator,
         persistent=True,  # Stays alive after completion
     )
+    orchestrator_id = route.state_id
 
     # Wait until the first round settles to IDLE
     await scheduler.wait_for(orchestrator_id)
@@ -66,11 +67,15 @@ async with Scheduler() as scheduler:
     # Feed more input later
     await scheduler.enqueue_input(orchestrator_id, "Now analyze the cost implications")
 
-    # Stream events
-    async for event in scheduler.stream(
+    # Open a fresh stream for the next routed turn
+    route = await scheduler.route_root_input(
         "Update the analysis",
+        agent=orchestrator,
         state_id=orchestrator_id,
-    ):
+    )
+    assert route.stream is not None
+
+    async for event in route.stream:
         if event.type == "step_delta" and event.delta.content:
             print(event.delta.content, end="", flush=True)
 
@@ -89,11 +94,13 @@ Agents running under the scheduler automatically get orchestration tools:
 # Inside an agent's system prompt:
 """
 You can use these tools to coordinate work:
-- spawn_agent: Create a child agent for a sub-task
+- spawn_child_agent: Create a fresh child agent for a sub-task
+- fork_child_agent: Fork the current agent into a child that inherits context
 - query_spawned_agent: Check on a child's progress
 - cancel_agent: Stop a child that's no longer needed
 - list_agents: See all active children
 - sleep_and_wait: Wait for a condition before continuing
+- retrospect_tool_result: Rewrite the latest tool result with structured feedback
 """
 ```
 
@@ -106,19 +113,28 @@ Chain agents sequentially:
 ```python
 async with Scheduler() as scheduler:
     # Step 1: Research
-    research_result = await scheduler.run(researcher, "Gather facts about X")
+    research_route = await scheduler.route_root_input(
+        "Gather facts about X",
+        agent=researcher,
+        persistent=False,
+    )
+    research_result = await scheduler.wait_for(research_route.state_id)
 
     # Step 2: Analyze using research output
-    analysis_result = await scheduler.run(
-        analyzer,
+    analysis_route = await scheduler.route_root_input(
         f"Analyze these findings: {research_result.response}",
+        agent=analyzer,
+        persistent=False,
     )
+    analysis_result = await scheduler.wait_for(analysis_route.state_id)
 
     # Step 3: Write report
-    report = await scheduler.run(
-        writer,
+    report_route = await scheduler.route_root_input(
         f"Write a report based on: {analysis_result.response}",
+        agent=writer,
+        persistent=False,
     )
+    report = await scheduler.wait_for(report_route.state_id)
 ```
 
 ### Fan-out / Fan-in
@@ -130,8 +146,12 @@ async with Scheduler() as scheduler:
     # Fan out
     ids = []
     for topic in ["topic_a", "topic_b", "topic_c"]:
-        state_id = await scheduler.submit(researcher, f"Research {topic}")
-        ids.append(state_id)
+        route = await scheduler.route_root_input(
+            f"Research {topic}",
+            agent=researcher,
+            persistent=False,
+        )
+        ids.append(route.state_id)
 
     # Fan in
     results = []
@@ -140,10 +160,12 @@ async with Scheduler() as scheduler:
         results.append(result.response)
 
     # Synthesize
-    final = await scheduler.run(
-        synthesizer,
+    final_route = await scheduler.route_root_input(
         f"Synthesize these findings: {results}",
+        agent=synthesizer,
+        persistent=False,
     )
+    final = await scheduler.wait_for(final_route.state_id)
 ```
 
 ### Supervisor Pattern
@@ -152,13 +174,14 @@ A persistent supervisor coordinates transient workers:
 
 ```python
 async with Scheduler() as scheduler:
-    supervisor_id = await scheduler.submit(
-        supervisor_agent,
+    route = await scheduler.route_root_input(
         "Manage the data processing pipeline",
+        agent=supervisor_agent,
         persistent=True,
     )
+    supervisor_id = route.state_id
 
-    # The supervisor uses spawn_agent internally to create workers
+    # The supervisor uses spawn_child_agent / fork_child_agent internally to create workers
     # External input can steer the supervisor
     await scheduler.enqueue_input(supervisor_id, "Priority: process batch 42 first")
 ```

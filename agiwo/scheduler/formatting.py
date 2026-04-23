@@ -239,8 +239,9 @@ def summarize_text(text: str | None, limit: int) -> str | None:
 
 _FORK_NOTICE = _system_notice(
     "You are a forked child agent. Your conversation history has been "
-    "inherited from the parent agent. Do NOT use spawn_agent — it is "
-    "unavailable to you. Complete the following task directly."
+    "inherited from the parent agent. Do NOT use spawn_child_agent or "
+    "fork_child_agent — child agents cannot spawn further child agents. "
+    "Complete the following task directly."
 )
 
 

@@ -131,6 +131,41 @@ def _extract_tool_args_from_committed(
     return {}
 
 
+def _remove_tool_call_index(
+    run_to_tool_calls: dict[str, set[str]] | None,
+    *,
+    run_id: str,
+    tool_call_id: str,
+) -> None:
+    if run_to_tool_calls is None:
+        return
+    tool_call_ids = run_to_tool_calls.get(run_id)
+    if not tool_call_ids:
+        return
+    tool_call_ids.discard(tool_call_id)
+    if not tool_call_ids:
+        run_to_tool_calls.pop(run_id, None)
+
+
+def _cache_assistant_tool_call(
+    assistant_cache: OrderedDict[str, AssistantStepCommitted],
+    *,
+    assistant: AssistantStepCommitted,
+    tool_call_id: str,
+    run_to_tool_calls: dict[str, set[str]] | None = None,
+) -> None:
+    previous = assistant_cache.get(tool_call_id)
+    if previous is not None and previous.run_id != assistant.run_id:
+        _remove_tool_call_index(
+            run_to_tool_calls,
+            run_id=previous.run_id,
+            tool_call_id=tool_call_id,
+        )
+    assistant_cache[tool_call_id] = assistant
+    if run_to_tool_calls is not None:
+        run_to_tool_calls.setdefault(assistant.run_id, set()).add(tool_call_id)
+
+
 def _build_tool_span_from_entry(
     trace_id: str,
     step: ToolStepCommitted,
@@ -439,12 +474,18 @@ def _apply_tool_entry_to_trace(
     *,
     run_spans: dict[str, Span],
     assistant_cache: OrderedDict[str, AssistantStepCommitted],
+    run_to_tool_calls: dict[str, set[str]] | None = None,
 ) -> bool:
     if isinstance(entry, AssistantStepCommitted) and entry.tool_calls:
         for tc in entry.tool_calls:
             tool_call_id = tc.get("id")
             if tool_call_id:
-                assistant_cache[tool_call_id] = entry
+                _cache_assistant_tool_call(
+                    assistant_cache,
+                    assistant=entry,
+                    tool_call_id=tool_call_id,
+                    run_to_tool_calls=run_to_tool_calls,
+                )
         return True
     if isinstance(entry, ToolStepCommitted):
         trace.add_span(
@@ -485,6 +526,7 @@ def _apply_entry_to_trace(
     llm_started: dict[str, LLMCallStarted],
     assistant_cache: OrderedDict[str, AssistantStepCommitted],
     preview_length: int,
+    run_to_tool_calls: dict[str, set[str]] | None = None,
 ) -> None:
     if _apply_run_entry_to_trace(
         trace,
@@ -506,6 +548,7 @@ def _apply_entry_to_trace(
         entry,
         run_spans=run_spans,
         assistant_cache=assistant_cache,
+        run_to_tool_calls=run_to_tool_calls,
     ):
         return
     _apply_runtime_entry_to_trace(
@@ -528,6 +571,7 @@ class AgentTraceCollector:
         self._assistant_committed_cache: OrderedDict[str, AssistantStepCommitted] = (
             OrderedDict()
         )
+        self._run_to_tool_calls: dict[str, set[str]] = {}
         self._llm_started: dict[str, LLMCallStarted] = {}
 
     @property
@@ -551,6 +595,7 @@ class AgentTraceCollector:
         )
         self._run_spans = {}
         self._assistant_committed_cache = OrderedDict()
+        self._run_to_tool_calls = {}
         self._llm_started = {}
 
     async def stop(self) -> None:
@@ -562,6 +607,7 @@ class AgentTraceCollector:
         self._trace = None
         self._run_spans = {}
         self._assistant_committed_cache = OrderedDict()
+        self._run_to_tool_calls = {}
         self._llm_started = {}
 
     async def on_run_log_entries(self, entries: list[RunLogEntry]) -> None:
@@ -576,9 +622,17 @@ class AgentTraceCollector:
                 llm_started=self._llm_started,
                 assistant_cache=self._assistant_committed_cache,
                 preview_length=self.PREVIEW_LENGTH,
+                run_to_tool_calls=self._run_to_tool_calls,
             )
             while len(self._assistant_committed_cache) > self._CACHE_MAX_SIZE:
-                self._assistant_committed_cache.popitem(last=False)
+                tool_call_id, assistant = self._assistant_committed_cache.popitem(
+                    last=False
+                )
+                _remove_tool_call_index(
+                    self._run_to_tool_calls,
+                    run_id=assistant.run_id,
+                    tool_call_id=tool_call_id,
+                )
             if isinstance(entry, (RunFinished, RunFailedEntry)):
                 self._purge_run_correlation_state(entry.run_id)
         await self._save_trace()
@@ -609,12 +663,7 @@ class AgentTraceCollector:
     def _purge_run_correlation_state(self, run_id: str) -> None:
         self._run_spans.pop(run_id, None)
         self._llm_started.pop(run_id, None)
-        stale_tool_calls = [
-            tool_call_id
-            for tool_call_id, assistant in self._assistant_committed_cache.items()
-            if assistant.run_id == run_id
-        ]
-        for tool_call_id in stale_tool_calls:
+        for tool_call_id in self._run_to_tool_calls.pop(run_id, set()):
             self._assistant_committed_cache.pop(tool_call_id, None)
 
     async def _save_trace(self) -> None:

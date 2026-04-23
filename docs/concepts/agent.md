@@ -32,7 +32,7 @@ Agent(
     *,
     model: Model,
     tools: list[BaseTool] | None = None,
-    hooks: AgentHooks | None = None,
+    hooks: HookRegistry | list[HookRegistration] | None = None,
     id: str | None = None,
 )
 ```
@@ -119,7 +119,7 @@ Agiwo assembles tools through `ToolManager`:
 - `SkillTool` when skills are enabled
 - scheduler runtime tools when the agent is executed under `Scheduler`
 
-Scheduler tools such as `spawn_agent` and `sleep_and_wait` are runtime-owned system tools. They are not registered manually on the agent.
+Scheduler tools such as `spawn_child_agent`, `fork_child_agent`, and `sleep_and_wait` are runtime-owned system tools. They are not registered manually on the agent.
 
 ## Agent-As-Tool
 
@@ -149,7 +149,7 @@ from agiwo.agent import (
     AgentConfig,
     AgentOptions,
     AgentStorageOptions,
-    RunStepStorageConfig,
+    RunLogStorageConfig,
     TraceStorageConfig,
 )
 
@@ -157,7 +157,7 @@ config = AgentConfig(
     name="assistant",
     options=AgentOptions(
         storage=AgentStorageOptions(
-            run_step_storage=RunStepStorageConfig(
+            run_log_storage=RunLogStorageConfig(
                 storage_type="sqlite",
                 config={"db_path": "runs.db"},
             ),

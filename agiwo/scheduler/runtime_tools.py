@@ -38,71 +38,36 @@ def _build_failed_result(
     )
 
 
-class SpawnAgentTool(BaseTool):
-    """Spawn a child agent to handle a sub-task."""
+def _parse_optional_string_list(
+    value: object,
+    *,
+    field_name: str,
+) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError(f"{field_name} must be a list of strings")
+    return list(value)
 
-    name = "spawn_agent"
-    description = """Spawn a child agent to handle independent sub-tasks asynchronously.
-Only use for genuine parallel execution or delegation, such as concurrent data fetching and parallel analysis.
-Do not use for simple actions you can do directly.
-The child agent cannot spawn further agents.
-Call sleep_and_wait to wait for completion if needed."""
+
+class _BaseSpawnChildTool(BaseTool):
+    """Shared scheduler child-spawn runtime tool behavior."""
+
+    _fork: bool = False
+    _success_verb = "Spawned"
 
     def __init__(self, port: SchedulerToolControl) -> None:
         self._port = port
         super().__init__()
-
-    def get_parameters(self) -> dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "task": {
-                    "type": "string",
-                    "description": """Brief, complete task for child agent, including necessary context like background, dependencies, goal and expected outcome. Specify desired outcome, not process.Do not ask it to spawn additional agents.""",
-                },
-                "instruction": {
-                    "type": "string",
-                    "description": "Optional instruction: guide the child agent to finish the task in a more efficient, elegant, and effective way.",
-                },
-                "allowed_skills": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional explicit skill name list the child agent is allowed to use. Must already be expanded and must be a subset of the parent allowed skills. If omitted, inherits the parent skills.",
-                },
-                "fork": {
-                    "type": "boolean",
-                    "description": """If true, child agent inherits parent full conversation history and tool definitions for LLM KV cache reuse. When fork=true, instruction and system_prompt are forbidden to keep the prompt prefix consistent. Child cannot spawn further agents.""",
-                    "default": False,
-                },
-            },
-            "required": ["task"],
-        }
 
     async def gate(
         self,
         parameters: dict[str, Any],
         context: ToolContext,
     ) -> ToolGateDecision:
+        del parameters
         if context.depth > 0:
             return ToolGateDecision.deny("Child agents cannot spawn further agents.")
-
-        fork = bool(parameters.get("fork", False))
-        if fork:
-            conflicting = []
-            if parameters.get("instruction"):
-                conflicting.append("instruction")
-            if parameters.get("system_prompt"):
-                conflicting.append("system_prompt")
-            if parameters.get("allowed_skills"):
-                conflicting.append("allowed_skills")
-
-            if conflicting:
-                return ToolGateDecision.deny(
-                    f"Cannot set {', '.join(conflicting)} when fork=true. "
-                    "These parameters are ignored in fork mode. "
-                    "Set fork=false to use custom configuration."
-                )
-
         return ToolGateDecision.allow()
 
     async def execute(
@@ -124,22 +89,16 @@ Call sleep_and_wait to wait for completion if needed."""
             )
 
         task = parameters.get("task", "")
-        fork = bool(parameters.get("fork", False))
-        instruction = None if fork else parameters.get("instruction")
-        custom_child_id = parameters.get("child_id")
-        system_prompt = None if fork else parameters.get("system_prompt")
-        allowed_skills = None if fork else parameters.get("allowed_skills")
         try:
             state = await self._port.spawn_child(
                 SpawnChildRequest(
                     parent_agent_id=parent_agent_id,
                     session_id=context.session_id,
                     task=task,
-                    instruction=instruction,
-                    system_prompt=system_prompt,
-                    custom_child_id=custom_child_id,
-                    allowed_skills=allowed_skills,
-                    fork=fork,
+                    instruction=self._get_instruction(parameters),
+                    allowed_skills=self._get_allowed_skills(parameters),
+                    allowed_tools=self._get_allowed_tools(parameters),
+                    fork=self._fork,
                 )
             )
         except ValueError as exc:
@@ -155,10 +114,98 @@ Call sleep_and_wait to wait for completion if needed."""
             tool_name=self.name,
             tool_call_id=context.tool_call_id,
             input_args={"task": task, "child_id": state.id},
-            content=f"Spawned child agent '{state.id}' for task: {task}",
+            content=f"{self._success_verb} child agent '{state.id}' for task: {task}",
             output={"child_id": state.id, "status": "pending"},
             start_time=start_time,
         )
+
+    def _get_instruction(self, parameters: dict[str, Any]) -> str | None:
+        del parameters
+        return None
+
+    def _get_allowed_skills(self, parameters: dict[str, Any]) -> list[str] | None:
+        del parameters
+        return None
+
+    def _get_allowed_tools(self, parameters: dict[str, Any]) -> list[str] | None:
+        del parameters
+        return None
+
+
+class SpawnChildAgentTool(_BaseSpawnChildTool):
+    """Spawn a regular child agent to handle an independent sub-task."""
+
+    name = "spawn_child_agent"
+    description = """Spawn a child agent to handle an independent sub-task asynchronously.
+Use this for genuine delegation or parallel work.
+Do not use it for simple actions you can do directly.
+The child agent cannot spawn further child agents.
+Call sleep_and_wait to wait for completion if needed."""
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": """Brief, complete task for the child agent, including the goal, required context, and expected outcome. Specify the outcome, not a process script. Do not ask it to spawn additional child agents.""",
+                },
+                "instruction": {
+                    "type": "string",
+                    "description": "Optional instruction that guides how the child agent should approach the task.",
+                },
+                "allowed_tools": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional explicit functional tool list for the child agent. Must be a subset of the parent agent's allowed_tools when the parent is restricted.",
+                },
+                "allowed_skills": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional explicit skill name list for the child agent. Must already be expanded and must be a subset of the parent allowed skills.",
+                },
+            },
+            "required": ["task"],
+        }
+
+    def _get_instruction(self, parameters: dict[str, Any]) -> str | None:
+        instruction = parameters.get("instruction")
+        return instruction if isinstance(instruction, str) else None
+
+    def _get_allowed_skills(self, parameters: dict[str, Any]) -> list[str] | None:
+        return _parse_optional_string_list(
+            parameters.get("allowed_skills"),
+            field_name="allowed_skills",
+        )
+
+    def _get_allowed_tools(self, parameters: dict[str, Any]) -> list[str] | None:
+        return _parse_optional_string_list(
+            parameters.get("allowed_tools"),
+            field_name="allowed_tools",
+        )
+
+
+class ForkChildAgentTool(_BaseSpawnChildTool):
+    """Fork the current agent into a child that inherits parent context."""
+
+    name = "fork_child_agent"
+    description = """Fork the current agent into a child that inherits the parent conversation context.
+Use this only when the child should continue from the same prompt and context prefix.
+The child agent cannot spawn further child agents."""
+    _fork = True
+    _success_verb = "Forked"
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Brief task for the forked child agent to complete using the inherited parent context.",
+                },
+            },
+            "required": ["task"],
+        }
 
 
 class SleepAndWaitTool(BaseTool):

@@ -48,7 +48,9 @@ from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_CHILD_EXCLUDED_SYSTEM_TOOLS: frozenset[str] = frozenset({"spawn_agent"})
+_CHILD_EXCLUDED_SYSTEM_TOOLS: frozenset[str] = frozenset(
+    {"spawn_child_agent", "fork_child_agent"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,9 +138,9 @@ class SchedulerRunner:
         """Create a child agent for a pending scheduler state.
 
         System tools (scheduler runtime tools) are passed separately from
-        functional/user tools.  ``spawn_agent`` is excluded for non-fork
-        children; fork children inherit ALL system tools for KV cache reuse
-        (the gate check on ``SpawnAgentTool`` still blocks actual spawning).
+        functional/user tools.  Child-spawn runtime tools are excluded for
+        non-fork children; fork children inherit ALL system tools for KV cache
+        reuse and rely on runtime gate checks to block further child spawning.
         """
         parent = self._ctx.rt.agents.get(state.parent_id or "")
         if parent is None:

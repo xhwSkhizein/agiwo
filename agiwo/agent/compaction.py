@@ -4,6 +4,7 @@ Compaction runtime — context compression for long conversations.
 Merges compaction/runtime.py + messages.py + parser.py + prompt.py + transcript.py.
 """
 
+import copy
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -313,9 +314,10 @@ async def _compact(
         name="compact_request",
     )
     await commit_step(state, compact_user_step, append_message=True)
+    snapshot_messages = state.snapshot_messages()
 
     started_entries = await writer.record_llm_call_started(
-        messages=state.snapshot_messages(),
+        messages=copy.deepcopy(snapshot_messages),
         tools=None,
     )
     await state.session_runtime.project_run_log_entries(
@@ -330,7 +332,7 @@ async def _compact(
         model,
         state,
         abort_signal,
-        messages=state.snapshot_messages(),
+        messages=snapshot_messages,
         use_state_tools=False,
         name="compact",
     )

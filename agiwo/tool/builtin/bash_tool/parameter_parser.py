@@ -16,7 +16,7 @@ class BashParameterParser:
     """Parses and validates raw tool parameters into typed values."""
 
     @staticmethod
-    def parse_bool(value: Any) -> bool | None:
+    def parse_bool(value: object) -> bool | None:
         if value is None:
             return None
         if isinstance(value, bool):
@@ -61,6 +61,8 @@ class BashParameterParser:
             return None
         if not isinstance(stdin_value, str):
             return ParseError("stdin must be a string")
+        if stdin_value == "":
+            return None
         return stdin_value
 
     def parse_modes(self, parameters: dict[str, Any]) -> tuple[bool, bool] | ParseError:

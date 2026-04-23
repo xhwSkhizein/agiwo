@@ -81,6 +81,16 @@ class TestBashToolBasic:
         assert result.output["ok"] is False
         assert "stdin requires pty=true" in result.output["stderr"]
 
+    async def test_empty_stdin_does_not_require_pty(self, bash_tool, mock_context):
+        result = await bash_tool.execute(
+            {"command": "echo hi", "stdin": "", "tool_call_id": "tc_005d"},
+            mock_context,
+        )
+
+        assert result.output["ok"] is True
+        call = bash_tool.config.sandbox.execute_calls[-1]
+        assert call["stdin"] is None
+
     async def test_pty_foreground_uses_default_tty_size(self, bash_tool, mock_context):
         result = await bash_tool.execute(
             {

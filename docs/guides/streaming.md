@@ -1,6 +1,6 @@
 # Streaming
 
-Agiwo is streaming-first. All LLM responses flow through the same streaming pipeline, whether you use `run()`, `run_stream()`, or `start()`.
+Agiwo is streaming-first. All LLM responses flow through the same streaming pipeline, whether you use `run()`, `run_stream()`, `start()`, or scheduler `route_root_input()`.
 
 ## Streaming with `run_stream()`
 
@@ -20,7 +20,13 @@ async for event in agent.run_stream("Tell me about Python"):
 |------------|---------|
 | `run_started` | run/session metadata |
 | `step_delta` | incremental assistant deltas via `event.delta` |
-| `step_completed` | committed `StepRecord` via `event.step` |
+| `step_completed` | committed `StepView` via `event.step` |
+| `messages_rebuilt` | rebuilt prompt messages after runtime mutation |
+| `compaction_applied` | committed compaction summary + transcript range |
+| `compaction_failed` | committed compaction failure fact |
+| `retrospect_applied` | committed retrospect rewrite fact |
+| `termination_decided` | committed termination decision fact |
+| `run_rolled_back` | committed rollback range |
 | `run_completed` | final response, metrics, termination reason |
 | `run_failed` | final error |
 
@@ -46,11 +52,19 @@ result = await handle.wait()
 
 ## Scheduler Streaming
 
-The Scheduler exposes the same streaming interface:
+The Scheduler reuses the same stream protocol, but the public entrypoint is
+`route_root_input()`. Consume `RouteResult.stream`:
 
 ```python
 async with Scheduler() as scheduler:
-    async for event in scheduler.stream("Research topic X", agent=agent):
+    route = await scheduler.route_root_input(
+        "Research topic X",
+        agent=agent,
+        persistent=False,
+    )
+    assert route.stream is not None
+
+    async for event in route.stream:
         if event.type == "step_delta" and event.delta.content:
             print(event.delta.content, end="", flush=True)
 ```
@@ -58,12 +72,20 @@ async with Scheduler() as scheduler:
 For an existing agent state:
 
 ```python
-async for event in scheduler.stream(
+route = await scheduler.route_root_input(
     "Continue the analysis",
+    agent=agent,
     state_id=existing_state_id,
-):
+)
+assert route.stream is not None
+
+async for event in route.stream:
     process(event)
 ```
+
+Only one live stream subscriber is allowed per root `state_id`. If you steer a
+currently `RUNNING` root, `RouteResult.stream` is `None` because the existing
+subscriber continues consuming that root's stream.
 
 ## Stream Consumption
 
@@ -91,4 +113,4 @@ Agent.run_stream()
                            └─► AgentStreamItem (normalized)
 ```
 
-All execution paths — `run()`, `run_stream()`, Scheduler — share this pipeline. The difference is only in how the consumer processes events.
+All execution paths — `run()`, `run_stream()`, `start()`, and scheduler `route_root_input()` — share this pipeline. The difference is only in how the consumer processes events.

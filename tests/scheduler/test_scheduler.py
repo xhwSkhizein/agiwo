@@ -242,7 +242,8 @@ class TestSchedulerPrepareAgent:
             assert registered is not agent
 
             tool_names = {t.name for t in registered.tools}
-            assert "spawn_agent" in tool_names
+            assert "spawn_child_agent" in tool_names
+            assert "fork_child_agent" in tool_names
             assert "sleep_and_wait" in tool_names
             assert "query_spawned_agent" in tool_names
 
@@ -260,7 +261,8 @@ class TestSchedulerPrepareAgent:
             )
 
             tool_names = {t.name for t in agent.tools}
-            assert "spawn_agent" not in tool_names
+            assert "spawn_child_agent" not in tool_names
+            assert "fork_child_agent" not in tool_names
             assert "sleep_and_wait" not in tool_names
             assert "query_spawned_agent" not in tool_names
             assert agent.options.enable_termination_summary is False
@@ -402,7 +404,8 @@ class TestSchedulerCreateChildAgent:
         child_prompt = await child_agent.get_effective_system_prompt()
         assert "Be helpful" in child_prompt
         child_tool_names = {t.name for t in child_agent.tools}
-        assert "spawn_agent" not in child_tool_names
+        assert "spawn_child_agent" not in child_tool_names
+        assert "fork_child_agent" not in child_tool_names
         assert "sleep_and_wait" in child_tool_names
         assert "query_spawned_agent" in child_tool_names
         await scheduler.stop()
@@ -559,17 +562,19 @@ class TestSchedulerCreateChildAgent:
             )
 
         # ═══════════════════════════════════════════════════════════════════
-        # Verify child has spawn_agent tool (excluded in normal mode, included in fork)
+        # Verify fork child inherits both child-spawn tools for cache-stable tool layout.
         # ═══════════════════════════════════════════════════════════════════
         parent_tool_names = {t.name for t in parent_runtime.tools}
         child_tool_names = {t.name for t in child_agent.tools}
 
-        parent_has_spawn = "spawn_agent" in parent_tool_names
-        child_has_spawn = "spawn_agent" in child_tool_names
+        parent_has_spawn = "spawn_child_agent" in parent_tool_names
+        child_has_spawn = "spawn_child_agent" in child_tool_names
+        parent_has_fork = "fork_child_agent" in parent_tool_names
+        child_has_fork = "fork_child_agent" in child_tool_names
 
-        if parent_has_spawn and not child_has_spawn:
+        if parent_has_spawn != child_has_spawn or parent_has_fork != child_has_fork:
             mismatches.append(
-                f"TOOLS MISMATCH: Parent has spawn_agent but child does not.\n"
+                "TOOLS MISMATCH:\n"
                 f"  Parent tools: {parent_tool_names}\n"
                 f"  Child tools:  {child_tool_names}"
             )
@@ -632,7 +637,8 @@ class TestSchedulerCreateChildAgent:
             )
 
         # Basic assertions for clarity
-        assert child_has_spawn, "Fork child should inherit spawn_agent tool"
+        assert child_has_spawn, "Fork child should inherit spawn_child_agent tool"
+        assert child_has_fork, "Fork child should inherit fork_child_agent tool"
         assert len(child_steps) == 2, f"Expected 2 steps, got {len(child_steps)}"
         assert "sleep_and_wait" in child_tool_names
         assert "query_spawned_agent" in child_tool_names

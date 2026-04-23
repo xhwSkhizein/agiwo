@@ -74,7 +74,7 @@ flowchart TD
 
 ### 2. Child tool 语义与 root 不对称
 
-当前 child 派生时只排除了 `spawn_agent`，其他工具基本沿用 parent，并且 default builtin tools 还会被 SDK 的 tool assembly 自动补回。
+当前 child 派生时只排除了 child-spawn runtime tools，其他工具基本沿用 parent，并且 default builtin tools 还会被 SDK 的 tool assembly 自动补回。
 
 结果：
 
@@ -124,7 +124,7 @@ flowchart TD
 重构后建议满足以下目标：
 
 1. root runtime 保留原工具，并追加 scheduler tools
-2. child runtime 继承父能力，但明确禁止 `spawn_agent`
+2. child runtime 继承父能力，但明确禁止继续 child-spawn
 3. root runtime 和 child runtime 使用两条显式、独立的派生路径
 4. Console 侧只有一个统一的 Agent materialization 入口
 5. Web / Feishu / API 统一走同一套 session execution flow
@@ -153,7 +153,7 @@ flowchart TD
     RUN --> CTRL["SchedulerToolControl"]
     CTRL --> STATE["AgentState / PendingEvent"]
     STATE --> TICK["tick / dispatch"]
-    TICK --> CHILD["Prepare Child Runtime<br/>继承父工具 - spawn_agent"]
+    TICK --> CHILD["Prepare Child Runtime<br/>继承父工具 - child spawn tools"]
     CHILD --> RUN
 ```
 
@@ -221,7 +221,7 @@ flowchart TD
 期望效果：
 
 - root 仍然可以正常使用 `bash`、`bash_process`、`web_search`、`web_reader`、`memory_retrieval`
-- 同时获得 `spawn_agent`、`sleep_and_wait`、`query_spawned_agent`、`cancel_agent`、`list_agents`
+- 同时获得 `spawn_child_agent`、`fork_child_agent`、`sleep_and_wait`、`query_spawned_agent`、`cancel_agent`、`list_agents`
 
 #### 2. Child runtime preparation
 
@@ -233,7 +233,7 @@ flowchart TD
 规则：
 
 - 继承 parent 的正常执行能力
-- 明确移除 `spawn_agent`
+- 明确移除 `spawn_child_agent` / `fork_child_agent`
 - 保留其他 scheduler tools
 - child runtime 的“不可再派生”约束要在这里显式表达，而不是靠 incidental side effect
 
@@ -241,7 +241,7 @@ flowchart TD
 
 - child 可以执行真正的工作
 - child 可以 `sleep_and_wait`、查询 sibling/self state、取消自身可见 subtree
-- child 不能无限继续 `spawn_agent`
+- child 不能无限继续派生 child agent
 
 ### D. 统一 Console 的 session execution 入口
 
@@ -293,7 +293,7 @@ SessionExecutionService.execute(session_id, user_input)
 结果：
 
 - root: 原工具 + scheduler tools
-- child: 继承父工具，但无 `spawn_agent`
+- child: 继承父工具，但无 `spawn_child_agent` / `fork_child_agent`
 
 ### Phase 2. 收口 Console materialization
 
@@ -339,7 +339,7 @@ SessionExecutionService.execute(session_id, user_input)
 完成后，应满足以下可验证结果：
 
 1. Console session chat 下，root agent 可见原配置工具与 scheduler tools
-2. child agent 不可调用 `spawn_agent`
+2. child agent 不可调用 `spawn_child_agent` / `fork_child_agent`
 3. child agent 仍可使用其他允许的 builtin tools
 4. Web / Feishu 使用统一的 canonical Agent materialization 路径
 5. Scheduler 内部不再通过 child-style 逻辑准备 root runtime

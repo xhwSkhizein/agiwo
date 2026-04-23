@@ -109,15 +109,15 @@
 - `enable_skill`、Agent 级 `skills_dirs` 等历史 skill 开关/目录字段已删除；发现旧字段时直接 fast-fail，不保留静默兼容层。
 - `agiwo/skill/allowlist.py` 是唯一的 allowlist 归一化/展开/校验入口：pattern 展开、显式 skill 名合法性校验、runtime 前的“必须已展开”校验都收口在这里。
 - 只有最外层输入面可以接收 skill pattern：Console env/default-agent 配置和 Agents API。进入内部模型后，只允许显式 skill 名列表。
-- `Agent`、`AgentConfigRecord`、scheduler child override、`spawn_agent.allowed_skills` 都只接受“展开后的显式 skill 名列表”；未知 skill 名和 pattern 都必须在边界被拒绝。
+- `Agent`、`AgentConfigRecord`、scheduler child override、`spawn_child_agent.allowed_skills` 都只接受“展开后的显式 skill 名列表”；未知 skill 名和 pattern 都必须在边界被拒绝。
 - 子 Agent 的 `allowed_skills` 必须是父 Agent `allowed_skills` 的子集；如果父 Agent 未限制 skills，child 才能继承 `None` 语义。
 - `SkillManager` 的全局实例 key 由 `root_path + skills_dirs` 决定；`settings.skills_dirs` 变化时，后续 `get_global_skill_manager()` 会切到新的 manager。
 
 ### Scheduler
 
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
-- Scheduler runtime tools（`SpawnAgentTool`、`SleepAndWaitTool` 等）通过 `runtime_agent.inject_system_tools(...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
-- 子 Agent 的 system_tools 由 `SchedulerRunner` 从父 Agent 的 `system_tools` 派生；非 fork 模式排除 `spawn_agent`，fork 模式继承全部（gate 检查仍阻止实际 spawn）。
+- Scheduler runtime tools（`SpawnChildAgentTool`、`ForkChildAgentTool`、`SleepAndWaitTool` 等）通过 `runtime_agent.inject_system_tools(...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
+- 子 Agent 的 system_tools 由 `SchedulerRunner` 从父 Agent 的 `system_tools` 派生；非 fork 模式排除 `spawn_child_agent` / `fork_child_agent`，fork 模式继承全部（gate 检查仍阻止实际继续派生 child）。
 - 当前公开编排接口包括：`route_root_input`（统一入口）、`enqueue_input`、`wait_for`、`steer`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`。`submit`、`run`、`stream` 已合并到 `route_root_input` 或改为内部方法。
 - `Scheduler` 只做 facade 和 lifecycle；所有编排语义统一收口到 engine 层（facade 直接委托给 `_tick`、`_stream`、`_tree_ops` 等同包 helper）。
 - `SchedulerRunner` 只负责单次 dispatch action；`TaskGuard` 是 spawn/wake 的唯一护栏入口。
@@ -145,7 +145,7 @@
 - `SessionRuntime` 统一负责 sequence 分配、run-log 追加、把同一批 committed entries 喂给 trace writer，并基于同批 entries 投影 replayable `AgentStreamItem`；`trace`/`stream` 是 `RunLog` 的 view builder，不得各自维护独立 runtime 真相。
 - `StepDeltaEvent` 是当前唯一允许保留的 live-only stream 例外；除它之外，所有可重放 stream 事件都应由 committed `RunLog` entries 投影产生。
 - Agent 运行记录通过 session runtime 统一提交；流式输出通过 `Agent.start()` 返回的 handle 暴露 `AgentStreamItem`。
-- `BaseTraceStorage` 支持查询和实时订阅。
+- `BaseTraceStorage` 当前提供 `save_trace` / `get_trace` / `query_traces` / `close` 基础接口；live trace 更新由 agent runtime 通过 committed `RunLog` entry batches 驱动写入。
 
 ## Architecture Boundaries
 
