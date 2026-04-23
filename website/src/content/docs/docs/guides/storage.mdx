@@ -1,34 +1,44 @@
 ---
 title: Storage
-description: Configure run persistence and trace collection for observability and operator workflows.
+description: Configure run-log persistence and trace collection for observability and operator workflows.
 ---
 
 # Storage and Observability
 
 Agiwo separates runtime storage into two independent concerns:
 
-- run and step persistence
+- run-log persistence
 - trace collection
 
-## Run and step storage
+## Run log storage
 
-Run-step storage records inputs, outputs, steps, token usage, and status transitions.
+Run-log storage records canonical runtime facts as append-only `RunLog` entries.
 
 ```python
-from agiwo.agent import RunStepStorageConfig
-from agiwo.agent.storage.factory import create_run_step_storage
+from agiwo.agent import RunLogStorageConfig
+from agiwo.agent.storage.factory import create_run_log_storage
 
-storage = create_run_step_storage(
-    RunStepStorageConfig(
+storage = create_run_log_storage(
+    RunLogStorageConfig(
         storage_type="sqlite",
         config={"db_path": "runs.db"},
     )
 )
 ```
 
-## Trace Storage
+Stored facts include:
 
-Trace storage records span-style execution facts for debugging and observability.
+- `RunStarted`, `RunFinished`, `RunFailed`, `TerminationDecided`
+- `LLMCallStarted`, `LLMCallCompleted`
+- committed user, assistant, and tool steps
+- runtime decisions such as compaction, retrospect, rollback, and hook failures
+
+Replay/query helpers such as `list_step_views(...)` and `list_run_views(...)`
+are rebuilt from the stored `RunLog`.
+
+## Trace storage
+
+Trace storage persists trace snapshots built from committed run-log facts.
 
 ```python
 from agiwo.agent import TraceStorageConfig
@@ -49,7 +59,7 @@ from agiwo.agent import (
     AgentConfig,
     AgentOptions,
     AgentStorageOptions,
-    RunStepStorageConfig,
+    RunLogStorageConfig,
     TraceStorageConfig,
 )
 
@@ -59,7 +69,7 @@ config = AgentConfig(
     system_prompt="Use tools only when useful.",
     options=AgentOptions(
         storage=AgentStorageOptions(
-            run_step_storage=RunStepStorageConfig(
+            run_log_storage=RunLogStorageConfig(
                 storage_type="sqlite",
                 config={"db_path": "runs.db"},
             ),
@@ -81,9 +91,10 @@ config = AgentConfig(
 
 ## What this enables
 
-- inspect prior runs and steps
-- calculate token and cost metrics
+- inspect replayable run and step views
+- calculate token and cost metrics from committed facts
 - query traces by agent, session, or time range
 - support Console views for sessions, scheduler state, and traces
 
-The Console owns session storage and projections separately; the SDK itself does not expose a standalone session storage abstraction.
+The Console owns session storage and projections separately; the SDK itself does
+not expose a standalone session storage abstraction.

@@ -5,7 +5,8 @@ description: Compose agents with Agent.as_tool() or use the Scheduler for persis
 
 # Multi-Agent
 
-Agiwo supports two public ways to compose agents: agent-as-tool composition and scheduler-managed orchestration.
+Agiwo supports two public ways to compose agents: agent-as-tool composition and
+scheduler-managed orchestration.
 
 ## Choose the right level
 
@@ -48,7 +49,8 @@ orchestrator = Agent(
 )
 ```
 
-This is the simplest public composition path when the delegated unit should look like a functional tool.
+This is the simplest public composition path when the delegated unit should look
+like a functional tool.
 
 ## Scheduler-managed orchestration
 
@@ -56,21 +58,24 @@ This is the simplest public composition path when the delegated unit should look
 from agiwo.scheduler import Scheduler
 
 async with Scheduler() as scheduler:
-    result = await scheduler.run(
-        orchestrator,
+    route = await scheduler.route_root_input(
         "Research two competing approaches and compare them.",
+        agent=orchestrator,
+        persistent=False,
     )
+    result = await scheduler.wait_for(route.state_id)
     print(result.response)
 ```
 
 For longer-lived roots:
 
 ```python
-state_id = await scheduler.submit(
-    orchestrator,
+route = await scheduler.route_root_input(
     "Manage the research pipeline",
+    agent=orchestrator,
     persistent=True,
 )
+state_id = route.state_id
 
 await scheduler.wait_for(state_id)
 await scheduler.enqueue_input(state_id, "Now focus on pricing.")
@@ -78,13 +83,15 @@ await scheduler.enqueue_input(state_id, "Now focus on pricing.")
 
 ## Scheduler runtime tools
 
-Agents running under the scheduler automatically get orchestration tools such as:
+Agents running under the scheduler automatically get orchestration tools such
+as:
 
 - `spawn_agent`
 - `sleep_and_wait`
 - `query_spawned_agent`
 - `cancel_agent`
 - `list_agents`
+- `retrospect_tool_result`
 
 These are runtime-owned tools. You do not register them manually on the agent.
 
@@ -92,7 +99,8 @@ These are runtime-owned tools. You do not register them manually on the agent.
 
 ### Specialist delegation
 
-One orchestrator delegates bounded work to specialist agents via `Agent.as_tool()`.
+One orchestrator delegates bounded work to specialist agents via
+`Agent.as_tool()`.
 
 ### Persistent supervisor
 
@@ -100,4 +108,5 @@ One root stays alive and coordinates work over time through scheduler tools.
 
 ### Fan-out and synthesis
 
-Multiple worker agents gather or analyze in parallel, then another run synthesizes the results.
+Multiple worker agents gather or analyze in parallel, then another run
+synthesizes the results.

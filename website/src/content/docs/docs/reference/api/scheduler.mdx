@@ -1,6 +1,6 @@
 ---
 title: Scheduler API
-description: Reference for Scheduler lifecycle, orchestration methods, control methods, and state semantics.
+description: Reference for Scheduler lifecycle, routing methods, control methods, and state semantics.
 ---
 
 # Scheduler API
@@ -23,25 +23,20 @@ await scheduler.stop()
 
 ## Core methods
 
-### `run(...)`
-
-Submit one root and wait for the final `RunOutput`.
-
-### `submit(...)`
-
-Create and start a root immediately, returning `state_id`.
-
 ### `enqueue_input(...)`
 
 Queue the next input for a persistent root that is `IDLE` or `FAILED`.
 
 ### `route_root_input(...)`
 
-High-level integration entry point used by Console and channels. It decides whether the correct action is submit, enqueue, or steer.
+Canonical integration entry point used by Console and channels. It decides
+whether the correct action is:
 
-### `stream(...)`
+- `submitted`
+- `enqueued`
+- `steered`
 
-Consume `AgentStreamItem` values for a root run.
+The returned `RouteResult.stream` is the root stream for that routed turn.
 
 ### `wait_for(...)`
 
@@ -60,6 +55,14 @@ Wait until a state settles to `IDLE`, `COMPLETED`, or `FAILED`.
 - `list_states(...)`
 - `list_events(...)`
 - `get_stats(...)`
+- `get_registered_agent(...)`
+
+## Stream semantics
+
+- `route_root_input()` exposes stream consumption through `RouteResult.stream`
+- only one live stream subscriber is allowed per root `state_id`
+- `RouteResult.stream` is `None` only for `steered + RUNNING`, where the
+  existing subscriber keeps consuming the live stream
 
 ## State storage backends
 
@@ -68,3 +71,10 @@ Wait until a state settles to `IDLE`, `COMPLETED`, or `FAILED`.
 - `memory`
 - `sqlite`
 - `mongodb`
+
+## Route stream modes
+
+`RouteStreamMode` currently supports:
+
+- `RUN_END`
+- `UNTIL_SETTLED`

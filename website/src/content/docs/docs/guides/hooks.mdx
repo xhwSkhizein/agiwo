@@ -1,50 +1,101 @@
 ---
 title: Hooks
-description: Observe and extend Agiwo agent lifecycle events with AgentHooks.
+description: Observe and extend Agiwo agent lifecycle events with the phase-based HookRegistry.
 ---
 
 # Hooks
 
-Hooks let you observe or extend lifecycle points in the agent runtime. They are optional async callbacks grouped in `AgentHooks`.
+Hooks are registered through the phase-based `HookRegistry`. The old
+single-slot `AgentHooks` dataclass is no longer part of the public API.
 
-## Typical hook surfaces
-
-- before and after a run
-- before and after a tool call
-- before and after an LLM call
-- after a step is committed
-- memory write and memory retrieve hooks
-- compaction failure handling
-
-## Example
+## Quick start
 
 ```python
-from agiwo.agent import Agent, AgentConfig, AgentHooks
+from agiwo.agent import (
+    Agent,
+    AgentConfig,
+    HookPhase,
+    HookRegistry,
+    observe,
+    transform,
+)
 
 
-async def on_after_tool_call(tool_call_id, tool_name, parameters, result) -> None:
-    print(f"{tool_name} finished in {result.duration:.2f}s")
+async def add_prelude(payload: dict) -> dict:
+    updated = dict(payload)
+    updated["prelude_text"] = "Please be concise."
+    return updated
 
 
-hooks = AgentHooks(on_after_tool_call=on_after_tool_call)
+async def log_step(payload: dict) -> None:
+    step = payload["step"]
+    print(f"{step.role.value} step committed: {step.sequence}")
+
+
+hooks = HookRegistry(
+    [
+        transform(HookPhase.PREPARE, "add_prelude", add_prelude),
+        observe(HookPhase.AFTER_STEP_COMMIT, "log_step", log_step),
+    ]
+)
 
 agent = Agent(
-    AgentConfig(
-        name="assistant",
-        description="Helpful assistant",
-        system_prompt="Answer concisely.",
-    ),
+    AgentConfig(name="assistant", description="Helpful assistant"),
     model=model,
     hooks=hooks,
 )
 ```
 
+## Core types
+
+- `HookPhase`: lifecycle phase enum
+- `HookCapability`: `observe_only`, `transform`, `decision_support`
+- `HookGroup`: execution group ordering
+- `HookRegistration`: one registered phase handler
+- `HookRegistry`: ordered collection of registrations
+
+## Ordering and failures
+
+- Execution order is `group -> order -> registration order`
+- Only early phases may be marked `critical=True`
+- Non-critical hook failures are isolated, logged, and recorded as `HookFailed`
+  run-log facts
+- Critical hook failures are re-raised and fail the run
+
+## Public phases
+
+- `prepare`
+- `assemble_context`
+- `before_llm`
+- `after_llm`
+- `before_tool_call`
+- `after_tool_call`
+- `before_compaction`
+- `after_compaction`
+- `before_retrospect`
+- `after_retrospect`
+- `before_termination`
+- `after_termination`
+- `after_step_commit`
+- `run_finalized`
+- `memory_persist`
+- `compaction_failed`
+
+## Payload model
+
+Every handler receives a single `payload: dict[str, Any]`.
+
+- Transform phases may return a partial dict that only changes allowlisted fields
+- Decision-support phases may only write the phase-specific `*_advice` field
+- Observe-only phases should not return anything meaningful
+
 ## Good uses for hooks
 
 - logging and tracing
-- token and cost accounting
+- message rewrites before LLM calls
 - lightweight guardrails
-- memory integration
-- debugging run behavior
+- external memory integration
+- debugging committed step flow
 
-Hook exceptions propagate by default, so treat hooks as production code rather than best-effort callbacks.
+Prefer `observe(...)`, `transform(...)`, and `decision_support(...)` over
+constructing `HookRegistration` directly.

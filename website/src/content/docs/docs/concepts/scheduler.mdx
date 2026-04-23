@@ -36,6 +36,7 @@ You can think of the scheduler as two layers:
 
 | State | Meaning |
 | --- | --- |
+| `PENDING` | Child state is persisted but this round has not started yet |
 | `RUNNING` | Currently executing an agent cycle |
 | `WAITING` | Waiting for a wake condition |
 | `IDLE` | Persistent root finished the current round and is ready |
@@ -50,5 +51,8 @@ The high-level integration API is `route_root_input(...)`. It decides whether th
 - submit a new root
 - enqueue input for the next round
 - steer a currently active root
+
+For non-`RUNNING` paths, it also returns a `RouteResult.stream` iterator for the
+root turn that was just routed.
 
 That is why Console and channel integrations do not need to reimplement root lifecycle logic.
