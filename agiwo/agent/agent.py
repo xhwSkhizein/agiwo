@@ -202,8 +202,9 @@ class Agent:
         """Inject system-level tools and rebuild the resolved tool list.
 
         This is a scheduler-internal API used to inject runtime tools
-        (e.g. ``SpawnAgentTool``, ``SleepAndWaitTool``) after construction.
-        System tools bypass ``allowed_tools`` filtering.
+        (e.g. ``SpawnChildAgentTool``, ``ForkChildAgentTool``,
+        ``SleepAndWaitTool``) after construction. System tools bypass
+        ``allowed_tools`` filtering.
 
         **Note**: This method is intended for scheduler use only. Do not call
         this method directly in application code unless you are implementing

@@ -347,5 +347,5 @@ class TestBuildForkTaskNotice:
         result = build_fork_task_notice("Analyze data")
         assert "<system-notice>" in result
         assert "forked child agent" in result
-        assert "Do NOT use spawn_agent" in result
+        assert "Do NOT use spawn_child_agent or fork_child_agent" in result
         assert result.endswith("Analyze data")

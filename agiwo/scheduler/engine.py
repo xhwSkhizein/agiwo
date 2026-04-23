@@ -41,11 +41,12 @@ from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import RuntimeState, list_all_states
 from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
+    ForkChildAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
     RetrospectToolResultTool,
     SleepAndWaitTool,
-    SpawnAgentTool,
+    SpawnChildAgentTool,
 )
 from agiwo.scheduler.store import create_agent_state_storage
 from agiwo.scheduler.store.base import AgentStateStorage
@@ -86,7 +87,8 @@ class Scheduler:
             state_list_page_size=self._config.state_list_page_size,
         )
         self._scheduling_tools = (
-            SpawnAgentTool(self._tool_control),
+            SpawnChildAgentTool(self._tool_control),
+            ForkChildAgentTool(self._tool_control),
             SleepAndWaitTool(self._tool_control),
             QuerySpawnedAgentTool(self._tool_control),
             CancelAgentTool(self._tool_control),

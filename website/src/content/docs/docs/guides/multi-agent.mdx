@@ -86,7 +86,8 @@ await scheduler.enqueue_input(state_id, "Now focus on pricing.")
 Agents running under the scheduler automatically get orchestration tools such
 as:
 
-- `spawn_agent`
+- `spawn_child_agent`
+- `fork_child_agent`
 - `sleep_and_wait`
 - `query_spawned_agent`
 - `cancel_agent`

@@ -105,9 +105,9 @@ async def test_create_child_agent_applies_overrides() -> None:
     assert clone.config.options.enable_termination_summary is True
 
 
-class SpawnAgentDummy(BaseTool):
-    name = "spawn_agent"
-    description = "Dummy spawn_agent for testing"
+class SpawnChildAgentDummy(BaseTool):
+    name = "spawn_child_agent"
+    description = "Dummy spawn_child_agent for testing"
 
     def get_parameters(self) -> dict:
         return {"type": "object", "properties": {}}
@@ -119,9 +119,9 @@ class SpawnAgentDummy(BaseTool):
 
 @pytest.mark.asyncio
 async def test_create_child_agent_inherits_extra_tools() -> None:
-    """Extra tools (including spawn_agent) are inherited by children.
+    """Extra tools (including spawn_child_agent) are inherited by children.
 
-    spawn_agent exclusion is the scheduler's responsibility, not Agent's.
+    Child-spawn tool exclusion is the scheduler's responsibility, not Agent's.
     """
     agent = Agent(
         config=AgentConfig(
@@ -132,12 +132,12 @@ async def test_create_child_agent_inherits_extra_tools() -> None:
         ),
         id="definition-agent",
         model=MockModel(id="mock", name="mock", provider="openai"),
-        tools=[DummyTool(), SpawnAgentDummy()],
+        tools=[DummyTool(), SpawnChildAgentDummy()],
     )
     child = await agent.create_child_agent(child_id="child")
     child_tool_names = {t.name for t in child.tools}
     assert "dummy_tool" in child_tool_names
-    assert "spawn_agent" in child_tool_names
+    assert "spawn_child_agent" in child_tool_names
 
 
 @pytest.mark.asyncio
@@ -156,11 +156,11 @@ async def test_create_child_agent_receives_system_tools() -> None:
     )
     child = await agent.create_child_agent(
         child_id="sys-child",
-        system_tools=[SpawnAgentDummy()],
+        system_tools=[SpawnChildAgentDummy()],
     )
     child_tool_names = {t.name for t in child.tools}
     assert "dummy_tool" in child_tool_names
-    assert "spawn_agent" in child_tool_names
+    assert "spawn_child_agent" in child_tool_names
 
 
 def test_agent_constructor_does_not_expose_skill_manager(

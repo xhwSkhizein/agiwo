@@ -94,7 +94,8 @@ Agents running under the scheduler automatically get orchestration tools:
 # Inside an agent's system prompt:
 """
 You can use these tools to coordinate work:
-- spawn_agent: Create a child agent for a sub-task
+- spawn_child_agent: Create a fresh child agent for a sub-task
+- fork_child_agent: Fork the current agent into a child that inherits context
 - query_spawned_agent: Check on a child's progress
 - cancel_agent: Stop a child that's no longer needed
 - list_agents: See all active children
@@ -180,7 +181,7 @@ async with Scheduler() as scheduler:
     )
     supervisor_id = route.state_id
 
-    # The supervisor uses spawn_agent internally to create workers
+    # The supervisor uses spawn_child_agent / fork_child_agent internally to create workers
     # External input can steer the supervisor
     await scheduler.enqueue_input(supervisor_id, "Priority: process batch 42 first")
 ```

@@ -189,7 +189,8 @@ flowchart TD
 
 | Tool | Purpose |
 | --- | --- |
-| `spawn_agent` | 派生 child agent |
+| `spawn_child_agent` | 派生一个新的 child agent |
+| `fork_child_agent` | fork 当前 agent 为继承上下文的 child |
 | `sleep_and_wait` | 让当前 agent 进入 `WAITING` |
 | `query_spawned_agent` | 查看 child state |
 | `cancel_agent` | 取消 child subtree |

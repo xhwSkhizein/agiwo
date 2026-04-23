@@ -119,7 +119,7 @@ Agiwo assembles tools through `ToolManager`:
 - `SkillTool` when skills are enabled
 - scheduler runtime tools when the agent is executed under `Scheduler`
 
-Scheduler tools such as `spawn_agent` and `sleep_and_wait` are runtime-owned system tools. They are not registered manually on the agent.
+Scheduler tools such as `spawn_child_agent`, `fork_child_agent`, and `sleep_and_wait` are runtime-owned system tools. They are not registered manually on the agent.
 
 ## Agent-As-Tool
 
