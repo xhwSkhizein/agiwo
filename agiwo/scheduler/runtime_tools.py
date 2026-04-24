@@ -663,21 +663,19 @@ class ListAgentsTool(BaseTool):
         )
 
 
-class RetrospectToolResultTool(BaseTool):
-    """Retrospect and condense recent tool results to keep context lean."""
+class DeclareMilestonesTool(BaseTool):
+    """Declare or update the milestones for the current task."""
 
-    name = "retrospect_tool_result"
+    name = "declare_milestones"
     description = (
-        "Retrospect on recent tool results and replace verbose outputs with a "
-        "concise, structured feedback summary. Call this when a system-notice "
-        "asks you to retrospect.\n\n"
-        "Your feedback MUST be thorough and include:\n"
-        "1. **What was attempted** — which tools were called and what was the intent.\n"
-        "2. **What was learned** — key facts, data points, or confirmations gained.\n"
-        "3. **What went wrong or was unhelpful** — errors, dead-ends, or irrelevant results.\n"
-        "4. **What to do next** — concrete next steps or adjusted strategy based on findings.\n\n"
-        "Write the feedback as if briefing yourself for the next turn — "
-        "it replaces the original verbose content entirely."
+        "Declare or update the milestones for the current task. "
+        "Break the user's request into concrete, verifiable sub-goals. "
+        "Each milestone should have a clear id and a specific description "
+        "of what 'done' looks like. The system uses these milestones to "
+        "evaluate whether your work stays on track.\n\n"
+        'Example: [{"id":"understand","description":"Identify how '
+        'auth tokens are validated"}, {"id":"fix","description":'
+        '"Apply the fix and verify with tests"}]'
     )
     concurrency_safe = False
 
@@ -689,16 +687,24 @@ class RetrospectToolResultTool(BaseTool):
         return {
             "type": "object",
             "properties": {
-                "feedback": {
-                    "type": "string",
+                "milestones": {
+                    "type": "array",
                     "description": (
-                        "Structured retrospect feedback summarising the recent "
-                        "tool results. Must cover: what was attempted, what was "
-                        "learned, what was unhelpful, and what to do next."
+                        "Ordered list of milestone objects. Each must have: "
+                        "id (string, unique identifier) and "
+                        "description (string, what 'done' looks like)."
                     ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["id", "description"],
+                    },
                 },
             },
-            "required": ["feedback"],
+            "required": ["milestones"],
         }
 
     async def execute(
@@ -709,20 +715,100 @@ class RetrospectToolResultTool(BaseTool):
     ) -> ToolResult:
         del abort_signal
         start_time = time.time()
-        feedback = parameters.get("feedback", "")
-        if not feedback:
+        milestones = parameters.get("milestones", [])
+        if not milestones:
             return _build_failed_result(
                 tool_name=self.name,
-                error="feedback is required",
+                error="milestones must be a non-empty array",
                 context=context,
                 parameters=parameters,
                 start_time=start_time,
             )
+        ids = [m["id"] for m in milestones]
         return ToolResult.success(
             tool_name=self.name,
             tool_call_id=context.tool_call_id,
             input_args=parameters,
-            content=feedback,
+            content=f"Milestones declared: {', '.join(ids)}",
+            output={},
+            start_time=start_time,
+        )
+
+
+class ReviewTrajectoryTool(BaseTool):
+    """Respond to a <system-review> prompt."""
+
+    name = "review_trajectory"
+    description = (
+        "Respond to a <system-review> prompt by assessing whether "
+        "your recent tool calls advance the active milestone.\n\n"
+        "Parameters:\n"
+        "- aligned (boolean, required): true if trajectory aligns with "
+        "milestone, false if drifted.\n"
+        "- experience (string, required when aligned=false): A concise "
+        "summary covering what was attempted, what was learned, and "
+        "how this should inform the next approach.\n\n"
+        "This tool call itself will be transparently removed after processing."
+    )
+    concurrency_safe = False
+
+    def __init__(self, port: SchedulerToolControl) -> None:
+        self._port = port
+        super().__init__()
+
+    def get_parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "aligned": {
+                    "type": "boolean",
+                    "description": (
+                        "true if your recent trajectory aligns with the "
+                        "active milestone, false if it has drifted."
+                    ),
+                },
+                "experience": {
+                    "type": "string",
+                    "description": (
+                        "Required when aligned=false. A concise summary: "
+                        "what was attempted, what was learned, and how "
+                        "this should inform the next approach."
+                    ),
+                },
+            },
+            "required": ["aligned"],
+        }
+
+    async def execute(
+        self,
+        parameters: dict[str, Any],
+        context: ToolContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> ToolResult:
+        del abort_signal
+        start_time = time.time()
+        aligned = parameters.get("aligned", False)
+        experience = parameters.get("experience", "")
+
+        if not aligned and not experience:
+            return _build_failed_result(
+                tool_name=self.name,
+                error="experience is required when aligned=false",
+                context=context,
+                parameters=parameters,
+                start_time=start_time,
+            )
+
+        content = (
+            f"Trajectory review: aligned={aligned}. {experience}"
+            if experience
+            else f"Trajectory review: aligned={aligned}."
+        )
+        return ToolResult.success(
+            tool_name=self.name,
+            tool_call_id=context.tool_call_id,
+            input_args=parameters,
+            content=content,
             output={},
             start_time=start_time,
         )

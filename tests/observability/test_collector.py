@@ -8,9 +8,9 @@ from agiwo.agent.models.log import (
     CompactionApplied,
     LLMCallCompleted,
     LLMCallStarted,
-    RetrospectApplied,
     RunFinished,
     RunStarted,
+    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
 )
@@ -203,15 +203,14 @@ async def test_collector_records_runtime_run_log_entries() -> None:
                 compact_model="compact-model",
                 compact_tokens=128,
             ),
-            RetrospectApplied(
+            StepBackApplied(
                 sequence=4,
                 session_id="session-1",
                 run_id="run-1",
                 agent_id="agent-1",
-                affected_sequences=[2],
-                affected_step_ids=["step-2"],
-                feedback="switch plan",
-                replacement="[ToolResult offloaded to /tmp/x.txt]",
+                affected_count=1,
+                checkpoint_seq=2,
+                experience="switch plan",
             ),
             TerminationDecided(
                 sequence=5,
@@ -231,11 +230,11 @@ async def test_collector_records_runtime_run_log_entries() -> None:
     runtime_spans = [span for span in trace.spans if span.kind == SpanKind.RUNTIME]
     assert [span.name for span in runtime_spans] == [
         "compaction",
-        "retrospect",
+        "step_back",
         "termination",
     ]
     assert runtime_spans[0].attributes["summary"] == "short summary"
-    assert runtime_spans[1].attributes["feedback"] == "switch plan"
+    assert runtime_spans[1].attributes["experience"] == "switch plan"
     assert runtime_spans[2].attributes["termination_reason"] == "max_steps"
 
 

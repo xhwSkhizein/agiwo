@@ -12,7 +12,7 @@ _REPLAYABLE_TYPES = {
     "step_completed",
     "messages_rebuilt",
     "compaction_applied",
-    "retrospect_applied",
+    "step_back_applied",
     "termination_decided",
     "run_rolled_back",
     "run_completed",

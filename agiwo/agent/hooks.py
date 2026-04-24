@@ -24,8 +24,8 @@ class HookPhase(str, Enum):
     AFTER_TOOL_CALL = "after_tool_call"
     BEFORE_COMPACTION = "before_compaction"
     AFTER_COMPACTION = "after_compaction"
-    BEFORE_RETROSPECT = "before_retrospect"
-    AFTER_RETROSPECT = "after_retrospect"
+    BEFORE_REVIEW = "before_review"
+    AFTER_STEP_BACK = "after_step_back"
     BEFORE_TERMINATION = "before_termination"
     AFTER_TERMINATION = "after_termination"
     AFTER_STEP_COMMIT = "after_step_commit"
@@ -81,7 +81,7 @@ class HookRegistry:
         HookPhase.BEFORE_LLM,
         HookPhase.BEFORE_TOOL_CALL,
         HookPhase.BEFORE_COMPACTION,
-        HookPhase.BEFORE_RETROSPECT,
+        HookPhase.BEFORE_REVIEW,
         HookPhase.BEFORE_TERMINATION,
     }
     _CRITICAL_PHASES = {
@@ -100,7 +100,7 @@ class HookRegistry:
         HookPhase.BEFORE_LLM: {"llm_advice"},
         HookPhase.BEFORE_TOOL_CALL: {"tool_advice"},
         HookPhase.BEFORE_COMPACTION: {"compaction_advice"},
-        HookPhase.BEFORE_RETROSPECT: {"retrospect_advice"},
+        HookPhase.BEFORE_REVIEW: {"review_advice"},
         HookPhase.BEFORE_TERMINATION: {"termination_advice"},
     }
     _GROUP_ORDER = {

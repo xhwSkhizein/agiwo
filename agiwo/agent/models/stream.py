@@ -11,12 +11,12 @@ from agiwo.agent.models.log import (
     CompactionApplied,
     CompactionFailed,
     MessagesRebuilt,
-    RetrospectApplied,
     RunFailed,
     RunFinished,
     RunLogEntry,
     RunRolledBack,
     RunStarted,
+    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
@@ -143,21 +143,17 @@ class CompactionFailedEvent(AgentStreamItemBase):
 
 
 @dataclass(kw_only=True)
-class RetrospectAppliedEvent(AgentStreamItemBase):
-    affected_sequences: list[int]
-    affected_step_ids: list[str]
-    feedback: str | None = None
-    replacement: str | None = None
-    trigger: str | None = None
-    type: Literal["retrospect_applied"] = "retrospect_applied"
+class StepBackAppliedEvent(AgentStreamItemBase):
+    affected_count: int
+    checkpoint_seq: int
+    experience: str
+    type: Literal["step_back_applied"] = "step_back_applied"
 
     def to_dict(self) -> dict[str, Any]:
         payload = self._base_dict()
-        payload["affected_sequences"] = list(self.affected_sequences)
-        payload["affected_step_ids"] = list(self.affected_step_ids)
-        payload["feedback"] = self.feedback
-        payload["replacement"] = self.replacement
-        payload["trigger"] = self.trigger
+        payload["affected_count"] = self.affected_count
+        payload["checkpoint_seq"] = self.checkpoint_seq
+        payload["experience"] = self.experience
         return payload
 
 
@@ -334,14 +330,12 @@ def _stream_item_from_runtime_entry(
             max_attempts=entry.max_attempts,
             terminal=entry.terminal,
         )
-    elif isinstance(entry, RetrospectApplied):
-        item = RetrospectAppliedEvent(
+    elif isinstance(entry, StepBackApplied):
+        item = StepBackAppliedEvent(
             **base_kwargs,
-            affected_sequences=list(entry.affected_sequences),
-            affected_step_ids=list(entry.affected_step_ids),
-            feedback=entry.feedback,
-            replacement=entry.replacement,
-            trigger=entry.trigger,
+            affected_count=entry.affected_count,
+            checkpoint_seq=entry.checkpoint_seq,
+            experience=entry.experience,
         )
     elif isinstance(entry, TerminationDecided):
         item = TerminationDecidedEvent(
@@ -444,7 +438,7 @@ AgentStreamItem: TypeAlias = (
     | MessagesRebuiltEvent
     | CompactionAppliedEvent
     | CompactionFailedEvent
-    | RetrospectAppliedEvent
+    | StepBackAppliedEvent
     | TerminationDecidedEvent
     | RunRolledBackEvent
     | RunCompletedEvent
@@ -458,11 +452,11 @@ __all__ = [
     "CompactionAppliedEvent",
     "CompactionFailedEvent",
     "MessagesRebuiltEvent",
-    "RetrospectAppliedEvent",
     "RunRolledBackEvent",
     "RunCompletedEvent",
     "RunFailedEvent",
     "RunStartedEvent",
+    "StepBackAppliedEvent",
     "StepCompletedEvent",
     "StepDeltaEvent",
     "TerminationDecidedEvent",
