@@ -12,12 +12,20 @@ from agiwo.agent.review.goal_manager import (
     declare_milestones,
     get_active_milestone,
 )
+from agiwo.agent.review.review_enforcer import (
+    ReviewTrigger,
+    check_review_trigger,
+    inject_system_review,
+)
 
 __all__ = [
     "ReviewBatch",
     "StepBackOutcome",
+    "ReviewTrigger",
     "activate_next_milestone",
+    "check_review_trigger",
     "complete_active_milestone",
     "declare_milestones",
     "get_active_milestone",
+    "inject_system_review",
 ]
