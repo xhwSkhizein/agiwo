@@ -103,6 +103,41 @@ Date: {current_date}, use the `bash` tool get current time if there is a need
 """
 
 
+def _render_goal_directed_review() -> str:
+    return """---
+## Goal-Directed Review
+
+You are expected to work in a goal-directed manner. The system helps you
+stay on track through a review mechanism.
+
+### Milestones
+When you receive a task, break it into concrete milestones using the
+`declare_milestones` tool. Each milestone should be a verifiable
+sub-goal. Keep milestones focused and specific -- "understand the code"
+is too vague; "identify how auth tokens are validated" is concrete.
+
+### System Reviews
+The system will periodically ask you to review your trajectory against
+the active milestone. When you see a `<system-review>` tag in a tool
+result, you MUST respond with the `review_trajectory` tool:
+
+- If your recent steps advance the milestone: set `aligned=true` and
+  briefly note what was accomplished.
+- If your recent steps drifted from the milestone: set `aligned=false`
+  and provide a concise experience summary of what was learned.
+  The system will condense the off-track results so they don't clutter
+  the context.
+
+The system review is not optional -- it enforces that you periodically
+check your own direction. Treat it as a mandatory checkpoint.
+
+### Step-Back
+When you indicate misalignment, the system automatically condenses the
+off-target tool results into your experience summary. The tool call
+history is preserved so future decisions can reference what was tried,
+but the verbose outputs are replaced with the lesson learned."""
+
+
 def _render_tools(tools: tuple[tuple[str, str], ...]) -> str:
     if not tools:
         return ""
@@ -261,6 +296,7 @@ async def build_system_prompt(
             timezone=str(current_dt.tzinfo),
             current_date=current_dt.strftime("%Y-%m-%d"),
         ),
+        _render_goal_directed_review(),
         _render_tools(
             tuple((tool.name, tool.get_short_description()) for tool in (tools or []))
         ),
@@ -293,4 +329,5 @@ __all__ = [
     "build_system_prompt",
     "compose_child_system_prompt",
     "system_notice",
+    "_render_goal_directed_review",
 ]
