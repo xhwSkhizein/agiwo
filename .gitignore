@@ -87,3 +87,4 @@ test_dbs/
 .DS_Store
 Thumbs.db
 todos.md
+.worktrees/
