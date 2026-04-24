@@ -22,9 +22,7 @@ class ReviewCheckpoint:
 
     seq: int
     milestone_id: str
-    confirmed_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    confirmed_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass

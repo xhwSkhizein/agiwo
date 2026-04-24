@@ -66,7 +66,12 @@ class TestReviewBatch:
             "declare_milestones": FakeTool("declare_milestones"),
         }
         batch = ReviewBatch(config, ledger, tools_map)
-        result = FakeToolResult("review_trajectory", "JWT was a dead end", is_success=True, tool_call_id="tc_review")
+        result = FakeToolResult(
+            "review_trajectory",
+            "JWT was a dead end",
+            is_success=True,
+            tool_call_id="tc_review",
+        )
         content = batch.process_result(result)
         assert content == "JWT was a dead end"
         assert batch._feedback == "JWT was a dead end"

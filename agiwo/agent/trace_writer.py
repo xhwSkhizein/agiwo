@@ -504,9 +504,7 @@ def _apply_runtime_entry_to_trace(
     *,
     run_spans: dict[str, Span],
 ) -> bool:
-    if not isinstance(
-        entry, (CompactionApplied, StepBackApplied, TerminationDecided)
-    ):
+    if not isinstance(entry, (CompactionApplied, StepBackApplied, TerminationDecided)):
         return False
     _append_runtime_entry_to_trace(
         trace,

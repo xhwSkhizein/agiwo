@@ -23,7 +23,9 @@ def _build_review_notice(
     if milestone is not None:
         milestone_text = f'Active milestone: "{milestone.description}"'
     else:
-        milestone_text = "No active milestone declared. Consider using declare_milestones."
+        milestone_text = (
+            "No active milestone declared. Consider using declare_milestones."
+        )
 
     inner_text = (
         f"{milestone_text}\n\n"

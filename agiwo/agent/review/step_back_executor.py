@@ -118,10 +118,7 @@ def _remove_review_tool_call(messages: list[dict[str, Any]]) -> None:
                 indices_to_remove.append(i)
 
     for i, msg in enumerate(messages):
-        if (
-            msg.get("role") == "tool"
-            and msg.get("tool_call_id", "") in review_call_ids
-        ):
+        if msg.get("role") == "tool" and msg.get("tool_call_id", "") in review_call_ids:
             indices_to_remove.append(i)
 
     for i in sorted(indices_to_remove, reverse=True):

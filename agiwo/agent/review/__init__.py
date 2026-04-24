@@ -9,7 +9,6 @@ Public API consumed by ``run_tool_batch.py``:
 from typing import Any
 
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.run import RunLedger
 from agiwo.agent.review.goal_manager import (
     activate_next_milestone,
@@ -107,9 +106,7 @@ class ReviewBatch:
 
         return content
 
-    def register_step(
-        self, tool_call_id: str, step_id: str, sequence: int
-    ) -> None:
+    def register_step(self, tool_call_id: str, step_id: str, sequence: int) -> None:
         """Register a committed step for later step-back lookup."""
         self._step_lookup[tool_call_id] = {
             "id": step_id,

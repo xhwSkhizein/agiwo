@@ -24,9 +24,12 @@ class TestDeclareMilestones:
         m = Milestone(id="a", description="Step A", status="completed")
         m2 = Milestone(id="b", description="Step B", status="active")
         state = ReviewState(milestones=[m, m2])
-        result = declare_milestones(state, [
-            Milestone(id="c", description="Step C"),
-        ])
+        result = declare_milestones(
+            state,
+            [
+                Milestone(id="c", description="Step C"),
+            ],
+        )
         # state unchanged because active milestone was already active
         assert len(state.milestones) == 3
         assert result == ["c"]

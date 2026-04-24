@@ -182,9 +182,7 @@ class StepBackApplied(RunLogEntry):
     affected_count: int = 0
     checkpoint_seq: int = 0
     experience: str = ""
-    kind: RunLogEntryKind = field(
-        init=False, default=RunLogEntryKind.STEP_BACK_APPLIED
-    )
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.STEP_BACK_APPLIED)
 
 
 @dataclass(frozen=True, kw_only=True)
