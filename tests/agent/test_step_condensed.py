@@ -26,10 +26,10 @@ class TestStepViewCondensedContent:
             content="original verbose result",
             tool_call_id="tc-1",
             name="bash",
-            condensed_content="[archived] Retrospect: short summary",
+            condensed_content="[archived] Step back: short summary",
         )
         msg = step.to_message()
-        assert msg["content"] == "[archived] Retrospect: short summary"
+        assert msg["content"] == "[archived] Step back: short summary"
 
     def test_assistant_message_uses_condensed_content(self):
         """condensed_content applies to all roles via to_message()."""

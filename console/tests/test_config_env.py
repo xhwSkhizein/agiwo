@@ -262,10 +262,8 @@ def test_agent_options_input_maps_all_fields() -> None:
             "stream_cleanup_timeout": 90.5,
             "compact_prompt": "Compact the context",
             "enable_context_rollback": False,
-            "enable_tool_retrospect": False,
-            "retrospect_token_threshold": 2049,
-            "retrospect_round_interval": 7,
-            "retrospect_accumulated_token_threshold": 16384,
+            "enable_goal_directed_review": True,
+            "review_step_interval": 10,
         }
     )
     options = agent_options_input_to_agent_options(
@@ -285,10 +283,8 @@ def test_agent_options_input_maps_all_fields() -> None:
     assert options.stream_cleanup_timeout == 90.5
     assert options.compact_prompt == "Compact the context"
     assert options.enable_context_rollback is False
-    assert options.enable_tool_retrospect is False
-    assert options.retrospect_token_threshold == 2049
-    assert options.retrospect_round_interval == 7
-    assert options.retrospect_accumulated_token_threshold == 16384
+    assert options.enable_goal_directed_review is True
+    assert options.review_step_interval == 10
 
 
 def test_console_agent_options_input_matches_sdk_agent_options() -> None:

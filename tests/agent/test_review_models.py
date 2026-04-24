@@ -1,5 +1,4 @@
 # tests/agent/test_review_models.py
-import pytest
 from datetime import datetime
 from agiwo.agent.models.review import Milestone, ReviewCheckpoint, ReviewState
 

@@ -16,7 +16,6 @@ from agiwo.agent.models.log import (
     LLMCallCompleted,
     LLMCallStarted,
     MessagesRebuilt,
-    RetrospectApplied,
     RunFailed,
     RunFinished,
     RunLogEntry,
@@ -33,7 +32,6 @@ from agiwo.agent.models.log import (
 from agiwo.agent.models.runtime_decision import (
     CompactionDecisionView,
     CompactionFailureDecisionView,
-    RetrospectDecisionView,
     RollbackDecisionView,
     RuntimeDecisionState,
     StepBackDecisionView,
@@ -56,7 +54,7 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.TOOL_STEP_COMMITTED: ToolStepCommitted,
     RunLogEntryKind.COMPACTION_APPLIED: CompactionApplied,
     RunLogEntryKind.COMPACTION_FAILED: CompactionFailed,
-    RunLogEntryKind.RETROSPECT_APPLIED: RetrospectApplied,
+    RunLogEntryKind.STEP_BACK_APPLIED: StepBackApplied,
     RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED: StepCondensedContentUpdated,
     RunLogEntryKind.TERMINATION_DECIDED: TerminationDecided,
     RunLogEntryKind.HOOK_FAILED: HookFailed,
@@ -319,7 +317,6 @@ def build_runtime_decision_state_from_entries(
     latest_termination: TerminationDecisionView | None = None
     latest_compaction: CompactionDecisionView | None = None
     latest_compaction_failure: CompactionFailureDecisionView | None = None
-    latest_retrospect: RetrospectDecisionView | None = None
     latest_step_back: StepBackDecisionView | None = None
     latest_rollback: RollbackDecisionView | None = None
 
@@ -360,20 +357,6 @@ def build_runtime_decision_state_from_entries(
                 terminal=entry.terminal,
             )
             continue
-        if isinstance(entry, RetrospectApplied):
-            latest_retrospect = RetrospectDecisionView(
-                session_id=entry.session_id,
-                run_id=entry.run_id,
-                agent_id=entry.agent_id,
-                sequence=entry.sequence,
-                created_at=entry.created_at,
-                affected_sequences=tuple(entry.affected_sequences),
-                affected_step_ids=tuple(entry.affected_step_ids),
-                feedback=entry.feedback,
-                replacement=entry.replacement,
-                trigger=entry.trigger,
-            )
-            continue
         if isinstance(entry, StepBackApplied):
             latest_step_back = StepBackDecisionView(
                 session_id=entry.session_id,
@@ -402,7 +385,6 @@ def build_runtime_decision_state_from_entries(
         latest_termination=latest_termination,
         latest_compaction=latest_compaction,
         latest_compaction_failure=latest_compaction_failure,
-        latest_retrospect=latest_retrospect,
         latest_step_back=latest_step_back,
         latest_rollback=latest_rollback,
     )

@@ -11,7 +11,6 @@ from agiwo.agent.models.log import (
     CompactionApplied,
     CompactionFailed,
     MessagesRebuilt,
-    RetrospectApplied,
     RunFailed,
     RunFinished,
     RunLogEntry,
@@ -140,25 +139,6 @@ class CompactionFailedEvent(AgentStreamItemBase):
         payload["attempt"] = self.attempt
         payload["max_attempts"] = self.max_attempts
         payload["terminal"] = self.terminal
-        return payload
-
-
-@dataclass(kw_only=True)
-class RetrospectAppliedEvent(AgentStreamItemBase):
-    affected_sequences: list[int]
-    affected_step_ids: list[str]
-    feedback: str | None = None
-    replacement: str | None = None
-    trigger: str | None = None
-    type: Literal["retrospect_applied"] = "retrospect_applied"
-
-    def to_dict(self) -> dict[str, Any]:
-        payload = self._base_dict()
-        payload["affected_sequences"] = list(self.affected_sequences)
-        payload["affected_step_ids"] = list(self.affected_step_ids)
-        payload["feedback"] = self.feedback
-        payload["replacement"] = self.replacement
-        payload["trigger"] = self.trigger
         return payload
 
 
@@ -350,15 +330,6 @@ def _stream_item_from_runtime_entry(
             max_attempts=entry.max_attempts,
             terminal=entry.terminal,
         )
-    elif isinstance(entry, RetrospectApplied):
-        item = RetrospectAppliedEvent(
-            **base_kwargs,
-            affected_sequences=list(entry.affected_sequences),
-            affected_step_ids=list(entry.affected_step_ids),
-            feedback=entry.feedback,
-            replacement=entry.replacement,
-            trigger=entry.trigger,
-        )
     elif isinstance(entry, StepBackApplied):
         item = StepBackAppliedEvent(
             **base_kwargs,
@@ -467,7 +438,6 @@ AgentStreamItem: TypeAlias = (
     | MessagesRebuiltEvent
     | CompactionAppliedEvent
     | CompactionFailedEvent
-    | RetrospectAppliedEvent
     | StepBackAppliedEvent
     | TerminationDecidedEvent
     | RunRolledBackEvent
@@ -482,7 +452,6 @@ __all__ = [
     "CompactionAppliedEvent",
     "CompactionFailedEvent",
     "MessagesRebuiltEvent",
-    "RetrospectAppliedEvent",
     "RunRolledBackEvent",
     "RunCompletedEvent",
     "RunFailedEvent",

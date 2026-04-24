@@ -1,4 +1,4 @@
-"""Goal-directed review — replaces token/round-based retrospect.
+"""Goal-directed review.
 
 Public API consumed by ``run_tool_batch.py``:
 
@@ -34,7 +34,7 @@ _get_active_milestone = get_active_milestone
 class ReviewBatch:
     """Per-batch review lifecycle object.
 
-    Replaces ``RetrospectBatch``.  Caller interacts through three methods:
+    Replaces the legacy retrospect system.  Caller interacts through three methods:
 
     * ``process_result()``  — returns final content (may inject <system-notice>)
     * ``register_step()``   — registers a committed step for later lookup

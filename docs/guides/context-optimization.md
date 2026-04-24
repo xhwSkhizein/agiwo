@@ -1,8 +1,8 @@
 # Context Optimization
 
-长时间运行的 agent（特别是 scheduler 编排场景）会面临上下文膨胀问题。SDK 提供两个独立的上下文优化机制：**Context Rollback**（空转回退）和 **Tool Result Retrospect**（工具结果回顾）。
+长时间运行的 agent（特别是 scheduler 编排场景）会面临上下文膨胀问题。SDK 提供两个独立的上下文优化机制：**Context Rollback**（空转回退）和 **Goal-Directed Review**（目标导向回顾与步步后退）。
 
-两者与 compaction（上下文压缩）独立共存：compaction 在 token 窗口层面工作，rollback 和 retrospect 在语义层面优化内容质量。
+两者与 compaction（上下文压缩）独立共存：compaction 在 token 窗口层面工作，rollback 和 review/step-back 在语义层面优化内容质量。
 
 ## Context Rollback
 
@@ -42,119 +42,145 @@ AgentOptions(
 
 ---
 
-## Tool Result Retrospect
+## Goal-Directed Review
 
 ### 问题
 
-agent 探索性地调用工具（查询数据库、搜索文件等），可能得到大量结果但对当前目标帮助有限。完整的 tool result（可能数千 tokens）留在上下文中，真正有价值的只是"这条路不行"这个结论。
+agent 在工作中可能偏离目标，产生大量与目标无关的 tool 调用和结果。传统的基于 token 计数的触发机制（"结果太大了，回顾一下"）不够精准——应该在语义层面检测目标偏离并执行回退。
+
+### 核心思路
+
+将 "系统被动提醒 agent 回顾" 改为 **"系统在关键节点强制 agent 进行目标对齐检查"**。Agent 声明里程碑和阶段性目标，系统在检查点（步数间隔、连续错误、里程碑切换）强制注入 review 通知，agent 必须评估当前进展与目标的匹配度；若偏离，系统执行 KV-cache-safe 的 step-back（仅替换 tool result 内容，不删除/重排 message）。
 
 ### 工作方式
 
-Retrospect 分两步：**系统触发提示** → **agent 主动回顾**。
+#### 步骤 1：声明里程碑
 
-#### 步骤 1：系统检测并注入提示
+Agent 在开始时调用 `declare_milestones` 声明目标拆解：
 
-每次 tool 执行完成后，系统检查是否满足以下任一触发条件：
+```python
+declare_milestones(milestones=[
+    {"id": "understand", "description": "理解 session 管理代码结构"},
+    {"id": "diagnose", "description": "定位 session 泄漏根因"},
+    {"id": "fix", "description": "修复泄漏并验证"},
+])
+```
 
-| 触发类型 | 条件 | 系统提示侧重 |
-|---------|------|------------|
-| 单次大结果 | 单个 tool result 超过 `retrospect_token_threshold` tokens | 强调 concise / replace |
-| 轮次累计 | 连续 N 轮 tool call（`retrospect_round_interval`） | 强调目标聚焦、回顾方向 |
-| Token 累计 | tool result 累计超过 `retrospect_accumulated_token_threshold` | 强调空间紧迫、清理低价值内容 |
+系统记录这些里程碑到 `ReviewState`，并自动将第一个里程碑设置为 active。Agent 可以在执行过程中调用 `complete_active_milestone()` 切换里程碑。
 
-满足条件时，系统在 tool result 末尾追加针对触发类型的 `<system-notice>`，引导 agent 调用 `retrospect_tool_result`。
+#### 步骤 2：系统强制 Review
 
-#### 步骤 2：agent 调用 retrospect
+以下条件触发系统注入 `<system-notice>` 要求 agent 调用 `review_trajectory`：
 
-agent 看到 system-notice 后，可以调用 `retrospect_tool_result(feedback="...")`，提供一段结构化的回顾总结。系统自动：
+| 触发类型 | 条件 | 触发逻辑 |
+|---------|------|---------|
+| `STEP_INTERVAL` | 自上次 checkpoint 起 >= `review_step_interval` 轮 tool call | 常规检查点：评估是否聚焦目标 |
+| `CONSECUTIVE_ERRORS` | 连续 >= 3 个 tool call 返回 error | 检测无效尝试模式 |
+| `MILESTONE_SWITCH` | 里程碑状态变化（pending → active, active → completed） | 目标切换时的强制对齐 |
 
-1. **确定范围**：从上次 retrospect 位置到当前，所有未处理的 tool steps
-2. **归档原始内容**：每个 tool result 的原始 content 写入磁盘文件
-3. **替换上下文**：tool message 替换为 `[ToolResult offloaded to ...]`，最后一个 tool message 追加 agent 的 feedback
-4. **透明化**：retrospect 自身的 tool_call + tool_result 从上下文中移除
-5. **持久化**：storage 中的 `condensed_content` 字段记录精简内容，`content` 字段保留原始数据
+#### 步骤 3：Agent 回顾
+
+Agent 调用 `review_trajectory` 提供结构化回顾：
+
+```python
+review_trajectory(
+    alignment="on_track",  # 或 "partial_deviation", "off_track"
+    experience=(
+        "搜索了 session.py 和 manager.py，确认 session 生命周期由 SessionManager "
+        "统一管理，通过 asyncio.Lock 保护并发访问。"
+    ),
+    milestones=[
+        {"id": "understand", "status": "completed"},
+        {"id": "diagnose", "status": "active"},
+    ],
+    goal_remaining="定位 GC 延迟导致的 session 未释放问题",
+    off_track_steps=["tool_call_3", "tool_call_5"],
+)
+```
+
+当 alignment 不是 `on_track` 时，系统将 `off_track_steps` 对应的 tool result 替换为 `experience` 内容。Agent 的 tool_call 完整保留（意图轨迹），tool result 被精简为经验总结（KV-cache 安全）。
 
 #### 上下文效果
 
-Retrospect 前：
+Review 前：
 ```
-assistant: [tool_call: search_db(query="plan A")]
-tool:      [3000 tokens 的查询结果]
-assistant: [tool_call: search_db(query="plan B")]
-tool:      [2000 tokens 的查询结果 + <system-notice>...]
-assistant: [tool_call: retrospect_tool_result(feedback="...")]
+assistant: [tool_call: search_file(pattern="*.py")]
+tool:      [5000 tokens 的文件列表]
+assistant: [tool_call: search_db(query="random_table")]  ← 偏离目标
+tool:      [3000 tokens 的查询结果 + <system-notice>请调用 review_trajectory]
+assistant: [tool_call: review_trajectory(alignment="off_track", experience="...")]
 tool:      [确认信息]
 ```
 
-Retrospect 后：
+Step-back 后：
 ```
-assistant: [tool_call: search_db(query="plan A")]
-tool:      [ToolResult offloaded to /path/tool_call_1.txt]
-assistant: [tool_call: search_db(query="plan B")]
-tool:      [ToolResult offloaded to /path/tool_call_2.txt
-            ---
-            Retrospect: 尝试了 plan A 和 plan B，均未找到目标数据。
-            该表不包含所需字段，需要换用 Y 表。]
+assistant: [tool_call: search_file(pattern="*.py")]
+tool:      [5000 tokens 的文件列表]
+assistant: [tool_call: search_db(query="random_table")]  ← tool_call 保留
+tool:      [搜索了 random_table，与当前诊断目标无关，该表不包含 session 信息]  ← 替换为经验
+assistant: [tool_call: search_db(query="session_registry")]  ← 基于经验修正方向
 ```
-
-assistant 的 tool_call 完整保留（探索轨迹），tool result 被归档 + 精简，retrospect 自身透明移除。
 
 ### 配置
 
 ```python
 AgentOptions(
-    enable_tool_retrospect=True,                   # 默认开启
-    retrospect_token_threshold=1024,               # 单次 tool result token 阈值
-    retrospect_round_interval=5,                   # 每 N 轮 tool call 触发
-    retrospect_accumulated_token_threshold=8192,   # 累计 token 阈值
+    enable_goal_directed_review=True,   # 默认开启
+    review_step_interval=8,             # 每 N 轮 tool call 触发常规 review
+    review_on_error=True,               # 连续错误时是否触发 review
 )
 ```
 
-### Storage 双写
+### KV Cache 安全性
 
-canonical `RunLog` 中的 committed step `content` 永远保留原始内容。retrospect/condense 只会追加 `StepCondensedContentUpdated` 这类 metadata fact，不会回写修改原始 step entry。
-
-- 加载历史 steps 构建 messages 时，`condensed_content` 优先（`condensed_content or content`）
-- Console/trace/replay 可同时展示原始和精简内容
-- 跨 run 重新加载历史时自动使用精简版
+Step-back 仅修改 tool result 的 `content` 字段，不删除或重排任何 message。Agent tool_call 的意图链条完整保留。review_trajectory 自身的 tool_call + tool_result 在 step-back 后被移除（仅此一对），避免额外占据上下文。这些约束确保 LLM 的 KV cache 不被破坏。
 
 ### 约束
 
-- 仅 scheduler 场景生效（通过 scheduler runtime tools 注入 `retrospect_tool_result` 工具）
-- 只能操作本轮 run 中的 steps，不能跨 run
-- 与 compaction 独立共存
+- 仅 scheduler 场景生效（`declare_milestones` 和 `review_trajectory` 工具通过 scheduler 注入）
+- 里程碑由 agent 维护和拆解，用户仅提供顶层大目标
+- 系统决定 review 时机和 step-back 范围，agent 仅提供内容
+- 与 compaction/rollback 独立共存
 
 ---
 
 ## 架构
 
-### retrospect 包结构
+### review 包结构
 
 ```
-agiwo/agent/retrospect/
-├── __init__.py      # 公开 API：RetrospectBatch, RetrospectOutcome
-├── triggers.py      # RetrospectTrigger 枚举、触发检查、notice 模板
-├── executor.py      # offload / 替换 / 持久化 / 清理
+agiwo/agent/review/
+├── __init__.py          # 公开 API：ReviewBatch
+├── goal_manager.py      # 里程碑管理（declare/complete/activate）
+├── review_enforcer.py   # 触发条件检测、system-notice 注入
+├── step_back_executor.py # KV-cache-safe 内容精简
 ```
 
-`run_loop.py` 只通过 `RetrospectBatch` 与 retrospect 交互：
+`run_tool_batch.py` 通过 `ReviewBatch` 与 review 交互：
 
 ```python
-batch = RetrospectBatch(state, tools_map)
+batch = ReviewBatch(context.config, context.ledger, runtime.tools_map)
 
 for result in tool_results:
-    content = batch.process_result(result)     # 可能注入 notice
+    content = batch.process_result(result, current_seq=seq)  # 可能注入 notice
     # ... commit step ...
     batch.register_step(call_id, step.id, step.sequence)
 
-outcome = await batch.finalize()               # 构建 retrospect 结果
+outcome = await batch.finalize(
+    storage=context.session_runtime.run_log_storage,
+    session_id=context.session_id,
+    run_id=context.run_id,
+    agent_id=context.agent_id,
+)
 if outcome.applied:
-    replace_messages(state, outcome.messages)   # 显式应用上下文变更
+    # 目标内容替换，不调用 rebuild_messages
+    context.ledger.messages.clear()
+    context.ledger.messages.extend(outcome.messages)
 ```
 
 ### 设计原则
 
-- **上下文变更显式化**：`finalize()` 返回 `RetrospectOutcome`，调用方通过 `replace_messages` 显式应用，和 compaction 的模式统一
-- **Storage 不可变**：原始 `content` 永远保留，`condensed_content` 只追加不覆盖
-- **无 magic flag**：retrospect tool 通过 `tool_name` 识别，不依赖隐式输出标记
-- **依赖方向**：`retrospect/` 不依赖 `scheduler/`，`scheduler/runtime_tools.py` 提供 `RetrospectToolResultTool`
+- **系统强制 review**：不依赖 agent 自我意识，系统在检查点注入 review 通知
+- **KV-cache 安全**：仅替换 tool result content，不删除/重排 message，不调用 rebuild_messages
+- **意图链条完整**：tool_call 永远保留，经验信息以 tool result 形式反馈给 LLM
+- **依赖方向**：`review/` 不依赖 `scheduler/`，`scheduler/runtime_tools.py` 提供 `DeclareMilestonesTool` 和 `ReviewTrajectoryTool`

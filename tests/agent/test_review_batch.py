@@ -1,9 +1,9 @@
 # tests/agent/test_review_batch.py
 import pytest
-from agiwo.agent.models.review import Milestone, ReviewState
+from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.run import RunLedger
-from agiwo.agent.review import ReviewBatch, StepBackOutcome
+from agiwo.agent.review import ReviewBatch
 
 
 class FakeTool:

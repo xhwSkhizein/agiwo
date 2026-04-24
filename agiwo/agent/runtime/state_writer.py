@@ -11,7 +11,6 @@ from agiwo.agent.models.log import (
     LLMCallCompleted,
     LLMCallStarted,
     MessagesRebuilt,
-    RetrospectApplied,
     RunFailed,
     RunFinished,
     RunStarted,
@@ -224,29 +223,6 @@ class RunStateWriter:
 
     def next_compaction_failure_attempt(self) -> int:
         return self._state.ledger.compaction.failure_count + 1
-
-    async def record_retrospect_applied(
-        self,
-        *,
-        affected_sequences: list[int],
-        affected_step_ids: list[str],
-        feedback: str | None,
-        replacement: str | None,
-        trigger: str | None = None,
-    ) -> list[object]:
-        return await self.append_entries(
-            [
-                build_retrospect_applied_entry(
-                    self._state,
-                    sequence=await self._state.session_runtime.allocate_sequence(),
-                    affected_sequences=affected_sequences,
-                    affected_step_ids=affected_step_ids,
-                    feedback=feedback,
-                    replacement=replacement,
-                    trigger=trigger,
-                )
-            ]
-        )
 
     async def record_step_back_applied(
         self,
@@ -488,29 +464,6 @@ def build_compaction_failed_entry(
     )
 
 
-def build_retrospect_applied_entry(
-    state: RunContext,
-    *,
-    sequence: int,
-    affected_sequences: list[int],
-    affected_step_ids: list[str],
-    feedback: str | None,
-    replacement: str | None,
-    trigger: str | None = None,
-) -> RetrospectApplied:
-    return RetrospectApplied(
-        sequence=sequence,
-        session_id=state.session_id,
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        affected_sequences=affected_sequences,
-        affected_step_ids=affected_step_ids,
-        feedback=feedback,
-        replacement=replacement,
-        trigger=trigger,
-    )
-
-
 def build_step_back_applied_entry(
     state: RunContext,
     *,
@@ -518,9 +471,8 @@ def build_step_back_applied_entry(
     affected_count: int,
     checkpoint_seq: int,
     experience: str,
-) -> Any:
+) -> StepBackApplied:
     """Build a StepBackApplied log entry."""
-    from agiwo.agent.models.log import StepBackApplied
     return StepBackApplied(
         session_id=state.session_id,
         run_id=state.run_id,
@@ -560,7 +512,6 @@ __all__ = [
     "build_llm_call_completed_entry",
     "build_llm_call_started_entry",
     "build_messages_rebuilt_entry",
-    "build_retrospect_applied_entry",
     "build_step_back_applied_entry",
     "build_run_failed_entry",
     "build_run_finished_entry",

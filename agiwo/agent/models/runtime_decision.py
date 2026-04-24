@@ -43,20 +43,6 @@ class CompactionFailureDecisionView:
 
 
 @dataclass(frozen=True, slots=True)
-class RetrospectDecisionView:
-    session_id: str
-    run_id: str
-    agent_id: str
-    sequence: int
-    created_at: datetime
-    affected_sequences: tuple[int, ...]
-    affected_step_ids: tuple[str, ...]
-    feedback: str | None = None
-    replacement: str | None = None
-    trigger: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class StepBackDecisionView:
     session_id: str
     run_id: str
@@ -85,7 +71,6 @@ class RuntimeDecisionState:
     latest_termination: TerminationDecisionView | None = None
     latest_compaction: CompactionDecisionView | None = None
     latest_compaction_failure: CompactionFailureDecisionView | None = None
-    latest_retrospect: RetrospectDecisionView | None = None
     latest_step_back: StepBackDecisionView | None = None
     latest_rollback: RollbackDecisionView | None = None
 
@@ -94,7 +79,6 @@ class RuntimeDecisionState:
             self.latest_termination is None
             and self.latest_compaction is None
             and self.latest_compaction_failure is None
-            and self.latest_retrospect is None
             and self.latest_step_back is None
             and self.latest_rollback is None
         )
@@ -103,7 +87,6 @@ class RuntimeDecisionState:
 __all__ = [
     "CompactionFailureDecisionView",
     "CompactionDecisionView",
-    "RetrospectDecisionView",
     "RollbackDecisionView",
     "RuntimeDecisionState",
     "StepBackDecisionView",

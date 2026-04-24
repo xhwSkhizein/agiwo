@@ -1,5 +1,4 @@
 # tests/agent/test_review_enforcer.py
-import pytest
 from agiwo.agent.models.review import Milestone, ReviewState
 from agiwo.agent.review.review_enforcer import (
     ReviewTrigger,

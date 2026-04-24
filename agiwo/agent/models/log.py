@@ -176,18 +176,6 @@ class CompactionFailed(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
-class RetrospectApplied(RunLogEntry):
-    affected_sequences: list[int] = field(default_factory=list)
-    affected_step_ids: list[str] = field(default_factory=list)
-    feedback: str | None = None
-    replacement: str | None = None
-    trigger: str | None = None
-    kind: RunLogEntryKind = field(
-        init=False, default=RunLogEntryKind.RETROSPECT_APPLIED
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
 class StepBackApplied(RunLogEntry):
     """Log entry recorded when step-back condenses off-track tool results."""
 
@@ -195,7 +183,7 @@ class StepBackApplied(RunLogEntry):
     checkpoint_seq: int = 0
     experience: str = ""
     kind: RunLogEntryKind = field(
-        init=False, default=RunLogEntryKind.RETROSPECT_APPLIED
+        init=False, default=RunLogEntryKind.STEP_BACK_APPLIED
     )
 
 
@@ -291,7 +279,6 @@ __all__ = [
     "LLMCallCompleted",
     "LLMCallStarted",
     "MessagesRebuilt",
-    "RetrospectApplied",
     "RunRolledBack",
     "StepBackApplied",
     "StepCondensedContentUpdated",

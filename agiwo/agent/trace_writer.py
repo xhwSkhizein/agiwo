@@ -11,7 +11,6 @@ from agiwo.agent.models.log import (
     CompactionApplied,
     LLMCallCompleted,
     LLMCallStarted,
-    RetrospectApplied,
     RunFailed as RunFailedEntry,
     RunFinished,
     RunLogEntry,
@@ -211,7 +210,7 @@ def _build_tool_span_from_entry(
 
 def _build_runtime_span_from_entry(
     trace_id: str,
-    entry: CompactionApplied | RetrospectApplied | StepBackApplied | TerminationDecided,
+    entry: CompactionApplied | StepBackApplied | TerminationDecided,
     run_span: Span | None,
 ) -> Span:
     parent_id = run_span.span_id if run_span else None
@@ -225,15 +224,6 @@ def _build_runtime_span_from_entry(
             "end_sequence": entry.end_sequence,
             "transcript_path": entry.transcript_path,
             "summary": entry.summary,
-        }
-    elif isinstance(entry, RetrospectApplied):
-        name = "retrospect"
-        attributes = {
-            "affected_sequences": list(entry.affected_sequences),
-            "affected_step_ids": list(entry.affected_step_ids),
-            "feedback": entry.feedback,
-            "replacement": entry.replacement,
-            "trigger": entry.trigger,
         }
     elif isinstance(entry, StepBackApplied):
         name = "step_back"
@@ -267,7 +257,7 @@ def _build_runtime_span_from_entry(
 
 def _append_runtime_entry_to_trace(
     trace: Trace,
-    entry: CompactionApplied | RetrospectApplied | StepBackApplied | TerminationDecided,
+    entry: CompactionApplied | StepBackApplied | TerminationDecided,
     *,
     run_spans: dict[str, Span],
 ) -> None:
@@ -515,7 +505,7 @@ def _apply_runtime_entry_to_trace(
     run_spans: dict[str, Span],
 ) -> bool:
     if not isinstance(
-        entry, (CompactionApplied, RetrospectApplied, StepBackApplied, TerminationDecided)
+        entry, (CompactionApplied, StepBackApplied, TerminationDecided)
     ):
         return False
     _append_runtime_entry_to_trace(

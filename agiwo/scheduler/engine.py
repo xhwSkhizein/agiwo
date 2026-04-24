@@ -45,7 +45,6 @@ from agiwo.scheduler.runtime_tools import (
     ForkChildAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
-    RetrospectToolResultTool,
     ReviewTrajectoryTool,
     SleepAndWaitTool,
     SpawnChildAgentTool,
@@ -95,7 +94,6 @@ class Scheduler:
             QuerySpawnedAgentTool(self._tool_control),
             CancelAgentTool(self._tool_control),
             ListAgentsTool(self._tool_control),
-            RetrospectToolResultTool(self._tool_control),
             DeclareMilestonesTool(self._tool_control),
             ReviewTrajectoryTool(self._tool_control),
         )

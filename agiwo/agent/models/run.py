@@ -95,15 +95,6 @@ class CompactionState:
     failure_count: int = 0
 
 
-@dataclass
-class RetrospectState:
-    """Retrospect state."""
-
-    last_seq: int = 0
-    pending_tokens: int = 0
-    pending_rounds: int = 0
-
-
 @dataclass(frozen=True)
 class RunIdentity:
     run_id: str
@@ -131,7 +122,6 @@ class RunLedger:
     tokens: TokenStats = field(default_factory=TokenStats)
     steps: StepStats = field(default_factory=StepStats)
     compaction: CompactionState = field(default_factory=CompactionState)
-    retrospect: RetrospectState = field(default_factory=RetrospectState)
     review: ReviewState = field(default_factory=ReviewState)
 
 
@@ -205,7 +195,6 @@ __all__ = [
     "CompactMetadata",
     "CompactionState",
     "MemoryRecord",
-    "RetrospectState",
     "RunIdentity",
     "RunLedger",
     "RunMetrics",
