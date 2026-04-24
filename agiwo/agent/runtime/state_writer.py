@@ -15,6 +15,7 @@ from agiwo.agent.models.log import (
     RunFailed,
     RunFinished,
     RunStarted,
+    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
@@ -243,6 +244,26 @@ class RunStateWriter:
                     feedback=feedback,
                     replacement=replacement,
                     trigger=trigger,
+                )
+            ]
+        )
+
+    async def record_step_back_applied(
+        self,
+        *,
+        affected_count: int,
+        checkpoint_seq: int,
+        experience: str,
+    ) -> list[object]:
+        """Record a step-back applied event to the run log."""
+        return await self.append_entries(
+            [
+                build_step_back_applied_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    affected_count=affected_count,
+                    checkpoint_seq=checkpoint_seq,
+                    experience=experience,
                 )
             ]
         )
@@ -490,6 +511,27 @@ def build_retrospect_applied_entry(
     )
 
 
+def build_step_back_applied_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    affected_count: int,
+    checkpoint_seq: int,
+    experience: str,
+) -> Any:
+    """Build a StepBackApplied log entry."""
+    from agiwo.agent.models.log import StepBackApplied
+    return StepBackApplied(
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        sequence=sequence,
+        affected_count=affected_count,
+        checkpoint_seq=checkpoint_seq,
+        experience=experience,
+    )
+
+
 def build_termination_decided_entry(
     state: RunContext,
     *,
@@ -519,6 +561,7 @@ __all__ = [
     "build_llm_call_started_entry",
     "build_messages_rebuilt_entry",
     "build_retrospect_applied_entry",
+    "build_step_back_applied_entry",
     "build_run_failed_entry",
     "build_run_finished_entry",
     "build_run_started_entry",
