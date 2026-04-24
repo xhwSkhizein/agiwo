@@ -27,15 +27,13 @@ from agiwo.agent.review.step_back_executor import (
 )
 from agiwo.tool.base import BaseTool, ToolResult
 
-_get_active_milestone = get_active_milestone
-
 
 class ReviewBatch:
     """Per-batch review lifecycle object.
 
     Replaces the legacy retrospect system.  Caller interacts through three methods:
 
-    * ``process_result()``  — returns final content (may inject <system-notice>)
+    * ``process_result()``  — returns final content (may inject <system-review>)
     * ``register_step()``   — registers a committed step for later lookup
     * ``finalize()``        — returns ``StepBackOutcome``; caller applies
       via targeted content updates (NO rebuild_messages)
@@ -55,6 +53,7 @@ class ReviewBatch:
             and "declare_milestones" in tools_map
         )
         self._feedback: str | None = None
+        self._review_seq: int | None = None
         self._step_lookup: dict[str, dict[str, Any]] = {}
 
     @property
@@ -72,14 +71,22 @@ class ReviewBatch:
         if not self._enabled:
             return content
 
-        # Capture review_trajectory feedback
+        # Capture review_trajectory feedback.
         if result.tool_name == "review_trajectory" and result.is_success:
-            self._feedback = content
+            self._ledger.review.consecutive_errors = 0
+            output = result.output if isinstance(result.output, dict) else {}
+            aligned = output.get("aligned")
+            if aligned is True:
+                self._ledger.review.last_review_seq = current_seq
+                self._ledger.review.last_checkpoint_seq = current_seq
+                self._ledger.review.is_review_pending = False
+                return content
+            if aligned is False:
+                experience = output.get("experience")
+                self._feedback = experience if isinstance(experience, str) else content
+                self._review_seq = current_seq
+                return content
             return content
-
-        # Capture declare_milestones — set review_pending flag
-        if result.tool_name == "declare_milestones" and result.is_success:
-            self._ledger.review.is_review_pending = True
 
         # Track errors
         is_error = not result.is_success
@@ -100,7 +107,7 @@ class ReviewBatch:
         )
 
         if trigger is not ReviewTrigger.NONE:
-            milestone = _get_active_milestone(self._ledger.review)
+            milestone = get_active_milestone(self._ledger.review)
             step_count = max(current_seq - self._ledger.review.last_review_seq, 0)
             content = inject_system_review(content, milestone, step_count)
 
@@ -144,7 +151,7 @@ class ReviewBatch:
             max_seq = max(
                 (msg.get("_sequence", 0) for msg in outcome.messages), default=0
             )
-            self._ledger.review.last_review_seq = max_seq
+            self._ledger.review.last_review_seq = max(max_seq, self._review_seq or 0)
         self._ledger.review.is_review_pending = False
 
         return outcome

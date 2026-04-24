@@ -20,13 +20,14 @@ def declare_milestones(
 
     # Update existing or add new
     for m in milestones:
-        m.declared_at_seq = current_seq
         if m.id in existing_ids:
             for i, existing in enumerate(state.milestones):
                 if existing.id == m.id:
+                    m.declared_at_seq = existing.declared_at_seq
                     state.milestones[i] = m
                     break
         else:
+            m.declared_at_seq = current_seq
             state.milestones.append(m)
 
     # If no milestone is currently active, activate the first pending
@@ -45,6 +46,7 @@ def complete_active_milestone(state: ReviewState, *, seq: int) -> bool:
         if m.status == "active":
             m.status = "completed"
             m.completed_at_seq = seq
+            state.is_review_pending = True
             return True
     return False
 
@@ -54,6 +56,7 @@ def activate_next_milestone(state: ReviewState) -> Milestone | None:
     for m in state.milestones:
         if m.status == "pending":
             m.status = "active"
+            state.is_review_pending = True
             return m
     return None
 

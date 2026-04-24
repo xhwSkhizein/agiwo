@@ -71,7 +71,7 @@ class AgentOptions(BaseModel):
     compact_prompt: str = ""
     enable_context_rollback: bool = True
     enable_goal_directed_review: bool = True
-    review_step_interval: int = 8
+    review_step_interval: int = Field(default=8, ge=1)
     review_on_error: bool = True
     storage: AgentStorageOptions = Field(default_factory=AgentStorageOptions)
 

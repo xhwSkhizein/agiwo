@@ -47,6 +47,16 @@ class TestDeclareMilestonesTool:
         )
         assert not result.is_success
 
+    @pytest.mark.asyncio
+    async def test_execute_rejects_milestone_without_id(self):
+        tool = DeclareMilestonesTool(MagicMock(spec=SchedulerToolControl))
+        result = await tool.execute(
+            parameters={"milestones": [{"description": "missing id"}]},
+            context=ToolContext(session_id="s1", tool_call_id="tc_1"),
+        )
+        assert not result.is_success
+        assert "non-empty string 'id'" in result.content
+
 
 class TestReviewTrajectoryTool:
     def test_name_and_description(self):
@@ -70,6 +80,7 @@ class TestReviewTrajectoryTool:
             context=ToolContext(session_id="s1", tool_call_id="tc_r"),
         )
         assert result.is_success
+        assert result.output == {"aligned": True, "experience": ""}
 
     @pytest.mark.asyncio
     async def test_execute_aligned_false_requires_experience(self):
@@ -83,6 +94,10 @@ class TestReviewTrajectoryTool:
         )
         assert result.is_success
         assert "Tried X" in result.content
+        assert result.output == {
+            "aligned": False,
+            "experience": "Tried X, learned Y, will do Z next.",
+        }
 
     @pytest.mark.asyncio
     async def test_execute_aligned_false_without_experience(self):

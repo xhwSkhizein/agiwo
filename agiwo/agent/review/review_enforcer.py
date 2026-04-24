@@ -3,7 +3,6 @@
 from enum import Enum
 
 from agiwo.agent.models.review import Milestone, ReviewState
-from agiwo.agent.prompt import system_notice
 
 
 class ReviewTrigger(Enum):
@@ -37,7 +36,7 @@ def _build_review_notice(
         f"If aligned, use review_trajectory with aligned=true and a brief note."
     )
 
-    return f"\n\n{system_notice(inner_text)}"
+    return f"\n\n<system-review>\n{inner_text}\n</system-review>"
 
 
 def check_review_trigger(
@@ -56,8 +55,9 @@ def check_review_trigger(
     if tool_name == "review_trajectory":
         return ReviewTrigger.NONE
 
-    # Milestone switch (agent just declared/completed a milestone)
-    if state.is_review_pending:
+    # Milestone switch (agent just completed/activated a milestone).
+    # Initial milestone declarations should not immediately trigger a review.
+    if state.is_review_pending and tool_name != "declare_milestones":
         return ReviewTrigger.MILESTONE_SWITCH
 
     # Consecutive errors

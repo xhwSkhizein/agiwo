@@ -60,7 +60,7 @@ def _decision_entries() -> list:
             agent_id="agent-1",
             affected_count=2,
             checkpoint_seq=8,
-            experience="token_threshold",
+            experience="reduce token usage by summarizing context",
             created_at=now,
         ),
         RunRolledBack(
@@ -100,7 +100,9 @@ def test_build_runtime_decision_state_from_entries_replays_latest_views() -> Non
     assert state.latest_compaction_failure.attempt == 1
     assert state.latest_step_back is not None
     assert state.latest_step_back.affected_count == 2
-    assert state.latest_step_back.experience == "token_threshold"
+    assert (
+        state.latest_step_back.experience == "reduce token usage by summarizing context"
+    )
     assert state.latest_rollback is not None
     assert state.latest_rollback.end_sequence == 4
 

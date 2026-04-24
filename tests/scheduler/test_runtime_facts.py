@@ -143,7 +143,7 @@ async def test_runtime_facts_reads_runtime_decision_state_from_runtime_agent():
                 agent_id="root",
                 affected_count=2,
                 checkpoint_seq=5,
-                experience="token_threshold",
+                experience="switch plan",
             ),
             TerminationDecided(
                 sequence=3,
@@ -165,6 +165,6 @@ async def test_runtime_facts_reads_runtime_decision_state_from_runtime_agent():
     assert decision_state.latest_compaction is not None
     assert decision_state.latest_compaction.summary == "compacted"
     assert decision_state.latest_step_back is not None
-    assert decision_state.latest_step_back.experience == "token_threshold"
+    assert decision_state.latest_step_back.experience == "switch plan"
     assert decision_state.latest_termination is not None
     assert decision_state.latest_termination.reason is TerminationReason.MAX_STEPS

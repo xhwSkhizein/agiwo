@@ -1,5 +1,5 @@
-# tests/agent/test_review_models.py
-from datetime import datetime
+from datetime import datetime, timezone
+
 from agiwo.agent.models.review import Milestone, ReviewCheckpoint, ReviewState
 
 
@@ -39,6 +39,11 @@ class TestReviewCheckpoint:
         assert cp.seq == 10
         assert cp.milestone_id == "understand"
         assert cp.confirmed_at == now
+
+        default_cp = ReviewCheckpoint(seq=11, milestone_id="diagnose")
+        assert default_cp.confirmed_at.tzinfo is timezone.utc
+        delta = datetime.now(timezone.utc) - default_cp.confirmed_at
+        assert abs(delta.total_seconds()) < 1
 
 
 class TestReviewState:

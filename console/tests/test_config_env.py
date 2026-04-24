@@ -264,6 +264,7 @@ def test_agent_options_input_maps_all_fields() -> None:
             "enable_context_rollback": False,
             "enable_goal_directed_review": True,
             "review_step_interval": 10,
+            "review_on_error": False,
         }
     )
     options = agent_options_input_to_agent_options(
@@ -285,6 +286,7 @@ def test_agent_options_input_maps_all_fields() -> None:
     assert options.enable_context_rollback is False
     assert options.enable_goal_directed_review is True
     assert options.review_step_interval == 10
+    assert options.review_on_error is False
 
 
 def test_console_agent_options_input_matches_sdk_agent_options() -> None:

@@ -80,11 +80,10 @@ async def _apply_review_outcome(
     if not outcome.applied:
         return
 
-    # KEY CHANGE: targeted content updates instead of rebuild_messages
-    # Sync ledger.messages with outcome.messages (which may be shorter after
-    # review_trajectory removal or have modified content in tool results)
-    context.ledger.messages.clear()
-    context.ledger.messages.extend(outcome.messages)
+    # Step-back already updates surviving message dicts in-place. Sync the
+    # ledger list to drop temporary review_trajectory metadata without a full
+    # messages rebuild.
+    context.ledger.messages[:] = outcome.messages
 
     # Record step_back event to run log
     step_back_entries = await writer.record_step_back_applied(

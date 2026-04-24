@@ -58,6 +58,18 @@ class TestCheckReviewTrigger:
         )
         assert trigger == ReviewTrigger.MILESTONE_SWITCH
 
+    def test_error_priority_wins_over_step_interval(self):
+        state = ReviewState(consecutive_errors=2, last_review_seq=1)
+        trigger = check_review_trigger(
+            state=state,
+            enabled=True,
+            is_error=True,
+            step_interval=8,
+            error_threshold=2,
+            current_seq=20,
+        )
+        assert trigger == ReviewTrigger.CONSECUTIVE_ERRORS
+
     def test_no_trigger_for_review_tool_itself(self):
         state = ReviewState(is_review_pending=True)
         trigger = check_review_trigger(
@@ -88,7 +100,8 @@ class TestInjectSystemReview:
         content = "Tool result content"
         milestone = Milestone(id="locate", description="定位超时根因", status="active")
         result = inject_system_review(content, milestone, step_count=3)
-        assert "<system-notice>" in result
+        assert "<system-review>" in result
+        assert "</system-review>" in result
         assert content in result
         assert "定位超时根因" in result
         assert "review_trajectory" in result
@@ -96,5 +109,6 @@ class TestInjectSystemReview:
     def test_injects_review_without_milestone(self):
         content = "Tool result content"
         result = inject_system_review(content, None, step_count=5)
-        assert "<system-notice>" in result
+        assert "<system-review>" in result
+        assert "</system-review>" in result
         assert "No active milestone" in result

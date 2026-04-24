@@ -724,7 +724,33 @@ class DeclareMilestonesTool(BaseTool):
                 parameters=parameters,
                 start_time=start_time,
             )
-        ids = [m["id"] for m in milestones]
+        if not isinstance(milestones, list):
+            return _build_failed_result(
+                tool_name=self.name,
+                error="milestones must be a non-empty array",
+                context=context,
+                parameters=parameters,
+                start_time=start_time,
+            )
+        ids: list[str] = []
+        for milestone in milestones:
+            if (
+                not isinstance(milestone, dict)
+                or "id" not in milestone
+                or not isinstance(milestone["id"], str)
+                or not milestone["id"].strip()
+            ):
+                return _build_failed_result(
+                    tool_name=self.name,
+                    error=(
+                        "milestones must be an array of objects each containing "
+                        "a non-empty string 'id'"
+                    ),
+                    context=context,
+                    parameters=parameters,
+                    start_time=start_time,
+                )
+            ids.append(milestone["id"])
         return ToolResult.success(
             tool_name=self.name,
             tool_call_id=context.tool_call_id,
@@ -748,7 +774,8 @@ class ReviewTrajectoryTool(BaseTool):
         "- experience (string, required when aligned=false): A concise "
         "summary covering what was attempted, what was learned, and "
         "how this should inform the next approach.\n\n"
-        "This tool call itself will be transparently removed after processing."
+        "This tool call and result are temporary review metadata and may be "
+        "removed after processing."
     )
     concurrency_safe = False
 
@@ -787,9 +814,27 @@ class ReviewTrajectoryTool(BaseTool):
     ) -> ToolResult:
         del abort_signal
         start_time = time.time()
-        aligned = parameters.get("aligned", False)
+        aligned = parameters.get("aligned")
         experience = parameters.get("experience", "")
 
+        if not isinstance(aligned, bool):
+            return _build_failed_result(
+                tool_name=self.name,
+                error="aligned must be a boolean",
+                context=context,
+                parameters=parameters,
+                start_time=start_time,
+            )
+        if experience is None:
+            experience = ""
+        if not isinstance(experience, str):
+            return _build_failed_result(
+                tool_name=self.name,
+                error="experience must be a string",
+                context=context,
+                parameters=parameters,
+                start_time=start_time,
+            )
         if not aligned and not experience:
             return _build_failed_result(
                 tool_name=self.name,
@@ -809,6 +854,6 @@ class ReviewTrajectoryTool(BaseTool):
             tool_call_id=context.tool_call_id,
             input_args=parameters,
             content=content,
-            output={},
+            output={"aligned": aligned, "experience": experience},
             start_time=start_time,
         )

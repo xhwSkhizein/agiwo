@@ -179,9 +179,9 @@ class CompactionFailed(RunLogEntry):
 class StepBackApplied(RunLogEntry):
     """Log entry recorded when step-back condenses off-track tool results."""
 
-    affected_count: int = 0
-    checkpoint_seq: int = 0
-    experience: str = ""
+    affected_count: int
+    checkpoint_seq: int
+    experience: str
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.STEP_BACK_APPLIED)
 
 

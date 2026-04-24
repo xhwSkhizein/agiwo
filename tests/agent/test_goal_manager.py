@@ -20,7 +20,7 @@ class TestDeclareMilestones:
         assert state.milestones[1].status == "pending"
         assert result == ["a", "b"]
 
-    def test_redeclare_preserves_previous_if_no_active_change(self):
+    def test_append_preserves_previous_active_if_no_active_change(self):
         m = Milestone(id="a", description="Step A", status="completed")
         m2 = Milestone(id="b", description="Step B", status="active")
         state = ReviewState(milestones=[m, m2])
@@ -30,9 +30,21 @@ class TestDeclareMilestones:
                 Milestone(id="c", description="Step C"),
             ],
         )
-        # state unchanged because active milestone was already active
+        # appends new milestone while preserving existing active milestone
         assert len(state.milestones) == 3
         assert result == ["c"]
+
+    def test_existing_milestone_preserves_declared_sequence(self):
+        m = Milestone(id="a", description="Old", status="pending", declared_at_seq=2)
+        state = ReviewState(milestones=[m])
+        result = declare_milestones(
+            state,
+            [Milestone(id="a", description="New", status="pending")],
+            current_seq=10,
+        )
+        assert result == ["a"]
+        assert state.milestones[0].description == "New"
+        assert state.milestones[0].declared_at_seq == 2
 
 
 class TestCompleteActiveMilestone:

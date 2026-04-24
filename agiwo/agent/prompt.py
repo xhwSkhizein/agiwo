@@ -329,5 +329,4 @@ __all__ = [
     "build_system_prompt",
     "compose_child_system_prompt",
     "system_notice",
-    "_render_goal_directed_review",
 ]

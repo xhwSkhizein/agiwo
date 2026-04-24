@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
 from agiwo.agent import StepCompletedEvent
 from agiwo.agent.models.log import (
@@ -217,6 +219,19 @@ def test_compaction_failed_round_trips_through_storage() -> None:
     assert restored.attempt == 2
     assert restored.max_attempts == 3
     assert restored.terminal is False
+
+
+def test_unsupported_legacy_run_log_kind_has_actionable_error() -> None:
+    with pytest.raises(ValueError, match="Clear old SQLite DB files"):
+        deserialize_run_log_entry_from_storage(
+            {
+                "kind": "retrospect_applied",
+                "sequence": 1,
+                "session_id": "sess-1",
+                "run_id": "run-1",
+                "agent_id": "agent-1",
+            }
+        )
 
 
 def test_build_run_and_step_views_from_run_log_entries() -> None:

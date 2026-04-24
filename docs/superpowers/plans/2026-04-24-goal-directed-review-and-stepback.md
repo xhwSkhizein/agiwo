@@ -6,7 +6,7 @@
 
 **Architecture:** New `agiwo/agent/review/` package (GoalManager → ReviewEnforcer → StepBackExecutor). System enforces review at checkpoints, agent provides alignment assessment and experience, system executes KV-cache-safe content condensation without message deletion or reordering.
 
-**Tech Stack:** Python 3.12+, dataclasses, asyncio, aiofiles, pytest
+**Tech Stack:** Python 3.10+, dataclasses, asyncio, aiofiles, pytest
 
 **Spec:** `docs/superpowers/specs/2026-04-24-goal-directed-review-and-stepback-design.md`
 
@@ -544,7 +544,6 @@ Expected: `ModuleNotFoundError: No module named 'agiwo.agent.review.review_enfor
 from enum import Enum
 
 from agiwo.agent.models.review import Milestone, ReviewState
-from agiwo.agent.prompt import system_notice
 
 
 class ReviewTrigger(Enum):
@@ -567,17 +566,17 @@ def _build_review_notice(
         else "No active milestone declared. Consider using declare_milestones."
     )
 
-    return (
-        f"\n\n{system_notice(
-            f'{milestone_text}\n\n'
-            f'Steps since last review: {step_count}\n\n'
-            f'Question: Do your recent steps meaningfully advance the current goal?\n'
-            f'If not, use review_trajectory to:\n'
-            f'  1. Indicate misalignment (aligned=false)\n'
-            f'  2. Provide a concise experience summary of what was learned\n'
-            f'If aligned, use review_trajectory with aligned=true and a brief note.'
-        )}"
+    inner_text = (
+        f"{milestone_text}\n\n"
+        f"Steps since last review: {step_count}\n\n"
+        f"Question: Do your recent steps meaningfully advance the current goal?\n"
+        f"If not, use review_trajectory to:\n"
+        f"  1. Indicate misalignment (aligned=false)\n"
+        f"  2. Provide a concise experience summary of what was learned\n"
+        f"If aligned, use review_trajectory with aligned=true and a brief note."
     )
+
+    return f"\n\n<system-review>\n{inner_text}\n</system-review>"
 
 
 def check_review_trigger(
@@ -1729,7 +1728,8 @@ In `build_system_prompt()` (line 230), add `_render_goal_directed_review()` to t
 
 - [ ] **Step 3: Add to `__all__` exports in prompt.py**
 
-Add `"_render_goal_directed_review"` to the `__all__` list.
+Keep `_render_goal_directed_review` module-internal; do not add private helper
+names to the public `__all__` list.
 
 - [ ] **Step 4: Verify with existing tests**
 
@@ -1840,7 +1840,7 @@ class StepBackApplied(RunLogEntry):
     checkpoint_seq: int
     experience: str
     kind: RunLogEntryKind = field(
-        init=False, default=RunLogEntryKind.RETROSPECT_APPLIED
+        init=False, default=RunLogEntryKind.STEP_BACK_APPLIED
     )
 ```
 

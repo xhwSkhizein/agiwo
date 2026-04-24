@@ -29,7 +29,7 @@
 
 ### 2. 交互流程
 
-```
+```text
 1. User: "fix the session timeout bug"
 2. Agent: declare_milestones([
      {id:"understand", desc:"理解 session 管理逻辑"},
@@ -97,7 +97,7 @@ class ReviewCheckpoint:
 
 ### Review Prompt 格式
 
-```
+```text
 <system-review>
 Active milestone: "{milestone.description}"
 
@@ -138,7 +138,7 @@ class AgentOptions(BaseModel):
 
 ### 执行流程
 
-```
+```text
 Before StepBack:
   msg[0]: system prompt        ← KV cache ✓
   msg[1]: user: "fix the bug"  ← KV cache ✓
@@ -183,7 +183,7 @@ async def _apply_step_back_outcome(context, outcome, writer):
 
 在 system prompt 中新增专门 section：
 
-```
+```text
 ## Goal-Directed Review
 
 You are expected to work in a goal-directed manner. The system helps you
@@ -212,14 +212,14 @@ but the verbose outputs are replaced with the lesson learned.
 ### Tool Schema 对齐
 
 **`declare_milestones`:**
-```
+```text
 Declare or update the milestones for the current task. Break the user's
 request into concrete, verifiable sub-goals. Each milestone should have
 a clear id and a specific description of what 'done' looks like.
 ```
 
 **`review_trajectory`:**
-```
+```text
 Respond to a <system-review> prompt. Parameters:
 - aligned: true if trajectory aligns with active milestone
 - experience: (required when aligned=false) What was attempted, learned,
@@ -305,4 +305,4 @@ StepBack 先于 Compaction，语义层控制膨胀 → 减少 Compaction 触发�
 - 仅 `enable_goal_directed_review=True` 时生效
 - Milestones 不跨 run 持久化（每次 run 重新声明）
 - 与 Compaction 独立共存，StepBack 先于 Compaction
-- `<system-review>` 只追加在 tool result content 末尾（与当前 `<system-notice>` 一致的方式）
+- `<system-review>` 只追加在 tool result content 末尾

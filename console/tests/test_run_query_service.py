@@ -164,7 +164,7 @@ async def test_run_query_service_exposes_runtime_decision_state() -> None:
                 agent_id="agent-1",
                 affected_count=1,
                 checkpoint_seq=2,
-                experience="token_threshold",
+                experience="switch plan",
             ),
             TerminationDecided(
                 sequence=3,
@@ -185,7 +185,7 @@ async def test_run_query_service_exposes_runtime_decision_state() -> None:
     assert state.latest_compaction is not None
     assert state.latest_compaction.summary == "compact"
     assert state.latest_step_back is not None
-    assert state.latest_step_back.experience == "token_threshold"
+    assert state.latest_step_back.experience == "switch plan"
     assert state.latest_termination is not None
     assert state.latest_termination.reason is TerminationReason.COMPLETED
     assert snapshot.runtime_decisions.latest_termination is not None

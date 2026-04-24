@@ -16,6 +16,14 @@ logger = get_logger(__name__)
 
 
 class HookPhase(str, Enum):
+    """Agent runtime hook phases.
+
+    Review phases are intentionally asymmetric: BEFORE_REVIEW gates the
+    decision and can provide review_advice, while AFTER_STEP_BACK only fires
+    when condensation actually runs. A review that decides no step-back is
+    needed does not produce an after-review event.
+    """
+
     PREPARE = "prepare"
     ASSEMBLE_CONTEXT = "assemble_context"
     BEFORE_LLM = "before_llm"
