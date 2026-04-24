@@ -17,6 +17,7 @@ from agiwo.agent.models.log import (
     RunLogEntry,
     RunRolledBack,
     RunStarted,
+    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
@@ -158,6 +159,21 @@ class RetrospectAppliedEvent(AgentStreamItemBase):
         payload["feedback"] = self.feedback
         payload["replacement"] = self.replacement
         payload["trigger"] = self.trigger
+        return payload
+
+
+@dataclass(kw_only=True)
+class StepBackAppliedEvent(AgentStreamItemBase):
+    affected_count: int
+    checkpoint_seq: int
+    experience: str
+    type: Literal["step_back_applied"] = "step_back_applied"
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self._base_dict()
+        payload["affected_count"] = self.affected_count
+        payload["checkpoint_seq"] = self.checkpoint_seq
+        payload["experience"] = self.experience
         return payload
 
 
@@ -343,6 +359,13 @@ def _stream_item_from_runtime_entry(
             replacement=entry.replacement,
             trigger=entry.trigger,
         )
+    elif isinstance(entry, StepBackApplied):
+        item = StepBackAppliedEvent(
+            **base_kwargs,
+            affected_count=entry.affected_count,
+            checkpoint_seq=entry.checkpoint_seq,
+            experience=entry.experience,
+        )
     elif isinstance(entry, TerminationDecided):
         item = TerminationDecidedEvent(
             **base_kwargs,
@@ -445,6 +468,7 @@ AgentStreamItem: TypeAlias = (
     | CompactionAppliedEvent
     | CompactionFailedEvent
     | RetrospectAppliedEvent
+    | StepBackAppliedEvent
     | TerminationDecidedEvent
     | RunRolledBackEvent
     | RunCompletedEvent
@@ -463,6 +487,7 @@ __all__ = [
     "RunCompletedEvent",
     "RunFailedEvent",
     "RunStartedEvent",
+    "StepBackAppliedEvent",
     "StepCompletedEvent",
     "StepDeltaEvent",
     "TerminationDecidedEvent",

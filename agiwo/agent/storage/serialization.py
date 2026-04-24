@@ -23,6 +23,7 @@ from agiwo.agent.models.log import (
     RunLogEntryKind,
     RunRolledBack,
     RunStarted,
+    StepBackApplied,
     StepCondensedContentUpdated,
     TerminationDecided,
     ToolStepCommitted,
@@ -35,6 +36,7 @@ from agiwo.agent.models.runtime_decision import (
     RetrospectDecisionView,
     RollbackDecisionView,
     RuntimeDecisionState,
+    StepBackDecisionView,
     TerminationDecisionView,
 )
 from agiwo.agent.models.run import RunMetrics, RunStatus, RunView, TerminationReason
@@ -318,6 +320,7 @@ def build_runtime_decision_state_from_entries(
     latest_compaction: CompactionDecisionView | None = None
     latest_compaction_failure: CompactionFailureDecisionView | None = None
     latest_retrospect: RetrospectDecisionView | None = None
+    latest_step_back: StepBackDecisionView | None = None
     latest_rollback: RollbackDecisionView | None = None
 
     for entry in entries:
@@ -371,6 +374,18 @@ def build_runtime_decision_state_from_entries(
                 trigger=entry.trigger,
             )
             continue
+        if isinstance(entry, StepBackApplied):
+            latest_step_back = StepBackDecisionView(
+                session_id=entry.session_id,
+                run_id=entry.run_id,
+                agent_id=entry.agent_id,
+                sequence=entry.sequence,
+                created_at=entry.created_at,
+                affected_count=entry.affected_count,
+                checkpoint_seq=entry.checkpoint_seq,
+                experience=entry.experience,
+            )
+            continue
         if isinstance(entry, RunRolledBack):
             latest_rollback = RollbackDecisionView(
                 session_id=entry.session_id,
@@ -388,6 +403,7 @@ def build_runtime_decision_state_from_entries(
         latest_compaction=latest_compaction,
         latest_compaction_failure=latest_compaction_failure,
         latest_retrospect=latest_retrospect,
+        latest_step_back=latest_step_back,
         latest_rollback=latest_rollback,
     )
 

@@ -44,6 +44,7 @@ from agiwo.agent.models.log import (
     RunLogEntryKind,
     RunRolledBack,
     RunStarted,
+    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
@@ -62,6 +63,7 @@ from agiwo.agent.models.runtime_decision import (
     RetrospectDecisionView,
     RollbackDecisionView,
     RuntimeDecisionState,
+    StepBackDecisionView,
     TerminationDecisionView,
 )
 from agiwo.agent.models.step import (
@@ -82,6 +84,7 @@ from agiwo.agent.models.stream import (
     RunFailedEvent,
     RunRolledBackEvent,
     RunStartedEvent,
+    StepBackAppliedEvent,
     StepCompletedEvent,
     StepDeltaEvent,
     TerminationDecidedEvent,
@@ -145,6 +148,9 @@ __all__ = [
     "RetrospectDecisionView",
     "RollbackDecisionView",
     "RuntimeDecisionState",
+    "StepBackApplied",
+    "StepBackAppliedEvent",
+    "StepBackDecisionView",
     "StepCompletedEvent",
     "StepDelta",
     "StepDeltaEvent",

@@ -57,6 +57,18 @@ class RetrospectDecisionView:
 
 
 @dataclass(frozen=True, slots=True)
+class StepBackDecisionView:
+    session_id: str
+    run_id: str
+    agent_id: str
+    sequence: int
+    created_at: datetime
+    affected_count: int = 0
+    checkpoint_seq: int = 0
+    experience: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class RollbackDecisionView:
     session_id: str
     run_id: str
@@ -74,6 +86,7 @@ class RuntimeDecisionState:
     latest_compaction: CompactionDecisionView | None = None
     latest_compaction_failure: CompactionFailureDecisionView | None = None
     latest_retrospect: RetrospectDecisionView | None = None
+    latest_step_back: StepBackDecisionView | None = None
     latest_rollback: RollbackDecisionView | None = None
 
     def is_empty(self) -> bool:
@@ -82,6 +95,7 @@ class RuntimeDecisionState:
             and self.latest_compaction is None
             and self.latest_compaction_failure is None
             and self.latest_retrospect is None
+            and self.latest_step_back is None
             and self.latest_rollback is None
         )
 
@@ -92,5 +106,6 @@ __all__ = [
     "RetrospectDecisionView",
     "RollbackDecisionView",
     "RuntimeDecisionState",
+    "StepBackDecisionView",
     "TerminationDecisionView",
 ]
