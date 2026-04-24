@@ -255,25 +255,23 @@ class SessionViewService:
                 )
             )
 
-        if runtime_decisions.latest_retrospect is not None:
-            decision = runtime_decisions.latest_retrospect
+        if runtime_decisions.latest_step_back is not None:
+            decision = runtime_decisions.latest_step_back
             decisions.append(
                 RuntimeDecisionRecord(
-                    kind="retrospect",
+                    kind="step_back",
                     sequence=decision.sequence,
                     run_id=decision.run_id,
                     agent_id=decision.agent_id,
                     created_at=decision.created_at,
                     summary=(
-                        f"{len(decision.affected_step_ids)} steps / "
-                        f"{len(decision.affected_sequences)} sequences revised"
+                        f"{decision.affected_count} results condensed, "
+                        f"checkpoint at seq {decision.checkpoint_seq}"
                     ),
                     details={
-                        "trigger": decision.trigger,
-                        "feedback": decision.feedback,
-                        "replacement": decision.replacement,
-                        "affected_step_ids": list(decision.affected_step_ids),
-                        "affected_sequences": list(decision.affected_sequences),
+                        "affected_count": decision.affected_count,
+                        "checkpoint_seq": decision.checkpoint_seq,
+                        "experience": decision.experience,
                     },
                 )
             )

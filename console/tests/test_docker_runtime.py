@@ -65,11 +65,15 @@ def test_parse_mount_spec_rejects_relative_aliases(tmp_path: Path) -> None:
         parse_mount_spec(f"{source}:..")
 
 
-def test_build_docker_run_command_includes_defaults_and_mounts(tmp_path: Path) -> None:
+def test_build_docker_run_command_includes_defaults_and_mounts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     data_dir = tmp_path / "data"
     mount_source = tmp_path / "project"
     mount_source.mkdir()
     mounts = parse_mounts([f"{mount_source}:project"])
+    monkeypatch.setattr("server.docker_runtime.sys.platform", "linux")
 
     command = build_docker_run_command(
         ContainerUpOptions(
@@ -146,6 +150,7 @@ def test_build_docker_run_command_rewrites_loopback_proxy_env_before_explicit_en
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_dir = tmp_path / "data"
+    monkeypatch.setattr("server.docker_runtime.sys.platform", "linux")
     monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
     monkeypatch.setenv("HTTPS_PROXY", "https://proxy.internal:8443")
 
@@ -266,6 +271,7 @@ def test_container_up_creates_data_dir_replaces_existing_container_and_waits_for
         "server.docker_runtime.resolve_container_user",
         lambda: "1000:1000",
     )
+    monkeypatch.setattr("server.docker_runtime.sys.platform", "linux")
 
     exit_code = container_up(
         options,

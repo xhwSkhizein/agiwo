@@ -282,7 +282,7 @@ class TestStepResponseCondensedContent:
         step.tool_calls = None
         step.tool_call_id = "tc-1"
         step.name = "bash"
-        step.condensed_content = "[archived]\n---\nRetrospect: concise summary"
+        step.condensed_content = "[archived]\n---\nStep back: concise summary"
         step.metrics = None
         step.created_at = datetime.now(timezone.utc)
         step.parent_run_id = None
@@ -291,7 +291,7 @@ class TestStepResponseCondensedContent:
         response = step_response_from_sdk(step)
 
         assert (
-            response.condensed_content == "[archived]\n---\nRetrospect: concise summary"
+            response.condensed_content == "[archived]\n---\nStep back: concise summary"
         )
         assert response.content == "original verbose output"
 

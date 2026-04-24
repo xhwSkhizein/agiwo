@@ -24,7 +24,6 @@ from agiwo.scheduler.runtime_tools import (
     ForkChildAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
-    RetrospectToolResultTool,
     SleepAndWaitTool,
     SpawnChildAgentTool,
 )
@@ -774,38 +773,3 @@ class TestSleepAndWaitNoProgress:
         )
         state = await store.get_state("orch")
         assert state.no_progress is False
-
-
-class TestRetrospectToolResultTool:
-    @pytest.mark.asyncio
-    async def test_success_with_feedback(self, control, context):
-        tool = RetrospectToolResultTool(control)
-        tool_result = await tool.execute(
-            {
-                "feedback": "Plan A failed, switching to plan B.",
-                "tool_call_id": "tc-ret",
-            },
-            context,
-        )
-        assert tool_result.is_success
-        assert tool_result.output == {}
-        assert "Plan A failed" in tool_result.content
-
-    @pytest.mark.asyncio
-    async def test_empty_feedback_fails(self, control, context):
-        tool = RetrospectToolResultTool(control)
-        tool_result = await tool.execute(
-            {"feedback": "", "tool_call_id": "tc-ret"},
-            context,
-        )
-        assert not tool_result.is_success
-        assert "required" in tool_result.content
-
-    @pytest.mark.asyncio
-    async def test_missing_feedback_fails(self, control, context):
-        tool = RetrospectToolResultTool(control)
-        tool_result = await tool.execute(
-            {"tool_call_id": "tc-ret"},
-            context,
-        )
-        assert not tool_result.is_success

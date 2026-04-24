@@ -302,7 +302,7 @@ class SQLiteRunLogStorage(RunLogStorage):
             RunLogEntryKind.TERMINATION_DECIDED,
             RunLogEntryKind.COMPACTION_APPLIED,
             RunLogEntryKind.COMPACTION_FAILED,
-            RunLogEntryKind.RETROSPECT_APPLIED,
+            RunLogEntryKind.STEP_BACK_APPLIED,
             RunLogEntryKind.RUN_ROLLED_BACK,
         )
         entries: list[RunLogEntry] = []

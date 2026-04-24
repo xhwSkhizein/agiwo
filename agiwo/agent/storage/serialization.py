@@ -16,13 +16,13 @@ from agiwo.agent.models.log import (
     LLMCallCompleted,
     LLMCallStarted,
     MessagesRebuilt,
-    RetrospectApplied,
     RunFailed,
     RunFinished,
     RunLogEntry,
     RunLogEntryKind,
     RunRolledBack,
     RunStarted,
+    StepBackApplied,
     StepCondensedContentUpdated,
     TerminationDecided,
     ToolStepCommitted,
@@ -32,9 +32,9 @@ from agiwo.agent.models.log import (
 from agiwo.agent.models.runtime_decision import (
     CompactionDecisionView,
     CompactionFailureDecisionView,
-    RetrospectDecisionView,
     RollbackDecisionView,
     RuntimeDecisionState,
+    StepBackDecisionView,
     TerminationDecisionView,
 )
 from agiwo.agent.models.run import RunMetrics, RunStatus, RunView, TerminationReason
@@ -54,11 +54,20 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.TOOL_STEP_COMMITTED: ToolStepCommitted,
     RunLogEntryKind.COMPACTION_APPLIED: CompactionApplied,
     RunLogEntryKind.COMPACTION_FAILED: CompactionFailed,
-    RunLogEntryKind.RETROSPECT_APPLIED: RetrospectApplied,
+    RunLogEntryKind.STEP_BACK_APPLIED: StepBackApplied,
     RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED: StepCondensedContentUpdated,
     RunLogEntryKind.TERMINATION_DECIDED: TerminationDecided,
     RunLogEntryKind.HOOK_FAILED: HookFailed,
 }
+
+
+def _unsupported_run_log_kind_error(kind: object) -> ValueError:
+    return ValueError(
+        "Stored run log entry kind "
+        f"{kind!r} is not supported by this Agiwo version. "
+        "This usually means the session database was created by an older "
+        "runtime. Clear old SQLite DB files and .agiwo state before restarting."
+    )
 
 
 def _drop_none(value: Any) -> Any:
@@ -109,8 +118,14 @@ def serialize_run_log_entry_for_storage(entry: RunLogEntry) -> dict[str, Any]:
 
 def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
     normalized = dict(data)
-    kind = RunLogEntryKind(normalized["kind"])
-    entry_type = _RUN_LOG_TYPES[kind]
+    raw_kind = normalized.get("kind")
+    try:
+        kind = RunLogEntryKind(raw_kind)
+    except ValueError as exc:
+        raise _unsupported_run_log_kind_error(raw_kind) from exc
+    entry_type = _RUN_LOG_TYPES.get(kind)
+    if entry_type is None:
+        raise _unsupported_run_log_kind_error(raw_kind)
     created_at = normalized.get("created_at")
     if isinstance(created_at, str):
         normalized["created_at"] = datetime.fromisoformat(created_at)
@@ -317,7 +332,7 @@ def build_runtime_decision_state_from_entries(
     latest_termination: TerminationDecisionView | None = None
     latest_compaction: CompactionDecisionView | None = None
     latest_compaction_failure: CompactionFailureDecisionView | None = None
-    latest_retrospect: RetrospectDecisionView | None = None
+    latest_step_back: StepBackDecisionView | None = None
     latest_rollback: RollbackDecisionView | None = None
 
     for entry in entries:
@@ -357,18 +372,16 @@ def build_runtime_decision_state_from_entries(
                 terminal=entry.terminal,
             )
             continue
-        if isinstance(entry, RetrospectApplied):
-            latest_retrospect = RetrospectDecisionView(
+        if isinstance(entry, StepBackApplied):
+            latest_step_back = StepBackDecisionView(
                 session_id=entry.session_id,
                 run_id=entry.run_id,
                 agent_id=entry.agent_id,
                 sequence=entry.sequence,
                 created_at=entry.created_at,
-                affected_sequences=tuple(entry.affected_sequences),
-                affected_step_ids=tuple(entry.affected_step_ids),
-                feedback=entry.feedback,
-                replacement=entry.replacement,
-                trigger=entry.trigger,
+                affected_count=entry.affected_count,
+                checkpoint_seq=entry.checkpoint_seq,
+                experience=entry.experience,
             )
             continue
         if isinstance(entry, RunRolledBack):
@@ -387,7 +400,7 @@ def build_runtime_decision_state_from_entries(
         latest_termination=latest_termination,
         latest_compaction=latest_compaction,
         latest_compaction_failure=latest_compaction_failure,
-        latest_retrospect=latest_retrospect,
+        latest_step_back=latest_step_back,
         latest_rollback=latest_rollback,
     )
 

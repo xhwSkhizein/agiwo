@@ -16,6 +16,14 @@ logger = get_logger(__name__)
 
 
 class HookPhase(str, Enum):
+    """Agent runtime hook phases.
+
+    Review phases are intentionally asymmetric: BEFORE_REVIEW gates the
+    decision and can provide review_advice, while AFTER_STEP_BACK only fires
+    when condensation actually runs. A review that decides no step-back is
+    needed does not produce an after-review event.
+    """
+
     PREPARE = "prepare"
     ASSEMBLE_CONTEXT = "assemble_context"
     BEFORE_LLM = "before_llm"
@@ -24,8 +32,8 @@ class HookPhase(str, Enum):
     AFTER_TOOL_CALL = "after_tool_call"
     BEFORE_COMPACTION = "before_compaction"
     AFTER_COMPACTION = "after_compaction"
-    BEFORE_RETROSPECT = "before_retrospect"
-    AFTER_RETROSPECT = "after_retrospect"
+    BEFORE_REVIEW = "before_review"
+    AFTER_STEP_BACK = "after_step_back"
     BEFORE_TERMINATION = "before_termination"
     AFTER_TERMINATION = "after_termination"
     AFTER_STEP_COMMIT = "after_step_commit"
@@ -81,7 +89,7 @@ class HookRegistry:
         HookPhase.BEFORE_LLM,
         HookPhase.BEFORE_TOOL_CALL,
         HookPhase.BEFORE_COMPACTION,
-        HookPhase.BEFORE_RETROSPECT,
+        HookPhase.BEFORE_REVIEW,
         HookPhase.BEFORE_TERMINATION,
     }
     _CRITICAL_PHASES = {
@@ -100,7 +108,7 @@ class HookRegistry:
         HookPhase.BEFORE_LLM: {"llm_advice"},
         HookPhase.BEFORE_TOOL_CALL: {"tool_advice"},
         HookPhase.BEFORE_COMPACTION: {"compaction_advice"},
-        HookPhase.BEFORE_RETROSPECT: {"retrospect_advice"},
+        HookPhase.BEFORE_REVIEW: {"review_advice"},
         HookPhase.BEFORE_TERMINATION: {"termination_advice"},
     }
     _GROUP_ORDER = {

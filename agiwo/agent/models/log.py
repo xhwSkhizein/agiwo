@@ -30,6 +30,7 @@ class RunLogEntryKind(str, Enum):
     COMPACTION_APPLIED = "compaction_applied"
     COMPACTION_FAILED = "compaction_failed"
     RETROSPECT_APPLIED = "retrospect_applied"
+    STEP_BACK_APPLIED = "step_back_applied"
     STEP_CONDENSED_CONTENT_UPDATED = "step_condensed_content_updated"
     TERMINATION_DECIDED = "termination_decided"
     HOOK_FAILED = "hook_failed"
@@ -175,15 +176,13 @@ class CompactionFailed(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
-class RetrospectApplied(RunLogEntry):
-    affected_sequences: list[int] = field(default_factory=list)
-    affected_step_ids: list[str] = field(default_factory=list)
-    feedback: str | None = None
-    replacement: str | None = None
-    trigger: str | None = None
-    kind: RunLogEntryKind = field(
-        init=False, default=RunLogEntryKind.RETROSPECT_APPLIED
-    )
+class StepBackApplied(RunLogEntry):
+    """Log entry recorded when step-back condenses off-track tool results."""
+
+    affected_count: int
+    checkpoint_seq: int
+    experience: str
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.STEP_BACK_APPLIED)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -278,8 +277,8 @@ __all__ = [
     "LLMCallCompleted",
     "LLMCallStarted",
     "MessagesRebuilt",
-    "RetrospectApplied",
     "RunRolledBack",
+    "StepBackApplied",
     "StepCondensedContentUpdated",
     "RunFailed",
     "RunFinished",

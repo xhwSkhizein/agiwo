@@ -5,8 +5,8 @@ import pytest
 from agiwo.agent import (
     CompactionApplied,
     CompactionFailed,
-    RetrospectApplied,
     RunRolledBack,
+    StepBackApplied,
     TerminationDecided,
     TerminationReason,
 )
@@ -53,16 +53,14 @@ def _decision_entries() -> list:
             terminal=False,
             created_at=now,
         ),
-        RetrospectApplied(
+        StepBackApplied(
             sequence=4,
             session_id="sess-1",
             run_id="run-1",
             agent_id="agent-1",
-            affected_sequences=[7, 8],
-            affected_step_ids=["step-7"],
-            feedback="summarized",
-            replacement="summary",
-            trigger="token_threshold",
+            affected_count=2,
+            checkpoint_seq=8,
+            experience="reduce token usage by summarizing context",
             created_at=now,
         ),
         RunRolledBack(
@@ -100,9 +98,11 @@ def test_build_runtime_decision_state_from_entries_replays_latest_views() -> Non
     assert state.latest_compaction_failure is not None
     assert state.latest_compaction_failure.error == "compact retry failed"
     assert state.latest_compaction_failure.attempt == 1
-    assert state.latest_retrospect is not None
-    assert state.latest_retrospect.affected_sequences == (7, 8)
-    assert state.latest_retrospect.trigger == "token_threshold"
+    assert state.latest_step_back is not None
+    assert state.latest_step_back.affected_count == 2
+    assert (
+        state.latest_step_back.experience == "reduce token usage by summarizing context"
+    )
     assert state.latest_rollback is not None
     assert state.latest_rollback.end_sequence == 4
 
@@ -147,8 +147,8 @@ async def test_storage_get_runtime_decision_state_filters_latest_entries(
         assert state.latest_termination is not None
         assert state.latest_termination.reason is TerminationReason.TIMEOUT
         assert state.latest_termination.run_id == "run-2"
-        assert state.latest_retrospect is not None
-        assert state.latest_retrospect.replacement == "summary"
+        assert state.latest_step_back is not None
+        assert state.latest_step_back.checkpoint_seq == 8
         assert state.latest_compaction is not None
         assert state.latest_compaction.metadata.after_token_estimate == 200
         assert state.latest_compaction_failure is not None

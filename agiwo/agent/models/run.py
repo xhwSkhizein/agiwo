@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 from agiwo.agent.models.input import UserInput
+from agiwo.agent.models.review import ReviewState
 from agiwo.config.termination import TerminationReason
 from agiwo.utils.serialization import serialize_optional_datetime
 
@@ -94,15 +95,6 @@ class CompactionState:
     failure_count: int = 0
 
 
-@dataclass
-class RetrospectState:
-    """Retrospect state."""
-
-    last_seq: int = 0
-    pending_tokens: int = 0
-    pending_rounds: int = 0
-
-
 @dataclass(frozen=True)
 class RunIdentity:
     run_id: str
@@ -130,7 +122,7 @@ class RunLedger:
     tokens: TokenStats = field(default_factory=TokenStats)
     steps: StepStats = field(default_factory=StepStats)
     compaction: CompactionState = field(default_factory=CompactionState)
-    retrospect: RetrospectState = field(default_factory=RetrospectState)
+    review: ReviewState = field(default_factory=ReviewState)
 
 
 @dataclass
@@ -203,7 +195,6 @@ __all__ = [
     "CompactMetadata",
     "CompactionState",
     "MemoryRecord",
-    "RetrospectState",
     "RunIdentity",
     "RunLedger",
     "RunMetrics",

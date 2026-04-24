@@ -32,11 +32,6 @@ ALLOWED_AGENT_INTERNAL_IMPORT_PREFIXES = (
     Path("tests"),
     Path("console/tests"),
 )
-ALLOWED_RETROSPECT_INTERNAL_IMPORT_PREFIXES = (
-    Path("agiwo/agent/retrospect"),
-    Path("tests"),
-    Path("console/tests"),
-)
 ALLOWED_DEAD_PERMISSION_API_PREFIXES = (
     Path("tests"),
     Path("console/tests"),
@@ -137,8 +132,6 @@ FILE_GROWTH_BUDGETS = (
     (re.compile(r"^agiwo/scheduler/scheduler\.py$"), 320),
     (re.compile(r"^agiwo/tool/permission/manager\.py$"), 530),
     (re.compile(r"^agiwo/tool/permission/store\.py$"), 500),
-    (re.compile(r"^agiwo/agent/retrospect/triggers\.py$"), 120),
-    (re.compile(r"^agiwo/agent/retrospect/executor\.py$"), 200),
 )
 STEPRECORD_CONSTRUCTOR_NAMES = {
     "StepRecord",
@@ -229,28 +222,6 @@ def _imports_agent_internal(module_name: str | None) -> bool:
             "agiwo.agent.prompt.",
             "agiwo.agent.runtime.",
         )
-    )
-
-
-def _imports_retrospect_internal(module_name: str | None) -> bool:
-    if module_name is None:
-        return False
-    return module_name in {
-        "agiwo.agent.retrospect.triggers",
-        "agiwo.agent.retrospect.executor",
-    } or module_name.startswith(
-        (
-            "agiwo.agent.retrospect.triggers.",
-            "agiwo.agent.retrospect.executor.",
-        )
-    )
-
-
-def _imports_scheduler_from_retrospect(module_name: str | None) -> bool:
-    if module_name is None:
-        return False
-    return module_name == "agiwo.scheduler" or module_name.startswith(
-        "agiwo.scheduler."
     )
 
 
@@ -877,35 +848,6 @@ def _detect_import_name_errors(
                 ),
             )
         )
-    if _imports_retrospect_internal(module_name) and not _is_allowed_prefix(
-        path, ALLOWED_RETROSPECT_INTERNAL_IMPORT_PREFIXES
-    ):
-        errors.append(
-            _make_error(
-                path,
-                line,
-                "AGW049",
-                (
-                    "Import retrospect internals only through "
-                    "agiwo.agent.retrospect public API; do not reach into "
-                    "triggers/executor sub-modules directly."
-                ),
-            )
-        )
-    if _imports_scheduler_from_retrospect(module_name) and path.as_posix().startswith(
-        "agiwo/agent/retrospect/"
-    ):
-        errors.append(
-            _make_error(
-                path,
-                line,
-                "AGW047",
-                (
-                    "retrospect/ must not depend on scheduler; dependency "
-                    "direction is scheduler -> agent, not the reverse."
-                ),
-            )
-        )
     return errors
 
 
@@ -1493,78 +1435,6 @@ def _detect_console_tool_catalog_text_errors(
     return errors
 
 
-def _detect_retrospect_convention_text_errors(
-    path: Path, content: str
-) -> list[GuardError]:
-    errors: list[GuardError] = []
-    if path == Path("scripts/repo_guard.py"):
-        return errors
-
-    path_str = path.as_posix()
-    is_production = path_str.startswith("agiwo/") or path_str.startswith(
-        "console/server/"
-    )
-
-    if is_production:
-        line = _find_first_match_line(content, r"""["']_retrospect["']""")
-        if line is not None:
-            errors.append(
-                _make_error(
-                    path,
-                    line,
-                    "AGW046",
-                    (
-                        "Do not use _retrospect magic flags for inter-module "
-                        "signaling; RetrospectBatch detects retrospect tool "
-                        "results by tool_name."
-                    ),
-                )
-            )
-
-    if path == Path("agiwo/agent/run_loop.py"):
-        for attr in (
-            "last_retrospect_seq",
-            "retrospect_pending_tokens",
-            "retrospect_pending_rounds",
-        ):
-            line = _find_first_match_line(content, rf"ledger\.{attr}\b")
-            if line is not None:
-                errors.append(
-                    _make_error(
-                        path,
-                        line,
-                        "AGW048",
-                        (
-                            "Do not access retrospect tracking state directly "
-                            "in run_loop; all retrospect state management is "
-                            "encapsulated in RetrospectBatch."
-                        ),
-                    )
-                )
-
-    if path == Path("agiwo/agent/run_loop.py"):
-        for pattern in (
-            r"\bfrom\s+agiwo\.agent\.retrospect\.triggers\s+import\b",
-            r"\bfrom\s+agiwo\.agent\.retrospect\.executor\s+import\b",
-        ):
-            line = _find_first_match_line(content, pattern)
-            if line is not None:
-                errors.append(
-                    _make_error(
-                        path,
-                        line,
-                        "AGW045",
-                        (
-                            "run_loop must interact with retrospect only through "
-                            "RetrospectBatch; do not import retrospect internals "
-                            "(triggers/executor) directly."
-                        ),
-                    )
-                )
-
-    return errors
-
-
 def _detect_text_guard_errors(path: Path, content: str) -> list[GuardError]:
     errors = _detect_agent_v2_text_errors(path, content)
     errors.extend(_detect_agent_config_text_errors(path, content))
@@ -1574,7 +1444,6 @@ def _detect_text_guard_errors(path: Path, content: str) -> list[GuardError]:
     errors.extend(_detect_agent_runtime_text_errors(path, content))
     errors.extend(_detect_console_tool_catalog_text_errors(path, content))
     errors.extend(_detect_agent_lifecycle_stable_id_errors(path, content))
-    errors.extend(_detect_retrospect_convention_text_errors(path, content))
     return errors
 
 

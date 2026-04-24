@@ -6,9 +6,9 @@ from agiwo.agent import (
     AssistantStepCommitted,
     CompactionApplied,
     MessageRole,
-    RetrospectApplied,
     RunFinished,
     RunStarted,
+    StepBackApplied,
     TerminationDecided,
     TerminationReason,
     UserStepCommitted,
@@ -136,16 +136,14 @@ async def test_runtime_facts_reads_runtime_decision_state_from_runtime_agent():
                 transcript_path="/tmp/transcript.json",
                 summary="compacted",
             ),
-            RetrospectApplied(
+            StepBackApplied(
                 sequence=2,
                 session_id="sess-1",
                 run_id="run-1",
                 agent_id="root",
-                affected_sequences=[4, 5],
-                affected_step_ids=["step-5"],
-                feedback="summarized",
-                replacement="summary",
-                trigger="token_threshold",
+                affected_count=2,
+                checkpoint_seq=5,
+                experience="switch plan",
             ),
             TerminationDecided(
                 sequence=3,
@@ -166,7 +164,7 @@ async def test_runtime_facts_reads_runtime_decision_state_from_runtime_agent():
 
     assert decision_state.latest_compaction is not None
     assert decision_state.latest_compaction.summary == "compacted"
-    assert decision_state.latest_retrospect is not None
-    assert decision_state.latest_retrospect.trigger == "token_threshold"
+    assert decision_state.latest_step_back is not None
+    assert decision_state.latest_step_back.experience == "switch plan"
     assert decision_state.latest_termination is not None
     assert decision_state.latest_termination.reason is TerminationReason.MAX_STEPS

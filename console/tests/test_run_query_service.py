@@ -5,9 +5,9 @@ import pytest
 from agiwo.agent import (
     CompactionApplied,
     MessageRole,
-    RetrospectApplied,
     RunFinished,
     RunStarted,
+    StepBackApplied,
     TerminationDecided,
     TerminationReason,
     UserStepCommitted,
@@ -157,15 +157,14 @@ async def test_run_query_service_exposes_runtime_decision_state() -> None:
                 transcript_path="/tmp/compact.json",
                 summary="compact",
             ),
-            RetrospectApplied(
+            StepBackApplied(
                 sequence=2,
                 session_id="sess-1",
                 run_id="run-1",
                 agent_id="agent-1",
-                affected_sequences=[2],
-                affected_step_ids=["step-2"],
-                replacement="summary",
-                trigger="token_threshold",
+                affected_count=1,
+                checkpoint_seq=2,
+                experience="switch plan",
             ),
             TerminationDecided(
                 sequence=3,
@@ -185,8 +184,8 @@ async def test_run_query_service_exposes_runtime_decision_state() -> None:
 
     assert state.latest_compaction is not None
     assert state.latest_compaction.summary == "compact"
-    assert state.latest_retrospect is not None
-    assert state.latest_retrospect.trigger == "token_threshold"
+    assert state.latest_step_back is not None
+    assert state.latest_step_back.experience == "switch plan"
     assert state.latest_termination is not None
     assert state.latest_termination.reason is TerminationReason.COMPLETED
     assert snapshot.runtime_decisions.latest_termination is not None

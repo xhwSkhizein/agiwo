@@ -70,10 +70,9 @@ class AgentOptions(BaseModel):
     stream_cleanup_timeout: float = 300.0
     compact_prompt: str = ""
     enable_context_rollback: bool = True
-    enable_tool_retrospect: bool = True
-    retrospect_token_threshold: int = 1024
-    retrospect_round_interval: int = 5
-    retrospect_accumulated_token_threshold: int = 8192
+    enable_goal_directed_review: bool = True
+    review_step_interval: int = Field(default=8, ge=1)
+    review_on_error: bool = True
     storage: AgentStorageOptions = Field(default_factory=AgentStorageOptions)
 
     def get_effective_root_path(self) -> str:

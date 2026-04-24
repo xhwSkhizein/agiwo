@@ -41,10 +41,11 @@ from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import RuntimeState, list_all_states
 from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
+    DeclareMilestonesTool,
     ForkChildAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
-    RetrospectToolResultTool,
+    ReviewTrajectoryTool,
     SleepAndWaitTool,
     SpawnChildAgentTool,
 )
@@ -93,7 +94,8 @@ class Scheduler:
             QuerySpawnedAgentTool(self._tool_control),
             CancelAgentTool(self._tool_control),
             ListAgentsTool(self._tool_control),
-            RetrospectToolResultTool(self._tool_control),
+            DeclareMilestonesTool(self._tool_control),
+            ReviewTrajectoryTool(self._tool_control),
         )
         self._runner = SchedulerRunner(
             RunnerContext(
