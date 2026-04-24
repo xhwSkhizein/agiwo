@@ -52,6 +52,17 @@ class TestDeclareMilestonesTool:
             context=ToolContext(session_id="s1", tool_call_id="tc_1"),
         )
         assert not result.is_success
+        assert "non-empty array" in result.content
+
+    @pytest.mark.asyncio
+    async def test_execute_rejects_non_array_milestones(self):
+        tool = DeclareMilestonesTool(MagicMock(spec=SchedulerToolControl))
+        result = await tool.execute(
+            parameters={"milestones": "nope"},
+            context=ToolContext(session_id="s1", tool_call_id="tc_1"),
+        )
+        assert not result.is_success
+        assert "must be an array" in result.content
 
     @pytest.mark.asyncio
     async def test_execute_rejects_milestone_without_id(self):
@@ -62,6 +73,16 @@ class TestDeclareMilestonesTool:
         )
         assert not result.is_success
         assert "non-empty string 'id'" in result.content
+
+    @pytest.mark.asyncio
+    async def test_execute_rejects_milestone_without_description(self):
+        tool = DeclareMilestonesTool(MagicMock(spec=SchedulerToolControl))
+        result = await tool.execute(
+            parameters={"milestones": [{"id": "a"}]},
+            context=ToolContext(session_id="s1", tool_call_id="tc_1"),
+        )
+        assert not result.is_success
+        assert "'description'" in result.content
 
 
 class TestReviewTrajectoryTool:

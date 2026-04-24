@@ -52,7 +52,7 @@ async def execute_step_back(
     _remove_review_tool_call(working, review_tool_call_id=review_tool_call_id)
 
     # 2. Find and condense tool results after checkpoint
-    for i, msg in enumerate(working):
+    for msg in working:
         if msg.get("role") != "tool":
             continue
         seq = msg.get("_sequence", 0)
@@ -83,7 +83,7 @@ async def execute_step_back(
                 run_id,
                 agent_id,
                 step_id,
-                condensed,
+                original_content,
             )
 
     logger.info(
@@ -131,7 +131,8 @@ def _remove_review_tool_call(
                 else:
                     confirmed_review_call_ids.add(tc.get("id", ""))
             msg["tool_calls"] = remaining
-            if not remaining:
+            content = msg.get("content")
+            if not remaining and (not isinstance(content, str) or not content.strip()):
                 indices_to_remove.append(i)
 
     if not confirmed_review_call_ids:

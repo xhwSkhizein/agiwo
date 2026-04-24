@@ -70,6 +70,29 @@ class TestReviewBatch:
         config = AgentOptions(enable_goal_directed_review=True)
         ledger = RunLedger()
         ledger.review.consecutive_errors = 2
+        ledger.messages = [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "tc_review",
+                        "type": "function",
+                        "function": {
+                            "name": "review_trajectory",
+                            "arguments": "{}",
+                        },
+                    }
+                ],
+                "_sequence": 6,
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "tc_review",
+                "content": "Trajectory review: aligned=True.",
+                "_sequence": 7,
+            },
+        ]
         tools_map = {
             "review_trajectory": FakeTool("review_trajectory"),
             "declare_milestones": FakeTool("declare_milestones"),
@@ -87,6 +110,7 @@ class TestReviewBatch:
         assert ledger.review.consecutive_errors == 0
         assert ledger.review.last_review_seq == 7
         assert ledger.review.last_checkpoint_seq == 7
+        assert ledger.messages == []
 
     @pytest.mark.asyncio
     async def test_process_result_step_back_only_when_not_aligned(self):
@@ -275,6 +299,27 @@ class TestReviewBatch:
         batch = ReviewBatch(config, ledger, tools_map)
         outcome = await batch.finalize()
         assert outcome.applied is False
+
+    @pytest.mark.asyncio
+    async def test_finalize_requires_storage_when_feedback_present(self):
+        config = AgentOptions(enable_goal_directed_review=True)
+        ledger = RunLedger()
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
+        batch = ReviewBatch(config, ledger, tools_map)
+        batch.process_result(
+            FakeToolResult(
+                "review_trajectory",
+                "Trajectory review: aligned=False. summarize",
+                output={"aligned": False, "experience": "summarize"},
+            ),
+            current_seq=6,
+        )
+
+        with pytest.raises(ValueError, match="requires a non-None storage"):
+            await batch.finalize()
 
     def test_agent_options_rejects_invalid_review_step_interval(self):
         with pytest.raises(ValueError):

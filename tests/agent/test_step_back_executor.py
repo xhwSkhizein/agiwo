@@ -336,6 +336,49 @@ class TestExecuteStepBack:
         assert "tc_old_review" in tool_call_ids
         assert "tc_current_review" not in tool_call_ids
 
+    @pytest.mark.asyncio
+    async def test_preserves_assistant_content_when_removing_review_call(self):
+        messages = [
+            {
+                "role": "assistant",
+                "content": "I checked the previous results.",
+                "tool_calls": [
+                    {
+                        "id": "tc_review",
+                        "type": "function",
+                        "function": {"name": "review_trajectory", "arguments": "{}"},
+                    }
+                ],
+                "_sequence": 6,
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "tc_review",
+                "content": "Trajectory review: aligned=False.",
+                "_sequence": 7,
+            },
+        ]
+        storage = AsyncMock()
+        storage.get_step_by_tool_call_id = AsyncMock(return_value=None)
+        storage.append_step_condensed_content = AsyncMock(return_value=True)
+
+        outcome = await execute_step_back(
+            messages=messages,
+            checkpoint_seq=6,
+            experience="Search drifted.",
+            review_tool_call_id="tc_review",
+            step_lookup={},
+            storage=storage,
+            session_id="s1",
+            run_id="r1",
+            agent_id="a1",
+        )
+
+        assert len(outcome.messages) == 1
+        assert outcome.messages[0]["role"] == "assistant"
+        assert outcome.messages[0]["content"] == "I checked the previous results."
+        assert outcome.messages[0]["tool_calls"] == []
+
 
 class TestStepBackOutcome:
     def test_default_not_applied(self):

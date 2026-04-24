@@ -26,6 +26,7 @@ from agiwo.agent.review.step_back_executor import (
     StepBackOutcome,
     execute_step_back,
 )
+from agiwo.agent.storage.base import RunLogStorage
 from agiwo.tool.base import BaseTool, ToolResult
 
 
@@ -82,6 +83,7 @@ class ReviewBatch:
                 self._ledger.review.last_review_seq = current_seq
                 self._ledger.review.last_checkpoint_seq = current_seq
                 self._ledger.review.is_review_pending = False
+                self._remove_review_tool_call(result.tool_call_id or None)
                 return content
             if aligned is False:
                 experience = output.get("experience")
@@ -136,7 +138,7 @@ class ReviewBatch:
     async def finalize(
         self,
         *,
-        storage=None,
+        storage: RunLogStorage | None = None,
         session_id: str = "",
         run_id: str = "",
         agent_id: str = "",
@@ -144,6 +146,12 @@ class ReviewBatch:
         """Build the step-back outcome if feedback was captured."""
         if not self._enabled or self._feedback is None:
             return StepBackOutcome()
+
+        if storage is None:
+            raise ValueError(
+                "ReviewBatch.finalize() requires a non-None storage because "
+                "execute_step_back() persists condensed content via storage."
+            )
 
         checkpoint_seq = self._ledger.review.last_checkpoint_seq
         messages = list(self._ledger.messages)
@@ -169,6 +177,46 @@ class ReviewBatch:
         self._ledger.review.is_review_pending = False
 
         return outcome
+
+    def _remove_review_tool_call(self, review_tool_call_id: str | None) -> None:
+        if not review_tool_call_id:
+            return
+        self._ledger.messages = [
+            message
+            for message in self._ledger.messages
+            if not self._is_review_message(message, review_tool_call_id)
+        ]
+
+    def _is_review_message(
+        self,
+        message: dict[str, Any],
+        review_tool_call_id: str,
+    ) -> bool:
+        if message.get("role") == "tool":
+            return message.get("tool_call_id") == review_tool_call_id
+        if message.get("role") != "assistant":
+            return False
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            return False
+        remaining_calls: list[dict[str, Any]] = []
+        removed = False
+        for tool_call in tool_calls:
+            function = tool_call.get("function", {})
+            if (
+                tool_call.get("id") == review_tool_call_id
+                and function.get("name") == "review_trajectory"
+            ):
+                removed = True
+                continue
+            remaining_calls.append(tool_call)
+        if not removed:
+            return False
+        message["tool_calls"] = remaining_calls
+        content = message.get("content")
+        return not remaining_calls and (
+            not isinstance(content, str) or not content.strip()
+        )
 
 
 def _parse_declared_milestones(output: object) -> list[Milestone]:

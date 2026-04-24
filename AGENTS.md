@@ -142,7 +142,7 @@
 ### Storage & Observability
 
 - Agent 运行记录的 canonical persistence 是 `AgentOptions.storage.run_log_storage`；storage 层以 append-only `RunLog` entries 为真相源，并从中重建 `RunView` / `StepView` 查询结果。
-- `RunStateWriter` 是 runtime facts 的唯一写路径；异常终态必须落 `RunFailed`，`CompactionFailed`/`CompactionApplied`/`RetrospectApplied`/`TerminationDecided` 等都必须成为 first-class `RunLog` facts。
+- `RunStateWriter` 是 runtime facts 的唯一写路径；异常终态必须落 `RunFailed`，`CompactionFailed`/`CompactionApplied`/`StepBackApplied`/`TerminationDecided` 等都必须成为 first-class `RunLog` facts。
 - `SessionRuntime` 统一负责 sequence 分配、run-log 追加、把同一批 committed entries 喂给 trace writer，并基于同批 entries 投影 replayable `AgentStreamItem`；`trace`/`stream` 是 `RunLog` 的 view builder，不得各自维护独立 runtime 真相。
 - `StepDeltaEvent` 是当前唯一允许保留的 live-only stream 例外；除它之外，所有可重放 stream 事件都应由 committed `RunLog` entries 投影产生。
 - Agent 运行记录通过 session runtime 统一提交；流式输出通过 `Agent.start()` 返回的 handle 暴露 `AgentStreamItem`。

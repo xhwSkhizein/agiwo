@@ -3,6 +3,28 @@
 from agiwo.agent.models.review import Milestone, ReviewState
 
 
+class GoalManager:
+    """Thin OO wrapper around module-level milestone helpers."""
+
+    def declare_milestones(
+        self,
+        state: ReviewState,
+        milestones: list[Milestone],
+        *,
+        current_seq: int = 0,
+    ) -> list[str]:
+        return declare_milestones(state, milestones, current_seq=current_seq)
+
+    def complete_active_milestone(self, state: ReviewState, *, seq: int) -> bool:
+        return complete_active_milestone(state, seq=seq)
+
+    def activate_next_milestone(self, state: ReviewState) -> Milestone | None:
+        return activate_next_milestone(state)
+
+    def get_active_milestone(self, state: ReviewState) -> Milestone | None:
+        return get_active_milestone(state)
+
+
 def declare_milestones(
     state: ReviewState,
     milestones: list[Milestone],
@@ -70,6 +92,7 @@ def get_active_milestone(state: ReviewState) -> Milestone | None:
 
 
 __all__ = [
+    "GoalManager",
     "activate_next_milestone",
     "complete_active_milestone",
     "declare_milestones",

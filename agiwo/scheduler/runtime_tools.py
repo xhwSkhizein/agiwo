@@ -716,15 +716,15 @@ class DeclareMilestonesTool(BaseTool):
         del abort_signal
         start_time = time.time()
         milestones = parameters.get("milestones", [])
-        if not milestones:
+        if not isinstance(milestones, list):
             return _build_failed_result(
                 tool_name=self.name,
-                error="milestones must be a non-empty array",
+                error="milestones must be an array",
                 context=context,
                 parameters=parameters,
                 start_time=start_time,
             )
-        if not isinstance(milestones, list):
+        if not milestones:
             return _build_failed_result(
                 tool_name=self.name,
                 error="milestones must be a non-empty array",
@@ -740,24 +740,27 @@ class DeclareMilestonesTool(BaseTool):
                 or "id" not in milestone
                 or not isinstance(milestone["id"], str)
                 or not milestone["id"].strip()
+                or "description" not in milestone
+                or not isinstance(milestone["description"], str)
+                or not milestone["description"].strip()
             ):
                 return _build_failed_result(
                     tool_name=self.name,
                     error=(
                         "milestones must be an array of objects each containing "
-                        "a non-empty string 'id'"
+                        "non-empty string 'id' and 'description' fields"
                     ),
                     context=context,
                     parameters=parameters,
                     start_time=start_time,
                 )
             milestone_id = milestone["id"].strip()
-            description = milestone.get("description", "")
+            description = milestone["description"].strip()
             ids.append(milestone_id)
             normalized_milestones.append(
                 {
                     "id": milestone_id,
-                    "description": description if isinstance(description, str) else "",
+                    "description": description,
                 }
             )
         return ToolResult.success(

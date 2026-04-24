@@ -982,7 +982,7 @@ async def execute_step_back(
                     run_id,
                     agent_id,
                     step_id,
-                    condensed,
+                    original_content,
                 )
 
     # 2. Remove review_trajectory tool call and result
@@ -1106,30 +1106,47 @@ class FakeToolResult:
 
 
 class TestReviewBatch:
-    def test_enabled_when_configured_and_tool_present(self):
+    def test_enabled_when_configured_and_tools_present(self):
         config = AgentOptions(enable_goal_directed_review=True)
         ledger = RunLedger()
-        tools_map = {"review_trajectory": FakeTool("review_trajectory")}
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
         batch = ReviewBatch(config, ledger, tools_map)
         assert batch.enabled is True
 
     def test_disabled_when_flag_off(self):
         config = AgentOptions(enable_goal_directed_review=False)
         ledger = RunLedger()
-        tools_map = {"review_trajectory": FakeTool("review_trajectory")}
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
         batch = ReviewBatch(config, ledger, tools_map)
         assert batch.enabled is False
 
-    def test_disabled_when_tool_missing(self):
+    def test_disabled_when_review_tool_missing(self):
         config = AgentOptions(enable_goal_directed_review=True)
         ledger = RunLedger()
-        batch = ReviewBatch(config, ledger, {})
+        tools_map = {"declare_milestones": FakeTool("declare_milestones")}
+        batch = ReviewBatch(config, ledger, tools_map)
+        assert batch.enabled is False
+
+    def test_disabled_when_milestones_tool_missing(self):
+        config = AgentOptions(enable_goal_directed_review=True)
+        ledger = RunLedger()
+        tools_map = {"review_trajectory": FakeTool("review_trajectory")}
+        batch = ReviewBatch(config, ledger, tools_map)
         assert batch.enabled is False
 
     def test_process_result_captures_review_feedback(self):
         config = AgentOptions(enable_goal_directed_review=True)
         ledger = RunLedger()
-        tools_map = {"review_trajectory": FakeTool("review_trajectory")}
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
         batch = ReviewBatch(config, ledger, tools_map)
 
         result = FakeToolResult("review_trajectory", "JWT was a dead end", is_success=True, tool_call_id="tc_review")
@@ -1144,7 +1161,10 @@ class TestReviewBatch:
         ledger.review.milestones = [
             Milestone(id="a", description="Find the bug", status="active")
         ]
-        tools_map = {"review_trajectory": FakeTool("review_trajectory")}
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
         batch = ReviewBatch(config, ledger, tools_map)
 
         result = FakeToolResult("search", "Found 5000 tokens worth of results", tool_call_id="tc_search")
@@ -1186,7 +1206,8 @@ Read the current `__init__.py`, then add `ReviewBatch` class alongside the exist
 from typing import Any
 
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.models.review import ReviewState, Milestone, get_active_milestone
+from agiwo.agent.models.review import ReviewState, Milestone
+from agiwo.agent.review.goal_manager import get_active_milestone
 from agiwo.agent.models.run import RunLedger
 from agiwo.agent.review.review_enforcer import (
     ReviewTrigger,
