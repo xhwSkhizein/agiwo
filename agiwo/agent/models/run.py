@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 from agiwo.agent.models.input import UserInput
+from agiwo.agent.models.review import ReviewState
 from agiwo.config.termination import TerminationReason
 from agiwo.utils.serialization import serialize_optional_datetime
 
@@ -131,6 +132,7 @@ class RunLedger:
     steps: StepStats = field(default_factory=StepStats)
     compaction: CompactionState = field(default_factory=CompactionState)
     retrospect: RetrospectState = field(default_factory=RetrospectState)
+    review: ReviewState = field(default_factory=ReviewState)
 
 
 @dataclass
