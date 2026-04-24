@@ -48,20 +48,20 @@ def check_retrospect_trigger(
     tool_name: str,
 ) -> RetrospectTrigger:
     """Return the trigger type, or ``NONE`` if no notice should be injected."""
-    if not config.enable_tool_retrospect:
+    if not config.enable_goal_directed_review:
         return RetrospectTrigger.NONE
     if tool_name == "retrospect_tool_result":
         return RetrospectTrigger.NONE
 
     token_estimate = len(content) // 4
 
-    if token_estimate >= config.retrospect_token_threshold:
+    if token_estimate >= 1024:
         return RetrospectTrigger.LARGE_RESULT
-    if ledger.retrospect.pending_rounds >= config.retrospect_round_interval:
+    if ledger.retrospect.pending_rounds >= config.review_step_interval:
         return RetrospectTrigger.ROUND_INTERVAL
     if (
         ledger.retrospect.pending_tokens
-        >= config.retrospect_accumulated_token_threshold
+        >= 8192
     ):
         return RetrospectTrigger.TOKEN_ACCUMULATED
     return RetrospectTrigger.NONE

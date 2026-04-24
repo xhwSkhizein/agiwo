@@ -34,7 +34,7 @@ class RetrospectBatch:
     def __init__(self, state: RunContext, tools_map: dict[str, BaseTool]) -> None:
         self._state = state
         self._enabled = (
-            state.config.enable_tool_retrospect
+            state.config.enable_goal_directed_review
             and "retrospect_tool_result" in tools_map
         )
         self._feedback: str | None = None
