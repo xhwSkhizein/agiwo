@@ -733,6 +733,7 @@ class DeclareMilestonesTool(BaseTool):
                 start_time=start_time,
             )
         ids: list[str] = []
+        normalized_milestones: list[dict[str, str]] = []
         for milestone in milestones:
             if (
                 not isinstance(milestone, dict)
@@ -750,13 +751,21 @@ class DeclareMilestonesTool(BaseTool):
                     parameters=parameters,
                     start_time=start_time,
                 )
-            ids.append(milestone["id"])
+            milestone_id = milestone["id"].strip()
+            description = milestone.get("description", "")
+            ids.append(milestone_id)
+            normalized_milestones.append(
+                {
+                    "id": milestone_id,
+                    "description": description if isinstance(description, str) else "",
+                }
+            )
         return ToolResult.success(
             tool_name=self.name,
             tool_call_id=context.tool_call_id,
             input_args=parameters,
             content=f"Milestones declared: {', '.join(ids)}",
-            output={},
+            output={"milestones": normalized_milestones},
             start_time=start_time,
         )
 

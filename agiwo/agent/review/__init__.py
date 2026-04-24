@@ -9,6 +9,7 @@ Public API consumed by ``run_tool_batch.py``:
 from typing import Any
 
 from agiwo.agent.models.config import AgentOptions
+from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.run import RunLedger
 from agiwo.agent.review.goal_manager import (
     activate_next_milestone,
@@ -54,6 +55,7 @@ class ReviewBatch:
         )
         self._feedback: str | None = None
         self._review_seq: int | None = None
+        self._review_tool_call_id: str | None = None
         self._step_lookup: dict[str, dict[str, Any]] = {}
 
     @property
@@ -85,7 +87,18 @@ class ReviewBatch:
                 experience = output.get("experience")
                 self._feedback = experience if isinstance(experience, str) else content
                 self._review_seq = current_seq
+                self._review_tool_call_id = result.tool_call_id or None
                 return content
+            return content
+
+        if result.tool_name == "declare_milestones" and result.is_success:
+            milestones = _parse_declared_milestones(result.output)
+            if milestones:
+                declare_milestones(
+                    self._ledger.review,
+                    milestones,
+                    current_seq=current_seq,
+                )
             return content
 
         # Track errors
@@ -99,7 +112,7 @@ class ReviewBatch:
         trigger = check_review_trigger(
             state=self._ledger.review,
             enabled=True,
-            is_error=is_error,
+            is_error=is_error and self._config.review_on_error,
             step_interval=self._config.review_step_interval,
             error_threshold=2,
             tool_name=result.tool_name,
@@ -139,6 +152,7 @@ class ReviewBatch:
             messages=messages,
             checkpoint_seq=checkpoint_seq,
             experience=self._feedback,
+            review_tool_call_id=self._review_tool_call_id,
             step_lookup=self._step_lookup,
             storage=storage,
             session_id=session_id,
@@ -155,6 +169,36 @@ class ReviewBatch:
         self._ledger.review.is_review_pending = False
 
         return outcome
+
+
+def _parse_declared_milestones(output: object) -> list[Milestone]:
+    if not isinstance(output, dict):
+        return []
+    raw_milestones = output.get("milestones")
+    if not isinstance(raw_milestones, list):
+        return []
+
+    milestones: list[Milestone] = []
+    for raw in raw_milestones:
+        if not isinstance(raw, dict):
+            continue
+        milestone_id = raw.get("id")
+        if not isinstance(milestone_id, str) or not milestone_id.strip():
+            continue
+        description = raw.get("description", "")
+        if not isinstance(description, str):
+            description = ""
+        status = raw.get("status", "pending")
+        if status not in {"pending", "active", "completed", "abandoned"}:
+            status = "pending"
+        milestones.append(
+            Milestone(
+                id=milestone_id.strip(),
+                description=description,
+                status=status,
+            )
+        )
+    return milestones
 
 
 __all__ = [

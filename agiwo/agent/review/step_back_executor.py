@@ -30,6 +30,7 @@ async def execute_step_back(
     messages: list[dict[str, Any]],
     checkpoint_seq: int,
     experience: str,
+    review_tool_call_id: str | None = None,
     step_lookup: dict[str, dict[str, Any]],
     storage: RunLogStorage,
     session_id: str,
@@ -48,7 +49,7 @@ async def execute_step_back(
     affected_count = 0
 
     # 1. Remove review_trajectory tool call and result first (they're at the tail)
-    _remove_review_tool_call(working)
+    _remove_review_tool_call(working, review_tool_call_id=review_tool_call_id)
 
     # 2. Find and condense tool results after checkpoint
     for i, msg in enumerate(working):
@@ -72,16 +73,18 @@ async def execute_step_back(
 
         # Persist original content to storage
         step_info = step_lookup.get(tool_call_id)
-        if step_info is not None:
-            step_id = step_info.get("id", "")
-            if step_id:
-                await storage.append_step_condensed_content(
-                    session_id,
-                    run_id,
-                    agent_id,
-                    step_id,
-                    condensed,
-                )
+        step_id = step_info.get("id", "") if step_info is not None else ""
+        if not step_id:
+            step = await storage.get_step_by_tool_call_id(session_id, tool_call_id)
+            step_id = step.id if step is not None else ""
+        if step_id:
+            await storage.append_step_condensed_content(
+                session_id,
+                run_id,
+                agent_id,
+                step_id,
+                condensed,
+            )
 
     logger.info(
         "step_back_executed",
@@ -99,30 +102,62 @@ async def execute_step_back(
     )
 
 
-def _remove_review_tool_call(messages: list[dict[str, Any]]) -> None:
-    """Remove review_trajectory tool call and its result from the message list."""
+def _remove_review_tool_call(
+    messages: list[dict[str, Any]],
+    *,
+    review_tool_call_id: str | None,
+) -> None:
+    """Remove only the current review_trajectory tool call and its result."""
     indices_to_remove: list[int] = []
-    review_call_ids: set[str] = set()
+    review_call_ids = (
+        {review_tool_call_id}
+        if review_tool_call_id
+        else _find_latest_review_tool_call_id(messages)
+    )
+    if not review_call_ids:
+        return
 
+    confirmed_review_call_ids: set[str] = set()
     for i, msg in enumerate(messages):
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
             remaining: list[dict[str, Any]] = []
             for tc in msg["tool_calls"]:
                 fn = tc.get("function", {})
-                if fn.get("name") == "review_trajectory":
-                    review_call_ids.add(tc.get("id", ""))
-                else:
+                if (
+                    tc.get("id") not in review_call_ids
+                    or fn.get("name") != "review_trajectory"
+                ):
                     remaining.append(tc)
+                else:
+                    confirmed_review_call_ids.add(tc.get("id", ""))
             msg["tool_calls"] = remaining
             if not remaining:
                 indices_to_remove.append(i)
 
+    if not confirmed_review_call_ids:
+        return
+
     for i, msg in enumerate(messages):
-        if msg.get("role") == "tool" and msg.get("tool_call_id", "") in review_call_ids:
+        if (
+            msg.get("role") == "tool"
+            and msg.get("tool_call_id", "") in confirmed_review_call_ids
+        ):
             indices_to_remove.append(i)
 
     for i in sorted(indices_to_remove, reverse=True):
         messages.pop(i)
+
+
+def _find_latest_review_tool_call_id(messages: list[dict[str, Any]]) -> set[str]:
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant" or not msg.get("tool_calls"):
+            continue
+        for tc in reversed(msg["tool_calls"]):
+            fn = tc.get("function", {})
+            if fn.get("name") == "review_trajectory":
+                tool_call_id = tc.get("id")
+                return {tool_call_id} if tool_call_id else set()
+    return set()
 
 
 __all__ = [

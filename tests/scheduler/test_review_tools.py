@@ -37,6 +37,12 @@ class TestDeclareMilestonesTool:
         assert result.is_success
         assert "a" in result.content
         assert "b" in result.content
+        assert result.output == {
+            "milestones": [
+                {"id": "a", "description": "Step A"},
+                {"id": "b", "description": "Step B"},
+            ]
+        }
 
     @pytest.mark.asyncio
     async def test_execute_empty_milestones(self):

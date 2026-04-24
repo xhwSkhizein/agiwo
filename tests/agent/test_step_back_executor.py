@@ -1,10 +1,13 @@
 # tests/agent/test_step_back_executor.py
 import pytest
 from unittest.mock import AsyncMock
+from agiwo.agent.models.log import StepCondensedContentUpdated, ToolStepCommitted
+from agiwo.agent.models.step import MessageRole
 from agiwo.agent.review.step_back_executor import (
     StepBackOutcome,
     execute_step_back,
 )
+from agiwo.agent.storage.base import InMemoryRunLogStorage
 
 
 def _make_messages():
@@ -201,6 +204,137 @@ class TestExecuteStepBack:
 
         # Should have called append_step_condensed_content for affected steps
         assert storage.append_step_condensed_content.call_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_persists_condensed_content_for_prior_batch_tool_result(self):
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "tc_old",
+                "content": "Verbose old result",
+                "_sequence": 5,
+            },
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "tc_review",
+                        "type": "function",
+                        "function": {"name": "review_trajectory", "arguments": "{}"},
+                    }
+                ],
+                "_sequence": 6,
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "tc_review",
+                "content": "Review acknowledged",
+                "_sequence": 7,
+            },
+        ]
+        storage = InMemoryRunLogStorage()
+        await storage.append_entries(
+            [
+                ToolStepCommitted(
+                    sequence=5,
+                    session_id="s1",
+                    run_id="r1",
+                    agent_id="a1",
+                    step_id="step_old",
+                    role=MessageRole.TOOL,
+                    content="Verbose old result",
+                    tool_call_id="tc_old",
+                    name="search",
+                )
+            ]
+        )
+
+        await execute_step_back(
+            messages=messages,
+            checkpoint_seq=3,
+            experience="Old search was off-track.",
+            review_tool_call_id="tc_review",
+            step_lookup={},
+            storage=storage,
+            session_id="s1",
+            run_id="r1",
+            agent_id="a1",
+        )
+
+        entries = await storage.list_entries(session_id="s1")
+        condensed_entries = [
+            entry for entry in entries if isinstance(entry, StepCondensedContentUpdated)
+        ]
+        assert len(condensed_entries) == 1
+        assert condensed_entries[0].step_id == "step_old"
+
+    @pytest.mark.asyncio
+    async def test_removes_only_current_review_pair(self):
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "tc_old_review",
+                        "type": "function",
+                        "function": {"name": "review_trajectory", "arguments": "{}"},
+                    }
+                ],
+                "_sequence": 2,
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "tc_old_review",
+                "content": "Trajectory review: aligned=True.",
+                "_sequence": 3,
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "tc_search",
+                "content": "Verbose search result",
+                "_sequence": 5,
+            },
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "tc_current_review",
+                        "type": "function",
+                        "function": {"name": "review_trajectory", "arguments": "{}"},
+                    }
+                ],
+                "_sequence": 6,
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "tc_current_review",
+                "content": "Trajectory review: aligned=False.",
+                "_sequence": 7,
+            },
+        ]
+        storage = AsyncMock()
+        storage.get_step_by_tool_call_id = AsyncMock(return_value=None)
+        storage.append_step_condensed_content = AsyncMock(return_value=True)
+
+        outcome = await execute_step_back(
+            messages=messages,
+            checkpoint_seq=4,
+            experience="Search drifted.",
+            review_tool_call_id="tc_current_review",
+            step_lookup={},
+            storage=storage,
+            session_id="s1",
+            run_id="r1",
+            agent_id="a1",
+        )
+
+        tool_call_ids = {
+            msg.get("tool_call_id")
+            for msg in outcome.messages
+            if msg.get("role") == "tool"
+        }
+        assert "tc_old_review" in tool_call_ids
+        assert "tc_current_review" not in tool_call_ids
 
 
 class TestStepBackOutcome:

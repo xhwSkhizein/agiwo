@@ -174,6 +174,26 @@ class TestReviewBatch:
         batch.process_result(result)
         assert ledger.review.is_review_pending is False
 
+    def test_process_result_declares_milestones_from_tool_output(self):
+        config = AgentOptions(enable_goal_directed_review=True)
+        ledger = RunLedger()
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
+        batch = ReviewBatch(config, ledger, tools_map)
+        result = FakeToolResult(
+            "declare_milestones",
+            "Milestones declared: a",
+            tool_call_id="tc_declare",
+            output={"milestones": [{"id": "a", "description": "Find the bug"}]},
+        )
+        batch.process_result(result, current_seq=4)
+        assert [(m.id, m.description, m.status) for m in ledger.review.milestones] == [
+            ("a", "Find the bug", "active")
+        ]
+        assert ledger.review.milestones[0].declared_at_seq == 4
+
     def test_process_result_tracks_consecutive_errors(self):
         config = AgentOptions(enable_goal_directed_review=True)
         ledger = RunLedger()
@@ -188,6 +208,29 @@ class TestReviewBatch:
         assert ledger.review.consecutive_errors == 2
         batch.process_result(FakeToolResult("search", "ok", is_success=True))
         assert ledger.review.consecutive_errors == 0
+
+    def test_process_result_respects_review_on_error_disabled(self):
+        config = AgentOptions(
+            enable_goal_directed_review=True,
+            review_on_error=False,
+            review_step_interval=100,
+        )
+        ledger = RunLedger()
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
+        batch = ReviewBatch(config, ledger, tools_map)
+        batch.process_result(
+            FakeToolResult("search", "failed once", is_success=False),
+            current_seq=1,
+        )
+        content = batch.process_result(
+            FakeToolResult("search", "failed twice", is_success=False),
+            current_seq=2,
+        )
+        assert ledger.review.consecutive_errors == 2
+        assert "<system-review>" not in content
 
     @pytest.mark.asyncio
     async def test_register_step_supports_public_finalize_outcome(self):
