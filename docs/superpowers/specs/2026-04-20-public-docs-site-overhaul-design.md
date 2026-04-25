@@ -32,7 +32,7 @@ This framing better matches the current and emerging direction of the project:
 - scheduler-driven orchestration
 - trace + persistence + operator visibility
 - skills, memory, and tool control
-- context optimization and retrospective feedback loops
+- context optimization and goal-directed review feedback loops
 - ongoing work around self-improvement and runtime evolution
 
 The phrase “runtime harness” is the central differentiator. The public site should consistently explain it as the union of:

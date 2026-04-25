@@ -94,8 +94,8 @@ class Scheduler:
             QuerySpawnedAgentTool(self._tool_control),
             CancelAgentTool(self._tool_control),
             ListAgentsTool(self._tool_control),
-            DeclareMilestonesTool(self._tool_control),
-            ReviewTrajectoryTool(self._tool_control),
+            DeclareMilestonesTool(),
+            ReviewTrajectoryTool(),
         )
         self._runner = SchedulerRunner(
             RunnerContext(

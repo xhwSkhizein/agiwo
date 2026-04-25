@@ -13,7 +13,7 @@
 | Single persisted source of truth is `RunLog` | `agiwo/agent/models/log.py`, `agiwo/agent/storage/base.py` | `SHIPPED` | Canonical runtime record is append-only `RunLog` |
 | `Run`, `StepRecord`, `AgentHooks` are no longer canonical runtime models | `agiwo/agent/`, `tests/` | `SHIPPED` | No compatibility layer retained |
 | Stable public read surface is explicitly documented | `agiwo/agent/__init__.py`, `agiwo/agent/storage/serialization.py` | `SPEC_UPDATE` | Shipped read surface is `RunView`, `StepView`, replayed `AgentStreamItem`, and runtime-decision views; no standalone `TimelineView` |
-| Latest runtime-decision state is queryable without raw entry scanning | `agiwo/agent/models/runtime_decision.py`, `agiwo/agent/storage/base.py`, `agiwo/agent/storage/sqlite.py` | `SHIPPED` | `termination`, `compaction`, `retrospect`, and rollback all have replayed latest-state queries |
+| Latest runtime-decision state is queryable without raw entry scanning | `agiwo/agent/models/runtime_decision.py`, `agiwo/agent/storage/base.py`, `agiwo/agent/storage/sqlite.py` | `SHIPPED` | `termination`, `compaction`, `step_back`, and rollback all have replayed latest-state queries |
 | Live stream facts can be rebuilt from `RunLog` | `agiwo/agent/models/stream.py`, `tests/agent/test_run_log_replay_parity.py` | `SHIPPED` | Replay parity covered for replayable event families |
 
 ## Scheduler

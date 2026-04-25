@@ -71,6 +71,7 @@ class TestActivateNextMilestone:
         assert result is not None
         assert result.id == "b"
         assert result.status == "active"
+        assert state.pending_review_reason is None
 
     def test_activate_none_pending_returns_none(self):
         m = Milestone(id="a", description="A", status="completed")

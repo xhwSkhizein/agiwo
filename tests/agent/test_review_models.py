@@ -51,21 +51,22 @@ class TestReviewState:
         rs = ReviewState()
         assert rs.milestones == []
         assert rs.last_review_seq == 0
-        assert rs.last_checkpoint_seq == 0
+        assert rs.latest_checkpoint is None
         assert rs.consecutive_errors == 0
-        assert rs.is_review_pending is False
+        assert rs.pending_review_reason is None
 
     def test_review_state_with_milestones(self):
         m = Milestone(id="a", description="desc", status="active")
+        checkpoint = ReviewCheckpoint(seq=3, milestone_id="a")
         rs = ReviewState(
             milestones=[m],
             last_review_seq=5,
-            last_checkpoint_seq=3,
+            latest_checkpoint=checkpoint,
             consecutive_errors=2,
-            is_review_pending=True,
+            pending_review_reason="milestone_switch",
         )
         assert len(rs.milestones) == 1
         assert rs.last_review_seq == 5
-        assert rs.last_checkpoint_seq == 3
+        assert rs.latest_checkpoint == checkpoint
         assert rs.consecutive_errors == 2
-        assert rs.is_review_pending is True
+        assert rs.pending_review_reason == "milestone_switch"

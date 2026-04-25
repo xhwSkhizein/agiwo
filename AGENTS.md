@@ -24,7 +24,7 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `agiwo.agent.hooks`，nested-agent adapter 收口在 `nested/`，run/session runtime context、state helper 与 `RunStateWriter` 严格写路径收口在 `agiwo.agent.runtime`，termination logic 收口在 `termination/`，上下文回顾优化收口在 `retrospect/`，`storage/` 负责持久化。`run_loop.py` 使用 `RunLoopOrchestrator` 类封装运行循环逻辑，消除多层嵌套；`run_loop.py` 是唯一的单次 run execution owner，而 `agiwo.agent.runtime` 只承载 `RunContext` / `RunRuntime`、`SessionRuntime` 与 `RunStateWriter`，不得再暴露 execution-owner alias、commit-pipeline facade 或兼容壳。 |
+| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `agiwo.agent.hooks`，nested-agent adapter 收口在 `nested/`，run/session runtime context、state helper 与 `RunStateWriter` 严格写路径收口在 `agiwo.agent.runtime`，termination logic 收口在 `termination/`，目标导向 review / step-back 优化收口在 `review/`，`storage/` 负责持久化。`run_loop.py` 使用 `RunLoopOrchestrator` 类封装运行循环逻辑，消除多层嵌套；`run_loop.py` 是唯一的单次 run execution owner，而 `agiwo.agent.runtime` 只承载 `RunContext` / `RunRuntime`、`SessionRuntime` 与 `RunStateWriter`，不得再暴露 execution-owner alias、commit-pipeline facade 或兼容壳。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
 | `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade 与 loop lifecycle，`engine.py` 是唯一编排 owner，`runner.py` 负责单次 dispatch action 执行，`commands.py` 承载调度动作与 tool DTO，`runtime_state.py` 承载进程内 live state 与 tick helpers，`tool_control.py` 收口 child/sleep/cancel 的 tool-facing control，`runtime_tools.py` 是注入给 agent 的 scheduler runtime tools，`store/` 只负责持久化。`runner.py` 使用策略表驱动 output-handling 链，消除 chained responsibility。 |
@@ -136,7 +136,7 @@
 ### Context Optimization
 
 - Context Rollback 通过 `sleep_and_wait(no_progress=True)` 触发，删除空转轮次。
-- Tool Result Retrospect 由 `agiwo/agent/retrospect/` 处理，`run_loop.py` 只通过 `RetrospectBatch` 交互。
+- Tool-result review / step-back 由 `agiwo/agent/review/` 处理，`run_loop.py` 只通过 `ReviewBatch` 交互。
 - `StepView.condensed_content` 记录精简内容，加载历史时优先。
 
 ### Storage & Observability

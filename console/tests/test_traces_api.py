@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.observability.trace import SpanStatus, Trace
+from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 
 from server.app import create_app
 from server.config import ConsoleConfig
@@ -13,9 +13,14 @@ from server.dependencies import (
     ConsoleRuntime,
     bind_console_runtime,
     clear_console_runtime,
+    get_console_runtime_from_app,
 )
 from server.services.agent_registry import AgentRegistry
 from server.services.storage_wiring import create_run_log_storage, create_trace_storage
+
+
+def _runtime(client: AsyncClient) -> ConsoleRuntime:
+    return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
 
 
 @pytest.fixture
@@ -78,3 +83,224 @@ async def test_list_traces_returns_page_envelope(client) -> None:
     assert payload["has_more"] is True
     assert payload["total"] is None
     assert len(payload["items"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -> None:
+    runtime = _runtime(client)
+    created_at = datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)
+    root_span = Span(
+        trace_id="trace-detail",
+        kind=SpanKind.AGENT,
+        name="agent-alpha",
+        depth=0,
+        run_id="run-1",
+        start_time=created_at,
+        end_time=created_at.replace(second=2),
+        duration_ms=2000.0,
+        status=SpanStatus.OK,
+        attributes={
+            "agent_id": "agent-alpha",
+            "session_id": "sess-1",
+            "nested": False,
+            "parent_run_id": None,
+            "start_sequence": 1,
+            "end_sequence": 9,
+        },
+        output_preview="done",
+    )
+    await runtime.trace_storage.save_trace(
+        Trace(
+            trace_id="trace-detail",
+            agent_id="agent-alpha",
+            session_id="sess-1",
+            status=SpanStatus.OK,
+            start_time=created_at,
+            end_time=created_at.replace(second=2),
+            duration_ms=2000.0,
+            root_span_id=root_span.span_id,
+            spans=[
+                root_span,
+                Span(
+                    trace_id="trace-detail",
+                    parent_span_id=root_span.span_id,
+                    kind=SpanKind.TOOL_CALL,
+                    name="web_search",
+                    depth=1,
+                    run_id="run-1",
+                    step_id="step-1",
+                    start_time=created_at.replace(second=1),
+                    end_time=created_at.replace(second=1),
+                    duration_ms=42.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 5,
+                        "agent_id": "agent-alpha",
+                        "tool_name": "web_search",
+                        "tool_call_id": "tc-1",
+                    },
+                    tool_details={
+                        "tool_name": "web_search",
+                        "tool_call_id": "tc-1",
+                        "input_args": {"q": "jwt"},
+                        "output": (
+                            "Found 15 JWT references\n\n"
+                            "<system-review>\n"
+                            'Active milestone: "Fix auth"\n\n'
+                            "Trigger: step_interval\n"
+                            "Steps since last review: 8\n"
+                            "Hook advice: narrow the search\n"
+                            "</system-review>"
+                        ),
+                        "status": "completed",
+                    },
+                ),
+                Span(
+                    trace_id="trace-detail",
+                    parent_span_id=root_span.span_id,
+                    kind=SpanKind.TOOL_CALL,
+                    name="review_trajectory",
+                    depth=1,
+                    run_id="run-1",
+                    step_id="step-2",
+                    start_time=created_at.replace(second=1),
+                    end_time=created_at.replace(second=1),
+                    duration_ms=18.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 6,
+                        "agent_id": "agent-alpha",
+                        "tool_name": "review_trajectory",
+                        "tool_call_id": "tc-review",
+                    },
+                    tool_details={
+                        "tool_name": "review_trajectory",
+                        "tool_call_id": "tc-review",
+                        "input_args": {"aligned": False},
+                        "output": "Trajectory review: aligned=False. JWT was a dead end",
+                        "status": "completed",
+                    },
+                ),
+                Span(
+                    trace_id="trace-detail",
+                    parent_span_id=root_span.span_id,
+                    kind=SpanKind.RUNTIME,
+                    name="step_back",
+                    depth=1,
+                    run_id="run-1",
+                    start_time=created_at.replace(second=1),
+                    end_time=created_at.replace(second=1),
+                    duration_ms=0.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 8,
+                        "agent_id": "agent-alpha",
+                        "affected_count": 2,
+                        "checkpoint_seq": 4,
+                        "experience": "switch plan",
+                    },
+                ),
+            ],
+            total_tokens=10,
+            total_input_tokens=4,
+            total_output_tokens=6,
+            total_tool_calls=2,
+            total_llm_calls=0,
+            input_query="fix auth flow",
+            final_output="done",
+        )
+    )
+
+    response = await client.get("/api/traces/trace-detail")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["runtime_decisions"][0]["kind"] == "step_back"
+    assert payload["runtime_decisions"][0]["details"]["experience"] == "switch plan"
+    assert [event["kind"] for event in payload["timeline_events"]] == [
+        "run_started",
+        "tool_call",
+        "review_checkpoint",
+        "review_result",
+        "runtime_decision",
+        "run_finished",
+    ]
+    assert payload["timeline_events"][2]["details"]["trigger_reason"] == "step_interval"
+
+
+@pytest.mark.asyncio
+async def test_get_trace_handles_null_milestone_list(client) -> None:
+    runtime = _runtime(client)
+    created_at = datetime(2026, 4, 25, 12, 5, tzinfo=timezone.utc)
+    root_span = Span(
+        trace_id="trace-milestones-null",
+        kind=SpanKind.AGENT,
+        name="agent-alpha",
+        depth=0,
+        run_id="run-2",
+        start_time=created_at,
+        end_time=created_at.replace(second=1),
+        duration_ms=1000.0,
+        status=SpanStatus.OK,
+        attributes={
+            "agent_id": "agent-alpha",
+            "session_id": "sess-2",
+            "nested": False,
+            "parent_run_id": None,
+            "start_sequence": 1,
+            "end_sequence": 2,
+        },
+    )
+    await runtime.trace_storage.save_trace(
+        Trace(
+            trace_id="trace-milestones-null",
+            agent_id="agent-alpha",
+            session_id="sess-2",
+            status=SpanStatus.OK,
+            start_time=created_at,
+            end_time=created_at.replace(second=1),
+            duration_ms=1000.0,
+            root_span_id=root_span.span_id,
+            spans=[
+                root_span,
+                Span(
+                    trace_id="trace-milestones-null",
+                    parent_span_id=root_span.span_id,
+                    kind=SpanKind.TOOL_CALL,
+                    name="declare_milestones",
+                    depth=1,
+                    run_id="run-2",
+                    step_id="step-milestones",
+                    start_time=created_at,
+                    end_time=created_at,
+                    duration_ms=5.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 2,
+                        "agent_id": "agent-alpha",
+                        "tool_name": "declare_milestones",
+                        "tool_call_id": "tc-milestones",
+                    },
+                    tool_details={
+                        "tool_name": "declare_milestones",
+                        "tool_call_id": "tc-milestones",
+                        "input_args": {"milestones": None},
+                        "output": "ignored",
+                        "status": "completed",
+                    },
+                ),
+            ],
+        )
+    )
+
+    response = await client.get("/api/traces/trace-milestones-null")
+
+    assert response.status_code == 200
+    payload = response.json()
+    milestone_event = next(
+        event
+        for event in payload["timeline_events"]
+        if event["kind"] == "milestone_update"
+    )
+    assert milestone_event["summary"] == "0 milestones declared/updated"
+    assert milestone_event["details"]["milestones"] == []

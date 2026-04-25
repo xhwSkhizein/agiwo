@@ -29,7 +29,7 @@
 - `agiwo/agent/run_bootstrap.py`
   Stop direct message-state mutation from bypassing the writer during context assembly.
 - `agiwo/agent/run_tool_batch.py`
-  Route tool-step commits and retrospect message rewrites through the writer.
+  Route tool-step commits and step-back message rewrites through the writer.
 - `agiwo/agent/compaction.py`
   Convert `compaction` success/failure into writer-mediated runtime facts.
 - `agiwo/agent/runtime/step_committer.py`
@@ -345,8 +345,8 @@ class HookPhase(str, Enum):
     BEFORE_COMPACTION = "before_compaction"
     AFTER_COMPACTION = "after_compaction"
     COMPACTION_FAILED = "compaction_failed"
-    BEFORE_RETROSPECT = "before_retrospect"
-    AFTER_RETROSPECT = "after_retrospect"
+    BEFORE_REVIEW = "before_review"
+    AFTER_STEP_BACK = "after_step_back"
     BEFORE_TERMINATION = "before_termination"
     AFTER_TERMINATION = "after_termination"
     AFTER_STEP_COMMIT = "after_step_commit"
@@ -371,7 +371,7 @@ _DECISION_SUPPORT_ALLOWLISTS = {
     HookPhase.BEFORE_LLM: {"llm_advice"},
     HookPhase.BEFORE_TOOL_CALL: {"tool_advice"},
     HookPhase.BEFORE_COMPACTION: {"compaction_advice"},
-    HookPhase.BEFORE_RETROSPECT: {"retrospect_advice"},
+    HookPhase.BEFORE_REVIEW: {"step_back_advice"},
     HookPhase.BEFORE_TERMINATION: {"termination_advice"},
 }
 ```
@@ -595,16 +595,16 @@ git add agiwo/agent/runtime/state_writer.py agiwo/agent/run_loop.py agiwo/agent/
 git commit -m "refactor: route run lifecycle through state writer"
 ```
 
-### Task 4: Route Tool, Compaction, And Retrospect Writes Through The Writer
+### Task 4: Route Tool, Compaction, And StepBack Writes Through The Writer
 
 **Files:**
 - Modify: `agiwo/agent/run_tool_batch.py`
 - Modify: `agiwo/agent/compaction.py`
-- Modify: `agiwo/agent/retrospect/executor.py`
+- Modify: `agiwo/agent/review/executor.py`
 - Modify: `agiwo/agent/runtime/state_writer.py`
 - Modify: `agiwo/agent/tool_executor.py`
 - Test: `tests/agent/test_compact.py`
-- Test: `tests/agent/test_retrospect.py`
+- Test: `tests/agent/test_step_back.py`
 - Test: `tests/agent/test_tool_auth_runtime.py`
 - Test: `tests/agent/test_run_engine.py`
 
@@ -638,9 +638,9 @@ async def test_run_loop_records_compaction_failed_entry_on_failed_attempt(
 ```
 
 ```python
-# tests/agent/test_retrospect.py
+# tests/agent/test_step_back.py
 @pytest.mark.asyncio
-async def test_retrospect_message_rebuild_goes_through_state_writer(
+async def test_step_back_message_rebuild_goes_through_state_writer(
     monkeypatch, _make_context
 ) -> None:
     state = _make_context()
@@ -653,15 +653,15 @@ async def test_retrospect_message_rebuild_goes_through_state_writer(
 
     ...
 
-    assert writer_calls == ["retrospect"]
+    assert writer_calls == ["step-back"]
 ```
 
 - [ ] **Step 2: Run the targeted tests to verify they fail**
 
-Run: `uv run pytest tests/agent/test_compact.py::test_run_loop_records_compaction_failed_entry_on_failed_attempt tests/agent/test_retrospect.py::test_retrospect_message_rebuild_goes_through_state_writer -v`
+Run: `uv run pytest tests/agent/test_compact.py::test_run_loop_records_compaction_failed_entry_on_failed_attempt tests/agent/test_step_back.py::test_step_back_message_rebuild_goes_through_state_writer -v`
 Expected: FAIL because `compaction` failure does not append `CompactionFailed` and message rewrites still bypass the writer.
 
-- [ ] **Step 3: Add writer methods for message rebuilds, `compaction` success/failure, tool-step commits, and retrospect application**
+- [ ] **Step 3: Add writer methods for message rebuilds, `compaction` success/failure, tool-step commits, and step-back application**
 
 ```python
 # agiwo/agent/runtime/state_writer.py
@@ -708,12 +708,12 @@ await session_runtime.project_committed_entries(tool_entries, context=context)
 
 if outcome.applied:
     rebuilt_entries = await writer.rebuild_messages(
-        reason="retrospect",
+        reason="step-back",
         messages=outcome.messages,
     )
-    retrospect_entries = await writer.record_retrospect_applied(...)
+    step_back_entries = await writer.record_step_back_applied(...)
     await session_runtime.project_committed_entries(
-        [*rebuilt_entries, *retrospect_entries],
+        [*rebuilt_entries, *step_back_entries],
         context=context,
     )
 ```
@@ -735,15 +735,15 @@ else:
     applied_entries = await writer.record_compaction_applied(metadata)
 ```
 
-- [ ] **Step 4: Run the compaction, retrospect, and tool suites**
+- [ ] **Step 4: Run the compaction, step-back, and tool suites**
 
-Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_retrospect.py tests/agent/test_tool_auth_runtime.py tests/agent/test_run_engine.py -v`
-Expected: PASS with `CompactionFailed` committed, retrospect rewrites mediated by the writer, and tool steps still producing stable results.
+Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_step_back.py tests/agent/test_tool_auth_runtime.py tests/agent/test_run_engine.py -v`
+Expected: PASS with `CompactionFailed` committed, step-back rewrites mediated by the writer, and tool steps still producing stable results.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agiwo/agent/runtime/state_writer.py agiwo/agent/run_tool_batch.py agiwo/agent/compaction.py agiwo/agent/retrospect/executor.py agiwo/agent/tool_executor.py tests/agent/test_compact.py tests/agent/test_retrospect.py tests/agent/test_tool_auth_runtime.py tests/agent/test_run_engine.py
+git add agiwo/agent/runtime/state_writer.py agiwo/agent/run_tool_batch.py agiwo/agent/compaction.py agiwo/agent/review/executor.py agiwo/agent/tool_executor.py tests/agent/test_compact.py tests/agent/test_step_back.py tests/agent/test_tool_auth_runtime.py tests/agent/test_run_engine.py
 git commit -m "refactor: route runtime decision writes through state writer"
 ```
 
@@ -795,7 +795,7 @@ def test_live_stream_matches_replayed_run_log_for_all_replayable_types() -> None
         "messages_rebuilt",
         "compaction_applied",
         "compaction_failed",
-        "retrospect_applied",
+        "step_back_applied",
         "termination_decided",
         "run_completed",
         "run_failed",

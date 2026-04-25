@@ -2,7 +2,7 @@
 
 **Goal:** Rebuild the core `agiwo.agent` runtime so that execution flow is easier to reason about, hooks are deterministic and robust, runtime facts have a single source of truth, and later scheduler/console migrations can build on a cleaner runtime protocol without preserving legacy internals.
 
-**Architecture:** Replace the current `run_loop + Run + StepRecord + AgentHooks` execution model with a `RunEngine` centered runtime. In the shipped code, `RunEngine` maps to `RunLoopOrchestrator` as the canonical runtime-facing name. The new runtime writes strongly typed `RunLog` entries as the only persisted source of truth. `termination`, `compaction`, and `retrospect` are first-class runtime decisions. `trace` and `stream` are replayable views built from `RunLog`, not peer decision layers.
+**Architecture:** Replace the current `run_loop + Run + StepRecord + AgentHooks` execution model with a `RunEngine` centered runtime. In the shipped code, `RunEngine` maps to `RunLoopOrchestrator` as the canonical runtime-facing name. The new runtime writes strongly typed `RunLog` entries as the only persisted source of truth. `termination`, `compaction`, and `step-back` are first-class runtime decisions. `trace` and `stream` are replayable views built from `RunLog`, not peer decision layers.
 
 **Tech Stack:** Python 3.10+, existing `Model` and `BaseTool` abstractions, existing scheduler/console integration surfaces, new `RunLogStorage` facade replacing `RunStepStorage`
 
@@ -17,7 +17,7 @@ It includes:
 3. deleting `Run` and `StepRecord` as persisted source models
 4. introducing strongly typed `RunLog` entries as the only runtime source of truth
 5. replacing `RunStepStorage` with `RunLogStorage`
-6. making `termination`, `compaction`, and `retrospect` first-class runtime records
+6. making `termination`, `compaction`, and `step-back` first-class runtime records
 7. rebuilding `trace` and `stream` publication from `RunLog`
 8. defining migration stages for scheduler and console
 
@@ -36,14 +36,14 @@ The current agent runtime already has some useful separation:
 1. `Agent` is mostly a facade
 2. `RunContext` separates identity from mutable ledger state
 3. `SessionRuntime` owns session-scoped stream publication and storage handles
-4. `compaction` and `retrospect` are already split out of the main loop into dedicated modules
+4. `compaction` and `step-back` are already split out of the main loop into dedicated modules
 
 The remaining complexity is mostly caused by execution ownership and data ownership still being spread across multiple modules:
 
 1. `run_loop.py` still coordinates most execution phases directly
 2. hooks are called from multiple places such as `run_loop.py`, `tool_executor.py`, and `step_committer.py`
 3. `Run`, `StepRecord`, ledger state, stream events, and trace callbacks together form more than one "truth" about what happened
-4. `compaction`, `retrospect`, and `termination` affect execution semantics, but `trace` and `stream` learn about them only indirectly
+4. `compaction`, `step-back`, and `termination` affect execution semantics, but `trace` and `stream` learn about them only indirectly
 5. the current callback-slot `AgentHooks` model does not express phase ordering, mutation boundaries, or default failure isolation well enough
 
 This makes the runtime harder to change safely, and it increases the coupling cost for scheduler and console.
@@ -52,13 +52,13 @@ This makes the runtime harder to change safely, and it increases the coupling co
 
 These decisions are fixed for this refactor:
 
-1. keep the names `termination`, `compaction`, and `retrospect`
+1. keep the names `termination`, `compaction`, and `step-back`
 2. delete `AgentHooks` rather than preserve compatibility
 3. delete `Run` and `StepRecord` as canonical persisted models
 4. keep `Agent.start()`, `Agent.run()`, `Agent.run_stream()`, `Agent.run_child()`, and `Agent.create_child_agent()` as the public execution surfaces
 5. make `RunLog` the only persisted runtime source of truth
 6. treat "committed step" as one family of `RunLog` entries, not as a separate top-level model
-7. make `trace` and `stream` consumers of `RunLog`, not execution peers of `termination`, `compaction`, or `retrospect`
+7. make `trace` and `stream` consumers of `RunLog`, not execution peers of `termination`, `compaction`, or `step-back`
 8. allow no legacy compatibility layer to become a permanent second architecture
 
 ## Design Goals
@@ -96,7 +96,7 @@ Implementation mapping:
 - `RunEngine` remains the single authoritative phase-decider in the implementation, with `RunLoopOrchestrator` kept as the canonical runtime-facing name.
 
 1. phase progression
-2. calling `termination`, `compaction`, and `retrospect` policies
+2. calling `termination`, `compaction`, and `step-back` policies
 3. deciding when the run continues, pauses, or finishes
 4. invoking `HookDispatcher`
 5. sending all state changes through `RunStateWriter`
@@ -134,7 +134,7 @@ No other component may directly mutate message history, committed response state
 
 1. `termination`
 2. `compaction`
-3. `retrospect`
+3. `step-back`
 
 Each policy returns a structured decision. Policies do not publish streams, write traces, or mutate state directly.
 
@@ -164,8 +164,8 @@ The first version of the runtime should expose only a fixed set of phases:
 6. `after_tool_batch`
 7. `before_compaction`
 8. `after_compaction`
-9. `before_retrospect`
-10. `after_retrospect`
+9. `before_review`
+10. `after_step_back`
 11. `before_termination`
 12. `after_termination`
 13. `after_step_commit`
@@ -248,7 +248,7 @@ All `after_*` phases default to non-critical behavior.
 
 ### Ordering
 
-Every `RunLog` entry should carry a monotonic sequence in session order. This preserves the current ability to reason about a shared session timeline, including nested runs, `compaction` ranges, and `retrospect` impact ranges.
+Every `RunLog` entry should carry a monotonic sequence in session order. This preserves the current ability to reason about a shared session timeline, including nested runs, `compaction` ranges, and `step-back` impact ranges.
 
 Committed-step views should retain this ordering model so existing user-facing sequence semantics remain understandable.
 
@@ -271,7 +271,7 @@ The first implementation must include at least these entry families:
    - `ToolStepCommitted`
 4. policy decision entries
    - `CompactionApplied`
-   - `RetrospectApplied`
+   - `StepBackApplied`
    - `TerminationDecided`
 5. runtime health entries
    - `HookFailed`
@@ -304,7 +304,7 @@ Its old responsibilities split into:
 
 This removes the second source-of-truth problem where run status and response were stored both as runtime facts and as a separate aggregate object.
 
-## `termination`, `compaction`, and `retrospect`
+## `termination`, `compaction`, and `step-back`
 
 These three remain named exactly as they are today, but their runtime role changes.
 
@@ -331,9 +331,9 @@ It must record:
 
 `compaction` is an engine decision plus state rewrite, not a hidden message mutation.
 
-### `retrospect`
+### `step-back`
 
-`retrospect` remains named `retrospect`.
+`step-back` remains named `step-back`.
 
 It must record:
 
@@ -342,11 +342,11 @@ It must record:
 3. the reason it was triggered
 4. how message history was rewritten afterward
 
-`retrospect` is not just tool-result post-processing. It is a first-class context rewrite decision.
+`step-back` is not just tool-result post-processing. It is a first-class context rewrite decision.
 
 ## Trace And Stream Publication
 
-`trace` and `stream` are intentionally not modeled at the same layer as `termination`, `compaction`, or `retrospect`.
+`trace` and `stream` are intentionally not modeled at the same layer as `termination`, `compaction`, or `step-back`.
 
 The rule is:
 
@@ -361,7 +361,7 @@ The design guarantees replay at the phase and committed-step level.
 That means:
 
 1. committed step history is replayable
-2. `termination`, `compaction`, and `retrospect` decisions are replayable
+2. `termination`, `compaction`, and `step-back` decisions are replayable
 3. trace trees can be rebuilt from `RunLog`
 4. outward stream timelines can be rebuilt from `RunLog`
 
@@ -379,7 +379,7 @@ Provider token deltas may still be published live for UX, but they are treated a
 
 1. appending one or more `RunLog` entries
 2. allocating monotonic session-order sequence values
-3. storing any compacted transcript or large payload references needed by `compaction` and `retrospect`
+3. storing any compacted transcript or large payload references needed by `compaction` and `step-back`
 
 ### Read Interface
 
@@ -390,7 +390,7 @@ Required query capabilities:
 1. replay a run or session timeline in order
 2. list committed-step views for a session, run, or agent
 3. return latest run view for a session
-4. return latest `compaction`, `retrospect`, and `termination` state for a run or session
+4. return latest `compaction`, `step-back`, and `termination` state for a run or session
 5. return summary counts needed by console session list views
 
 ### Query Model
@@ -402,7 +402,7 @@ The intended public read models are:
 1. `RunView`
 2. `StepView`
 3. replayed `AgentStreamItem`
-4. explicit runtime-decision views for latest `termination`, `compaction`, `retrospect`, and rollback state
+4. explicit runtime-decision views for latest `termination`, `compaction`, `step-back`, and rollback state
 5. `RunMetrics`
 6. `RunOutput`
 
@@ -468,7 +468,7 @@ Implementation mapping:
 Completion criteria:
 
 1. root and child agent execution run fully on the new runtime
-2. `termination`, `compaction`, and `retrospect` are stored as first-class `RunLog` entries
+2. `termination`, `compaction`, and `step-back` are stored as first-class `RunLog` entries
 3. `trace` and `stream` can be rebuilt from `RunLog`
 4. existing agent-level behavior is re-covered by tests using the new model
 
@@ -498,7 +498,7 @@ At minimum, the new runtime test plan should cover:
 2. hook capability enforcement
 3. hook failure isolation and critical failure behavior
 4. committed-step generation from `RunLog`
-5. `termination`, `compaction`, and `retrospect` replay behavior
+5. `termination`, `compaction`, and `step-back` replay behavior
 6. trace rebuild from `RunLog`
 7. stream rebuild from `RunLog`
 8. root and child run execution correctness
@@ -540,7 +540,7 @@ Guardrail:
 
 1. The new design has one persisted source of truth: `RunLog`.
 2. `Run`, `StepRecord`, and `AgentHooks` are removed from the runtime design.
-3. `termination`, `compaction`, and `retrospect` remain named as-is and become first-class runtime records.
+3. `termination`, `compaction`, and `step-back` remain named as-is and become first-class runtime records.
 4. `trace` and `stream` are modeled as replayable views that consume `RunLog`.
 5. The `Agent` public execution surfaces remain stable enough for staged migration.
 6. The design supports a first implementation phase focused only on replacing `agiwo.agent` internals without forcing scheduler and console to be rewritten in the same change.

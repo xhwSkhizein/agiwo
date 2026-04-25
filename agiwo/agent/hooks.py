@@ -368,6 +368,39 @@ class HookRegistry:
             allow_transform=False,
         )
 
+    async def before_review(
+        self,
+        *,
+        trigger_reason: str,
+        milestone: object | None,
+        step_count: int,
+        context: object | None = None,
+    ) -> str | None:
+        payload = await self._dispatch(
+            HookPhase.BEFORE_REVIEW,
+            {
+                "trigger_reason": trigger_reason,
+                "milestone": milestone,
+                "step_count": step_count,
+                "context": context,
+                "review_advice": None,
+            },
+            allow_transform=True,
+        )
+        advice = payload.get("review_advice")
+        return advice if isinstance(advice, str) else None
+
+    async def after_step_back(
+        self,
+        outcome: object,
+        context: object | None = None,
+    ) -> None:
+        await self._dispatch(
+            HookPhase.AFTER_STEP_BACK,
+            {"outcome": outcome, "context": context},
+            allow_transform=False,
+        )
+
     async def after_run(self, result: object, context: object) -> None:
         await self._dispatch(
             HookPhase.RUN_FINALIZED,

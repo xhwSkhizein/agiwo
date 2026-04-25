@@ -10,6 +10,7 @@ from agiwo.agent.models.log import (
     CommittedStep,
     CompactionApplied,
     CompactionFailed,
+    ContextStepsHidden,
     MessagesRebuilt,
     RunFailed,
     RunFinished,
@@ -398,6 +399,12 @@ def stream_items_from_entries(
     run_contexts: Mapping[str, dict[str, Any]] | None = None,
 ) -> list["AgentStreamItem"]:
     items: list[AgentStreamItem] = []
+    hidden_step_ids = {
+        step_id
+        for entry in entries
+        if isinstance(entry, ContextStepsHidden)
+        for step_id in entry.step_ids
+    }
     resolved_run_contexts = _collect_run_contexts(
         entries,
         initial_run_contexts=run_contexts,
@@ -412,6 +419,8 @@ def stream_items_from_entries(
             entry,
             (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
         ):
+            if entry.step_id in hidden_step_ids:
+                continue
             base_kwargs = _base_kwargs_with_run_context(entry, resolved_run_contexts)
             base_kwargs["parent_run_id"] = entry.parent_run_id
             base_kwargs["depth"] = entry.depth

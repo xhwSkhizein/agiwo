@@ -5,7 +5,7 @@ from typing import Any
 
 from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import StepView
-from agiwo.agent.review import ReviewBatch
+from agiwo.agent.review import ReviewBatch, inject_system_review
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.step_commit import StepCommitter
 from agiwo.agent.runtime.state_writer import RunStateWriter
@@ -20,6 +20,7 @@ async def execute_tool_batch_cycle(
     context: RunContext,
     runtime: RunRuntime,
     tool_calls: list[dict[str, Any]],
+    assistant_step_id: str | None,
     set_termination_reason: ToolTerminationWriter,
     commit_step: StepCommitter,
 ) -> bool:
@@ -50,12 +51,33 @@ async def execute_tool_batch_cycle(
             sequence=seq,
             tool_call_id=call_id,
             name=result.tool_name,
-            content=batch.process_result(result, current_seq=seq),
+            content=result.content or "",
             content_for_user=result.content_for_user,
             is_error=not result.is_success,
         )
-        batch.register_step(call_id, tool_step.id, tool_step.sequence)
-        await commit_step(tool_step)
+        tool_step.content = batch.process_result(
+            result,
+            current_seq=seq,
+            assistant_step_id=assistant_step_id,
+            tool_step_id=tool_step.id,
+        )
+        review_notice = batch.consume_review_notice_request()
+        if review_notice is not None:
+            review_advice = await context.hooks.before_review(
+                trigger_reason=review_notice.trigger.value,
+                milestone=review_notice.milestone,
+                step_count=review_notice.step_count,
+                context=context,
+            )
+            tool_step.content = inject_system_review(
+                review_notice.content,
+                review_notice.milestone,
+                review_notice.step_count,
+                trigger_reason=review_notice.trigger.value,
+                review_advice=review_advice,
+            )
+        committed_step = await commit_step(tool_step)
+        batch.register_step(call_id, committed_step.id, committed_step.sequence)
 
         if not terminated and result.termination_reason is not None:
             await set_termination_reason(result.termination_reason, result.tool_name)
@@ -77,27 +99,93 @@ async def _apply_review_outcome(
         run_id=context.run_id,
         agent_id=context.agent_id,
     )
-    if not outcome.applied:
+    if outcome.mode == "none":
         return
 
-    # Step-back already updates surviving message dicts in-place. Sync the
-    # ledger list to drop temporary review_trajectory metadata without a full
-    # messages rebuild.
-    context.ledger.messages[:] = outcome.messages
+    if outcome.hidden_step_ids:
+        await writer.record_context_steps_hidden(step_ids=outcome.hidden_step_ids)
 
-    # Record step_back event to run log
-    step_back_entries = await writer.record_step_back_applied(
-        affected_count=outcome.affected_count,
-        checkpoint_seq=outcome.checkpoint_seq,
-        experience=outcome.experience or "",
+    for update in outcome.content_updates:
+        _replace_tool_message_content(
+            context.ledger.messages,
+            tool_call_id=update.tool_call_id,
+            content=update.content,
+        )
+
+    _remove_review_tool_call(
+        context.ledger.messages,
+        review_tool_call_id=outcome.review_tool_call_id,
     )
-    await context.session_runtime.project_run_log_entries(
-        step_back_entries,
-        run_id=context.run_id,
-        agent_id=context.agent_id,
-        parent_run_id=context.parent_run_id,
-        depth=context.depth,
-    )
+
+    if outcome.mode == "step_back":
+        step_back_entries = await writer.record_step_back_applied(
+            affected_count=outcome.affected_count,
+            checkpoint_seq=outcome.checkpoint_seq,
+            experience=outcome.experience or "",
+        )
+        await context.session_runtime.project_run_log_entries(
+            step_back_entries,
+            run_id=context.run_id,
+            agent_id=context.agent_id,
+            parent_run_id=context.parent_run_id,
+            depth=context.depth,
+        )
+        await context.hooks.after_step_back(outcome, context)
+
+
+def _replace_tool_message_content(
+    messages: list[dict[str, Any]],
+    *,
+    tool_call_id: str,
+    content: str,
+) -> None:
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+        if message.get("tool_call_id") != tool_call_id:
+            continue
+        message["content"] = content
+        break
+
+
+def _remove_review_tool_call(
+    messages: list[dict[str, Any]],
+    *,
+    review_tool_call_id: str | None,
+) -> None:
+    if not review_tool_call_id:
+        return
+
+    kept_messages: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("role") == "tool":
+            if message.get("tool_call_id") != review_tool_call_id:
+                kept_messages.append(message)
+            continue
+
+        if message.get("role") != "assistant":
+            kept_messages.append(message)
+            continue
+
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            kept_messages.append(message)
+            continue
+
+        remaining_tool_calls = [
+            tool_call
+            for tool_call in tool_calls
+            if tool_call.get("id") != review_tool_call_id
+        ]
+        if remaining_tool_calls:
+            message["tool_calls"] = remaining_tool_calls
+        else:
+            message.pop("tool_calls", None)
+        content = message.get("content")
+        if remaining_tool_calls or (isinstance(content, str) and content.strip()):
+            kept_messages.append(message)
+
+    messages[:] = kept_messages
 
 
 __all__ = ["execute_tool_batch_cycle"]

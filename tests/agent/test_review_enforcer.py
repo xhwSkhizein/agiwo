@@ -33,7 +33,6 @@ class TestCheckReviewTrigger:
     def test_step_interval_trigger(self):
         state = ReviewState(
             last_review_seq=5,
-            last_checkpoint_seq=5,
             consecutive_errors=0,
         )
         # current_seq=14, last_review_seq=5, diff=9 >= interval=8
@@ -48,7 +47,7 @@ class TestCheckReviewTrigger:
         assert trigger == ReviewTrigger.STEP_INTERVAL
 
     def test_pending_review_trigger(self):
-        state = ReviewState(is_review_pending=True)
+        state = ReviewState(pending_review_reason="milestone_switch")
         trigger = check_review_trigger(
             state=state,
             enabled=True,
@@ -71,7 +70,7 @@ class TestCheckReviewTrigger:
         assert trigger == ReviewTrigger.CONSECUTIVE_ERRORS
 
     def test_no_trigger_for_review_tool_itself(self):
-        state = ReviewState(is_review_pending=True)
+        state = ReviewState(pending_review_reason="milestone_switch")
         trigger = check_review_trigger(
             state=state,
             enabled=True,
@@ -83,7 +82,7 @@ class TestCheckReviewTrigger:
         assert trigger == ReviewTrigger.NONE
 
     def test_below_interval_no_trigger(self):
-        state = ReviewState(last_review_seq=5, last_checkpoint_seq=5)
+        state = ReviewState(last_review_seq=5)
         trigger = check_review_trigger(
             state=state,
             enabled=True,
@@ -99,16 +98,28 @@ class TestInjectSystemReview:
     def test_injects_review_with_milestone(self):
         content = "Tool result content"
         milestone = Milestone(id="locate", description="定位超时根因", status="active")
-        result = inject_system_review(content, milestone, step_count=3)
+        result = inject_system_review(
+            content,
+            milestone,
+            step_count=3,
+            trigger_reason="step_interval",
+        )
         assert "<system-review>" in result
         assert "</system-review>" in result
         assert content in result
         assert "定位超时根因" in result
+        assert "Trigger: step_interval" in result
         assert "review_trajectory" in result
 
     def test_injects_review_without_milestone(self):
         content = "Tool result content"
-        result = inject_system_review(content, None, step_count=5)
+        result = inject_system_review(
+            content,
+            None,
+            step_count=5,
+            trigger_reason="milestone_switch",
+        )
         assert "<system-review>" in result
         assert "</system-review>" in result
         assert "No active milestone" in result
+        assert "Trigger: milestone_switch" in result

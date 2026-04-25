@@ -138,6 +138,21 @@ class SessionObservabilityRecord:
 
 
 @dataclass(slots=True)
+class TraceTimelineEventRecord:
+    kind: str
+    timestamp: datetime | None = None
+    sequence: int | None = None
+    run_id: str | None = None
+    agent_id: str | None = None
+    span_id: str | None = None
+    step_id: str | None = None
+    title: str = ""
+    summary: str = ""
+    status: str = "ok"
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class PageSlice(Generic[T]):
     items: list[T]
     limit: int

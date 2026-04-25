@@ -99,7 +99,7 @@ Runtime truth means:
 3. committed step writes
 4. termination writes
 5. `compaction` success and failure writes
-6. `retrospect` writes
+6. `step-back` writes
 7. hook failure writes
 8. keeping in-memory committed state and appended `RunLog` entries consistent
 9. returning the committed entries for downstream projection
@@ -119,7 +119,7 @@ Runtime truth means:
 
 ### `RunPolicies`
 
-`termination`, `compaction`, and `retrospect` stay as named runtime policies.
+`termination`, `compaction`, and `step-back` stay as named runtime policies.
 
 Policies may:
 
@@ -164,8 +164,8 @@ The canonical public runtime phases are:
 7. `before_compaction`
 8. `after_compaction`
 9. `compaction_failed`
-10. `before_retrospect`
-11. `after_retrospect`
+10. `before_review`
+11. `after_step_back`
 12. `before_termination`
 13. `after_termination`
 14. `after_step_commit`
@@ -267,9 +267,9 @@ The canonical rules are:
    - observe-only only
 9. `compaction_failed`
    - observe-only only
-10. `before_retrospect`
-   - decision-support fields: `retrospect_advice`
-11. `after_retrospect`
+10. `before_review`
+   - decision-support fields: `step_back_advice`
+11. `after_step_back`
    - observe-only only
 12. `before_termination`
    - decision-support fields: `termination_advice`
@@ -318,7 +318,7 @@ This convergence pass keeps the existing entry families and adds missing strictn
    - `TerminationDecided`
    - `CompactionApplied`
    - `CompactionFailed`
-   - `RetrospectApplied`
+   - `StepBackApplied`
    - `RunRolledBack`
 5. runtime health
    - `HookFailed`
@@ -380,9 +380,9 @@ It must record:
    - `CompactionFailed`
 4. any derived in-memory `compaction` counters are updated only through the writer
 
-### `retrospect`
+### `step-back`
 
-1. policy/executor returns a structured retrospect outcome
+1. policy/executor returns a structured step-back outcome
 2. any committed message rewrite and replayable runtime fact is written only through `RunStateWriter`
 
 ### Termination
@@ -446,7 +446,7 @@ This convergence work is complete only when all of the following are true:
 4. illegal hook transform fields are rejected by contract
 5. hook execution order is deterministic and behavior-tested
 6. every `compaction` failure produces `CompactionFailed`
-7. latest `compaction`, `retrospect`, `termination`, and rollback state remain queryable from replay helpers
+7. latest `compaction`, `step-back`, `termination`, and rollback state remain queryable from replay helpers
 8. replayable live stream output matches replayed stream output from `RunLog`
 9. live trace structure matches replayed trace structure from `RunLog`
 10. production code no longer mutates runtime truth outside `RunStateWriter`
@@ -466,7 +466,7 @@ The runtime must be covered at four layers:
    - early failure paths
    - tool runs
    - `compaction`
-   - `retrospect`
+   - `step-back`
 3. live-versus-replay parity tests
    - stream parity
    - trace parity

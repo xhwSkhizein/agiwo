@@ -24,7 +24,7 @@ async for event in agent.run_stream("Tell me about Python"):
 | `messages_rebuilt` | rebuilt prompt messages after runtime mutation |
 | `compaction_applied` | committed compaction summary + transcript range |
 | `compaction_failed` | committed compaction failure fact |
-| `retrospect_applied` | committed retrospect rewrite fact |
+| `step_back_applied` | committed step-back rewrite fact |
 | `termination_decided` | committed termination decision fact |
 | `run_rolled_back` | committed rollback range |
 | `run_completed` | final response, metrics, termination reason |

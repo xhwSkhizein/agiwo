@@ -195,7 +195,8 @@ flowchart TD
 | `query_spawned_agent` | 查看 child state |
 | `cancel_agent` | 取消 child subtree |
 | `list_agents` | 列出直接 child |
-| `retrospect_tool_result` | 对最近一次工具结果写回 retrospect 反馈 |
+| `declare_milestones` | 声明当前任务的具体里程碑 |
+| `review_trajectory` | 回应系统 review，并在偏离时提供经验摘要 |
 
 这些 tools 由 `Scheduler` 自动注入，不需要手动注册。
 

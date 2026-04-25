@@ -100,7 +100,8 @@ You can use these tools to coordinate work:
 - cancel_agent: Stop a child that's no longer needed
 - list_agents: See all active children
 - sleep_and_wait: Wait for a condition before continuing
-- retrospect_tool_result: Rewrite the latest tool result with structured feedback
+- declare_milestones: Declare concrete sub-goals for the current task
+- review_trajectory: Respond to a system review and provide an experience summary when off-track
 """
 ```
 

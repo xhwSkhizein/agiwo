@@ -6,9 +6,12 @@ from agiwo.agent import StepMetrics, TerminationReason
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
+    CompactionFailed,
+    HookFailed,
     LLMCallCompleted,
     LLMCallStarted,
     RunFinished,
+    RunRolledBack,
     RunStarted,
     StepBackApplied,
     TerminationDecided,
@@ -203,8 +206,18 @@ async def test_collector_records_runtime_run_log_entries() -> None:
                 compact_model="compact-model",
                 compact_tokens=128,
             ),
-            StepBackApplied(
+            CompactionFailed(
                 sequence=4,
+                session_id="session-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                error="model timeout",
+                attempt=1,
+                max_attempts=2,
+                terminal=False,
+            ),
+            StepBackApplied(
+                sequence=5,
                 session_id="session-1",
                 run_id="run-1",
                 agent_id="agent-1",
@@ -212,8 +225,27 @@ async def test_collector_records_runtime_run_log_entries() -> None:
                 checkpoint_seq=2,
                 experience="switch plan",
             ),
+            RunRolledBack(
+                sequence=6,
+                session_id="session-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                start_sequence=4,
+                end_sequence=5,
+                reason="step_back_cleanup",
+            ),
+            HookFailed(
+                sequence=7,
+                session_id="session-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                phase="after_tool_call",
+                handler_name="audit_hook",
+                critical=False,
+                error="hook exploded",
+            ),
             TerminationDecided(
-                sequence=5,
+                sequence=8,
                 session_id="session-1",
                 run_id="run-1",
                 agent_id="agent-1",
@@ -230,12 +262,20 @@ async def test_collector_records_runtime_run_log_entries() -> None:
     runtime_spans = [span for span in trace.spans if span.kind == SpanKind.RUNTIME]
     assert [span.name for span in runtime_spans] == [
         "compaction",
+        "compaction_failed",
         "step_back",
+        "rollback",
+        "hook_failed",
         "termination",
     ]
+    assert runtime_spans[0].attributes["sequence"] == 3
     assert runtime_spans[0].attributes["summary"] == "short summary"
-    assert runtime_spans[1].attributes["experience"] == "switch plan"
-    assert runtime_spans[2].attributes["termination_reason"] == "max_steps"
+    assert runtime_spans[1].status == "error"
+    assert runtime_spans[1].error_message == "model timeout"
+    assert runtime_spans[2].attributes["experience"] == "switch plan"
+    assert runtime_spans[3].attributes["reason"] == "step_back_cleanup"
+    assert runtime_spans[4].attributes["handler_name"] == "audit_hook"
+    assert runtime_spans[5].attributes["termination_reason"] == "max_steps"
 
 
 @pytest.mark.asyncio

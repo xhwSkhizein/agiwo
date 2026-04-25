@@ -6,6 +6,7 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
     CompactionFailed,
+    ContextStepsHidden,
     ContextAssembled,
     HookFailed,
     LLMCallCompleted,
@@ -240,6 +241,23 @@ class RunStateWriter:
                     affected_count=affected_count,
                     checkpoint_seq=checkpoint_seq,
                     experience=experience,
+                )
+            ]
+        )
+
+    async def record_context_steps_hidden(
+        self,
+        *,
+        step_ids: list[str],
+        reason: str = "review_metadata",
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_context_steps_hidden_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    step_ids=step_ids,
+                    reason=reason,
                 )
             ]
         )
@@ -484,6 +502,23 @@ def build_step_back_applied_entry(
     )
 
 
+def build_context_steps_hidden_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    step_ids: list[str],
+    reason: str,
+) -> ContextStepsHidden:
+    return ContextStepsHidden(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        step_ids=list(step_ids),
+        reason=reason,
+    )
+
+
 def build_termination_decided_entry(
     state: RunContext,
     *,
@@ -508,6 +543,7 @@ __all__ = [
     "build_compaction_applied_entry",
     "build_compaction_failed_entry",
     "build_context_assembled_entry",
+    "build_context_steps_hidden_entry",
     "build_hook_failed_entry",
     "build_llm_call_completed_entry",
     "build_llm_call_started_entry",

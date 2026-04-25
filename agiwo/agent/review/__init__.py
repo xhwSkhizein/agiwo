@@ -1,15 +1,10 @@
-"""Goal-directed review.
+"""Goal-directed review public API used by ``run_tool_batch.py``."""
 
-Public API consumed by ``run_tool_batch.py``:
-
-* ``ReviewBatch`` — per-batch lifecycle object
-* ``StepBackOutcome`` — result of a step-back pass
-"""
-
+from dataclasses import dataclass
 from typing import Any
 
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.models.review import Milestone
+from agiwo.agent.models.review import Milestone, ReviewCheckpoint
 from agiwo.agent.models.run import RunLedger
 from agiwo.agent.review.goal_manager import (
     activate_next_milestone,
@@ -31,15 +26,7 @@ from agiwo.tool.base import BaseTool, ToolResult
 
 
 class ReviewBatch:
-    """Per-batch review lifecycle object.
-
-    Replaces the legacy retrospect system.  Caller interacts through three methods:
-
-    * ``process_result()``  — returns final content (may inject <system-review>)
-    * ``register_step()``   — registers a committed step for later lookup
-    * ``finalize()``        — returns ``StepBackOutcome``; caller applies
-      via targeted content updates (NO rebuild_messages)
-    """
+    """Per-batch review lifecycle object."""
 
     def __init__(
         self,
@@ -54,10 +41,13 @@ class ReviewBatch:
             and "review_trajectory" in tools_map
             and "declare_milestones" in tools_map
         )
-        self._feedback: str | None = None
+        self._pending_outcome: StepBackOutcome | None = None
         self._review_seq: int | None = None
         self._review_tool_call_id: str | None = None
+        self._review_hidden_step_ids: list[str] = []
+        self._feedback: str | None = None
         self._step_lookup: dict[str, dict[str, Any]] = {}
+        self._pending_review_notice: ReviewNoticeRequest | None = None
 
     @property
     def enabled(self) -> bool:
@@ -68,30 +58,24 @@ class ReviewBatch:
         result: ToolResult,
         *,
         current_seq: int = 0,
+        assistant_step_id: str | None = None,
+        tool_step_id: str | None = None,
     ) -> str:
-        """Process a tool result. Returns the (possibly transformed) content."""
+        """Process a tool result and return the prompt-visible content."""
+
+        self._pending_review_notice = None
         content = result.content or ""
         if not self._enabled:
             return content
 
-        # Capture review_trajectory feedback.
         if result.tool_name == "review_trajectory" and result.is_success:
-            self._ledger.review.consecutive_errors = 0
-            output = result.output if isinstance(result.output, dict) else {}
-            aligned = output.get("aligned")
-            if aligned is True:
-                self._ledger.review.last_review_seq = current_seq
-                self._ledger.review.last_checkpoint_seq = current_seq
-                self._ledger.review.is_review_pending = False
-                self._remove_review_tool_call(result.tool_call_id or None)
-                return content
-            if aligned is False:
-                experience = output.get("experience")
-                self._feedback = experience if isinstance(experience, str) else content
-                self._review_seq = current_seq
-                self._review_tool_call_id = result.tool_call_id or None
-                return content
-            return content
+            return self._handle_review_result(
+                result,
+                content=content,
+                current_seq=current_seq,
+                assistant_step_id=assistant_step_id,
+                tool_step_id=tool_step_id,
+            )
 
         if result.tool_name == "declare_milestones" and result.is_success:
             milestones = _parse_declared_milestones(result.output)
@@ -103,14 +87,12 @@ class ReviewBatch:
                 )
             return content
 
-        # Track errors
         is_error = not result.is_success
         if is_error:
             self._ledger.review.consecutive_errors += 1
         else:
             self._ledger.review.consecutive_errors = 0
 
-        # Check triggers
         trigger = check_review_trigger(
             state=self._ledger.review,
             enabled=True,
@@ -121,15 +103,35 @@ class ReviewBatch:
             current_seq=current_seq,
         )
 
-        if trigger is not ReviewTrigger.NONE:
-            milestone = get_active_milestone(self._ledger.review)
-            step_count = max(current_seq - self._ledger.review.last_review_seq, 0)
-            content = inject_system_review(content, milestone, step_count)
+        if trigger is ReviewTrigger.NONE:
+            return content
 
-        return content
+        if trigger is ReviewTrigger.MILESTONE_SWITCH:
+            self._ledger.review.pending_review_reason = None
+
+        milestone = get_active_milestone(self._ledger.review)
+        step_count = max(current_seq - self._ledger.review.last_review_seq, 0)
+        self._pending_review_notice = ReviewNoticeRequest(
+            content=content,
+            milestone=milestone,
+            step_count=step_count,
+            trigger=trigger,
+        )
+        return inject_system_review(
+            content,
+            milestone,
+            step_count,
+            trigger_reason=trigger.value,
+        )
+
+    def consume_review_notice_request(self) -> "ReviewNoticeRequest | None":
+        request = self._pending_review_notice
+        self._pending_review_notice = None
+        return request
 
     def register_step(self, tool_call_id: str, step_id: str, sequence: int) -> None:
         """Register a committed step for later step-back lookup."""
+
         self._step_lookup[tool_call_id] = {
             "id": step_id,
             "sequence": sequence,
@@ -143,9 +145,13 @@ class ReviewBatch:
         run_id: str = "",
         agent_id: str = "",
     ) -> StepBackOutcome:
-        """Build the step-back outcome if feedback was captured."""
-        if not self._enabled or self._feedback is None:
+        """Return the structured cleanup outcome for this batch."""
+
+        if not self._enabled or self._pending_outcome is None:
             return StepBackOutcome()
+
+        if self._pending_outcome.mode != "step_back":
+            return self._pending_outcome
 
         if storage is None:
             raise ValueError(
@@ -153,13 +159,15 @@ class ReviewBatch:
                 "execute_step_back() persists condensed content via storage."
             )
 
-        checkpoint_seq = self._ledger.review.last_checkpoint_seq
-        messages = list(self._ledger.messages)
-
+        checkpoint_seq = (
+            self._ledger.review.latest_checkpoint.seq
+            if self._ledger.review.latest_checkpoint is not None
+            else 0
+        )
         outcome = await execute_step_back(
-            messages=messages,
+            messages=list(self._ledger.messages),
             checkpoint_seq=checkpoint_seq,
-            experience=self._feedback,
+            experience=self._feedback or "",
             review_tool_call_id=self._review_tool_call_id,
             step_lookup=self._step_lookup,
             storage=storage,
@@ -167,56 +175,76 @@ class ReviewBatch:
             run_id=run_id,
             agent_id=agent_id,
         )
-
-        # Reset tracking
-        if outcome.messages:
-            max_seq = max(
-                (msg.get("_sequence", 0) for msg in outcome.messages), default=0
-            )
-            self._ledger.review.last_review_seq = max(max_seq, self._review_seq or 0)
-        self._ledger.review.is_review_pending = False
-
+        outcome.hidden_step_ids = list(self._review_hidden_step_ids)
+        self._ledger.review.last_review_seq = (
+            self._review_seq or self._ledger.review.last_review_seq
+        )
+        self._ledger.review.pending_review_reason = None
         return outcome
 
-    def _remove_review_tool_call(self, review_tool_call_id: str | None) -> None:
-        if not review_tool_call_id:
-            return
-        self._ledger.messages = [
-            message
-            for message in self._ledger.messages
-            if not self._is_review_message(message, review_tool_call_id)
+    def _handle_review_result(
+        self,
+        result: ToolResult,
+        *,
+        content: str,
+        current_seq: int,
+        assistant_step_id: str | None,
+        tool_step_id: str | None,
+    ) -> str:
+        self._ledger.review.consecutive_errors = 0
+        self._review_seq = current_seq
+        self._review_tool_call_id = result.tool_call_id or None
+        self._review_hidden_step_ids = [
+            step_id
+            for step_id in (assistant_step_id, tool_step_id)
+            if step_id is not None
         ]
 
-    def _is_review_message(
-        self,
-        message: dict[str, Any],
-        review_tool_call_id: str,
-    ) -> bool:
-        if message.get("role") == "tool":
-            return message.get("tool_call_id") == review_tool_call_id
-        if message.get("role") != "assistant":
-            return False
-        tool_calls = message.get("tool_calls")
-        if not isinstance(tool_calls, list):
-            return False
-        remaining_calls: list[dict[str, Any]] = []
-        removed = False
-        for tool_call in tool_calls:
-            function = tool_call.get("function", {})
-            if (
-                tool_call.get("id") == review_tool_call_id
-                and function.get("name") == "review_trajectory"
-            ):
-                removed = True
-                continue
-            remaining_calls.append(tool_call)
-        if not removed:
-            return False
-        message["tool_calls"] = remaining_calls
-        content = message.get("content")
-        return not remaining_calls and (
-            not isinstance(content, str) or not content.strip()
+        output = result.output if isinstance(result.output, dict) else {}
+        aligned = output.get("aligned")
+        if aligned is True:
+            active_milestone = get_active_milestone(self._ledger.review)
+            self._ledger.review.latest_checkpoint = ReviewCheckpoint(
+                seq=current_seq,
+                milestone_id=active_milestone.id
+                if active_milestone is not None
+                else "",
+            )
+            self._ledger.review.last_review_seq = current_seq
+            self._ledger.review.pending_review_reason = None
+            self._pending_outcome = StepBackOutcome(
+                mode="metadata_only",
+                review_tool_call_id=self._review_tool_call_id,
+                hidden_step_ids=list(self._review_hidden_step_ids),
+            )
+            return content
+
+        if aligned is False:
+            experience = output.get("experience")
+            self._feedback = experience if isinstance(experience, str) else content
+            self._pending_outcome = StepBackOutcome(
+                mode="step_back",
+                review_tool_call_id=self._review_tool_call_id,
+                hidden_step_ids=list(self._review_hidden_step_ids),
+            )
+            return content
+
+        self._ledger.review.last_review_seq = current_seq
+        self._ledger.review.pending_review_reason = None
+        self._pending_outcome = StepBackOutcome(
+            mode="metadata_only",
+            review_tool_call_id=self._review_tool_call_id,
+            hidden_step_ids=list(self._review_hidden_step_ids),
         )
+        return content
+
+
+@dataclass(frozen=True)
+class ReviewNoticeRequest:
+    content: str
+    milestone: Milestone | None
+    step_count: int
+    trigger: ReviewTrigger
 
 
 def _parse_declared_milestones(output: object) -> list[Milestone]:
@@ -251,8 +279,9 @@ def _parse_declared_milestones(output: object) -> list[Milestone]:
 
 __all__ = [
     "ReviewBatch",
-    "StepBackOutcome",
+    "ReviewNoticeRequest",
     "ReviewTrigger",
+    "StepBackOutcome",
     "activate_next_milestone",
     "check_review_trigger",
     "complete_active_milestone",

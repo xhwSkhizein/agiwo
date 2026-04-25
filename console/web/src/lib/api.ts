@@ -193,7 +193,7 @@ export interface SessionDetail {
 }
 
 export interface RuntimeDecisionEvent {
-  kind: "termination" | "compaction" | "retrospect" | "rollback" | string;
+  kind: "termination" | "compaction" | "step_back" | "rollback" | string;
   sequence: number;
   run_id: string;
   agent_id: string;
@@ -395,6 +395,20 @@ export interface SessionObservability {
   decision_events: RuntimeDecisionEvent[];
 }
 
+export interface TraceTimelineEvent {
+  kind: string;
+  timestamp: string | null;
+  sequence: number | null;
+  run_id: string | null;
+  agent_id: string | null;
+  span_id: string | null;
+  step_id: string | null;
+  title: string;
+  summary: string;
+  status: string;
+  details: Record<string, unknown>;
+}
+
 export interface SpanResponse {
   span_id: string;
   trace_id: string;
@@ -439,6 +453,8 @@ export interface TraceDetail {
   input_query: string | null;
   final_output: string | null;
   spans: SpanResponse[];
+  runtime_decisions: RuntimeDecisionEvent[];
+  timeline_events: TraceTimelineEvent[];
 }
 
 export function listTraces(params?: {
@@ -477,10 +493,9 @@ export interface AgentOptionsPayload {
   stream_cleanup_timeout: number;
   compact_prompt: string;
   enable_context_rollback: boolean;
-  enable_tool_retrospect: boolean;
-  retrospect_token_threshold: number;
-  retrospect_round_interval: number;
-  retrospect_accumulated_token_threshold: number;
+  enable_goal_directed_review: boolean;
+  review_step_interval: number;
+  review_on_error: boolean;
 }
 
 export interface ModelParamsPayload {

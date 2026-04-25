@@ -46,8 +46,13 @@ from server.models.view import (
     StepMetricsResponse,
     StepResponse,
     TraceListItem,
+    TraceTimelineEventResponse,
     TraceResponse,
     WakeConditionResponse,
+)
+from server.services.runtime.runtime_observability import (
+    build_trace_runtime_decisions,
+    build_trace_timeline_events,
 )
 from server.services.runtime.scheduler_tree_view_service import SchedulerTreeRecord
 
@@ -456,6 +461,26 @@ def trace_response_from_sdk(trace: Trace) -> TraceResponse:
         )
         for span in getattr(trace, "spans", []) or []
     ]
+    runtime_decisions = [
+        runtime_decision_response_from_record(decision)
+        for decision in build_trace_runtime_decisions(trace)
+    ]
+    timeline_events = [
+        TraceTimelineEventResponse(
+            kind=event.kind,
+            timestamp=event.timestamp.isoformat() if event.timestamp else None,
+            sequence=event.sequence,
+            run_id=event.run_id,
+            agent_id=event.agent_id,
+            span_id=event.span_id,
+            step_id=event.step_id,
+            title=event.title,
+            summary=event.summary,
+            status=event.status,
+            details=dict(event.details),
+        )
+        for event in build_trace_timeline_events(trace)
+    ]
     return TraceResponse(
         **_trace_base_kwargs(trace),
         end_time=trace.end_time.isoformat()
@@ -464,6 +489,8 @@ def trace_response_from_sdk(trace: Trace) -> TraceResponse:
         root_span_id=getattr(trace, "root_span_id", None),
         max_depth=getattr(trace, "max_depth", 0),
         spans=spans,
+        runtime_decisions=runtime_decisions,
+        timeline_events=timeline_events,
     )
 
 
