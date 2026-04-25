@@ -212,9 +212,12 @@ async def test_execute_tool_batch_cycle_records_declared_milestone_fact(
         session_runtime=session_runtime,
     )
     runtime = _FakeRuntime(tools_map=_review_tools_map())
+    committed_steps = []
 
     async def commit_step(step):
-        return await _commit_step_to_ledger_and_storage(context, step)
+        committed_step = await _commit_step_to_ledger_and_storage(context, step)
+        committed_steps.append(committed_step)
+        return committed_step
 
     async def set_termination_reason(reason: TerminationReason, tool_name: str) -> None:
         del reason, tool_name
@@ -240,7 +243,7 @@ async def test_execute_tool_batch_cycle_records_declared_milestone_fact(
     ]
     assert len(milestone_facts) == 1
     assert milestone_facts[0].source_tool_call_id == "tc_declare"
-    assert milestone_facts[0].source_step_id
+    assert milestone_facts[0].source_step_id == committed_steps[0].id
     assert milestone_facts[0].active_milestone_id == "locate"
     assert [(m.id, m.status) for m in milestone_facts[0].milestones] == [
         ("locate", "active")

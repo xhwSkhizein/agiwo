@@ -110,7 +110,7 @@ class RunStateWriter:
     async def rebuild_messages(
         self,
         *,
-        reason: Literal["declared", "updated", "completed", "activated"],
+        reason: str,
         messages: list[dict[str, Any]],
     ) -> list[object]:
         replace_messages(self._state, messages)
@@ -278,11 +278,9 @@ class RunStateWriter:
     ) -> list[object]:
         return await self.append_entries(
             [
-                ReviewMilestonesUpdated(
+                build_review_milestones_updated_entry(
+                    self._state,
                     sequence=await self._state.session_runtime.allocate_sequence(),
-                    session_id=self._state.session_id,
-                    run_id=self._state.run_id,
-                    agent_id=self._state.agent_id,
                     milestones=list(milestones),
                     active_milestone_id=active_milestone_id,
                     source_tool_call_id=source_tool_call_id,
@@ -300,17 +298,15 @@ class RunStateWriter:
         ],
         active_milestone_id: str | None,
         review_count_since_checkpoint: int,
-        trigger_tool_call_id: str,
-        trigger_tool_step_id: str,
-        notice_step_id: str,
+        trigger_tool_call_id: str | None,
+        trigger_tool_step_id: str | None,
+        notice_step_id: str | None,
     ) -> list[object]:
         return await self.append_entries(
             [
-                ReviewTriggerDecided(
+                build_review_trigger_decided_entry(
+                    self._state,
                     sequence=await self._state.session_runtime.allocate_sequence(),
-                    session_id=self._state.session_id,
-                    run_id=self._state.run_id,
-                    agent_id=self._state.agent_id,
                     trigger_reason=trigger_reason,
                     active_milestone_id=active_milestone_id,
                     review_count_since_checkpoint=review_count_since_checkpoint,
@@ -331,11 +327,9 @@ class RunStateWriter:
     ) -> list[object]:
         return await self.append_entries(
             [
-                ReviewCheckpointRecorded(
+                build_review_checkpoint_recorded_entry(
+                    self._state,
                     sequence=await self._state.session_runtime.allocate_sequence(),
-                    session_id=self._state.session_id,
-                    run_id=self._state.run_id,
-                    agent_id=self._state.agent_id,
                     checkpoint_seq=checkpoint_seq,
                     milestone_id=milestone_id,
                     review_tool_call_id=review_tool_call_id,
@@ -359,11 +353,9 @@ class RunStateWriter:
     ) -> list[object]:
         return await self.append_entries(
             [
-                ReviewOutcomeRecorded(
+                build_review_outcome_recorded_entry(
+                    self._state,
                     sequence=await self._state.session_runtime.allocate_sequence(),
-                    session_id=self._state.session_id,
-                    run_id=self._state.run_id,
-                    agent_id=self._state.agent_id,
                     aligned=aligned,
                     mode=mode,
                     experience=experience,
@@ -634,6 +626,106 @@ def build_context_steps_hidden_entry(
     )
 
 
+def build_review_milestones_updated_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    milestones: list[Milestone],
+    active_milestone_id: str | None,
+    source_tool_call_id: str | None,
+    source_step_id: str | None,
+    reason: Literal["declared", "updated", "completed", "activated"],
+) -> ReviewMilestonesUpdated:
+    return ReviewMilestonesUpdated(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        milestones=list(milestones),
+        active_milestone_id=active_milestone_id,
+        source_tool_call_id=source_tool_call_id,
+        source_step_id=source_step_id,
+        reason=reason,
+    )
+
+
+def build_review_trigger_decided_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    trigger_reason: Literal["step_interval", "consecutive_errors", "milestone_switch"],
+    active_milestone_id: str | None,
+    review_count_since_checkpoint: int,
+    trigger_tool_call_id: str | None,
+    trigger_tool_step_id: str | None,
+    notice_step_id: str | None,
+) -> ReviewTriggerDecided:
+    return ReviewTriggerDecided(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        trigger_reason=trigger_reason,
+        active_milestone_id=active_milestone_id,
+        review_count_since_checkpoint=review_count_since_checkpoint,
+        trigger_tool_call_id=trigger_tool_call_id,
+        trigger_tool_step_id=trigger_tool_step_id,
+        notice_step_id=notice_step_id,
+    )
+
+
+def build_review_checkpoint_recorded_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    checkpoint_seq: int,
+    milestone_id: str | None,
+    review_tool_call_id: str | None,
+    review_step_id: str | None,
+) -> ReviewCheckpointRecorded:
+    return ReviewCheckpointRecorded(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        checkpoint_seq=checkpoint_seq,
+        milestone_id=milestone_id,
+        review_tool_call_id=review_tool_call_id,
+        review_step_id=review_step_id,
+    )
+
+
+def build_review_outcome_recorded_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    aligned: bool | None,
+    mode: Literal["metadata_only", "step_back"],
+    experience: str | None,
+    active_milestone_id: str | None,
+    review_tool_call_id: str | None,
+    review_step_id: str | None,
+    hidden_step_ids: list[str],
+    notice_cleaned_step_ids: list[str],
+    condensed_step_ids: list[str],
+) -> ReviewOutcomeRecorded:
+    return ReviewOutcomeRecorded(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        aligned=aligned,
+        mode=mode,
+        experience=experience,
+        active_milestone_id=active_milestone_id,
+        review_tool_call_id=review_tool_call_id,
+        review_step_id=review_step_id,
+        hidden_step_ids=list(hidden_step_ids),
+        notice_cleaned_step_ids=list(notice_cleaned_step_ids),
+        condensed_step_ids=list(condensed_step_ids),
+    )
+
+
 def build_termination_decided_entry(
     state: RunContext,
     *,
@@ -663,6 +755,10 @@ __all__ = [
     "build_llm_call_completed_entry",
     "build_llm_call_started_entry",
     "build_messages_rebuilt_entry",
+    "build_review_checkpoint_recorded_entry",
+    "build_review_milestones_updated_entry",
+    "build_review_outcome_recorded_entry",
+    "build_review_trigger_decided_entry",
     "build_step_back_applied_entry",
     "build_run_failed_entry",
     "build_run_finished_entry",

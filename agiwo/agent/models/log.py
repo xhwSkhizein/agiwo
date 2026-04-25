@@ -247,9 +247,9 @@ class ReviewTriggerDecided(RunLogEntry):
     trigger_reason: Literal["step_interval", "consecutive_errors", "milestone_switch"]
     active_milestone_id: str | None = None
     review_count_since_checkpoint: int = 0
-    trigger_tool_call_id: str = ""
-    trigger_tool_step_id: str = ""
-    notice_step_id: str = ""
+    trigger_tool_call_id: str | None = None
+    trigger_tool_step_id: str | None = None
+    notice_step_id: str | None = None
     kind: RunLogEntryKind = field(
         init=False, default=RunLogEntryKind.REVIEW_TRIGGER_DECIDED
     )
@@ -268,8 +268,8 @@ class ReviewCheckpointRecorded(RunLogEntry):
 
 @dataclass(frozen=True, kw_only=True)
 class ReviewOutcomeRecorded(RunLogEntry):
-    aligned: bool | None
     mode: Literal["metadata_only", "step_back"]
+    aligned: bool | None = None
     experience: str | None = None
     active_milestone_id: str | None = None
     review_tool_call_id: str | None = None

@@ -232,6 +232,7 @@ async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -
                         "trigger_reason": "step_interval",
                         "active_milestone_id": "fix",
                         "review_count_since_checkpoint": 8,
+                        "trigger_tool_call_id": "tc-1",
                         "trigger_tool_step_id": "step-1",
                         "notice_step_id": "step-1",
                     },

@@ -1302,11 +1302,14 @@ def _collect_milestones_from_trace(trace: Trace) -> list[MilestoneRecord]:
         sequence = _span_sequence(span)
         for raw in _extract_review_fact_milestones(span):
             milestone_id = str(raw["id"])
+            declared_at_seq = _as_int(raw.get("declared_at_seq"))
             record = MilestoneRecord(
                 id=milestone_id,
                 description=str(raw["description"]),
                 status=str(raw.get("status") or "pending"),
-                declared_at_seq=_as_int(raw.get("declared_at_seq")) or sequence,
+                declared_at_seq=(
+                    declared_at_seq if declared_at_seq is not None else sequence
+                ),
                 completed_at_seq=(
                     _as_int(raw.get("completed_at_seq"))
                     if raw.get("completed_at_seq") is not None
@@ -1363,9 +1366,7 @@ def _latest_checkpoint_for_board(
             continue
         milestone_id = _string_value(span.attributes.get("milestone_id"))
         if milestone_id is None:
-            milestone_id = active_milestone_id
-        if milestone_id is None:
-            return None
+            continue
         return ReviewCheckpointRecord(
             seq=_as_int(span.attributes.get("checkpoint_seq")) or _span_sequence(span),
             milestone_id=milestone_id,

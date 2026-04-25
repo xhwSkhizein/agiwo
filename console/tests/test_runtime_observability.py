@@ -386,3 +386,60 @@ def test_build_session_milestone_board_and_conversation_events() -> None:
         "review_event",
     ]
     assert events[-1].summary == "Review misaligned; 2 steps condensed"
+
+
+def test_milestone_board_skips_checkpoint_without_milestone_id() -> None:
+    trace = _trace_with_review_and_llm()
+    trace.spans.extend(
+        [
+            Span(
+                trace_id="trace-1",
+                span_id="runtime-review-checkpoint-old",
+                parent_span_id="run-1-root",
+                kind=SpanKind.RUNTIME,
+                name="review_checkpoint",
+                depth=1,
+                run_id="run-1",
+                start_time=datetime(2026, 4, 25, 0, 0, 2, tzinfo=timezone.utc),
+                end_time=datetime(2026, 4, 25, 0, 0, 2, tzinfo=timezone.utc),
+                duration_ms=0.0,
+                status=SpanStatus.OK,
+                attributes={
+                    "agent_id": "agent-1",
+                    "sequence": 6,
+                    "checkpoint_seq": 12,
+                    "milestone_id": "inspect",
+                },
+            ),
+            Span(
+                trace_id="trace-1",
+                span_id="runtime-review-checkpoint-new",
+                parent_span_id="run-1-root",
+                kind=SpanKind.RUNTIME,
+                name="review_checkpoint",
+                depth=1,
+                run_id="run-1",
+                start_time=datetime(2026, 4, 25, 0, 0, 5, tzinfo=timezone.utc),
+                end_time=datetime(2026, 4, 25, 0, 0, 5, tzinfo=timezone.utc),
+                duration_ms=0.0,
+                status=SpanStatus.OK,
+                attributes={
+                    "agent_id": "agent-1",
+                    "sequence": 9,
+                    "checkpoint_seq": 15,
+                    "milestone_id": None,
+                },
+            ),
+        ]
+    )
+
+    board = build_session_milestone_board(
+        session_id="sess-1",
+        trace=trace,
+        review_cycles=build_trace_review_cycles(trace),
+    )
+
+    assert board is not None
+    assert board.latest_checkpoint is not None
+    assert board.latest_checkpoint.seq == 12
+    assert board.latest_checkpoint.milestone_id == "inspect"

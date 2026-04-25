@@ -165,11 +165,19 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
     if entry_type is ReviewMilestonesUpdated:
         milestones = normalized.get("milestones")
         if isinstance(milestones, list):
-            normalized["milestones"] = [
-                item if isinstance(item, Milestone) else Milestone(**item)
-                for item in milestones
-                if isinstance(item, (dict, Milestone))
-            ]
+            normalized_milestones: list[Milestone] = []
+            for item in milestones:
+                if isinstance(item, Milestone):
+                    normalized_milestones.append(item)
+                    continue
+                if isinstance(item, dict):
+                    normalized_milestones.append(Milestone(**item))
+                    continue
+                raise ValueError(
+                    "Invalid ReviewMilestonesUpdated.milestones item: "
+                    f"{type(item).__name__}"
+                )
+            normalized["milestones"] = normalized_milestones
     normalized.pop("kind", None)
     return entry_type(**normalized)
 

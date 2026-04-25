@@ -124,3 +124,78 @@ def test_review_replay_tracks_pending_notice_until_outcome() -> None:
 
     assert state.pending_review_notice is None
     assert state.review_count_since_checkpoint == 0
+
+
+def test_review_replay_derives_pending_milestone_switch_until_triggered() -> None:
+    state = build_review_state_from_entries(
+        [
+            ReviewMilestonesUpdated(
+                sequence=1,
+                session_id="sess",
+                run_id="run",
+                agent_id="agent",
+                milestones=[
+                    Milestone(id="inspect", description="Inspect", status="active"),
+                    Milestone(id="fix", description="Fix", status="pending"),
+                ],
+                active_milestone_id="inspect",
+                reason="declared",
+            ),
+            ReviewMilestonesUpdated(
+                sequence=2,
+                session_id="sess",
+                run_id="run",
+                agent_id="agent",
+                milestones=[
+                    Milestone(id="inspect", description="Inspect", status="completed"),
+                    Milestone(id="fix", description="Fix", status="active"),
+                ],
+                active_milestone_id="fix",
+                reason="activated",
+            ),
+        ]
+    )
+
+    assert state.pending_review_reason == "milestone_switch"
+    assert state.consecutive_errors == 0
+
+    state = build_review_state_from_entries(
+        [
+            ReviewMilestonesUpdated(
+                sequence=1,
+                session_id="sess",
+                run_id="run",
+                agent_id="agent",
+                milestones=[
+                    Milestone(id="inspect", description="Inspect", status="active"),
+                    Milestone(id="fix", description="Fix", status="pending"),
+                ],
+                active_milestone_id="inspect",
+                reason="declared",
+            ),
+            ReviewMilestonesUpdated(
+                sequence=2,
+                session_id="sess",
+                run_id="run",
+                agent_id="agent",
+                milestones=[
+                    Milestone(id="inspect", description="Inspect", status="completed"),
+                    Milestone(id="fix", description="Fix", status="active"),
+                ],
+                active_milestone_id="fix",
+                reason="activated",
+            ),
+            ReviewTriggerDecided(
+                sequence=3,
+                session_id="sess",
+                run_id="run",
+                agent_id="agent",
+                trigger_reason="milestone_switch",
+                active_milestone_id="fix",
+                review_count_since_checkpoint=0,
+            ),
+        ]
+    )
+
+    assert state.pending_review_reason is None
+    assert state.pending_review_notice is not None

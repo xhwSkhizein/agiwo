@@ -1,3 +1,4 @@
+import tempfile
 from typing import cast
 
 import pytest
@@ -77,7 +78,7 @@ async def test_prepare_run_context_restores_review_state_from_run_log() -> None:
         model=cast(object, None),
         tools_map={},
         abort_signal=AbortSignal(),
-        root_path="/tmp",
+        root_path=tempfile.gettempdir(),
         compact_start_seq=0,
         max_input_tokens_per_call=1000,
         max_context_window=None,

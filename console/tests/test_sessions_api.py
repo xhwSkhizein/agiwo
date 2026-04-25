@@ -526,6 +526,7 @@ async def test_get_session_detail_includes_milestone_board_and_conversation_even
                         "sequence": 6,
                         "agent_id": "agent-alpha",
                         "active_milestone_id": "inspect",
+                        "source_tool_call_id": "tc-milestones",
                         "source_step_id": "step-milestones",
                         "milestones": [
                             {
@@ -562,6 +563,7 @@ async def test_get_session_detail_includes_milestone_board_and_conversation_even
                         "trigger_reason": "step_interval",
                         "active_milestone_id": "inspect",
                         "review_count_since_checkpoint": 4,
+                        "trigger_tool_call_id": "tc-1",
                         "trigger_tool_step_id": "step-1",
                         "notice_step_id": "step-1",
                     },

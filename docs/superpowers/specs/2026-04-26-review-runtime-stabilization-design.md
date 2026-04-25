@@ -80,9 +80,9 @@ class PendingReviewNotice:
     trigger_reason: str
     active_milestone_id: str | None
     review_count_since_checkpoint: int
-    trigger_tool_call_id: str
-    trigger_tool_step_id: str
-    notice_step_id: str
+    trigger_tool_call_id: str | None
+    trigger_tool_step_id: str | None
+    notice_step_id: str | None
 ```
 
 This state exists to prevent nested or duplicate review requests. It does not need to be exposed as public API.
@@ -112,9 +112,9 @@ Fields:
 - `trigger_reason: Literal["step_interval", "consecutive_errors", "milestone_switch"]`
 - `active_milestone_id: str | None`
 - `review_count_since_checkpoint: int`
-- `trigger_tool_call_id: str`
-- `trigger_tool_step_id: str`
-- `notice_step_id: str`
+- `trigger_tool_call_id: str | None`
+- `trigger_tool_step_id: str | None`
+- `notice_step_id: str | None`
 
 There must be at most one `ReviewTriggerDecided` per tool batch.
 
@@ -240,10 +240,12 @@ Replay must not resurrect a completed `<system-review>` notice.
 Replay must derive review state from RunLog facts:
 
 - latest `ReviewMilestonesUpdated` gives the milestone board
+- `ReviewMilestonesUpdated` also derives `pending_review_reason="milestone_switch"` when replay observes an active milestone transition, a completed milestone status change, or a `reason` of `completed` / `activated`; a later `ReviewTriggerDecided` or `ReviewOutcomeRecorded` clears that transient pending reason. This matches `agiwo/agent/review/replay.py`, which reads milestone facts instead of tool payloads.
 - latest `ReviewCheckpointRecorded` gives the checkpoint
 - `ReviewOutcomeRecorded` clears pending review state and resets count after consumed reviews
 - `ReviewTriggerDecided` can set pending review state only until a matching outcome is recorded
 - tool committed facts update `review_count_since_checkpoint` for non-`review_trajectory` tools when needed during replay
+- `consecutive_errors` is intentionally runtime-transient and is not reconstructed from RunLog facts.
 
 Replay should not parse `declare_milestones` or `review_trajectory` tool payloads to reconstruct authoritative milestone/review state.
 

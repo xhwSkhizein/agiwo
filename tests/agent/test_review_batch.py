@@ -3,7 +3,7 @@ import pytest
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.run import RunLedger
-from agiwo.agent.review import ReviewBatch
+from agiwo.agent.review import ReviewBatch, _build_system_review_cleanup_updates
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 
 
@@ -465,6 +465,25 @@ class TestReviewBatch:
 
         with pytest.raises(ValueError, match="requires a non-None storage"):
             await batch.finalize()
+
+    @pytest.mark.asyncio
+    async def test_system_review_cleanup_skips_updates_without_resolved_step_id(self):
+        updates = await _build_system_review_cleanup_updates(
+            [
+                {
+                    "role": "tool",
+                    "tool_call_id": "tc_missing",
+                    "content": "result\n<system-review>review</system-review>",
+                }
+            ],
+            storage=InMemoryRunLogStorage(),
+            session_id="s1",
+            run_id="r1",
+            agent_id="a1",
+            review_tool_call_id=None,
+        )
+
+        assert updates == []
 
     def test_agent_options_rejects_invalid_review_step_interval(self):
         with pytest.raises(ValueError):

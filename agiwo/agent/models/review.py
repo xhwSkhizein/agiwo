@@ -32,9 +32,9 @@ class PendingReviewNotice:
     trigger_reason: str
     active_milestone_id: str | None
     review_count_since_checkpoint: int
-    trigger_tool_call_id: str
-    trigger_tool_step_id: str
-    notice_step_id: str
+    trigger_tool_call_id: str | None
+    trigger_tool_step_id: str | None
+    notice_step_id: str | None
 
 
 @dataclass

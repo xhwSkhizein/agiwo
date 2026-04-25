@@ -303,8 +303,7 @@ class ReviewBatch:
 
     def _review_step_id(self) -> str | None:
         for step_id in reversed(self._review_hidden_step_ids):
-            if step_id is not None:
-                return step_id
+            return step_id
         return None
 
 
@@ -408,18 +407,19 @@ async def _build_system_review_cleanup_updates(
             continue
 
         cleaned_content = strip_system_review_notices(content)
-        step_id = ""
-        if storage is not None:
-            step = await storage.get_step_by_tool_call_id(session_id, tool_call_id)
-            step_id = step.id if step is not None else ""
-            if step_id:
-                await storage.append_step_condensed_content(
-                    session_id,
-                    run_id,
-                    agent_id,
-                    step_id,
-                    cleaned_content,
-                )
+        if storage is None:
+            continue
+        step = await storage.get_step_by_tool_call_id(session_id, tool_call_id)
+        step_id = step.id if step is not None else ""
+        if not step_id:
+            continue
+        await storage.append_step_condensed_content(
+            session_id,
+            run_id,
+            agent_id,
+            step_id,
+            cleaned_content,
+        )
         updates.append(
             ContentUpdate(
                 step_id=step_id,

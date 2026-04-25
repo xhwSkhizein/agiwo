@@ -330,7 +330,7 @@ def _build_runtime_span_from_entry(
             {
                 "trigger_reason": entry.trigger_reason,
                 "active_milestone_id": entry.active_milestone_id,
-                "review_count_since_checkpoint": (entry.review_count_since_checkpoint),
+                "review_count_since_checkpoint": entry.review_count_since_checkpoint,
                 "trigger_tool_call_id": entry.trigger_tool_call_id,
                 "trigger_tool_step_id": entry.trigger_tool_step_id,
                 "notice_step_id": entry.notice_step_id,

@@ -94,7 +94,7 @@ async def execute_tool_batch_cycle(
                 if review_notice.milestone is not None
                 else None,
                 review_count_since_checkpoint=review_notice.step_count,
-                trigger_tool_call_id=call_id,
+                trigger_tool_call_id=result.tool_call_id or None,
                 trigger_tool_step_id=committed_step.id,
                 notice_step_id=committed_step.id,
             )
