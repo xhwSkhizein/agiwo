@@ -136,7 +136,7 @@
 ### Context Optimization
 
 - Context Rollback 通过 `sleep_and_wait(no_progress=True)` 触发，删除空转轮次。
-- Tool-result review / step-back 由 `agiwo/agent/review/` 处理，`run_loop.py` 只通过 `ReviewBatch` 交互。
+- Tool-result review / step-back 由 `agiwo/agent/review/` 处理，`run_loop.py` 只通过 `ReviewBatch` 交互；milestone、trigger、checkpoint、outcome 必须写 first-class `RunLog` facts，并由 replay/trace/Console 视图消费 facts，而不是解析 tool 输出或 `<system-review>` 文本作为权威状态。
 - `StepView.condensed_content` 记录精简内容，加载历史时优先。
 
 ### Storage & Observability
