@@ -18,6 +18,7 @@ from agiwo.agent.review.review_enforcer import (
     inject_system_review,
     strip_system_review_notices,
 )
+from agiwo.agent.review.replay import build_review_state_from_entries
 from agiwo.agent.review.step_back_executor import (
     ContentUpdate,
     StepBackOutcome,
@@ -301,6 +302,7 @@ __all__ = [
     "ReviewTrigger",
     "StepBackOutcome",
     "activate_next_milestone",
+    "build_review_state_from_entries",
     "check_review_trigger",
     "complete_active_milestone",
     "declare_milestones",
