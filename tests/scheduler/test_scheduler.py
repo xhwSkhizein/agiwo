@@ -34,6 +34,7 @@ from agiwo.scheduler.models import (
 from agiwo.scheduler.formatting import build_wake_message
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.store.memory import InMemoryAgentStateStorage
+from agiwo.tool import BaseTool, ToolContext, ToolResult
 
 
 _TEST_CLEANUP_WAIT_FIRST = 0.1
@@ -197,6 +198,33 @@ def _tool_call(
         ),
         StreamChunk(finish_reason="tool_calls"),
     ]
+
+
+class NoopTool(BaseTool):
+    @property
+    def name(self) -> str:
+        return "noop"
+
+    @property
+    def description(self) -> str:
+        return "Return a static result."
+
+    def get_parameters(self) -> dict:
+        return {"type": "object", "properties": {}, "additionalProperties": False}
+
+    async def execute(
+        self,
+        parameters: dict,
+        context: ToolContext,
+        abort_signal: AbortSignal | None = None,
+    ) -> ToolResult:
+        del context, abort_signal
+        return ToolResult.success(
+            tool_name=self.name,
+            tool_call_id="",
+            input_args=parameters,
+            content="ok",
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1140,6 +1168,61 @@ class TestSchedulerStream:
         assert items
         assert isinstance(items[-1], RunCompletedEvent)
         assert items[-1].response == "Second answer"
+
+    @pytest.mark.asyncio
+    async def test_persistent_root_max_steps_stream_settles_and_can_continue(self):
+        async with Scheduler(_fast_config()) as scheduler:
+            model = MockModel(
+                [
+                    _tool_call("noop"),
+                    _simple_completion("Continued answer"),
+                ]
+            )
+            agent = _make_agent(
+                name="stream-max-steps",
+                model=model,
+                id="stream-max-steps",
+                tools=[NoopTool()],
+                options=AgentOptions(
+                    max_steps=1,
+                    enable_termination_summary=False,
+                ),
+            )
+
+            first = await scheduler.route_root_input(
+                "first",
+                agent=agent,
+                session_id="sess-max-steps",
+                timeout=_TEST_RUN_TIMEOUT,
+                persistent=True,
+                stream_mode=RouteStreamMode.UNTIL_SETTLED,
+            )
+            first_items = [item async for item in first.stream]
+            state = await scheduler.get_state("stream-max-steps")
+
+            assert state is not None
+            assert state.status == AgentStateStatus.IDLE
+            assert state.last_run_result is not None
+            assert (
+                state.last_run_result.termination_reason == TerminationReason.MAX_STEPS
+            )
+            assert isinstance(first_items[-1], RunCompletedEvent)
+            assert first_items[-1].termination_reason == TerminationReason.MAX_STEPS
+
+            second = await scheduler.route_root_input(
+                "continue",
+                agent=agent,
+                state_id="stream-max-steps",
+                timeout=_TEST_RUN_TIMEOUT,
+                persistent=True,
+                stream_mode=RouteStreamMode.UNTIL_SETTLED,
+            )
+            second_items = [item async for item in second.stream]
+
+        assert second_items
+        assert isinstance(second_items[-1], RunCompletedEvent)
+        assert second_items[-1].response == "Continued answer"
+        assert second_items[-1].termination_reason == TerminationReason.COMPLETED
 
     @pytest.mark.asyncio
     async def test_stream_rejects_second_subscriber_for_same_root(self):

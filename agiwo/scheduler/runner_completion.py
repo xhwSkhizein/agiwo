@@ -11,6 +11,7 @@ from agiwo.scheduler.models import AgentState, SchedulerEventType
 from agiwo.scheduler.runner_output import (
     build_last_run_result,
     is_failed_output,
+    is_interrupted_output,
     is_normal_completion,
     is_periodic_wake,
     is_sleeping_output,
@@ -58,6 +59,8 @@ class RunnerCompletionHandler:
             handled = await self._handle_shutdown_requested(state, text)
         elif is_failed_output(output):
             handled = await self._handle_failed_output(state, output, text)
+        elif is_interrupted_output(output):
+            handled = await self._handle_interrupted_output(state, output, text)
         elif is_sleeping_output(output):
             handled = await self._handle_sleeping(state, text)
         elif is_periodic_wake(action):
@@ -141,6 +144,39 @@ class RunnerCompletionHandler:
                     summary=text,
                     error=reason,
                 )
+            )
+        )
+        if state.is_child:
+            await self._ctx.emit_event_to_parent(
+                state,
+                SchedulerEventType.CHILD_FAILED,
+                {"reason": reason},
+            )
+        return True
+
+    async def _handle_interrupted_output(
+        self,
+        state: AgentState,
+        output: RunOutput,
+        text: str | None,
+    ) -> bool:
+        reason = output.termination_reason.value
+        last_run_result = build_last_run_result(
+            termination_reason=output.termination_reason,
+            run_id=output.run_id,
+            summary=text,
+        )
+        if state.is_root and state.is_persistent:
+            await self._ctx.save_state(
+                state.with_idle(result_summary=text or reason).with_updates(
+                    last_run_result=last_run_result
+                )
+            )
+            return True
+
+        await self._ctx.save_state(
+            state.with_failed(text or reason).with_updates(
+                last_run_result=last_run_result
             )
         )
         if state.is_child:
