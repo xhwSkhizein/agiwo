@@ -128,7 +128,7 @@ class MilestoneRecord:
     id: str
     description: str
     status: str
-    declared_at_seq: int = 0
+    declared_at_seq: int | None = None
     completed_at_seq: int | None = None
 
 
@@ -169,6 +169,7 @@ class ReviewCycleRecord:
     trigger_reason: str
     steps_since_last_review: int | None = None
     active_milestone: str | None = None
+    active_milestone_id: str | None = None
     hook_advice: str | None = None
     aligned: bool | None = None
     experience: str | None = None

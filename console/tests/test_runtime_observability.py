@@ -171,7 +171,7 @@ def test_build_trace_review_cycles_groups_checkpoint_result_and_step_back() -> N
 
     assert len(cycles) == 1
     cycle = cycles[0]
-    assert cycle.cycle_id == "run-1:6"
+    assert cycle.cycle_id == "run-1:6:tool-1"
     assert cycle.trigger_reason == "step_interval"
     assert cycle.steps_since_last_review == 8
     assert cycle.active_milestone == "Inspect auth"
@@ -180,6 +180,56 @@ def test_build_trace_review_cycles_groups_checkpoint_result_and_step_back() -> N
     assert cycle.experience == "switch plan"
     assert cycle.step_back_applied is True
     assert cycle.affected_count == 2
+
+
+def test_build_trace_review_cycles_disambiguates_missing_sequences() -> None:
+    trace = _trace_with_review_and_llm()
+    trace.spans = [
+        span
+        for span in trace.spans
+        if span.kind != SpanKind.RUNTIME
+        and (span.kind != SpanKind.TOOL_CALL or span.name != "review_trajectory")
+    ]
+    for index, span in enumerate(trace.spans):
+        if span.kind == SpanKind.TOOL_CALL:
+            span.attributes.pop("sequence", None)
+            span.span_id = f"review-notice-{index}"
+    trace.spans.append(
+        Span(
+            trace_id="trace-1",
+            span_id="review-notice-extra",
+            parent_span_id="run-1-root",
+            kind=SpanKind.TOOL_CALL,
+            name="bash",
+            depth=1,
+            run_id="run-1",
+            step_id="step-extra",
+            start_time=datetime(2026, 4, 25, 0, 0, 5, tzinfo=timezone.utc),
+            end_time=datetime(2026, 4, 25, 0, 0, 5, tzinfo=timezone.utc),
+            duration_ms=10.0,
+            status=SpanStatus.OK,
+            attributes={"agent_id": "agent-1"},
+            tool_details={
+                "tool_name": "bash",
+                "tool_call_id": "tc-extra",
+                "output": (
+                    "<system-review>\n"
+                    'Active milestone: "Inspect auth"\n\n'
+                    "Trigger: token_pressure\n"
+                    "Steps since last review: 2\n"
+                    "</system-review>"
+                ),
+                "status": "completed",
+            },
+        )
+    )
+
+    cycles = build_trace_review_cycles(trace)
+
+    assert [cycle.cycle_id for cycle in cycles] == [
+        "run-1:0:review-notice-2",
+        "run-1:0:review-notice-extra",
+    ]
 
 
 def test_build_trace_mainline_events_returns_readable_narrative_sequence() -> None:
@@ -261,6 +311,7 @@ def test_build_session_milestone_board_and_conversation_events() -> None:
     )
 
     assert board is not None
+    assert review_cycles[0].active_milestone_id == "inspect"
     assert board.active_milestone_id == "inspect"
     assert board.milestones[0].description == "Inspect auth"
     assert board.latest_review_outcome is not None

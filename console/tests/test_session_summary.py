@@ -6,7 +6,7 @@ from agiwo.agent import ContentPart, ContentType, UserMessage
 from agiwo.agent.models.log import RunFinished, RunStarted
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.agent.models.run import RunMetrics
-from agiwo.observability.trace import SpanStatus, Trace
+from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 from server.config import ConsoleConfig
 from server.models.session import Session
 from server.services.runtime.run_query_service import RunQueryService
@@ -184,6 +184,37 @@ async def test_get_session_detail_populates_metrics() -> None:
     assert detail.observability is not None
     assert len(detail.observability.recent_traces) == 1
     assert detail.observability.recent_traces[0].trace_id == "trace-1"
+
+
+def test_select_mainline_trace_skips_trace_without_root_agent_span() -> None:
+    malformed = Trace(
+        trace_id="malformed",
+        agent_id="agent-a",
+        session_id="sess-1",
+        status=SpanStatus.OK,
+    )
+    mainline = Trace(
+        trace_id="mainline",
+        agent_id="agent-a",
+        session_id="sess-1",
+        status=SpanStatus.OK,
+    )
+    mainline.spans = [
+        Span(
+            trace_id="mainline",
+            span_id="root",
+            parent_span_id=None,
+            kind=SpanKind.AGENT,
+            name="agent-a",
+            depth=0,
+            run_id="run-1",
+            attributes={"nested": False},
+        )
+    ]
+
+    selected = SessionViewService._select_mainline_trace([malformed, mainline])
+
+    assert selected is mainline
 
 
 @pytest.mark.asyncio

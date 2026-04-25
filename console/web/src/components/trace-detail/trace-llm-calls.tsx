@@ -48,7 +48,12 @@ export function TraceLlmCalls({
               ) : null}
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              {metricChip("duration", formatDurationMs(call.duration_ms || 0))}
+              {metricChip(
+                "duration",
+                call.duration_ms != null
+                  ? formatDurationMs(call.duration_ms)
+                  : "-",
+              )}
               {metricChip(
                 "first token",
                 call.first_token_latency_ms !== null

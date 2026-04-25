@@ -104,6 +104,7 @@ describe("SessionDetailPage", () => {
           trigger_reason: "step_interval",
           steps_since_last_review: 8,
           active_milestone: "Inspect auth flow",
+          active_milestone_id: "inspect",
           hook_advice: "narrow the search",
           aligned: false,
           experience: "switch plan",
@@ -190,10 +191,12 @@ describe("SessionDetailPage", () => {
     expect(screen.getAllByText("Inspect auth flow").length).toBeGreaterThan(0);
     expect(screen.getByText("Conversation")).toBeInTheDocument();
     expect(screen.queryByText("Observability")).not.toBeInTheDocument();
+    expect(apiMocks.listRuns).not.toHaveBeenCalled();
+    expect(apiMocks.getSessionSteps).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Debug" }));
 
-    expect(screen.getByText("Observability")).toBeInTheDocument();
+    expect(await screen.findByText("Observability")).toBeInTheDocument();
     expect(screen.getByText("Trace Context")).toBeInTheDocument();
     expect(screen.getByText("Runtime Decisions")).toBeInTheDocument();
     expect(screen.getByText("completed via finished")).toBeInTheDocument();

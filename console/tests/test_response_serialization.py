@@ -191,6 +191,7 @@ def test_session_detail_serializes_new_mainline_fields() -> None:
                 trigger_reason="step_interval",
                 steps_since_last_review=8,
                 active_milestone="Inspect the auth flow",
+                active_milestone_id="inspect",
                 aligned=True,
                 experience=None,
                 step_back_applied=False,
@@ -215,6 +216,7 @@ def test_session_detail_serializes_new_mainline_fields() -> None:
 
     assert payload.milestone_board is not None
     assert payload.milestone_board.active_milestone_id == "inspect"
+    assert payload.review_cycles[0].active_milestone_id == "inspect"
     assert payload.review_cycles[0].trigger_reason == "step_interval"
     assert payload.conversation_events[0].kind == "assistant_message"
 

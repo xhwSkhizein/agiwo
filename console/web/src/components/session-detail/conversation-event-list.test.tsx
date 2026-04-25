@@ -52,8 +52,10 @@ describe("ConversationEventList", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dialogue" }));
     expect(screen.getByText("Please inspect auth")).toBeInTheDocument();
     expect(screen.queryByText("Searched the repo")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review misaligned; 2 steps condensed")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "All Events" }));
+    expect(screen.getByText("Searched the repo")).toBeInTheDocument();
     expect(screen.getByText("Review misaligned; 2 steps condensed")).toBeInTheDocument();
   });
 });

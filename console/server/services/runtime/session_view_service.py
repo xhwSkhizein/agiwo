@@ -236,23 +236,6 @@ class SessionViewService:
             state.status.value if hasattr(state.status, "value") else str(state.status)
         )
 
-    async def _build_observability(
-        self,
-        *,
-        session_id: str,
-    ) -> SessionObservabilityRecord:
-        recent_traces, decision_events = await asyncio.gather(
-            self._trace_queries.list_session_recent_traces(session_id),
-            self._run_queries.list_runtime_decision_events(
-                session_id,
-                limit=12,
-            ),
-        )
-        return SessionObservabilityRecord(
-            recent_traces=recent_traces,
-            decision_events=decision_events,
-        )
-
     @staticmethod
     def _select_mainline_trace(recent_traces: list[Trace]) -> Trace | None:
         for trace in recent_traces:
@@ -265,9 +248,12 @@ class SessionViewService:
                 None,
             )
             if root_span is None:
-                return trace
+                continue
             if root_span.attributes.get("nested") is False:
                 return trace
-            if root_span.attributes.get("parent_run_id") is None:
+            if (
+                "nested" not in root_span.attributes
+                and root_span.attributes.get("parent_run_id") is None
+            ):
                 return trace
         return recent_traces[0] if recent_traces else None

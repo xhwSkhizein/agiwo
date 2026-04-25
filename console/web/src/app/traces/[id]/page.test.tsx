@@ -68,6 +68,7 @@ describe("TraceDetailPage", () => {
           trigger_reason: "step_interval",
           steps_since_last_review: 8,
           active_milestone: "Fix auth",
+          active_milestone_id: null,
           hook_advice: "narrow the search",
           aligned: false,
           experience: "switch plan",

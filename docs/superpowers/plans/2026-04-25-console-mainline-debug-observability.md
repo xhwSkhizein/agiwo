@@ -1493,7 +1493,7 @@ const [viewMode, setViewMode] = useState<"mainline" | "debug">("mainline");
   <div className="space-y-6">
     <TraceLoopTimeline events={trace.timeline_events} />
     <TraceRuntimeDecisions decisions={trace.runtime_decisions} />
-    <TraceLlmCalls calls={trace.llm_calls} />
+    <TraceLlmCalls llmCalls={trace.llm_calls} />
     <SectionCard title="Waterfall" bodyClassName="overflow-hidden">
       {trace.spans.map((span) => (
         <SpanRow
@@ -1679,7 +1679,7 @@ export function ConversationEventList({
 }: {
   events: ConversationEvent[];
 }) {
-  const [filter, setFilter] = useState<FilterMode>("dialogue");
+  const [filter, setFilter] = useState<FilterMode>("key-events");
   const filtered = visibleEvents(events, filter);
 
   return (
@@ -1737,7 +1737,10 @@ const [viewMode, setViewMode] = useState<"mainline" | "debug">("mainline");
 
 {viewMode === "mainline" ? (
   <div className="space-y-6">
-    <MilestoneBoard board={detail.milestone_board} />
+    <MilestoneBoard
+      board={detail.milestone_board}
+      reviewCycles={detail.review_cycles}
+    />
     <SectionCard title="Latest Review" bodyClassName="px-4 py-4">
       <pre className="whitespace-pre-wrap text-sm text-foreground">
         {detail.review_cycles[0]?.experience || detail.milestone_board?.latest_review_outcome?.active_milestone || "No review cycles yet."}

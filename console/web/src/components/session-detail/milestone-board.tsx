@@ -34,6 +34,19 @@ function latestReviewSummary(board: SessionMilestoneBoard | null): string {
   return "Latest checkpoint recorded";
 }
 
+function isLatestReviewTarget(
+  latestCycle: ReviewCycle | null,
+  milestone: SessionMilestoneBoard["milestones"][number],
+): boolean {
+  if (!latestCycle) {
+    return false;
+  }
+  if (latestCycle.active_milestone_id) {
+    return latestCycle.active_milestone_id === milestone.id;
+  }
+  return latestCycle.active_milestone === milestone.description;
+}
+
 export function MilestoneBoard({
   board,
   reviewCycles,
@@ -117,11 +130,11 @@ export function MilestoneBoard({
             </div>
             <div className="mt-1 flex flex-wrap gap-3 text-xs text-ink-muted">
               <span>id {milestone.id}</span>
-              <span>declared seq {milestone.declared_at_seq}</span>
+              <span>declared seq {milestone.declared_at_seq ?? "-"}</span>
               {milestone.completed_at_seq !== null ? (
                 <span>completed seq {milestone.completed_at_seq}</span>
               ) : null}
-              {latestCycle?.active_milestone === milestone.description ? (
+              {isLatestReviewTarget(latestCycle, milestone) ? (
                 <span>latest review target</span>
               ) : null}
             </div>

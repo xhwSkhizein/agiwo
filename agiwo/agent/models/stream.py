@@ -416,14 +416,20 @@ def stream_items_from_entries(
     entries: list[RunLogEntry],
     *,
     run_contexts: Mapping[str, dict[str, Any]] | None = None,
+    persisted_hidden_step_ids: set[str] | None = None,
 ) -> list["AgentStreamItem"]:
     items: list[AgentStreamItem] = []
-    hidden_step_ids = {
+    local_hidden_step_ids = {
         step_id
         for entry in entries
         if isinstance(entry, ContextStepsHidden)
         for step_id in entry.step_ids
     }
+    if persisted_hidden_step_ids is not None:
+        persisted_hidden_step_ids.update(local_hidden_step_ids)
+        hidden_step_ids = persisted_hidden_step_ids
+    else:
+        hidden_step_ids = local_hidden_step_ids
     resolved_run_contexts = _collect_run_contexts(
         entries,
         initial_run_contexts=run_contexts,

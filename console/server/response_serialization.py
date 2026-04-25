@@ -279,6 +279,7 @@ def review_cycle_response_from_record(
         trigger_reason=record.trigger_reason,
         steps_since_last_review=record.steps_since_last_review,
         active_milestone=record.active_milestone,
+        active_milestone_id=record.active_milestone_id,
         hook_advice=record.hook_advice,
         aligned=record.aligned,
         experience=record.experience,

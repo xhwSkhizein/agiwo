@@ -150,7 +150,7 @@ def _span_sort_key(span: Span) -> tuple[datetime, int, int, str]:
 def _cycle_sort_key(cycle: ReviewCycleRecord) -> tuple[datetime, int, str]:
     return (
         cycle.started_at or datetime.min.replace(tzinfo=timezone.utc),
-        _as_int(cycle.cycle_id.rsplit(":", 1)[-1]) or 0,
+        _cycle_sequence(cycle) or 0,
         cycle.cycle_id,
     )
 
@@ -205,7 +205,7 @@ def _new_review_cycle_from_notice(
 ) -> ReviewCycleRecord:
     sequence = _span_sequence(span)
     return ReviewCycleRecord(
-        cycle_id=f"{span.run_id or 'run'}:{sequence}",
+        cycle_id=f"{span.run_id or 'run'}:{sequence}:{span.span_id}",
         run_id=span.run_id or "",
         agent_id=_runtime_agent_id(trace, span),
         trigger_reason=str(notice.get("trigger_reason") or "unknown"),
@@ -234,7 +234,7 @@ def _find_latest_review_cycle(
 def _fallback_review_cycle(trace: Trace, span: Span) -> ReviewCycleRecord:
     sequence = _span_sequence(span)
     cycle = ReviewCycleRecord(
-        cycle_id=f"{span.run_id or 'run'}:{sequence}",
+        cycle_id=f"{span.run_id or 'run'}:{sequence}:{span.span_id}",
         run_id=span.run_id or "",
         agent_id=_runtime_agent_id(trace, span),
         trigger_reason="unknown",
@@ -244,7 +244,12 @@ def _fallback_review_cycle(trace: Trace, span: Span) -> ReviewCycleRecord:
 
 
 def _cycle_sequence(cycle: ReviewCycleRecord) -> int | None:
-    return _as_int(cycle.cycle_id.rsplit(":", 1)[-1])
+    parts = cycle.cycle_id.rsplit(":", 2)
+    if len(parts) == 3:
+        sequence = _as_int(parts[1])
+        if sequence is not None:
+            return sequence
+    return _as_int(parts[-1]) if parts else None
 
 
 def _summarize_text(text: str | None, *, limit: int = 120) -> str:
@@ -299,6 +304,17 @@ def _milestone_id_from_description(
         if milestone.description == description:
             return milestone.id
     return None
+
+
+def _attach_cycle_milestone_ids(
+    cycles: list[ReviewCycleRecord],
+    milestones: list[MilestoneRecord],
+) -> None:
+    for cycle in cycles:
+        cycle.active_milestone_id = _milestone_id_from_description(
+            milestones,
+            cycle.active_milestone,
+        )
 
 
 def _summary_from_step(step: StepView) -> str:
@@ -587,34 +603,34 @@ _RUNTIME_DECISION_SPAN_BUILDERS: dict[
     "compaction": lambda trace, span: _build_compaction_decision_from_span(
         trace,
         span,
-        sequence=_as_int(span.attributes.get("sequence")) or 0,
+        sequence=_span_sequence(span),
     ),
     "compaction_failed": lambda trace, span: (
         _build_compaction_failed_decision_from_span(
             trace,
             span,
-            sequence=_as_int(span.attributes.get("sequence")) or 0,
+            sequence=_span_sequence(span),
         )
     ),
     "step_back": lambda trace, span: _build_step_back_decision_from_span(
         trace,
         span,
-        sequence=_as_int(span.attributes.get("sequence")) or 0,
+        sequence=_span_sequence(span),
     ),
     "rollback": lambda trace, span: _build_rollback_decision_from_span(
         trace,
         span,
-        sequence=_as_int(span.attributes.get("sequence")) or 0,
+        sequence=_span_sequence(span),
     ),
     "termination": lambda trace, span: _build_termination_decision_from_span(
         trace,
         span,
-        sequence=_as_int(span.attributes.get("sequence")) or 0,
+        sequence=_span_sequence(span),
     ),
     "hook_failed": lambda trace, span: _build_hook_failed_decision_from_span(
         trace,
         span,
-        sequence=_as_int(span.attributes.get("sequence")) or 0,
+        sequence=_span_sequence(span),
     ),
 }
 
@@ -1070,6 +1086,7 @@ def _update_review_cycles_from_runtime_span(
 
 def build_trace_review_cycles(trace: Trace) -> list[ReviewCycleRecord]:
     cycles: list[ReviewCycleRecord] = []
+    milestones = _collect_milestones_from_trace(trace)
 
     for span in sorted(trace.spans, key=_span_sort_key):
         if span.kind == SpanKind.TOOL_CALL:
@@ -1077,6 +1094,7 @@ def build_trace_review_cycles(trace: Trace) -> list[ReviewCycleRecord]:
         elif span.kind == SpanKind.RUNTIME:
             _update_review_cycles_from_runtime_span(cycles, trace=trace, span=span)
 
+    _attach_cycle_milestone_ids(cycles, milestones)
     cycles.sort(key=_cycle_sort_key)
     return cycles
 
@@ -1285,7 +1303,12 @@ def build_session_milestone_board(
         None,
     )
 
-    if not milestones and latest_checkpoint is None and latest_review_outcome is None:
+    if (
+        not milestones
+        and latest_checkpoint is None
+        and latest_review_outcome is None
+        and pending_review_reason is None
+    ):
         return None
 
     return SessionMilestoneBoardRecord(

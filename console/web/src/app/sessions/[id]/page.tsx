@@ -39,17 +39,25 @@ export default function SessionDetailPage() {
   const [viewMode, setViewMode] = useState<"mainline" | "debug">("mainline");
   const [runsOffset, setRunsOffset] = useState(0);
   const [runsPageSize, setRunsPageSize] = useState(50);
+  const debugActive = viewMode === "debug";
   const detailState = useSessionDetailResource(sessionId);
-  const runsState = useSessionRunsPage(sessionId, runsPageSize, runsOffset);
-  const stepsState = useSessionStepsFeed(sessionId);
+  const runsState = useSessionRunsPage(
+    sessionId,
+    runsPageSize,
+    runsOffset,
+    debugActive,
+  );
+  const stepsState = useSessionStepsFeed(sessionId, debugActive);
   const detail = detailState.detail;
   const steps = stepsState.steps;
   const runs = runsState.runs;
   const loading =
     detailState.loading ||
-    stepsState.loading ||
-    (runsState.loading && runs.length === 0);
-  const error = detailState.error || runsState.error || stepsState.error;
+    (debugActive &&
+      (stepsState.loading || (runsState.loading && runs.length === 0)));
+  const error =
+    detailState.error ||
+    (debugActive ? runsState.error || stepsState.error : null);
 
   const runTotals = normalizeRunMetricsSummary(detail?.summary.metrics);
   const schedulerResult = getSchedulerRunResultView(
@@ -156,6 +164,7 @@ export default function SessionDetailPage() {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
+              aria-pressed={viewMode === "mainline"}
               onClick={() => setViewMode("mainline")}
               className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
                 viewMode === "mainline"
@@ -167,6 +176,7 @@ export default function SessionDetailPage() {
             </button>
             <button
               type="button"
+              aria-pressed={viewMode === "debug"}
               onClick={() => setViewMode("debug")}
               className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
                 viewMode === "debug"

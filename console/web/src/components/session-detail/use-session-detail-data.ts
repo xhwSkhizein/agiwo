@@ -70,6 +70,7 @@ export function useSessionRunsPage(
   sessionId: string,
   pageSize: number,
   offset: number,
+  enabled = true,
 ) {
   const requestKey = `${sessionId}:${pageSize}:${offset}`;
   const [state, setState] = useState<RunsState>({
@@ -81,6 +82,9 @@ export function useSessionRunsPage(
   });
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     let cancelled = false;
     listRuns({ session_id: sessionId, limit: pageSize, offset })
       .then((page) => {
@@ -111,12 +115,12 @@ export function useSessionRunsPage(
     return () => {
       cancelled = true;
     };
-  }, [offset, pageSize, requestKey, sessionId]);
+  }, [enabled, offset, pageSize, requestKey, sessionId]);
 
   return {
     runs: state.runs,
-    loading: state.key !== requestKey,
-    error: state.error,
+    loading: enabled && state.key !== requestKey,
+    error: enabled ? state.error : null,
     hasMore: state.hasMore,
     total: state.total,
   };
@@ -129,7 +133,7 @@ type StepsState = {
   error: string | null;
 };
 
-export function useSessionStepsFeed(sessionId: string) {
+export function useSessionStepsFeed(sessionId: string, enabled = true) {
   const activeSessionId = useRef(sessionId);
   const [state, setState] = useState<StepsState>({
     key: null,
@@ -141,6 +145,9 @@ export function useSessionStepsFeed(sessionId: string) {
 
   useEffect(() => {
     activeSessionId.current = sessionId;
+    if (!enabled) {
+      return;
+    }
     let cancelled = false;
     getSessionSteps(sessionId, { limit: 100, order: "desc" })
       .then((page) => {
@@ -169,10 +176,10 @@ export function useSessionStepsFeed(sessionId: string) {
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [enabled, sessionId]);
 
   async function loadEarlier() {
-    if (state.steps.length === 0 || loadingMore) {
+    if (!enabled || state.steps.length === 0 || loadingMore) {
       return;
     }
     const requestedSession = sessionId;
@@ -213,10 +220,10 @@ export function useSessionStepsFeed(sessionId: string) {
 
   return {
     steps: state.steps,
-    loading: state.key !== sessionId,
-    error: state.error,
+    loading: enabled && state.key !== sessionId,
+    error: enabled ? state.error : null,
     hasMore: state.hasMore,
-    loadingMore,
+    loadingMore: enabled && loadingMore,
     loadEarlier,
   };
 }

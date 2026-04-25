@@ -188,7 +188,7 @@ export interface MilestoneItem {
   id: string;
   description: string;
   status: string;
-  declared_at_seq: number;
+  declared_at_seq: number | null;
   completed_at_seq: number | null;
 }
 
@@ -225,6 +225,7 @@ export interface ReviewCycle {
   trigger_reason: string;
   steps_since_last_review: number | null;
   active_milestone: string | null;
+  active_milestone_id: string | null;
   hook_advice: string | null;
   aligned: boolean | null;
   experience: string | null;
@@ -242,7 +243,7 @@ export interface ConversationEvent {
   run_id: string | null;
   sequence: number | null;
   kind: string;
-  priority: "primary" | "secondary" | "muted" | string;
+  priority: "primary" | "secondary" | "muted" | (string & {});
   title: string;
   summary: string;
   details: Record<string, unknown>;
