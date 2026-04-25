@@ -408,6 +408,7 @@ async def test_get_session_detail_lists_recent_runtime_decisions(client) -> None
                 attempt=1,
                 max_attempts=2,
                 terminal=False,
+                created_at=datetime(2026, 4, 2, 12, 0, 2, tzinfo=timezone.utc),
             ),
             StepBackApplied(
                 sequence=10,
@@ -417,6 +418,7 @@ async def test_get_session_detail_lists_recent_runtime_decisions(client) -> None
                 affected_count=2,
                 checkpoint_seq=7,
                 experience="switch plan",
+                created_at=datetime(2026, 4, 2, 12, 0, 3, tzinfo=timezone.utc),
             ),
         ]
     )

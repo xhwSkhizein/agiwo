@@ -19,6 +19,10 @@ from server.services.agent_registry import AgentRegistry
 from server.services.storage_wiring import create_run_log_storage, create_trace_storage
 
 
+def _runtime(client: AsyncClient) -> ConsoleRuntime:
+    return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
+
+
 @pytest.fixture
 async def client():
     app = create_app()
@@ -83,7 +87,7 @@ async def test_list_traces_returns_page_envelope(client) -> None:
 
 @pytest.mark.asyncio
 async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -> None:
-    runtime = get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
+    runtime = _runtime(client)
     created_at = datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)
     root_span = Span(
         trace_id="trace-detail",
@@ -222,3 +226,81 @@ async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -
         "run_finished",
     ]
     assert payload["timeline_events"][2]["details"]["trigger_reason"] == "step_interval"
+
+
+@pytest.mark.asyncio
+async def test_get_trace_handles_null_milestone_list(client) -> None:
+    runtime = _runtime(client)
+    created_at = datetime(2026, 4, 25, 12, 5, tzinfo=timezone.utc)
+    root_span = Span(
+        trace_id="trace-milestones-null",
+        kind=SpanKind.AGENT,
+        name="agent-alpha",
+        depth=0,
+        run_id="run-2",
+        start_time=created_at,
+        end_time=created_at.replace(second=1),
+        duration_ms=1000.0,
+        status=SpanStatus.OK,
+        attributes={
+            "agent_id": "agent-alpha",
+            "session_id": "sess-2",
+            "nested": False,
+            "parent_run_id": None,
+            "start_sequence": 1,
+            "end_sequence": 2,
+        },
+    )
+    await runtime.trace_storage.save_trace(
+        Trace(
+            trace_id="trace-milestones-null",
+            agent_id="agent-alpha",
+            session_id="sess-2",
+            status=SpanStatus.OK,
+            start_time=created_at,
+            end_time=created_at.replace(second=1),
+            duration_ms=1000.0,
+            root_span_id=root_span.span_id,
+            spans=[
+                root_span,
+                Span(
+                    trace_id="trace-milestones-null",
+                    parent_span_id=root_span.span_id,
+                    kind=SpanKind.TOOL_CALL,
+                    name="declare_milestones",
+                    depth=1,
+                    run_id="run-2",
+                    step_id="step-milestones",
+                    start_time=created_at,
+                    end_time=created_at,
+                    duration_ms=5.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 2,
+                        "agent_id": "agent-alpha",
+                        "tool_name": "declare_milestones",
+                        "tool_call_id": "tc-milestones",
+                    },
+                    tool_details={
+                        "tool_name": "declare_milestones",
+                        "tool_call_id": "tc-milestones",
+                        "input_args": {"milestones": None},
+                        "output": "ignored",
+                        "status": "completed",
+                    },
+                ),
+            ],
+        )
+    )
+
+    response = await client.get("/api/traces/trace-milestones-null")
+
+    assert response.status_code == 200
+    payload = response.json()
+    milestone_event = next(
+        event
+        for event in payload["timeline_events"]
+        if event["kind"] == "milestone_update"
+    )
+    assert milestone_event["summary"] == "0 milestones declared/updated"
+    assert milestone_event["details"]["milestones"] == []

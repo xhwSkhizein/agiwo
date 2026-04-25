@@ -70,11 +70,13 @@ def complete_active_milestone(state: ReviewState, *, seq: int) -> bool:
 def activate_next_milestone(state: ReviewState) -> Milestone | None:
     """Activate the first pending milestone. Returns it, or None."""
 
+    had_active_milestone = _active_milestone_id(state.milestones) is not None
     for milestone in state.milestones:
         if milestone.status != "pending":
             continue
         milestone.status = "active"
-        state.pending_review_reason = "milestone_switch"
+        if had_active_milestone:
+            state.pending_review_reason = "milestone_switch"
         return milestone
     return None
 

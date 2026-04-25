@@ -1,5 +1,7 @@
 """Console session read models assembled from the run query facade and scheduler."""
 
+import asyncio
+
 from agiwo.agent import RunView, UserMessage
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import AgentState
@@ -196,12 +198,14 @@ class SessionViewService:
         *,
         session_id: str,
     ) -> SessionObservabilityRecord:
-        return SessionObservabilityRecord(
-            recent_traces=await self._trace_queries.list_session_recent_traces(
-                session_id
-            ),
-            decision_events=await self._run_queries.list_runtime_decision_events(
+        recent_traces, decision_events = await asyncio.gather(
+            self._trace_queries.list_session_recent_traces(session_id),
+            self._run_queries.list_runtime_decision_events(
                 session_id,
                 limit=12,
             ),
+        )
+        return SessionObservabilityRecord(
+            recent_traces=recent_traces,
+            decision_events=decision_events,
         )

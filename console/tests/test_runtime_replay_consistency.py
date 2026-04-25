@@ -110,3 +110,34 @@ async def test_console_step_queries_hide_review_metadata_by_default() -> None:
 
     assert page.items == []
     assert page.total == 0
+
+
+@pytest.mark.asyncio
+async def test_console_run_snapshot_excludes_hidden_review_metadata() -> None:
+    storage = InMemoryRunLogStorage()
+    await storage.append_entries(
+        [
+            AssistantStepCommitted(
+                sequence=1,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                step_id="step-review-result",
+                role=MessageRole.ASSISTANT,
+                content="Trajectory review: aligned=True.",
+            ),
+            ContextStepsHidden(
+                sequence=2,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                step_ids=["step-review-result"],
+                reason="review_metadata",
+            ),
+        ]
+    )
+    service = RunQueryService(run_storage=storage)
+
+    snapshot = await service.get_session_run_snapshot("sess-1")
+
+    assert snapshot.committed_step_count == 0

@@ -150,7 +150,7 @@ class ReviewBatch:
         if not self._enabled or self._pending_outcome is None:
             return StepBackOutcome()
 
-        if not self._pending_outcome.step_back_applied:
+        if self._pending_outcome.mode != "step_back":
             return self._pending_outcome
 
         if storage is None:
@@ -175,7 +175,6 @@ class ReviewBatch:
             run_id=run_id,
             agent_id=agent_id,
         )
-        outcome.review_tool_call_id = self._review_tool_call_id
         outcome.hidden_step_ids = list(self._review_hidden_step_ids)
         self._ledger.review.last_review_seq = (
             self._review_seq or self._ledger.review.last_review_seq
@@ -214,7 +213,7 @@ class ReviewBatch:
             self._ledger.review.last_review_seq = current_seq
             self._ledger.review.pending_review_reason = None
             self._pending_outcome = StepBackOutcome(
-                applied=True,
+                mode="metadata_only",
                 review_tool_call_id=self._review_tool_call_id,
                 hidden_step_ids=list(self._review_hidden_step_ids),
             )
@@ -224,11 +223,19 @@ class ReviewBatch:
             experience = output.get("experience")
             self._feedback = experience if isinstance(experience, str) else content
             self._pending_outcome = StepBackOutcome(
-                applied=True,
+                mode="step_back",
                 review_tool_call_id=self._review_tool_call_id,
                 hidden_step_ids=list(self._review_hidden_step_ids),
-                step_back_applied=True,
             )
+            return content
+
+        self._ledger.review.last_review_seq = current_seq
+        self._ledger.review.pending_review_reason = None
+        self._pending_outcome = StepBackOutcome(
+            mode="metadata_only",
+            review_tool_call_id=self._review_tool_call_id,
+            hidden_step_ids=list(self._review_hidden_step_ids),
+        )
         return content
 
 

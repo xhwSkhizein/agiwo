@@ -51,9 +51,9 @@ export function TraceRuntimeDecisions({
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {decisionPreviewItems(decision).map((item) => (
+                  {decisionPreviewItems(decision).map((item, index) => (
                     <span
-                      key={item}
+                      key={`${item}-${index}`}
                       className="rounded-full border border-line bg-panel-muted px-2 py-1 text-[11px] text-ink-muted"
                     >
                       {item}

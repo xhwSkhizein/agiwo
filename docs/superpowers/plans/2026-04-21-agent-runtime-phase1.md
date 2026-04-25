@@ -66,7 +66,7 @@ This plan only covers Phase 1. It includes the minimum console/query touch point
 - `tests/agent/test_compact.py`
 - `tests/agent/test_definition_contracts.py`
 - `tests/agent/test_memory_hooks.py`
-- `tests/agent/test_step-back.py`
+- `tests/agent/test_step_back.py`
 - `tests/agent/test_run_contracts.py`
 - `tests/agent/test_run_loop_contracts.py`
 - `tests/agent/test_state_tracking.py`
@@ -780,19 +780,19 @@ git commit -m "refactor: route agent execution through run engine"
 - Modify: `agiwo/agent/trace_writer.py`
 - Modify: `agiwo/agent/models/stream.py`
 - Test: `tests/agent/test_compact.py`
-- Test: `tests/agent/test_step-back.py`
+- Test: `tests/agent/test_step_back.py`
 - Test: `tests/agent/test_termination.py`
 - Test: `tests/agent/test_run_contracts.py`
 
 - [ ] **Step 1: Write failing policy/trace expectations**
 
 ```python
-# tests/agent/test_step-back.py
+# tests/agent/test_step_back.py
 from agiwo.agent.models.log import RunLogEntryKind
 
 
-async def test_step-back_is_recorded_as_run_log_entry(storage, runtime) -> None:
-    await runtime.trigger_step-back()
+async def test_step_back_is_recorded_as_run_log_entry(storage, runtime) -> None:
+    await runtime.trigger_step_back()
 
     entries = await storage.list_entries(session_id="sess-1")
     assert RunLogEntryKind.STEP_BACK_APPLIED in [entry.kind for entry in entries]
@@ -809,7 +809,7 @@ async def test_termination_entry_records_phase_and_reason(runtime, storage) -> N
 
 - [ ] **Step 2: Run the focused tests**
 
-Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_step-back.py tests/agent/test_termination.py tests/agent/test_run_contracts.py -v`
+Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_step_back.py tests/agent/test_termination.py tests/agent/test_run_contracts.py -v`
 Expected: FAIL because these paths still update step/run storage and trace/stream side effects directly.
 
 - [ ] **Step 3: Make policies and view builders consume/write `RunLog`**
@@ -901,13 +901,13 @@ def stream_items_from_entries(entries: list[RunLogEntry]) -> list[AgentStreamIte
 
 - [ ] **Step 4: Rerun the focused policy tests**
 
-Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_step-back.py tests/agent/test_termination.py tests/agent/test_run_contracts.py -v`
+Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_step_back.py tests/agent/test_termination.py tests/agent/test_run_contracts.py -v`
 Expected: PASS with assertions updated to read `RunLog`-backed views and stream items.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agiwo/agent/compaction.py agiwo/agent/review/executor.py agiwo/agent/termination/limits.py agiwo/agent/termination/summarizer.py agiwo/agent/trace_writer.py agiwo/agent/models/stream.py tests/agent/test_compact.py tests/agent/test_step-back.py tests/agent/test_termination.py tests/agent/test_run_contracts.py
+git add agiwo/agent/compaction.py agiwo/agent/review/executor.py agiwo/agent/termination/limits.py agiwo/agent/termination/summarizer.py agiwo/agent/trace_writer.py agiwo/agent/models/stream.py tests/agent/test_compact.py tests/agent/test_step_back.py tests/agent/test_termination.py tests/agent/test_run_contracts.py
 git commit -m "refactor: record runtime policies in run log"
 ```
 

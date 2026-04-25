@@ -160,6 +160,68 @@ async def test_execute_tool_batch_cycle_injects_hook_review_advice(
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_batch_cycle_injects_review_without_hook_advice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_tool_batch(*args, **kwargs):
+        del args, kwargs
+        return [
+            ToolResult.success(
+                tool_name="search",
+                tool_call_id="tc_search",
+                content="Found results",
+                output={},
+            )
+        ]
+
+    monkeypatch.setattr(
+        run_tool_batch_module, "execute_tool_batch", fake_execute_tool_batch
+    )
+
+    storage = InMemoryRunLogStorage()
+    session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
+    hooks = _FakeHooks(review_advice=None)
+    ledger = RunLedger()
+    ledger.review.milestones = [
+        Milestone(id="locate", description="Locate the auth bug", status="active")
+    ]
+    context = _FakeContext(
+        config=AgentOptions(
+            enable_goal_directed_review=True,
+            review_step_interval=1,
+        ),
+        ledger=ledger,
+        hooks=hooks,
+        session_runtime=session_runtime,
+    )
+    runtime = _FakeRuntime(tools_map=_review_tools_map())
+
+    async def commit_step(step):
+        return await _commit_step_to_ledger_and_storage(context, step)
+
+    async def set_termination_reason(reason: TerminationReason, tool_name: str) -> None:
+        del reason, tool_name
+
+    await run_tool_batch_module.execute_tool_batch_cycle(
+        context=context,
+        runtime=runtime,
+        tool_calls=[
+            {"id": "tc_search", "type": "function", "function": {"name": "search"}}
+        ],
+        assistant_step_id="assistant-step",
+        set_termination_reason=set_termination_reason,
+        commit_step=commit_step,
+    )
+
+    tool_messages = [
+        msg for msg in context.ledger.messages if msg.get("role") == "tool"
+    ]
+    assert len(tool_messages) == 1
+    assert "<system-review>" in tool_messages[0]["content"]
+    assert "Hook advice:" not in tool_messages[0]["content"]
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -223,7 +285,7 @@ async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
     assert terminated is False
     assert len(hooks.after_step_back_calls) == 1
     outcome = hooks.after_step_back_calls[0]
-    assert outcome.step_back_applied is True
+    assert outcome.mode == "step_back"
     assert outcome.affected_count == 1
     assert outcome.experience == "narrow the search"
     tool_messages = [
@@ -232,3 +294,27 @@ async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
     assert len(tool_messages) == 1
     assert tool_messages[0]["tool_call_id"] == "tc_search"
     assert tool_messages[0]["content"] == "[EXPERIENCE] narrow the search"
+
+
+def test_remove_review_tool_call_omits_empty_tool_calls_key() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": "Need to review this path.",
+            "tool_calls": [
+                {
+                    "id": "tc_review",
+                    "type": "function",
+                    "function": {"name": "review_trajectory", "arguments": "{}"},
+                }
+            ],
+        }
+    ]
+
+    run_tool_batch_module._remove_review_tool_call(
+        messages,
+        review_tool_call_id="tc_review",
+    )
+
+    assert len(messages) == 1
+    assert "tool_calls" not in messages[0]

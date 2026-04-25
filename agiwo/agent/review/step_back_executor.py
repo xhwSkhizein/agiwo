@@ -1,7 +1,7 @@
 """Step-back execution — build targeted tool-result content updates."""
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from agiwo.agent.storage.base import RunLogStorage
 from agiwo.utils.logging import get_logger
@@ -20,11 +20,10 @@ class ContentUpdate:
 class StepBackOutcome:
     """Structured cleanup outcome used by review finalization."""
 
-    applied: bool = False
+    mode: Literal["none", "metadata_only", "step_back"] = "none"
     review_tool_call_id: str | None = None
     hidden_step_ids: list[str] = field(default_factory=list)
     content_updates: list[ContentUpdate] = field(default_factory=list)
-    step_back_applied: bool = False
     affected_count: int = 0
     checkpoint_seq: int = 0
     experience: str | None = None
@@ -96,10 +95,9 @@ async def execute_step_back(
     )
 
     return StepBackOutcome(
-        applied=True,
+        mode="step_back",
         review_tool_call_id=review_tool_call_id,
         content_updates=content_updates,
-        step_back_applied=True,
         affected_count=len(content_updates),
         checkpoint_seq=checkpoint_seq,
         experience=experience,

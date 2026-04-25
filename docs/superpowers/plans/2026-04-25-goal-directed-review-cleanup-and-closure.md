@@ -888,8 +888,6 @@ def inject_system_review(
         "  2. Provide a concise experience summary of what was learned\n"
     )
     return f"{content}\n\n<system-review>\n{inner_text}</system-review>"
-    if review_advice:
-        inner_text += f"\nHook advice: {review_advice}\n"
 ```
 
 - [ ] **Step 4: Remove the unused scheduler control dependency from review tools**
@@ -1172,7 +1170,7 @@ git commit -m "fix: align console review config and observability"
 - [ ] **Step 1: Capture the exact remaining files before editing**
 
 ```bash
-rg -l "step-back|StepBack|STEP_BACK|before_review|after_step_back|enable_goal_directed_review|step-back_" AGENTS.md docs -S | sort
+rg -l "retrospect|Retrospect|RETROSPECT|enable_tool_retrospect|retrospect_|BEFORE_RETROSPECT|AFTER_RETROSPECT" AGENTS.md docs -S | sort
 ```
 
 Expected: the command lists the files above. Use that exact list as the edit checklist.
@@ -1180,12 +1178,12 @@ Expected: the command lists the files above. Use that exact list as the edit che
 - [ ] **Step 2: Rewrite current docs and `AGENTS.md` to the shipped terminology**
 
 ```markdown
-- `step-back` -> `goal-directed review` or `step-back`, depending on whether the sentence describes the review checkpoint or the content rewrite.
-- `review_trajectory` -> `review_trajectory`
-- `BEFORE_REVIEW` / `AFTER_STEP_BACK` -> `BEFORE_REVIEW` / `AFTER_STEP_BACK`
-- `StepBackApplied` -> `StepBackApplied`
-- `agiwo/agent/review/` -> `agiwo/agent/review/`
-- `enable_goal_directed_review` + threshold fields -> `enable_goal_directed_review`, `review_step_interval`, `review_on_error`
+- `retrospect` / `Retrospect` -> `review` / `Review` when the sentence describes the new goal-directed checkpoint flow.
+- `RetrospectToolResultTool` -> `review_trajectory`
+- `BEFORE_RETROSPECT` / `AFTER_RETROSPECT` -> `BEFORE_REVIEW` / `AFTER_STEP_BACK`
+- `RetrospectApplied` -> `StepBackApplied`
+- `agiwo/agent/retrospect/` -> `agiwo/agent/review/`
+- `enable_tool_retrospect`, `retrospect_token_threshold`, `retrospect_round_interval`, `retrospect_accumulated_token_threshold` -> `enable_goal_directed_review`, `review_step_interval`, `review_on_error`
 ```
 
 In `AGENTS.md`, update the architecture rows so they describe `agiwo/agent/review/` as the current context-optimization owner. Do not leave the old directory name in the stable-boundary docs.
@@ -1205,7 +1203,7 @@ Then rewrite the document titles and opening paragraphs so they read as historic
 - [ ] **Step 4: Run the terminology sweep again**
 
 ```bash
-rg -n "step-back|StepBack|STEP_BACK|before_review|after_step_back|enable_goal_directed_review|step-back_" AGENTS.md docs console/web/src agiwo tests console/tests -S
+rg -n "retrospect|Retrospect|RETROSPECT|enable_tool_retrospect|retrospect_|BEFORE_RETROSPECT|AFTER_RETROSPECT" AGENTS.md docs console/web/src agiwo tests console/tests -S
 ```
 
 Expected: the remaining hits are only deliberate legacy literals that must stay for compatibility tests, such as the raw `"step_back_applied"` input in `tests/agent/test_storage_serialization.py`.

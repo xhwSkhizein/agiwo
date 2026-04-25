@@ -69,14 +69,13 @@ async def execute_tool_batch_cycle(
                 step_count=review_notice.step_count,
                 context=context,
             )
-            if review_advice:
-                tool_step.content = inject_system_review(
-                    review_notice.content,
-                    review_notice.milestone,
-                    review_notice.step_count,
-                    trigger_reason=review_notice.trigger.value,
-                    review_advice=review_advice,
-                )
+            tool_step.content = inject_system_review(
+                review_notice.content,
+                review_notice.milestone,
+                review_notice.step_count,
+                trigger_reason=review_notice.trigger.value,
+                review_advice=review_advice,
+            )
         committed_step = await commit_step(tool_step)
         batch.register_step(call_id, committed_step.id, committed_step.sequence)
 
@@ -100,7 +99,7 @@ async def _apply_review_outcome(
         run_id=context.run_id,
         agent_id=context.agent_id,
     )
-    if not outcome.applied:
+    if outcome.mode == "none":
         return
 
     if outcome.hidden_step_ids:
@@ -118,7 +117,7 @@ async def _apply_review_outcome(
         review_tool_call_id=outcome.review_tool_call_id,
     )
 
-    if outcome.step_back_applied:
+    if outcome.mode == "step_back":
         step_back_entries = await writer.record_step_back_applied(
             affected_count=outcome.affected_count,
             checkpoint_seq=outcome.checkpoint_seq,
@@ -146,6 +145,7 @@ def _replace_tool_message_content(
         if message.get("tool_call_id") != tool_call_id:
             continue
         message["content"] = content
+        break
 
 
 def _remove_review_tool_call(
@@ -177,7 +177,10 @@ def _remove_review_tool_call(
             for tool_call in tool_calls
             if tool_call.get("id") != review_tool_call_id
         ]
-        message["tool_calls"] = remaining_tool_calls
+        if remaining_tool_calls:
+            message["tool_calls"] = remaining_tool_calls
+        else:
+            message.pop("tool_calls", None)
         content = message.get("content")
         if remaining_tool_calls or (isinstance(content, str) and content.strip()):
             kept_messages.append(message)

@@ -6,6 +6,16 @@ import { SectionCard } from "@/components/section-card";
 import type { TraceTimelineEvent } from "@/lib/api";
 import { formatLocalDateTime } from "@/lib/time";
 
+function timelineStatusBadgeClass(status: string): string {
+  if (status === "error") {
+    return "border-red-500/40 bg-red-500/10 text-red-200";
+  }
+  if (status === "ok") {
+    return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
+  }
+  return "border-line bg-panel-muted text-ink-muted";
+}
+
 export function TraceLoopTimeline({
   events,
 }: {
@@ -18,9 +28,9 @@ export function TraceLoopTimeline({
           No loop events replayed for this trace.
         </div>
       ) : (
-        events.map((event) => (
+        events.map((event, index) => (
           <details
-            key={`${event.kind}-${event.sequence ?? "na"}-${event.span_id ?? event.title}`}
+            key={`${event.kind}-${event.sequence ?? "na"}-${event.span_id ?? event.title}-${event.timestamp ?? "na"}-${index}`}
             className="rounded-xl border border-line bg-panel px-3 py-3"
           >
             <summary className="list-none cursor-pointer">
@@ -30,6 +40,13 @@ export function TraceLoopTimeline({
                   <span className="rounded-full border border-line px-2 py-0.5 text-[11px] uppercase tracking-wide text-ink-muted">
                     {event.kind}
                   </span>
+                  {event.status ? (
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wide ${timelineStatusBadgeClass(event.status)}`}
+                    >
+                      {event.status}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="text-sm text-foreground">{event.summary}</p>
                 <div className="flex flex-wrap gap-3 text-xs text-ink-muted">

@@ -173,6 +173,8 @@ class SQLiteRunLogStorage(RunLogStorage):
         run_id: str | None = None,
         agent_id: str | None = None,
         after_sequence: int | None = None,
+        kinds: list[RunLogEntryKind] | None = None,
+        order: Literal["asc", "desc"] = "asc",
         limit: int = 1000,
     ) -> list[RunLogEntry]:
         conn = await self._ensure_connection()
@@ -187,7 +189,11 @@ class SQLiteRunLogStorage(RunLogStorage):
         if after_sequence is not None:
             query += " AND sequence > ?"
             params.append(after_sequence)
-        query += " ORDER BY sequence ASC LIMIT ?"
+        if kinds is not None:
+            kind_placeholders = ",".join("?" for _ in kinds)
+            query += f" AND kind IN ({kind_placeholders})"
+            params.extend(kind.value for kind in kinds)
+        query += f" ORDER BY sequence {order.upper()} LIMIT ?"
         params.append(limit)
 
         entries: list[RunLogEntry] = []
@@ -285,9 +291,8 @@ class SQLiteRunLogStorage(RunLogStorage):
                 entries.append(self._deserialize_run_log_entry(row))
 
         run_views = build_run_views_from_entries(entries)
-        step_count = len(build_step_views_from_entries(entries))
         return SessionRunStats(
-            committed_step_count=step_count,
+            committed_step_count=await self.get_committed_step_count(session_id),
             run_views=run_views,
         )
 
@@ -318,29 +323,59 @@ class SQLiteRunLogStorage(RunLogStorage):
         entries.sort(key=lambda item: item.sequence)
         return build_runtime_decision_state_from_entries(entries)
 
-    async def get_committed_step_count(self, session_id: str) -> int:
+    async def count_step_views(
+        self,
+        *,
+        session_id: str,
+        include_hidden_from_context: bool = True,
+    ) -> int:
         conn = await self._ensure_connection()
-        kinds = [
+        step_kinds = [
             RunLogEntryKind.USER_STEP_COMMITTED.value,
             RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
             RunLogEntryKind.TOOL_STEP_COMMITTED.value,
-            RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED.value,
-            RunLogEntryKind.CONTEXT_STEPS_HIDDEN.value,
+        ]
+        placeholders = ",".join("?" for _ in step_kinds)
+        query = f"""
+            SELECT COUNT(*)
+            FROM run_log_entries AS steps
+            WHERE steps.session_id = ?
+              AND steps.kind IN ({placeholders})
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM run_log_entries AS rollback
+                  WHERE rollback.session_id = steps.session_id
+                    AND rollback.kind = ?
+                    AND CAST(json_extract(rollback.payload, '$.start_sequence') AS INTEGER) <= steps.sequence
+                    AND CAST(json_extract(rollback.payload, '$.end_sequence') AS INTEGER) >= steps.sequence
+              )
+        """
+        params: list[object] = [
+            session_id,
+            *step_kinds,
             RunLogEntryKind.RUN_ROLLED_BACK.value,
         ]
-        placeholders = ",".join("?" for _ in kinds)
-        entries: list[RunLogEntry] = []
-        async with conn.execute(
-            f"""
-            SELECT payload FROM run_log_entries
-            WHERE session_id = ? AND kind IN ({placeholders})
-            ORDER BY sequence ASC
-            """,
-            [session_id, *kinds],
-        ) as cursor:
-            async for row in cursor:
-                entries.append(self._deserialize_run_log_entry(row))
-        return len(build_step_views_from_entries(entries))
+        if not include_hidden_from_context:
+            query += """
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM run_log_entries AS hidden,
+                       json_each(hidden.payload, '$.step_ids') AS hidden_step
+                  WHERE hidden.session_id = steps.session_id
+                    AND hidden.kind = ?
+                    AND hidden_step.value = json_extract(steps.payload, '$.step_id')
+              )
+            """
+            params.append(RunLogEntryKind.CONTEXT_STEPS_HIDDEN.value)
+        async with conn.execute(query, params) as cursor:
+            row = await cursor.fetchone()
+        return int(row[0]) if row is not None else 0
+
+    async def get_committed_step_count(self, session_id: str) -> int:
+        return await self.count_step_views(
+            session_id=session_id,
+            include_hidden_from_context=False,
+        )
 
     async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
         if not session_ids:
@@ -363,39 +398,13 @@ class SQLiteRunLogStorage(RunLogStorage):
     async def batch_get_committed_step_counts(
         self, session_ids: list[str]
     ) -> dict[str, int]:
-        if not session_ids:
-            return {}
-        conn = await self._ensure_connection()
-        kinds = [
-            RunLogEntryKind.USER_STEP_COMMITTED.value,
-            RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
-            RunLogEntryKind.TOOL_STEP_COMMITTED.value,
-            RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED.value,
-            RunLogEntryKind.RUN_ROLLED_BACK.value,
-        ]
-        session_placeholders = ",".join("?" for _ in session_ids)
-        kind_placeholders = ",".join("?" for _ in kinds)
-        entries_by_session: dict[str, list[RunLogEntry]] = {
-            session_id: [] for session_id in session_ids
+        return {
+            session_id: await self.count_step_views(
+                session_id=session_id,
+                include_hidden_from_context=False,
+            )
+            for session_id in session_ids
         }
-        async with conn.execute(
-            f"""
-            SELECT session_id, payload FROM run_log_entries
-            WHERE session_id IN ({session_placeholders})
-              AND kind IN ({kind_placeholders})
-            ORDER BY session_id ASC, sequence ASC
-            """,
-            [*session_ids, *kinds],
-        ) as cursor:
-            async for row in cursor:
-                entries_by_session[row["session_id"]].append(
-                    self._deserialize_run_log_entry(row)
-                )
-
-        result: dict[str, int] = {}
-        for session_id, entries in entries_by_session.items():
-            result[session_id] = len(build_step_views_from_entries(entries))
-        return result
 
     async def list_step_views(
         self,

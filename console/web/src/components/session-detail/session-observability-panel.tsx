@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, ArrowRight, Clock3, GitBranch, Scissors, ShieldCheck } from "lucide-react";
+import { Activity, ArrowRight, ChevronRight, Clock3, GitBranch, Scissors, ShieldCheck } from "lucide-react";
 
 import { JsonDisclosure } from "@/components/json-disclosure";
 import { MonoText } from "@/components/mono-text";
@@ -17,6 +17,28 @@ function DecisionIcon({ kind }: { kind: RuntimeDecisionEvent["kind"] }) {
   if (kind === "compaction_failed") return <Scissors className="h-4 w-4 text-red-300" />;
   if (kind === "step_back") return <Activity className="h-4 w-4 text-amber-300" />;
   return <GitBranch className="h-4 w-4 text-zinc-300" />;
+}
+
+const DETAIL_PREVIEW_MAX_CHARS = 72;
+
+function formatPreviewDetailValue(value: unknown): string | null {
+  if (
+    value === null ||
+    value === undefined ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return String(value);
+  }
+  try {
+    const json = JSON.stringify(value);
+    if (!json) return null;
+    if (json.length <= DETAIL_PREVIEW_MAX_CHARS) return json;
+    return `${json.slice(0, DETAIL_PREVIEW_MAX_CHARS - 1)}…`;
+  } catch {
+    return null;
+  }
 }
 
 function decisionPreviewItems(event: RuntimeDecisionEvent): string[] {
@@ -54,13 +76,28 @@ function decisionPreviewItems(event: RuntimeDecisionEvent): string[] {
   }
   return Object.entries(event.details)
     .slice(0, 3)
-    .map(([key, value]) => `${key} ${String(value)}`);
+    .flatMap(([key, value]) => {
+      const preview = formatPreviewDetailValue(value);
+      return preview ? [`${key} ${preview}`] : [];
+    });
+}
+
+function DecisionChevron() {
+  return (
+    <span className="inline-flex items-center text-ink-muted">
+      <span className="sr-only">Toggle decision details</span>
+      <ChevronRight
+        aria-hidden="true"
+        className="h-4 w-4 transition-transform duration-150 group-open:rotate-90"
+      />
+    </span>
+  );
 }
 
 function DecisionCard({ event }: { event: RuntimeDecisionEvent }) {
   const previewItems = decisionPreviewItems(event);
   return (
-    <details className="rounded-xl border border-line bg-panel px-3 py-3">
+    <details className="group rounded-xl border border-line bg-panel px-3 py-3">
       <summary className="list-none cursor-pointer">
         <div className="flex items-start gap-3">
           <DecisionIcon kind={event.kind} />
@@ -74,9 +111,9 @@ function DecisionCard({ event }: { event: RuntimeDecisionEvent }) {
             <p className="text-sm text-foreground">{event.summary}</p>
             {previewItems.length > 0 && (
               <div className="flex flex-wrap gap-2">
-                {previewItems.map((item) => (
+                {previewItems.map((item, index) => (
                   <span
-                    key={item}
+                    key={`${item}-${index}`}
                     className="rounded-full border border-line bg-panel-muted px-2 py-1 text-[11px] text-ink-muted"
                   >
                     {item}
@@ -94,6 +131,7 @@ function DecisionCard({ event }: { event: RuntimeDecisionEvent }) {
               <span>{formatLocalDateTime(event.created_at)}</span>
             </div>
           </div>
+          <DecisionChevron />
         </div>
       </summary>
       <div className="mt-3">

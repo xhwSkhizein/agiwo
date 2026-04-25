@@ -140,7 +140,7 @@ class SessionObservabilityRecord:
 @dataclass(slots=True)
 class TraceTimelineEventRecord:
     kind: str
-    timestamp: str | None = None
+    timestamp: datetime | None = None
     sequence: int | None = None
     run_id: str | None = None
     agent_id: str | None = None

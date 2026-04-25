@@ -95,7 +95,7 @@ def inject_system_review(
 ) -> str:
     """Append a <system-review> notice to the tool result content.
 
-    Returns content unchanged when no notice should be injected.
+    This always appends the generated notice block.
     """
     notice = _build_review_notice(
         milestone,

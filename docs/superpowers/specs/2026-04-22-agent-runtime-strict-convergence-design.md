@@ -268,7 +268,7 @@ The canonical rules are:
 9. `compaction_failed`
    - observe-only only
 10. `before_review`
-   - decision-support fields: `step-back_advice`
+   - decision-support fields: `step_back_advice`
 11. `after_step_back`
    - observe-only only
 12. `before_termination`

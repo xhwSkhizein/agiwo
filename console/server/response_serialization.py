@@ -468,7 +468,7 @@ def trace_response_from_sdk(trace: Trace) -> TraceResponse:
     timeline_events = [
         TraceTimelineEventResponse(
             kind=event.kind,
-            timestamp=event.timestamp,
+            timestamp=event.timestamp.isoformat() if event.timestamp else None,
             sequence=event.sequence,
             run_id=event.run_id,
             agent_id=event.agent_id,

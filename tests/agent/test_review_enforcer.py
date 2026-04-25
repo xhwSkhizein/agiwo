@@ -122,3 +122,4 @@ class TestInjectSystemReview:
         assert "<system-review>" in result
         assert "</system-review>" in result
         assert "No active milestone" in result
+        assert "Trigger: milestone_switch" in result

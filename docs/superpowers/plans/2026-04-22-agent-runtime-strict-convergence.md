@@ -371,7 +371,7 @@ _DECISION_SUPPORT_ALLOWLISTS = {
     HookPhase.BEFORE_LLM: {"llm_advice"},
     HookPhase.BEFORE_TOOL_CALL: {"tool_advice"},
     HookPhase.BEFORE_COMPACTION: {"compaction_advice"},
-    HookPhase.BEFORE_REVIEW: {"step-back_advice"},
+    HookPhase.BEFORE_REVIEW: {"step_back_advice"},
     HookPhase.BEFORE_TERMINATION: {"termination_advice"},
 }
 ```
@@ -604,7 +604,7 @@ git commit -m "refactor: route run lifecycle through state writer"
 - Modify: `agiwo/agent/runtime/state_writer.py`
 - Modify: `agiwo/agent/tool_executor.py`
 - Test: `tests/agent/test_compact.py`
-- Test: `tests/agent/test_step-back.py`
+- Test: `tests/agent/test_step_back.py`
 - Test: `tests/agent/test_tool_auth_runtime.py`
 - Test: `tests/agent/test_run_engine.py`
 
@@ -638,9 +638,9 @@ async def test_run_loop_records_compaction_failed_entry_on_failed_attempt(
 ```
 
 ```python
-# tests/agent/test_step-back.py
+# tests/agent/test_step_back.py
 @pytest.mark.asyncio
-async def test_step-back_message_rebuild_goes_through_state_writer(
+async def test_step_back_message_rebuild_goes_through_state_writer(
     monkeypatch, _make_context
 ) -> None:
     state = _make_context()
@@ -658,7 +658,7 @@ async def test_step-back_message_rebuild_goes_through_state_writer(
 
 - [ ] **Step 2: Run the targeted tests to verify they fail**
 
-Run: `uv run pytest tests/agent/test_compact.py::test_run_loop_records_compaction_failed_entry_on_failed_attempt tests/agent/test_step-back.py::test_step-back_message_rebuild_goes_through_state_writer -v`
+Run: `uv run pytest tests/agent/test_compact.py::test_run_loop_records_compaction_failed_entry_on_failed_attempt tests/agent/test_step_back.py::test_step_back_message_rebuild_goes_through_state_writer -v`
 Expected: FAIL because `compaction` failure does not append `CompactionFailed` and message rewrites still bypass the writer.
 
 - [ ] **Step 3: Add writer methods for message rebuilds, `compaction` success/failure, tool-step commits, and step-back application**
@@ -711,9 +711,9 @@ if outcome.applied:
         reason="step-back",
         messages=outcome.messages,
     )
-    step-back_entries = await writer.record_step_back_applied(...)
+    step_back_entries = await writer.record_step_back_applied(...)
     await session_runtime.project_committed_entries(
-        [*rebuilt_entries, *step-back_entries],
+        [*rebuilt_entries, *step_back_entries],
         context=context,
     )
 ```
@@ -737,13 +737,13 @@ else:
 
 - [ ] **Step 4: Run the compaction, step-back, and tool suites**
 
-Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_step-back.py tests/agent/test_tool_auth_runtime.py tests/agent/test_run_engine.py -v`
+Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_step_back.py tests/agent/test_tool_auth_runtime.py tests/agent/test_run_engine.py -v`
 Expected: PASS with `CompactionFailed` committed, step-back rewrites mediated by the writer, and tool steps still producing stable results.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agiwo/agent/runtime/state_writer.py agiwo/agent/run_tool_batch.py agiwo/agent/compaction.py agiwo/agent/review/executor.py agiwo/agent/tool_executor.py tests/agent/test_compact.py tests/agent/test_step-back.py tests/agent/test_tool_auth_runtime.py tests/agent/test_run_engine.py
+git add agiwo/agent/runtime/state_writer.py agiwo/agent/run_tool_batch.py agiwo/agent/compaction.py agiwo/agent/review/executor.py agiwo/agent/tool_executor.py tests/agent/test_compact.py tests/agent/test_step_back.py tests/agent/test_tool_auth_runtime.py tests/agent/test_run_engine.py
 git commit -m "refactor: route runtime decision writes through state writer"
 ```
 

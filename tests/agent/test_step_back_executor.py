@@ -98,7 +98,7 @@ class TestExecuteStepBack:
             agent_id="a1",
         )
 
-        assert outcome.applied is True
+        assert outcome.mode == "step_back"
         assert outcome.affected_count == 1  # only tc_2 (seq 5 > checkpoint 3)
         assert outcome.checkpoint_seq == 3
         assert outcome.content_updates == [
@@ -183,7 +183,7 @@ class TestExecuteStepBack:
             agent_id="a1",
         )
 
-        assert outcome.applied is True
+        assert outcome.mode == "step_back"
         assert outcome.affected_count == 0
         assert outcome.content_updates == []
 
@@ -295,6 +295,6 @@ class TestExecuteStepBack:
 class TestStepBackOutcome:
     def test_default_not_applied(self):
         outcome = StepBackOutcome()
-        assert outcome.applied is False
+        assert outcome.mode == "none"
         assert outcome.affected_count == 0
         assert outcome.content_updates == []

@@ -141,8 +141,7 @@ class TestReviewBatch:
         )
 
         outcome = await batch.finalize()
-        assert outcome.applied is True
-        assert outcome.step_back_applied is False
+        assert outcome.mode == "metadata_only"
         assert outcome.review_tool_call_id == "tc_review"
         assert outcome.hidden_step_ids == ["step_review_call", "step_review_result"]
 
@@ -202,7 +201,7 @@ class TestReviewBatch:
             agent_id="a1",
         )
 
-        assert outcome.applied is True
+        assert outcome.mode == "step_back"
         assert outcome.experience == "JWT was a dead end"
         assert outcome.affected_count == 1
         assert outcome.review_tool_call_id == "tc_review"
@@ -332,7 +331,7 @@ class TestReviewBatch:
             run_id="r1",
             agent_id="a1",
         )
-        assert outcome.applied is True
+        assert outcome.mode == "step_back"
         assert [
             (update.step_id, update.content) for update in outcome.content_updates
         ] == [("step_1", "[EXPERIENCE] summarize")]
@@ -344,7 +343,36 @@ class TestReviewBatch:
         tools_map = {}
         batch = ReviewBatch(config, ledger, tools_map)
         outcome = await batch.finalize()
-        assert outcome.applied is False
+        assert outcome.mode == "none"
+
+    @pytest.mark.asyncio
+    async def test_malformed_review_result_still_advances_review_cursor(self):
+        config = AgentOptions(enable_goal_directed_review=True, review_step_interval=1)
+        ledger = RunLedger()
+        ledger.review.pending_review_reason = "milestone_switch"
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
+        batch = ReviewBatch(config, ledger, tools_map)
+        batch.process_result(
+            FakeToolResult(
+                "review_trajectory",
+                "Trajectory review: missing aligned output",
+                tool_call_id="tc_review",
+                output={},
+            ),
+            current_seq=9,
+            assistant_step_id="step_review_call",
+            tool_step_id="step_review_result",
+        )
+
+        outcome = await batch.finalize()
+
+        assert outcome.mode == "metadata_only"
+        assert outcome.hidden_step_ids == ["step_review_call", "step_review_result"]
+        assert ledger.review.last_review_seq == 9
+        assert ledger.review.pending_review_reason is None
 
     @pytest.mark.asyncio
     async def test_finalize_requires_storage_when_feedback_present(self):

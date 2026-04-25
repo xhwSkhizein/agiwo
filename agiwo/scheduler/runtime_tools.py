@@ -20,6 +20,10 @@ from agiwo.tool.base import BaseTool, ToolGateDecision, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
 
+_MILESTONE_STATUSES: frozenset[str] = frozenset(
+    {"pending", "active", "completed", "abandoned"}
+)
+
 
 def _build_failed_result(
     tool_name: str,
@@ -699,12 +703,7 @@ class DeclareMilestonesTool(BaseTool):
                             "description": {"type": "string"},
                             "status": {
                                 "type": "string",
-                                "enum": [
-                                    "pending",
-                                    "active",
-                                    "completed",
-                                    "abandoned",
-                                ],
+                                "enum": list(_MILESTONE_STATUSES),
                             },
                         },
                         "required": ["id", "description"],
@@ -769,12 +768,7 @@ class DeclareMilestonesTool(BaseTool):
                 "id": milestone_id,
                 "description": description,
             }
-            if isinstance(status, str) and status in {
-                "pending",
-                "active",
-                "completed",
-                "abandoned",
-            }:
+            if isinstance(status, str) and status in _MILESTONE_STATUSES:
                 normalized["status"] = status
             normalized_milestones.append(normalized)
         return ToolResult.success(

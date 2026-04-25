@@ -2,6 +2,7 @@
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from agiwo.agent.models.log import (
@@ -73,14 +74,6 @@ def _as_bool(value: object) -> bool:
     if isinstance(value, int):
         return value != 0
     return False
-
-
-def _iso(value: object) -> str | None:
-    if value is None:
-        return None
-    if hasattr(value, "isoformat"):
-        return value.isoformat()
-    return str(value)
 
 
 def _json_text(value: object) -> str:
@@ -368,13 +361,15 @@ def build_trace_runtime_decisions(trace: Trace) -> list[RuntimeDecisionRecord]:
         if record is None or record.kind == "hook_failed":
             continue
         decisions.append(record)
-    decisions.sort(key=lambda item: (_iso(item.created_at) or "", item.sequence))
+    decisions.sort(key=lambda item: (item.created_at, item.sequence))
     return decisions
 
 
-def _timeline_sort_key(event: TraceTimelineEventRecord) -> tuple[str, int, int, str]:
+def _timeline_sort_key(
+    event: TraceTimelineEventRecord,
+) -> tuple[datetime, int, int, str]:
     return (
-        event.timestamp or "",
+        event.timestamp or datetime.min.replace(tzinfo=timezone.utc),
         event.sequence if event.sequence is not None else 1_000_000_000,
         _TIMELINE_KIND_ORDER.get(event.kind, 999),
         event.title,
@@ -393,7 +388,7 @@ def build_trace_timeline_events(trace: Trace) -> list[TraceTimelineEventRecord]:
             events.append(
                 TraceTimelineEventRecord(
                     kind="run_started",
-                    timestamp=_iso(span.start_time),
+                    timestamp=span.start_time,
                     sequence=_as_int(span.attributes.get("start_sequence")),
                     run_id=span.run_id,
                     agent_id=agent_id,
@@ -415,7 +410,7 @@ def build_trace_timeline_events(trace: Trace) -> list[TraceTimelineEventRecord]:
                 events.append(
                     TraceTimelineEventRecord(
                         kind=completed_kind,
-                        timestamp=_iso(span.end_time),
+                        timestamp=span.end_time,
                         sequence=_as_int(span.attributes.get("end_sequence")),
                         run_id=span.run_id,
                         agent_id=agent_id,
@@ -446,7 +441,7 @@ def build_trace_timeline_events(trace: Trace) -> list[TraceTimelineEventRecord]:
             events.append(
                 TraceTimelineEventRecord(
                     kind="llm_call",
-                    timestamp=_iso(span.start_time),
+                    timestamp=span.start_time,
                     sequence=sequence,
                     run_id=span.run_id,
                     agent_id=agent_id,
@@ -475,7 +470,7 @@ def build_trace_timeline_events(trace: Trace) -> list[TraceTimelineEventRecord]:
                 events.append(
                     TraceTimelineEventRecord(
                         kind="review_checkpoint",
-                        timestamp=_iso(span.start_time),
+                        timestamp=span.start_time,
                         sequence=sequence,
                         run_id=span.run_id,
                         agent_id=agent_id,
@@ -497,7 +492,7 @@ def build_trace_timeline_events(trace: Trace) -> list[TraceTimelineEventRecord]:
                 events.append(
                     TraceTimelineEventRecord(
                         kind="review_result",
-                        timestamp=_iso(span.start_time),
+                        timestamp=span.start_time,
                         sequence=sequence,
                         run_id=span.run_id,
                         agent_id=agent_id,
@@ -528,10 +523,12 @@ def build_trace_timeline_events(trace: Trace) -> list[TraceTimelineEventRecord]:
                     if isinstance(input_args, dict)
                     else []
                 )
+                if not isinstance(milestones, list):
+                    milestones = []
                 events.append(
                     TraceTimelineEventRecord(
                         kind="milestone_update",
-                        timestamp=_iso(span.start_time),
+                        timestamp=span.start_time,
                         sequence=sequence,
                         run_id=span.run_id,
                         agent_id=agent_id,
@@ -547,7 +544,7 @@ def build_trace_timeline_events(trace: Trace) -> list[TraceTimelineEventRecord]:
             events.append(
                 TraceTimelineEventRecord(
                     kind="tool_call",
-                    timestamp=_iso(span.start_time),
+                    timestamp=span.start_time,
                     sequence=sequence,
                     run_id=span.run_id,
                     agent_id=agent_id,
@@ -574,7 +571,7 @@ def build_trace_timeline_events(trace: Trace) -> list[TraceTimelineEventRecord]:
             events.append(
                 TraceTimelineEventRecord(
                     kind=timeline_kind,
-                    timestamp=_iso(record.created_at),
+                    timestamp=record.created_at,
                     sequence=record.sequence,
                     run_id=record.run_id,
                     agent_id=record.agent_id,
