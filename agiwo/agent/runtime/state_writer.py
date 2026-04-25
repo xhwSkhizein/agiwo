@@ -274,7 +274,7 @@ class RunStateWriter:
         active_milestone_id: str | None,
         source_tool_call_id: str | None,
         source_step_id: str | None,
-        reason: str,
+        reason: Literal["declared", "updated", "completed", "activated"],
     ) -> list[object]:
         return await self.append_entries(
             [

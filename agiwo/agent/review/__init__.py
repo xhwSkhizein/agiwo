@@ -1,7 +1,7 @@
 """Goal-directed review public API used by ``run_tool_batch.py``."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.review import Milestone, ReviewCheckpoint
@@ -51,6 +51,7 @@ class ReviewBatch:
         self._feedback: str | None = None
         self._step_lookup: dict[str, dict[str, Any]] = {}
         self._pending_review_notice: ReviewNoticeRequest | None = None
+        self._pending_milestones_update: ReviewMilestonesUpdateRequest | None = None
         self._review_requested = False
 
     @property
@@ -68,6 +69,7 @@ class ReviewBatch:
         """Process a tool result and return the prompt-visible content."""
 
         self._pending_review_notice = None
+        self._pending_milestones_update = None
         content = result.content or ""
         if not self._enabled:
             return content
@@ -90,6 +92,15 @@ class ReviewBatch:
                     self._ledger.review,
                     milestones,
                     current_seq=current_seq,
+                )
+                active_milestone = get_active_milestone(self._ledger.review)
+                self._pending_milestones_update = ReviewMilestonesUpdateRequest(
+                    milestones=list(self._ledger.review.milestones),
+                    active_milestone_id=active_milestone.id
+                    if active_milestone is not None
+                    else None,
+                    source_tool_call_id=result.tool_call_id or None,
+                    reason="declared",
                 )
 
         is_error = not result.is_success
@@ -133,6 +144,13 @@ class ReviewBatch:
             step_count,
             trigger_reason=trigger.value,
         )
+
+    def consume_milestones_update_request(
+        self,
+    ) -> "ReviewMilestonesUpdateRequest | None":
+        request = self._pending_milestones_update
+        self._pending_milestones_update = None
+        return request
 
     def consume_review_notice_request(self) -> "ReviewNoticeRequest | None":
         request = self._pending_review_notice
@@ -200,6 +218,8 @@ class ReviewBatch:
             agent_id=agent_id,
         )
         outcome.hidden_step_ids = list(self._review_hidden_step_ids)
+        outcome.active_milestone_id = self._active_milestone_id()
+        outcome.review_step_id = self._review_step_id()
         self._ledger.review.last_review_seq = (
             self._review_seq or self._ledger.review.last_review_seq
         )
@@ -228,19 +248,24 @@ class ReviewBatch:
         aligned = output.get("aligned")
         if aligned is True:
             active_milestone = get_active_milestone(self._ledger.review)
+            active_milestone_id = (
+                active_milestone.id if active_milestone is not None else None
+            )
             self._ledger.review.latest_checkpoint = ReviewCheckpoint(
                 seq=current_seq,
-                milestone_id=active_milestone.id
-                if active_milestone is not None
-                else "",
+                milestone_id=active_milestone_id or "",
             )
             self._ledger.review.last_review_seq = current_seq
             self._ledger.review.review_count_since_checkpoint = 0
             self._ledger.review.pending_review_reason = None
             self._pending_outcome = StepBackOutcome(
                 mode="metadata_only",
+                aligned=True,
+                active_milestone_id=active_milestone_id,
                 review_tool_call_id=self._review_tool_call_id,
+                review_step_id=tool_step_id,
                 hidden_step_ids=list(self._review_hidden_step_ids),
+                checkpoint_seq=current_seq,
             )
             return content
 
@@ -250,8 +275,12 @@ class ReviewBatch:
             self._ledger.review.review_count_since_checkpoint = 0
             self._pending_outcome = StepBackOutcome(
                 mode="step_back",
+                aligned=False,
+                active_milestone_id=self._active_milestone_id(),
                 review_tool_call_id=self._review_tool_call_id,
+                review_step_id=tool_step_id,
                 hidden_step_ids=list(self._review_hidden_step_ids),
+                experience=self._feedback,
             )
             return content
 
@@ -260,10 +289,31 @@ class ReviewBatch:
         self._ledger.review.pending_review_reason = None
         self._pending_outcome = StepBackOutcome(
             mode="metadata_only",
+            aligned=None,
+            active_milestone_id=self._active_milestone_id(),
             review_tool_call_id=self._review_tool_call_id,
+            review_step_id=tool_step_id,
             hidden_step_ids=list(self._review_hidden_step_ids),
         )
         return content
+
+    def _active_milestone_id(self) -> str | None:
+        active_milestone = get_active_milestone(self._ledger.review)
+        return active_milestone.id if active_milestone is not None else None
+
+    def _review_step_id(self) -> str | None:
+        for step_id in reversed(self._review_hidden_step_ids):
+            if step_id is not None:
+                return step_id
+        return None
+
+
+@dataclass(frozen=True)
+class ReviewMilestonesUpdateRequest:
+    milestones: list[Milestone]
+    active_milestone_id: str | None
+    source_tool_call_id: str | None
+    reason: Literal["declared", "updated", "completed", "activated"]
 
 
 @dataclass(frozen=True)
@@ -306,6 +356,7 @@ def _parse_declared_milestones(output: object) -> list[Milestone]:
 
 __all__ = [
     "ReviewBatch",
+    "ReviewMilestonesUpdateRequest",
     "ReviewNoticeRequest",
     "ReviewTrigger",
     "StepBackOutcome",
