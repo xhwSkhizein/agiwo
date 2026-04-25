@@ -938,7 +938,7 @@ def _timeline_event_from_runtime_span(
             title="Milestone Update",
             summary=f"{len(milestones)} milestones declared/updated",
             status=status,
-            details={"milestones": milestones, **dict(span.attributes)},
+            details={**dict(span.attributes), "milestones": milestones},
         )
     record = build_runtime_decision_record_from_span(trace, span)
     if record is None:
