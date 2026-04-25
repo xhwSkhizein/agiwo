@@ -5,6 +5,7 @@ from typing import Any
 
 from agiwo.agent import (
     AgentStreamItem,
+    ContextStepsHiddenEvent,
     RunView,
     StepCompletedEvent,
     StepMetrics,
@@ -19,18 +20,31 @@ from agiwo.scheduler.models import (
 )
 from server.models.metrics import RunMetricsSummary
 from server.models.session import (
+    ConversationEventRecord,
     ChannelChatContext,
+    MilestoneRecord,
+    ReviewCheckpointRecord,
+    ReviewCycleRecord,
+    ReviewOutcomeRecord,
     RuntimeDecisionRecord,
     Session,
     SessionDetailRecord,
+    SessionMilestoneBoardRecord,
     SessionObservabilityRecord,
     SessionSummaryRecord,
+    TraceLlmCallRecord,
+    TraceMainlineEventRecord,
 )
 from server.models.view import (
     AgentStateListItem,
     AgentStateResponse,
     ChatContextResponse,
+    ConversationEventResponse,
+    MilestoneResponse,
     PendingEventResponse,
+    ReviewCheckpointResponse,
+    ReviewCycleResponse,
+    ReviewOutcomeResponse,
     RunMetricsResponse,
     RunResponse,
     RuntimeDecisionResponse,
@@ -39,18 +53,24 @@ from server.models.view import (
     SchedulerTreeResponse,
     SchedulerTreeStatsResponse,
     SessionDetailResponse,
+    SessionMilestoneBoardResponse,
     SessionObservabilityResponse,
     SessionRecordResponse,
     SessionSummaryResponse,
     SpanResponse,
     StepMetricsResponse,
     StepResponse,
+    TraceLlmCallResponse,
     TraceListItem,
+    TraceMainlineEventResponse,
     TraceTimelineEventResponse,
     TraceResponse,
     WakeConditionResponse,
 )
 from server.services.runtime.runtime_observability import (
+    build_trace_llm_call_records,
+    build_trace_mainline_events,
+    build_trace_review_cycles,
     build_trace_runtime_decisions,
     build_trace_timeline_events,
 )
@@ -193,6 +213,101 @@ def runtime_decision_response_from_record(
     )
 
 
+def milestone_response_from_record(record: MilestoneRecord) -> MilestoneResponse:
+    return MilestoneResponse(
+        id=record.id,
+        description=record.description,
+        status=record.status,
+        declared_at_seq=record.declared_at_seq,
+        completed_at_seq=record.completed_at_seq,
+    )
+
+
+def review_checkpoint_response_from_record(
+    record: ReviewCheckpointRecord,
+) -> ReviewCheckpointResponse:
+    return ReviewCheckpointResponse(
+        seq=record.seq,
+        milestone_id=record.milestone_id,
+        confirmed_at=record.confirmed_at.isoformat(),
+    )
+
+
+def review_outcome_response_from_record(
+    record: ReviewOutcomeRecord,
+) -> ReviewOutcomeResponse:
+    return ReviewOutcomeResponse(
+        aligned=record.aligned,
+        experience=record.experience,
+        step_back_applied=record.step_back_applied,
+        affected_count=record.affected_count,
+        trigger_reason=record.trigger_reason,
+        active_milestone=record.active_milestone,
+        resolved_at=record.resolved_at.isoformat() if record.resolved_at else None,
+    )
+
+
+def session_milestone_board_response_from_record(
+    record: SessionMilestoneBoardRecord,
+) -> SessionMilestoneBoardResponse:
+    return SessionMilestoneBoardResponse(
+        session_id=record.session_id,
+        run_id=record.run_id,
+        milestones=[milestone_response_from_record(item) for item in record.milestones],
+        active_milestone_id=record.active_milestone_id,
+        latest_checkpoint=(
+            review_checkpoint_response_from_record(record.latest_checkpoint)
+            if record.latest_checkpoint is not None
+            else None
+        ),
+        latest_review_outcome=(
+            review_outcome_response_from_record(record.latest_review_outcome)
+            if record.latest_review_outcome is not None
+            else None
+        ),
+        pending_review_reason=record.pending_review_reason,
+    )
+
+
+def review_cycle_response_from_record(
+    record: ReviewCycleRecord,
+) -> ReviewCycleResponse:
+    return ReviewCycleResponse(
+        cycle_id=record.cycle_id,
+        run_id=record.run_id,
+        agent_id=record.agent_id,
+        trigger_reason=record.trigger_reason,
+        steps_since_last_review=record.steps_since_last_review,
+        active_milestone=record.active_milestone,
+        active_milestone_id=record.active_milestone_id,
+        hook_advice=record.hook_advice,
+        aligned=record.aligned,
+        experience=record.experience,
+        step_back_applied=record.step_back_applied,
+        rollback_range=list(record.rollback_range) if record.rollback_range else None,
+        affected_count=record.affected_count,
+        started_at=record.started_at.isoformat() if record.started_at else None,
+        resolved_at=record.resolved_at.isoformat() if record.resolved_at else None,
+        raw_notice=record.raw_notice,
+    )
+
+
+def conversation_event_response_from_record(
+    record: ConversationEventRecord,
+) -> ConversationEventResponse:
+    return ConversationEventResponse(
+        id=record.id,
+        session_id=record.session_id,
+        run_id=record.run_id,
+        sequence=record.sequence,
+        kind=record.kind,
+        priority=record.priority,
+        title=record.title,
+        summary=record.summary,
+        details=dict(record.details),
+    )
+
+
 def session_observability_response_from_record(
     observability: SessionObservabilityRecord,
 ) -> SessionObservabilityResponse:
@@ -232,6 +347,18 @@ def session_detail_response_from_record(
             if detail.observability is not None
             else None
         ),
+        milestone_board=(
+            session_milestone_board_response_from_record(detail.milestone_board)
+            if detail.milestone_board is not None
+            else None
+        ),
+        review_cycles=[
+            review_cycle_response_from_record(record) for record in detail.review_cycles
+        ],
+        conversation_events=[
+            conversation_event_response_from_record(record)
+            for record in detail.conversation_events
+        ],
     )
 
 
@@ -481,6 +608,18 @@ def trace_response_from_sdk(trace: Trace) -> TraceResponse:
         )
         for event in build_trace_timeline_events(trace)
     ]
+    mainline_events = [
+        trace_mainline_event_response_from_record(event)
+        for event in build_trace_mainline_events(trace)
+    ]
+    review_cycles = [
+        review_cycle_response_from_record(record)
+        for record in build_trace_review_cycles(trace)
+    ]
+    llm_calls = [
+        trace_llm_call_response_from_record(record)
+        for record in build_trace_llm_call_records(trace)
+    ]
     return TraceResponse(
         **_trace_base_kwargs(trace),
         end_time=trace.end_time.isoformat()
@@ -491,6 +630,48 @@ def trace_response_from_sdk(trace: Trace) -> TraceResponse:
         spans=spans,
         runtime_decisions=runtime_decisions,
         timeline_events=timeline_events,
+        mainline_events=mainline_events,
+        review_cycles=review_cycles,
+        llm_calls=llm_calls,
+    )
+
+
+def trace_mainline_event_response_from_record(
+    record: TraceMainlineEventRecord,
+) -> TraceMainlineEventResponse:
+    return TraceMainlineEventResponse(
+        id=record.id,
+        kind=record.kind,
+        title=record.title,
+        summary=record.summary,
+        status=record.status,
+        sequence=record.sequence,
+        timestamp=record.timestamp.isoformat() if record.timestamp else None,
+        run_id=record.run_id,
+        agent_id=record.agent_id,
+        details=dict(record.details),
+    )
+
+
+def trace_llm_call_response_from_record(
+    record: TraceLlmCallRecord,
+) -> TraceLlmCallResponse:
+    return TraceLlmCallResponse(
+        span_id=record.span_id,
+        run_id=record.run_id,
+        agent_id=record.agent_id,
+        model=record.model,
+        provider=record.provider,
+        finish_reason=record.finish_reason,
+        duration_ms=record.duration_ms,
+        first_token_latency_ms=record.first_token_latency_ms,
+        input_tokens=record.input_tokens,
+        output_tokens=record.output_tokens,
+        total_tokens=record.total_tokens,
+        message_count=record.message_count,
+        tool_schema_count=record.tool_schema_count,
+        response_tool_call_count=record.response_tool_call_count,
+        output_preview=record.output_preview,
     )
 
 
@@ -500,6 +681,8 @@ def stream_event_to_payload(event: AgentStreamItem) -> dict[str, Any]:
             "type": "step",
             "step": step_response_from_sdk(event.step).model_dump(),
         }
+    if isinstance(event, ContextStepsHiddenEvent):
+        return event.to_dict()
     return {"type": "unknown", "data": str(event)}
 
 

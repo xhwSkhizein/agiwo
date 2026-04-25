@@ -87,6 +87,28 @@ agent = Agent(
 )
 ```
 
+## Console Structured Observability
+
+Console `Session Detail` and `Trace Detail` now expose additional structured
+read models such as milestone boards, review cycles, mainline narrative events,
+conversation events, and LLM-call summaries.
+
+These are derived views, not new truth sources. They are built from:
+
+- canonical `RunLog` entries for replayable runtime facts
+- `Trace.spans` for single-trace sequencing, LLM/tool correlation, and review
+  checkpoint parsing
+
+The original debug surfaces remain available:
+
+- `steps`
+- `runtime_decisions`
+- `timeline_events`
+- `spans`
+
+The structured Console fields exist to make the agent loop readable without
+requiring operators to parse raw JSON first.
+
 ### Trace Structure
 
 ```

@@ -118,6 +118,80 @@ class SessionDetailRecord:
     chat_context: ChannelChatContext | None = None
     scheduler_state: "AgentState | None" = None
     observability: "SessionObservabilityRecord | None" = None
+    milestone_board: "SessionMilestoneBoardRecord | None" = None
+    review_cycles: list["ReviewCycleRecord"] = field(default_factory=list)
+    conversation_events: list["ConversationEventRecord"] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class MilestoneRecord:
+    id: str
+    description: str
+    status: str
+    declared_at_seq: int | None = None
+    completed_at_seq: int | None = None
+
+
+@dataclass(slots=True)
+class ReviewCheckpointRecord:
+    seq: int
+    milestone_id: str
+    confirmed_at: datetime
+
+
+@dataclass(slots=True)
+class ReviewOutcomeRecord:
+    aligned: bool | None = None
+    experience: str | None = None
+    step_back_applied: bool = False
+    affected_count: int | None = None
+    trigger_reason: str | None = None
+    active_milestone: str | None = None
+    resolved_at: datetime | None = None
+
+
+@dataclass(slots=True)
+class SessionMilestoneBoardRecord:
+    session_id: str
+    run_id: str | None
+    milestones: list[MilestoneRecord] = field(default_factory=list)
+    active_milestone_id: str | None = None
+    latest_checkpoint: ReviewCheckpointRecord | None = None
+    latest_review_outcome: ReviewOutcomeRecord | None = None
+    pending_review_reason: str | None = None
+
+
+@dataclass(slots=True)
+class ReviewCycleRecord:
+    cycle_id: str
+    run_id: str
+    agent_id: str
+    trigger_reason: str
+    steps_since_last_review: int | None = None
+    active_milestone: str | None = None
+    active_milestone_id: str | None = None
+    hook_advice: str | None = None
+    aligned: bool | None = None
+    experience: str | None = None
+    step_back_applied: bool = False
+    rollback_range: tuple[int, int] | None = None
+    affected_count: int | None = None
+    started_at: datetime | None = None
+    resolved_at: datetime | None = None
+    raw_notice: str | None = None
+
+
+@dataclass(slots=True)
+class ConversationEventRecord:
+    id: str
+    session_id: str
+    run_id: str | None
+    sequence: int | None
+    kind: str
+    priority: str
+    title: str
+    summary: str
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -150,6 +224,39 @@ class TraceTimelineEventRecord:
     summary: str = ""
     status: str = "ok"
     details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class TraceMainlineEventRecord:
+    id: str
+    kind: str
+    title: str
+    summary: str
+    status: str = "ok"
+    sequence: int | None = None
+    timestamp: datetime | None = None
+    run_id: str | None = None
+    agent_id: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class TraceLlmCallRecord:
+    span_id: str
+    run_id: str
+    agent_id: str
+    model: str | None
+    provider: str | None
+    finish_reason: str | None
+    duration_ms: float | None
+    first_token_latency_ms: float | None
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    message_count: int
+    tool_schema_count: int
+    response_tool_call_count: int
+    output_preview: str | None
 
 
 @dataclass(slots=True)

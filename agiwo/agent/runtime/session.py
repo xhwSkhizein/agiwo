@@ -37,6 +37,7 @@ class SessionRuntime:
         self.abort_signal = abort_signal or AbortSignal()
         self._pending_steer_inputs: list[UserMessage] = []
         self._subscribers: set[asyncio.Queue[AgentStreamItem | object]] = set()
+        self._hidden_step_ids: set[str] = set()
         self._closed = False
 
     # ------------------------------------------------------------------
@@ -149,7 +150,11 @@ class SessionRuntime:
                 "depth": depth,
             }
         }
-        for item in stream_items_from_entries(entries, run_contexts=run_contexts):
+        for item in stream_items_from_entries(
+            entries,
+            run_contexts=run_contexts,
+            persisted_hidden_step_ids=self._hidden_step_ids,
+        ):
             await self.publish(item)
 
     async def close(self) -> None:

@@ -124,6 +124,40 @@ async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -
                 Span(
                     trace_id="trace-detail",
                     parent_span_id=root_span.span_id,
+                    kind=SpanKind.LLM_CALL,
+                    name="gpt-5.4",
+                    depth=1,
+                    run_id="run-1",
+                    start_time=created_at,
+                    end_time=created_at.replace(second=1),
+                    duration_ms=900.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 4,
+                        "agent_id": "agent-alpha",
+                        "provider": "openai-response",
+                    },
+                    llm_details={
+                        "messages": [{"role": "user", "content": "fix auth flow"}],
+                        "tools": [
+                            {"name": "web_search"},
+                            {"name": "review_trajectory"},
+                        ],
+                        "response_content": "Looking at JWT references",
+                        "response_tool_calls": [{"id": "tc-1"}],
+                        "finish_reason": "tool_calls",
+                        "metrics": {
+                            "input_tokens": 100,
+                            "output_tokens": 20,
+                            "total_tokens": 120,
+                            "first_token_ms": 321.0,
+                        },
+                    },
+                    output_preview="Looking at JWT references",
+                ),
+                Span(
+                    trace_id="trace-detail",
+                    parent_span_id=root_span.span_id,
                     kind=SpanKind.TOOL_CALL,
                     name="web_search",
                     depth=1,
@@ -219,13 +253,25 @@ async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -
     assert payload["runtime_decisions"][0]["details"]["experience"] == "switch plan"
     assert [event["kind"] for event in payload["timeline_events"]] == [
         "run_started",
+        "llm_call",
         "tool_call",
         "review_checkpoint",
         "review_result",
         "runtime_decision",
         "run_finished",
     ]
-    assert payload["timeline_events"][2]["details"]["trigger_reason"] == "step_interval"
+    assert payload["timeline_events"][3]["details"]["trigger_reason"] == "step_interval"
+    assert [event["kind"] for event in payload["mainline_events"]] == [
+        "run_started",
+        "review_checkpoint",
+        "review_result",
+        "runtime_decision",
+        "run_finished",
+    ]
+    assert payload["review_cycles"][0]["trigger_reason"] == "step_interval"
+    assert payload["review_cycles"][0]["step_back_applied"] is True
+    assert payload["llm_calls"][0]["model"] == "gpt-5.4"
+    assert payload["llm_calls"][0]["response_tool_call_count"] == 1
 
 
 @pytest.mark.asyncio

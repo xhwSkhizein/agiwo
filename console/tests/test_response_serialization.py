@@ -18,10 +18,23 @@ from server.models.agent_config import (
     ModelParamsInput,
     sanitize_agent_options_data,
 )
+from server.models.session import (
+    ConversationEventRecord,
+    MilestoneRecord,
+    ReviewCheckpointRecord,
+    ReviewCycleRecord,
+    ReviewOutcomeRecord,
+    SessionDetailRecord,
+    SessionMilestoneBoardRecord,
+    SessionSummaryRecord,
+    TraceLlmCallRecord,
+)
 from server.response_serialization import (
     agent_state_response_from_sdk,
+    session_detail_response_from_record,
     step_response_from_sdk,
     stream_event_to_payload,
+    trace_llm_call_response_from_record,
 )
 
 
@@ -140,3 +153,95 @@ def test_agent_config_view_model_and_registry_share_normalization_policy() -> No
         exclude_none=True,
         exclude_defaults=True,
     )
+
+
+def test_session_detail_serializes_new_mainline_fields() -> None:
+    detail = SessionDetailRecord(
+        summary=SessionSummaryRecord(session_id="sess-1"),
+        milestone_board=SessionMilestoneBoardRecord(
+            session_id="sess-1",
+            run_id="run-1",
+            milestones=[
+                MilestoneRecord(
+                    id="inspect",
+                    description="Inspect the auth flow",
+                    status="active",
+                    declared_at_seq=3,
+                )
+            ],
+            active_milestone_id="inspect",
+            latest_checkpoint=ReviewCheckpointRecord(
+                seq=8,
+                milestone_id="inspect",
+                confirmed_at=datetime(2026, 4, 25, tzinfo=timezone.utc),
+            ),
+            latest_review_outcome=ReviewOutcomeRecord(
+                aligned=True,
+                step_back_applied=False,
+                trigger_reason="step_interval",
+                active_milestone="Inspect the auth flow",
+            ),
+            pending_review_reason=None,
+        ),
+        review_cycles=[
+            ReviewCycleRecord(
+                cycle_id="run-1:8",
+                run_id="run-1",
+                agent_id="agent-1",
+                trigger_reason="step_interval",
+                steps_since_last_review=8,
+                active_milestone="Inspect the auth flow",
+                active_milestone_id="inspect",
+                aligned=True,
+                experience=None,
+                step_back_applied=False,
+            )
+        ],
+        conversation_events=[
+            ConversationEventRecord(
+                id="evt-1",
+                session_id="sess-1",
+                run_id="run-1",
+                sequence=10,
+                kind="assistant_message",
+                priority="primary",
+                title="Assistant",
+                summary="Auth check is in auth.py",
+                details={},
+            )
+        ],
+    )
+
+    payload = session_detail_response_from_record(detail)
+
+    assert payload.milestone_board is not None
+    assert payload.milestone_board.active_milestone_id == "inspect"
+    assert payload.review_cycles[0].active_milestone_id == "inspect"
+    assert payload.review_cycles[0].trigger_reason == "step_interval"
+    assert payload.conversation_events[0].kind == "assistant_message"
+
+
+def test_trace_llm_call_serialization_preserves_summary_fields() -> None:
+    record = TraceLlmCallRecord(
+        span_id="span-1",
+        run_id="run-1",
+        agent_id="agent-1",
+        model="gpt-5.4",
+        provider="openai-response",
+        finish_reason="stop",
+        duration_ms=1234.0,
+        first_token_latency_ms=345.0,
+        input_tokens=100,
+        output_tokens=20,
+        total_tokens=120,
+        message_count=6,
+        tool_schema_count=2,
+        response_tool_call_count=1,
+        output_preview="Looks aligned.",
+    )
+
+    payload = trace_llm_call_response_from_record(record)
+
+    assert payload.model == "gpt-5.4"
+    assert payload.response_tool_call_count == 1
+    assert payload.output_preview == "Looks aligned."

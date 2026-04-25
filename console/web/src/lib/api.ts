@@ -184,12 +184,80 @@ export interface ChatContextRecord {
   updated_at: string;
 }
 
+export interface MilestoneItem {
+  id: string;
+  description: string;
+  status: string;
+  declared_at_seq: number | null;
+  completed_at_seq: number | null;
+}
+
+export interface ReviewCheckpoint {
+  seq: number;
+  milestone_id: string;
+  confirmed_at: string;
+}
+
+export interface ReviewOutcome {
+  aligned: boolean | null;
+  experience: string | null;
+  step_back_applied: boolean;
+  affected_count: number | null;
+  trigger_reason: string | null;
+  active_milestone: string | null;
+  resolved_at: string | null;
+}
+
+export interface SessionMilestoneBoard {
+  session_id: string;
+  run_id: string | null;
+  milestones: MilestoneItem[];
+  active_milestone_id: string | null;
+  latest_checkpoint: ReviewCheckpoint | null;
+  latest_review_outcome: ReviewOutcome | null;
+  pending_review_reason: string | null;
+}
+
+export interface ReviewCycle {
+  cycle_id: string;
+  run_id: string;
+  agent_id: string;
+  trigger_reason: string;
+  steps_since_last_review: number | null;
+  active_milestone: string | null;
+  active_milestone_id: string | null;
+  hook_advice: string | null;
+  aligned: boolean | null;
+  experience: string | null;
+  step_back_applied: boolean;
+  rollback_range: number[] | null;
+  affected_count: number | null;
+  started_at: string | null;
+  resolved_at: string | null;
+  raw_notice: string | null;
+}
+
+export interface ConversationEvent {
+  id: string;
+  session_id: string;
+  run_id: string | null;
+  sequence: number | null;
+  kind: string;
+  priority: "primary" | "secondary" | "muted" | (string & {});
+  title: string;
+  summary: string;
+  details: Record<string, unknown>;
+}
+
 export interface SessionDetail {
   summary: SessionSummary;
   session: SessionRecord | null;
   chat_context: ChatContextRecord | null;
   scheduler_state: AgentStateDetail | null;
   observability: SessionObservability | null;
+  milestone_board: SessionMilestoneBoard | null;
+  review_cycles: ReviewCycle[];
+  conversation_events: ConversationEvent[];
 }
 
 export interface RuntimeDecisionEvent {
@@ -277,6 +345,12 @@ export interface StepCompletedEventPayload extends StreamEventBase {
   step: StepResponse;
 }
 
+export interface ContextStepsHiddenEventPayload extends StreamEventBase {
+  type: "context_steps_hidden";
+  step_ids: string[];
+  reason: string;
+}
+
 export interface RunCompletedEventPayload extends StreamEventBase {
   type: "run_completed";
   response?: string | null;
@@ -306,6 +380,7 @@ export type AgentStreamEventPayload =
   | RunStartedEventPayload
   | StepDeltaEventPayload
   | StepCompletedEventPayload
+  | ContextStepsHiddenEventPayload
   | RunCompletedEventPayload
   | RunFailedEventPayload;
 
@@ -409,6 +484,37 @@ export interface TraceTimelineEvent {
   details: Record<string, unknown>;
 }
 
+export interface TraceMainlineEvent {
+  id: string;
+  kind: string;
+  title: string;
+  summary: string;
+  status: string;
+  sequence: number | null;
+  timestamp: string | null;
+  run_id: string | null;
+  agent_id: string | null;
+  details: Record<string, unknown>;
+}
+
+export interface TraceLlmCall {
+  span_id: string;
+  run_id: string;
+  agent_id: string;
+  model: string | null;
+  provider: string | null;
+  finish_reason: string | null;
+  duration_ms: number | null;
+  first_token_latency_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  message_count: number;
+  tool_schema_count: number;
+  response_tool_call_count: number;
+  output_preview: string | null;
+}
+
 export interface SpanResponse {
   span_id: string;
   trace_id: string;
@@ -455,6 +561,9 @@ export interface TraceDetail {
   spans: SpanResponse[];
   runtime_decisions: RuntimeDecisionEvent[];
   timeline_events: TraceTimelineEvent[];
+  mainline_events: TraceMainlineEvent[];
+  review_cycles: ReviewCycle[];
+  llm_calls: TraceLlmCall[];
 }
 
 export function listTraces(params?: {

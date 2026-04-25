@@ -3,6 +3,7 @@
 import asyncio
 
 from agiwo.agent import RunView, UserMessage
+from agiwo.observability.trace import Trace
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import AgentState
 
@@ -18,6 +19,11 @@ from server.models.session import (
 )
 from server.services.metrics import add_run_to_summary
 from server.services.runtime.run_query_service import RunQueryService
+from server.services.runtime.runtime_observability import (
+    build_conversation_events,
+    build_session_milestone_board,
+    build_trace_review_cycles,
+)
 from server.services.runtime.trace_query_service import TraceQueryService
 
 
@@ -81,7 +87,26 @@ class SessionViewService:
 
         stats = await self._run_queries.get_session_run_snapshot(session_id)
         metrics = self._build_metrics_summary(stats.run_views)
-        scheduler_state = await self._get_scheduler_state(session_id)
+        (
+            scheduler_state,
+            chat_context,
+            recent_traces,
+            decision_events,
+            step_page,
+        ) = await asyncio.gather(
+            self._get_scheduler_state(session_id),
+            self._get_chat_context(session),
+            self._trace_queries.list_session_recent_traces(session_id),
+            self._run_queries.list_runtime_decision_events(
+                session_id,
+                limit=12,
+            ),
+            self._run_queries.list_session_steps(
+                session_id,
+                limit=200,
+                order="asc",
+            ),
+        )
         summary = self._assemble_summary(
             session,
             last_run=stats.run_views[0] if stats.run_views else None,
@@ -90,15 +115,33 @@ class SessionViewService:
             root_state_status=self._root_state_status(scheduler_state),
             metrics=metrics,
         )
-        chat_context = await self._get_chat_context(session)
+        observability = SessionObservabilityRecord(
+            recent_traces=recent_traces,
+            decision_events=decision_events,
+        )
+        mainline_trace = self._select_mainline_trace(recent_traces)
+        review_cycles = (
+            build_trace_review_cycles(mainline_trace)
+            if mainline_trace is not None
+            else []
+        )
 
         return SessionDetailRecord(
             summary=summary,
             session=session,
             chat_context=chat_context,
             scheduler_state=scheduler_state,
-            observability=await self._build_observability(
+            observability=observability,
+            milestone_board=build_session_milestone_board(
                 session_id=session_id,
+                trace=mainline_trace,
+                review_cycles=review_cycles,
+            ),
+            review_cycles=review_cycles,
+            conversation_events=build_conversation_events(
+                session_id=session_id,
+                steps=step_page.items,
+                review_cycles=review_cycles,
             ),
         )
 
@@ -193,19 +236,24 @@ class SessionViewService:
             state.status.value if hasattr(state.status, "value") else str(state.status)
         )
 
-    async def _build_observability(
-        self,
-        *,
-        session_id: str,
-    ) -> SessionObservabilityRecord:
-        recent_traces, decision_events = await asyncio.gather(
-            self._trace_queries.list_session_recent_traces(session_id),
-            self._run_queries.list_runtime_decision_events(
-                session_id,
-                limit=12,
-            ),
-        )
-        return SessionObservabilityRecord(
-            recent_traces=recent_traces,
-            decision_events=decision_events,
-        )
+    @staticmethod
+    def _select_mainline_trace(recent_traces: list[Trace]) -> Trace | None:
+        for trace in recent_traces:
+            root_span = next(
+                (
+                    span
+                    for span in trace.spans
+                    if span.kind.value == "agent" and span.depth == 0
+                ),
+                None,
+            )
+            if root_span is None:
+                continue
+            if root_span.attributes.get("nested") is False:
+                return trace
+            if (
+                "nested" not in root_span.attributes
+                and root_span.attributes.get("parent_run_id") is None
+            ):
+                return trace
+        return recent_traces[0] if recent_traces else None

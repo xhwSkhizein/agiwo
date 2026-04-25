@@ -110,6 +110,19 @@ class MessagesRebuiltEvent(AgentStreamItemBase):
 
 
 @dataclass(kw_only=True)
+class ContextStepsHiddenEvent(AgentStreamItemBase):
+    step_ids: list[str]
+    reason: str
+    type: Literal["context_steps_hidden"] = "context_steps_hidden"
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self._base_dict()
+        payload["step_ids"] = list(self.step_ids)
+        payload["reason"] = self.reason
+        return payload
+
+
+@dataclass(kw_only=True)
 class CompactionAppliedEvent(AgentStreamItemBase):
     start_sequence: int
     end_sequence: int
@@ -315,6 +328,12 @@ def _stream_item_from_runtime_entry(
             reason=entry.reason,
             message_count=len(entry.messages),
         )
+    elif isinstance(entry, ContextStepsHidden):
+        item = ContextStepsHiddenEvent(
+            **base_kwargs,
+            step_ids=list(entry.step_ids),
+            reason=entry.reason,
+        )
     elif isinstance(entry, CompactionApplied):
         item = CompactionAppliedEvent(
             **base_kwargs,
@@ -397,14 +416,20 @@ def stream_items_from_entries(
     entries: list[RunLogEntry],
     *,
     run_contexts: Mapping[str, dict[str, Any]] | None = None,
+    persisted_hidden_step_ids: set[str] | None = None,
 ) -> list["AgentStreamItem"]:
     items: list[AgentStreamItem] = []
-    hidden_step_ids = {
+    local_hidden_step_ids = {
         step_id
         for entry in entries
         if isinstance(entry, ContextStepsHidden)
         for step_id in entry.step_ids
     }
+    if persisted_hidden_step_ids is not None:
+        persisted_hidden_step_ids.update(local_hidden_step_ids)
+        hidden_step_ids = persisted_hidden_step_ids
+    else:
+        hidden_step_ids = local_hidden_step_ids
     resolved_run_contexts = _collect_run_contexts(
         entries,
         initial_run_contexts=run_contexts,
@@ -445,6 +470,7 @@ AgentStreamItem: TypeAlias = (
     | StepDeltaEvent
     | StepCompletedEvent
     | MessagesRebuiltEvent
+    | ContextStepsHiddenEvent
     | CompactionAppliedEvent
     | CompactionFailedEvent
     | StepBackAppliedEvent
@@ -460,6 +486,7 @@ __all__ = [
     "AgentStreamItemBase",
     "CompactionAppliedEvent",
     "CompactionFailedEvent",
+    "ContextStepsHiddenEvent",
     "MessagesRebuiltEvent",
     "RunRolledBackEvent",
     "RunCompletedEvent",

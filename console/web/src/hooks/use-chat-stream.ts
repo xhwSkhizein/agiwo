@@ -209,6 +209,17 @@ export function useChatStream(
               continue;
             }
 
+            if (agentEvent.type === "context_steps_hidden") {
+              const hiddenStepIds = new Set(agentEvent.step_ids);
+              setMessages((prev) =>
+                prev.filter(
+                  (message) =>
+                    !message.stepId || !hiddenStepIds.has(message.stepId),
+                ),
+              );
+              continue;
+            }
+
             if (agentEvent.type === "step_delta" && agentEvent.delta) {
               const assistantId = ensureAssistantPlaceholder();
               if (agentEvent.delta.content) {

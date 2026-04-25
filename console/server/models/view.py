@@ -329,12 +329,80 @@ class ChatContextResponse(BaseModel):
     updated_at: str
 
 
+class MilestoneResponse(BaseModel):
+    id: str
+    description: str
+    status: str
+    declared_at_seq: int | None = None
+    completed_at_seq: int | None = None
+
+
+class ReviewCheckpointResponse(BaseModel):
+    seq: int
+    milestone_id: str
+    confirmed_at: str
+
+
+class ReviewOutcomeResponse(BaseModel):
+    aligned: bool | None = None
+    experience: str | None = None
+    step_back_applied: bool = False
+    affected_count: int | None = None
+    trigger_reason: str | None = None
+    active_milestone: str | None = None
+    resolved_at: str | None = None
+
+
+class SessionMilestoneBoardResponse(BaseModel):
+    session_id: str
+    run_id: str | None
+    milestones: list[MilestoneResponse] = Field(default_factory=list)
+    active_milestone_id: str | None = None
+    latest_checkpoint: ReviewCheckpointResponse | None = None
+    latest_review_outcome: ReviewOutcomeResponse | None = None
+    pending_review_reason: str | None = None
+
+
+class ReviewCycleResponse(BaseModel):
+    cycle_id: str
+    run_id: str
+    agent_id: str
+    trigger_reason: str
+    steps_since_last_review: int | None = None
+    active_milestone: str | None = None
+    active_milestone_id: str | None = None
+    hook_advice: str | None = None
+    aligned: bool | None = None
+    experience: str | None = None
+    step_back_applied: bool = False
+    rollback_range: list[int] | None = None
+    affected_count: int | None = None
+    started_at: str | None = None
+    resolved_at: str | None = None
+    raw_notice: str | None = None
+
+
+class ConversationEventResponse(BaseModel):
+    id: str
+    session_id: str
+    run_id: str | None = None
+    sequence: int | None = None
+    kind: str
+    priority: str
+    title: str
+    summary: str
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class SessionDetailResponse(BaseModel):
     summary: SessionSummaryResponse
     session: SessionRecordResponse | None = None
     chat_context: ChatContextResponse | None = None
     scheduler_state: AgentStateResponse | None = None
     observability: "SessionObservabilityResponse | None" = None
+    milestone_board: SessionMilestoneBoardResponse | None = None
+    review_cycles: list[ReviewCycleResponse] = Field(default_factory=list)
+    conversation_events: list[ConversationEventResponse] = Field(default_factory=list)
 
 
 class RuntimeDecisionResponse(BaseModel):
@@ -364,6 +432,37 @@ class TraceTimelineEventResponse(BaseModel):
     summary: str
     status: str = "ok"
     details: dict[str, Any] = Field(default_factory=dict)
+
+
+class TraceMainlineEventResponse(BaseModel):
+    id: str
+    kind: str
+    title: str
+    summary: str
+    status: str = "ok"
+    sequence: int | None = None
+    timestamp: str | None = None
+    run_id: str | None = None
+    agent_id: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class TraceLlmCallResponse(BaseModel):
+    span_id: str
+    run_id: str
+    agent_id: str
+    model: str | None = None
+    provider: str | None = None
+    finish_reason: str | None = None
+    duration_ms: float | None = None
+    first_token_latency_ms: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    message_count: int
+    tool_schema_count: int
+    response_tool_call_count: int
+    output_preview: str | None = None
 
 
 class StepResponse(BaseModel):
@@ -450,6 +549,9 @@ class TraceResponse(TraceBase):
     spans: list[SpanResponse] = Field(default_factory=list)
     runtime_decisions: list[RuntimeDecisionResponse] = Field(default_factory=list)
     timeline_events: list[TraceTimelineEventResponse] = Field(default_factory=list)
+    mainline_events: list[TraceMainlineEventResponse] = Field(default_factory=list)
+    review_cycles: list[ReviewCycleResponse] = Field(default_factory=list)
+    llm_calls: list[TraceLlmCallResponse] = Field(default_factory=list)
 
 
 class TraceListItem(TraceBase):
@@ -484,8 +586,13 @@ __all__ = [
     "CreateSessionRequest",
     "extract_content_parts",
     "ForkSessionRequest",
+    "MilestoneResponse",
     "PageResponse",
     "PendingEventResponse",
+    "ConversationEventResponse",
+    "ReviewCheckpointResponse",
+    "ReviewCycleResponse",
+    "ReviewOutcomeResponse",
     "RunMetricsResponse",
     "RunResponse",
     "RuntimeDecisionResponse",
@@ -495,6 +602,7 @@ __all__ = [
     "SchedulerTreeResponse",
     "SchedulerTreeStatsResponse",
     "SessionDetailResponse",
+    "SessionMilestoneBoardResponse",
     "SessionObservabilityResponse",
     "SessionRecordResponse",
     "SessionSummaryResponse",
@@ -502,7 +610,9 @@ __all__ = [
     "StepMetricsResponse",
     "StepResponse",
     "SteerRequest",
+    "TraceLlmCallResponse",
     "TraceListItem",
+    "TraceMainlineEventResponse",
     "TraceTimelineEventResponse",
     "TraceResponse",
     "WakeConditionResponse",
