@@ -12,6 +12,15 @@ _FAILED_TERMINATIONS = frozenset(
         TerminationReason.TIMEOUT,
     }
 )
+_INTERRUPTED_TERMINATIONS = frozenset(
+    {
+        TerminationReason.MAX_STEPS,
+        TerminationReason.MAX_OUTPUT_TOKENS,
+        TerminationReason.MAX_INPUT_TOKENS_PER_CALL,
+        TerminationReason.MAX_RUN_COST,
+        TerminationReason.TOOL_LIMIT,
+    }
+)
 
 
 def build_last_run_result(
@@ -31,6 +40,12 @@ def build_last_run_result(
 
 def is_failed_output(output: RunOutput) -> bool:
     return any(output.termination_reason is reason for reason in _FAILED_TERMINATIONS)
+
+
+def is_interrupted_output(output: RunOutput) -> bool:
+    return any(
+        output.termination_reason is reason for reason in _INTERRUPTED_TERMINATIONS
+    )
 
 
 def is_sleeping_output(output: RunOutput) -> bool:
@@ -58,6 +73,7 @@ def is_normal_completion(action: DispatchAction, output: RunOutput) -> bool:
 __all__ = [
     "build_last_run_result",
     "is_failed_output",
+    "is_interrupted_output",
     "is_normal_completion",
     "is_periodic_wake",
     "is_sleeping_output",
