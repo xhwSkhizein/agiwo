@@ -123,4 +123,22 @@ describe("chat-types", () => {
     expect(merged).toHaveLength(2);
     expect(merged.map((message) => message.text)).toEqual(["first", "second"]);
   });
+
+  test("prefers condensed tool content and keeps the original result available", () => {
+    const message = messageFromStep(
+      buildStep({
+        role: "tool",
+        content: "Found 15 JWT references",
+        tool_call_id: "tc-2",
+        name: "search",
+        condensed_content: "[EXPERIENCE] JWT search was off-track.",
+      }),
+    );
+
+    expect(message).toMatchObject({
+      role: "tool",
+      text: "[EXPERIENCE] JWT search was off-track.",
+      originalContent: "Found 15 JWT references",
+    });
+  });
 });

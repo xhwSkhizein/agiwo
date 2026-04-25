@@ -1,6 +1,6 @@
 """Console session read models assembled from the run query facade and scheduler."""
 
-from agiwo.agent import RuntimeDecisionState, RunView, UserMessage
+from agiwo.agent import RunView, UserMessage
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import AgentState
 
@@ -9,7 +9,6 @@ from server.models.session import (
     ChannelChatContext,
     ChannelChatSessionStore,
     PageSlice,
-    RuntimeDecisionRecord,
     Session,
     SessionDetailRecord,
     SessionObservabilityRecord,
@@ -98,7 +97,6 @@ class SessionViewService:
             scheduler_state=scheduler_state,
             observability=await self._build_observability(
                 session_id=session_id,
-                runtime_decisions=stats.runtime_decisions,
             ),
         )
 
@@ -197,107 +195,13 @@ class SessionViewService:
         self,
         *,
         session_id: str,
-        runtime_decisions: RuntimeDecisionState,
     ) -> SessionObservabilityRecord:
         return SessionObservabilityRecord(
             recent_traces=await self._trace_queries.list_session_recent_traces(
                 session_id
             ),
-            decision_events=self._build_runtime_decision_records(runtime_decisions),
+            decision_events=await self._run_queries.list_runtime_decision_events(
+                session_id,
+                limit=12,
+            ),
         )
-
-    @staticmethod
-    def _build_runtime_decision_records(
-        runtime_decisions: RuntimeDecisionState,
-    ) -> list[RuntimeDecisionRecord]:
-        decisions: list[RuntimeDecisionRecord] = []
-
-        if runtime_decisions.latest_termination is not None:
-            decision = runtime_decisions.latest_termination
-            decisions.append(
-                RuntimeDecisionRecord(
-                    kind="termination",
-                    sequence=decision.sequence,
-                    run_id=decision.run_id,
-                    agent_id=decision.agent_id,
-                    created_at=decision.created_at,
-                    summary=f"{decision.reason.value} via {decision.source}",
-                    details={
-                        "reason": decision.reason.value,
-                        "phase": decision.phase,
-                        "source": decision.source,
-                    },
-                )
-            )
-
-        if runtime_decisions.latest_compaction is not None:
-            decision = runtime_decisions.latest_compaction
-            decisions.append(
-                RuntimeDecisionRecord(
-                    kind="compaction",
-                    sequence=decision.sequence,
-                    run_id=decision.run_id,
-                    agent_id=decision.agent_id,
-                    created_at=decision.created_at,
-                    summary=(
-                        f"seq {decision.metadata.start_seq}-{decision.metadata.end_seq} "
-                        f"{decision.metadata.before_token_estimate} -> "
-                        f"{decision.metadata.after_token_estimate} tokens"
-                    ),
-                    details={
-                        "start_sequence": decision.metadata.start_seq,
-                        "end_sequence": decision.metadata.end_seq,
-                        "before_token_estimate": decision.metadata.before_token_estimate,
-                        "after_token_estimate": decision.metadata.after_token_estimate,
-                        "message_count": decision.metadata.message_count,
-                        "summary": decision.summary,
-                    },
-                )
-            )
-
-        if runtime_decisions.latest_step_back is not None:
-            decision = runtime_decisions.latest_step_back
-            decisions.append(
-                RuntimeDecisionRecord(
-                    kind="step_back",
-                    sequence=decision.sequence,
-                    run_id=decision.run_id,
-                    agent_id=decision.agent_id,
-                    created_at=decision.created_at,
-                    summary=(
-                        f"{decision.affected_count} results condensed, "
-                        f"checkpoint at seq {decision.checkpoint_seq}"
-                    ),
-                    details={
-                        "affected_count": decision.affected_count,
-                        "checkpoint_seq": decision.checkpoint_seq,
-                        "experience": decision.experience,
-                    },
-                )
-            )
-
-        if runtime_decisions.latest_rollback is not None:
-            decision = runtime_decisions.latest_rollback
-            decisions.append(
-                RuntimeDecisionRecord(
-                    kind="rollback",
-                    sequence=decision.sequence,
-                    run_id=decision.run_id,
-                    agent_id=decision.agent_id,
-                    created_at=decision.created_at,
-                    summary=(
-                        f"seq {decision.start_sequence}-{decision.end_sequence} hidden"
-                    ),
-                    details={
-                        "start_sequence": decision.start_sequence,
-                        "end_sequence": decision.end_sequence,
-                        "reason": decision.reason,
-                    },
-                )
-            )
-
-        decisions.sort(
-            key=lambda item: (item.created_at, item.sequence),
-            reverse=True,
-        )
-        return decisions

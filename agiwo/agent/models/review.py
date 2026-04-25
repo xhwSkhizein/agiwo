@@ -31,9 +31,9 @@ class ReviewState:
 
     milestones: list[Milestone] = field(default_factory=list)
     last_review_seq: int = 0
-    last_checkpoint_seq: int = 0
+    latest_checkpoint: ReviewCheckpoint | None = None
     consecutive_errors: int = 0
-    is_review_pending: bool = False
+    pending_review_reason: Literal["milestone_switch"] | None = None
 
 
 __all__ = [

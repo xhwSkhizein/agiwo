@@ -12,6 +12,8 @@ import { SectionCard } from "@/components/section-card";
 import { ErrorStateMessage, FullPageMessage } from "@/components/state-message";
 import { TokenMetricsBadges } from "@/components/token-metrics-badges";
 import { TokenSummaryCards } from "@/components/token-summary-cards";
+import { TraceLoopTimeline } from "@/components/trace-detail/trace-loop-timeline";
+import { TraceRuntimeDecisions } from "@/components/trace-detail/trace-runtime-decisions";
 import { TraceStatusBadge } from "@/components/trace-status-badge";
 import { getTrace } from "@/lib/api";
 import type { TraceDetail, SpanResponse } from "@/lib/api";
@@ -229,6 +231,9 @@ export default function TraceDetailPage() {
     ? new Date(trace.start_time).getTime()
     : 0;
   const traceDurationMs = trace.duration_ms || 1;
+  const reviewEventCount = trace.timeline_events.filter((event) =>
+    ["review_checkpoint", "review_result", "milestone_update"].includes(event.kind),
+  ).length;
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -284,6 +289,16 @@ export default function TraceDetailPage() {
               valueClassName="text-lg font-medium"
               value={`${trace.total_llm_calls} / ${trace.total_tool_calls}`}
             />
+            <MetricCard
+              label="Runtime Decisions"
+              valueClassName="text-lg font-medium"
+              value={String(trace.runtime_decisions.length)}
+            />
+            <MetricCard
+              label="Review Events"
+              valueClassName="text-lg font-medium"
+              value={String(reviewEventCount)}
+            />
           </>
         }
       />
@@ -294,6 +309,10 @@ export default function TraceDetailPage() {
           <p className="text-sm">{trace.input_query}</p>
         </SectionCard>
       )}
+
+      <TraceRuntimeDecisions decisions={trace.runtime_decisions} />
+
+      <TraceLoopTimeline events={trace.timeline_events} />
 
       <SectionCard
         className="overflow-hidden"

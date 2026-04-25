@@ -6,6 +6,7 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
     CompactionFailed,
+    ContextStepsHidden,
     ContextAssembled,
     HookFailed,
     LLMCallCompleted,
@@ -240,6 +241,25 @@ class RunStateWriter:
                     affected_count=affected_count,
                     checkpoint_seq=checkpoint_seq,
                     experience=experience,
+                )
+            ]
+        )
+
+    async def record_context_steps_hidden(
+        self,
+        *,
+        step_ids: list[str],
+        reason: str = "review_metadata",
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                ContextStepsHidden(
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    session_id=self._state.session_id,
+                    run_id=self._state.run_id,
+                    agent_id=self._state.agent_id,
+                    step_ids=list(step_ids),
+                    reason=reason,
                 )
             ]
         )

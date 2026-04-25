@@ -352,6 +352,20 @@ class SessionObservabilityResponse(BaseModel):
     decision_events: list[RuntimeDecisionResponse] = Field(default_factory=list)
 
 
+class TraceTimelineEventResponse(BaseModel):
+    kind: str
+    timestamp: str | None = None
+    sequence: int | None = None
+    run_id: str | None = None
+    agent_id: str | None = None
+    span_id: str | None = None
+    step_id: str | None = None
+    title: str
+    summary: str
+    status: str = "ok"
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class StepResponse(BaseModel):
     id: str
     session_id: str
@@ -434,6 +448,8 @@ class TraceResponse(TraceBase):
     root_span_id: str | None = None
     max_depth: int = 0
     spans: list[SpanResponse] = Field(default_factory=list)
+    runtime_decisions: list[RuntimeDecisionResponse] = Field(default_factory=list)
+    timeline_events: list[TraceTimelineEventResponse] = Field(default_factory=list)
 
 
 class TraceListItem(TraceBase):
@@ -487,6 +503,7 @@ __all__ = [
     "StepResponse",
     "SteerRequest",
     "TraceListItem",
+    "TraceTimelineEventResponse",
     "TraceResponse",
     "WakeConditionResponse",
 ]

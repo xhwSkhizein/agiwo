@@ -32,7 +32,7 @@ storage = create_run_log_storage(RunLogStorageConfig(storage_type="memory"))
 - **Run facts**: `RunStarted`, `RunFinished`, `RunFailed`, `TerminationDecided`
 - **LLM facts**: `LLMCallStarted`, `LLMCallCompleted`
 - **Committed step facts**: user, assistant, and tool step commits
-- **Runtime decisions**: compaction, retrospect, rollback, hook failures
+- **Runtime decisions**: compaction, step-back, rollback, hook failures
 
 Replay/query helpers such as `list_step_views(...)`, `list_run_views(...)`, and
 `get_runtime_decision_state(...)` are rebuilt from the stored `RunLog`.

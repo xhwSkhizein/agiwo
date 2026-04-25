@@ -29,9 +29,9 @@ class RunLogEntryKind(str, Enum):
     TOOL_STEP_COMMITTED = "tool_step_committed"
     COMPACTION_APPLIED = "compaction_applied"
     COMPACTION_FAILED = "compaction_failed"
-    RETROSPECT_APPLIED = "retrospect_applied"
     STEP_BACK_APPLIED = "step_back_applied"
     STEP_CONDENSED_CONTENT_UPDATED = "step_condensed_content_updated"
+    CONTEXT_STEPS_HIDDEN = "context_steps_hidden"
     TERMINATION_DECIDED = "termination_decided"
     HOOK_FAILED = "hook_failed"
 
@@ -196,6 +196,16 @@ class StepCondensedContentUpdated(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ContextStepsHidden(RunLogEntry):
+    step_ids: list[str]
+    reason: str
+    kind: RunLogEntryKind = field(
+        init=False,
+        default=RunLogEntryKind.CONTEXT_STEPS_HIDDEN,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class TerminationDecided(RunLogEntry):
     termination_reason: TerminationReason
     phase: str
@@ -272,6 +282,7 @@ __all__ = [
     "CommittedStep",
     "CompactionApplied",
     "CompactionFailed",
+    "ContextStepsHidden",
     "ContextAssembled",
     "HookFailed",
     "LLMCallCompleted",

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Activity, ArrowRight, Clock3, GitBranch, Scissors, ShieldCheck } from "lucide-react";
 
+import { JsonDisclosure } from "@/components/json-disclosure";
 import { MonoText } from "@/components/mono-text";
 import { SectionCard } from "@/components/section-card";
 import { TraceStatusBadge } from "@/components/trace-status-badge";
@@ -13,33 +14,97 @@ import { formatLocalDateTime } from "@/lib/time";
 function DecisionIcon({ kind }: { kind: RuntimeDecisionEvent["kind"] }) {
   if (kind === "termination") return <ShieldCheck className="h-4 w-4 text-red-300" />;
   if (kind === "compaction") return <Scissors className="h-4 w-4 text-cyan-300" />;
-  if (kind === "retrospect") return <Activity className="h-4 w-4 text-amber-300" />;
+  if (kind === "compaction_failed") return <Scissors className="h-4 w-4 text-red-300" />;
+  if (kind === "step_back") return <Activity className="h-4 w-4 text-amber-300" />;
   return <GitBranch className="h-4 w-4 text-zinc-300" />;
 }
 
-function DecisionTitle({ event }: { event: RuntimeDecisionEvent }) {
+function decisionPreviewItems(event: RuntimeDecisionEvent): string[] {
+  if (event.kind === "step_back") {
+    return [
+      `affected_count ${String(event.details.affected_count ?? "-")}`,
+      `checkpoint_seq ${String(event.details.checkpoint_seq ?? "-")}`,
+      typeof event.details.experience === "string" ? event.details.experience : "",
+    ].filter(Boolean);
+  }
+  if (event.kind === "compaction") {
+    return [
+      `seq ${String(event.details.start_sequence ?? "-")}-${String(event.details.end_sequence ?? "-")}`,
+      `${String(event.details.before_token_estimate ?? "-")} -> ${String(event.details.after_token_estimate ?? "-")} tokens`,
+    ];
+  }
+  if (event.kind === "compaction_failed") {
+    return [
+      `attempt ${String(event.details.attempt ?? "-")}/${String(event.details.max_attempts ?? "-")}`,
+      typeof event.details.error === "string" ? event.details.error : "",
+    ].filter(Boolean);
+  }
+  if (event.kind === "rollback") {
+    return [
+      `seq ${String(event.details.start_sequence ?? "-")}-${String(event.details.end_sequence ?? "-")}`,
+      typeof event.details.reason === "string" ? event.details.reason : "",
+    ].filter(Boolean);
+  }
+  if (event.kind === "termination") {
+    return [
+      typeof event.details.reason === "string" ? event.details.reason : "",
+      typeof event.details.phase === "string" ? event.details.phase : "",
+      typeof event.details.source === "string" ? event.details.source : "",
+    ].filter(Boolean);
+  }
+  return Object.entries(event.details)
+    .slice(0, 3)
+    .map(([key, value]) => `${key} ${String(value)}`);
+}
+
+function DecisionCard({ event }: { event: RuntimeDecisionEvent }) {
+  const previewItems = decisionPreviewItems(event);
   return (
-    <div className="flex items-start gap-3 rounded-xl border border-line bg-panel px-3 py-3">
-      <DecisionIcon kind={event.kind} />
-      <div className="min-w-0 flex-1 space-y-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium capitalize text-foreground">{event.kind}</span>
-          <span className="rounded-full border border-line px-2 py-0.5 text-[11px] uppercase tracking-wide text-ink-muted">
-            seq {event.sequence}
-          </span>
+    <details className="rounded-xl border border-line bg-panel px-3 py-3">
+      <summary className="list-none cursor-pointer">
+        <div className="flex items-start gap-3">
+          <DecisionIcon kind={event.kind} />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium capitalize text-foreground">{event.kind}</span>
+              <span className="rounded-full border border-line px-2 py-0.5 text-[11px] uppercase tracking-wide text-ink-muted">
+                seq {event.sequence}
+              </span>
+            </div>
+            <p className="text-sm text-foreground">{event.summary}</p>
+            {previewItems.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {previewItems.map((item) => (
+                  <span
+                    key={item}
+                    className="rounded-full border border-line bg-panel-muted px-2 py-1 text-[11px] text-ink-muted"
+                  >
+                    {item}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-3 text-xs text-ink-muted">
+              <span>
+                Run <MonoText>{event.run_id}</MonoText>
+              </span>
+              <span>
+                Agent <MonoText>{event.agent_id}</MonoText>
+              </span>
+              <span>{formatLocalDateTime(event.created_at)}</span>
+            </div>
+          </div>
         </div>
-        <p className="text-sm text-foreground">{event.summary}</p>
-        <div className="flex flex-wrap gap-3 text-xs text-ink-muted">
-          <span>
-            Run <MonoText>{event.run_id}</MonoText>
-          </span>
-          <span>
-            Agent <MonoText>{event.agent_id}</MonoText>
-          </span>
-          <span>{formatLocalDateTime(event.created_at)}</span>
-        </div>
+      </summary>
+      <div className="mt-3">
+        <JsonDisclosure
+          label="Details"
+          value={event.details}
+          className="bg-panel"
+          contentClassName="bg-panel"
+        />
       </div>
-    </div>
+    </details>
   );
 }
 
@@ -134,7 +199,7 @@ export function SessionObservabilityPanel({
         ) : (
           <div className="space-y-2">
             {decisionEvents.map((event) => (
-              <DecisionTitle
+              <DecisionCard
                 key={`${event.kind}-${event.sequence}-${event.run_id}`}
                 event={event}
               />

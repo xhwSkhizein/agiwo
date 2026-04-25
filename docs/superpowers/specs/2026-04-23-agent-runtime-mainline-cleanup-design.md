@@ -110,7 +110,7 @@ It should not expose execution owners, commit-step wrappers, `state_ops` helpers
 
 Private methods that define phase control should remain on `RunLoopOrchestrator`, including `_run_loop`, `_run_loop_iteration`, `_run_compaction_cycle`, `_run_assistant_turn`, `_handle_assistant_turn_result`, `_execute_tool_calls`, `_set_termination_reason`, `_finalize_run`, and `_fail_run`.
 
-Domain helpers such as `run_bootstrap.py`, `run_tool_batch.py`, `llm_caller.py`, `compaction.py`, `termination/*`, and `retrospect/*` can remain separate because they implement phase work, not phase ownership.
+Domain helpers such as `run_bootstrap.py`, `run_tool_batch.py`, `llm_caller.py`, `compaction.py`, `termination/*`, and `review/*` can remain separate because they implement phase work, not phase ownership.
 
 ## Correctness Requirements
 
@@ -122,7 +122,7 @@ The refactor must preserve these behaviors:
 - Trace and replayable stream projection from committed `RunLog` entries.
 - `StepDeltaEvent` as the only live-only stream exception.
 - Hook order and hook phases, especially `on_step`, `after_run`, and `memory_write`.
-- Step commit behavior for normal assistant turns, tool results, compaction, retrospect, and termination summary.
+- Step commit behavior for normal assistant turns, tool results, compaction, step-back, and termination summary.
 - Cancel and error terminal handling, including termination decisions and `RunFailed`.
 
 ## Risks

@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 from agiwo.agent import Agent, AgentConfig, TerminationReason
+from agiwo.agent.models.log import ContextStepsHidden
 from agiwo.agent.models.stream import stream_items_from_entries
 from agiwo.llm.base import Model, StreamChunk
 
@@ -33,6 +34,21 @@ class _FixedResponseModel(Model):
         del messages, tools
         yield StreamChunk(content=self._response)
         yield StreamChunk(finish_reason="stop")
+
+
+def test_hidden_context_fact_does_not_emit_public_stream_events() -> None:
+    entries = [
+        ContextStepsHidden(
+            sequence=1,
+            session_id="sess-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            step_ids=["step-review-call"],
+            reason="review_metadata",
+        )
+    ]
+
+    assert stream_items_from_entries(entries) == []
 
 
 @pytest.mark.asyncio

@@ -8,8 +8,10 @@ from httpx import ASGITransport, AsyncClient
 from agiwo.agent import TerminationReason
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
+    CompactionFailed,
     RunFinished,
     RunStarted,
+    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
@@ -387,6 +389,53 @@ async def test_get_session_detail_returns_summary_session_and_root_scheduler_sta
     assert (
         payload["observability"]["decision_events"][0]["details"]["reason"]
         == "completed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_session_detail_lists_recent_runtime_decisions(client) -> None:
+    await _seed_session_context(client)
+    await _seed_runs_and_steps(client)
+    runtime = _runtime(client)
+    await runtime.run_log_storage.append_entries(
+        [
+            CompactionFailed(
+                sequence=9,
+                session_id="session-a",
+                run_id="run-a2",
+                agent_id="agent-alpha",
+                error="model timeout",
+                attempt=1,
+                max_attempts=2,
+                terminal=False,
+            ),
+            StepBackApplied(
+                sequence=10,
+                session_id="session-a",
+                run_id="run-a2",
+                agent_id="agent-alpha",
+                affected_count=2,
+                checkpoint_seq=7,
+                experience="switch plan",
+            ),
+        ]
+    )
+
+    response = await client.get("/api/sessions/session-a")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [event["kind"] for event in payload["observability"]["decision_events"]] == [
+        "step_back",
+        "compaction_failed",
+        "termination",
+    ]
+    assert payload["observability"]["decision_events"][0]["details"]["experience"] == (
+        "switch plan"
+    )
+    assert (
+        payload["observability"]["decision_events"][1]["details"]["error"]
+        == "model timeout"
     )
 
 

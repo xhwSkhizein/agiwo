@@ -189,6 +189,7 @@ class RunLoopOrchestrator:
             if pending_tool_calls:
                 terminated = await self._execute_tool_calls(
                     tool_calls=pending_tool_calls,
+                    assistant_step_id=None,
                 )
                 if terminated:
                     return
@@ -384,11 +385,16 @@ class RunLoopOrchestrator:
             )
             return True
 
-        return await self._execute_tool_calls(tool_calls=step.tool_calls)
+        return await self._execute_tool_calls(
+            tool_calls=step.tool_calls,
+            assistant_step_id=step.id,
+        )
 
     async def _execute_tool_calls(
         self,
         tool_calls: list[dict[str, object]],
+        *,
+        assistant_step_id: str | None,
     ) -> bool:
         """Execute a batch of tool calls."""
 
@@ -406,6 +412,7 @@ class RunLoopOrchestrator:
             context=self.context,
             runtime=self.runtime,
             tool_calls=tool_calls,
+            assistant_step_id=assistant_step_id,
             set_termination_reason=_set_tool_termination,
             commit_step=self._commit_step,
         )

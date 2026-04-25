@@ -9,6 +9,7 @@ from agiwo.agent.hooks import (
     HookPhase,
     HookRegistration,
     HookRegistry,
+    decision_support,
     observe,
     transform,
 )
@@ -250,3 +251,53 @@ async def test_hook_registry_routes_hook_failed_recording_through_writer(
     assert kwargs["critical"] is False
     assert kwargs["error"] == "boom"
     assert kwargs["traceback"] is not None
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_before_review_returns_review_advice() -> None:
+    async def advise_review(payload: dict) -> dict:
+        assert payload["trigger_reason"] == "step_interval"
+        assert payload["step_count"] == 4
+        return {"review_advice": "Focus on auth.py before broadening the search."}
+
+    registry = HookRegistry(
+        registrations=[
+            decision_support(
+                HookPhase.BEFORE_REVIEW,
+                "advise_review",
+                advise_review,
+            )
+        ]
+    )
+
+    advice = await registry.before_review(
+        trigger_reason="step_interval",
+        milestone=None,
+        step_count=4,
+        context=object(),
+    )
+
+    assert advice == "Focus on auth.py before broadening the search."
+
+
+@pytest.mark.asyncio
+async def test_hook_registry_after_step_back_dispatches_observer() -> None:
+    seen: list[object] = []
+
+    async def observe_step_back(payload: dict) -> None:
+        seen.append(payload["outcome"])
+
+    registry = HookRegistry(
+        registrations=[
+            observe(
+                HookPhase.AFTER_STEP_BACK,
+                "observe_step_back",
+                observe_step_back,
+            )
+        ]
+    )
+    outcome = object()
+
+    await registry.after_step_back(outcome, context=object())
+
+    assert seen == [outcome]

@@ -46,7 +46,7 @@ This plan only covers Phase 1. It includes the minimum console/query touch point
 - `agiwo/agent/models/step.py`
 - `agiwo/agent/models/stream.py`
 - `agiwo/agent/prompt.py`
-- `agiwo/agent/retrospect/executor.py`
+- `agiwo/agent/review/executor.py`
 - `agiwo/agent/run_loop.py`
 - `agiwo/agent/runtime/__init__.py`
 - `agiwo/agent/runtime/context.py`
@@ -66,7 +66,7 @@ This plan only covers Phase 1. It includes the minimum console/query touch point
 - `tests/agent/test_compact.py`
 - `tests/agent/test_definition_contracts.py`
 - `tests/agent/test_memory_hooks.py`
-- `tests/agent/test_retrospect.py`
+- `tests/agent/test_step-back.py`
 - `tests/agent/test_run_contracts.py`
 - `tests/agent/test_run_loop_contracts.py`
 - `tests/agent/test_state_tracking.py`
@@ -151,7 +151,7 @@ class RunLogEntryKind(str, Enum):
     ASSISTANT_STEP_COMMITTED = "assistant_step_committed"
     TOOL_STEP_COMMITTED = "tool_step_committed"
     COMPACTION_APPLIED = "compaction_applied"
-    RETROSPECT_APPLIED = "retrospect_applied"
+    STEP_BACK_APPLIED = "step_back_applied"
     TERMINATION_DECIDED = "termination_decided"
     HOOK_FAILED = "hook_failed"
 
@@ -362,8 +362,8 @@ class HookPhase(str, Enum):
     AFTER_TOOL_BATCH = "after_tool_batch"
     BEFORE_COMPACTION = "before_compaction"
     AFTER_COMPACTION = "after_compaction"
-    BEFORE_RETROSPECT = "before_retrospect"
-    AFTER_RETROSPECT = "after_retrospect"
+    BEFORE_REVIEW = "before_review"
+    AFTER_STEP_BACK = "after_step_back"
     BEFORE_TERMINATION = "before_termination"
     AFTER_TERMINATION = "after_termination"
     AFTER_STEP_COMMIT = "after_step_commit"
@@ -770,32 +770,32 @@ git add agiwo/agent/runtime/run_engine.py agiwo/agent/runtime/hook_dispatcher.py
 git commit -m "refactor: route agent execution through run engine"
 ```
 
-## Task 5: Move `termination`, `compaction`, `retrospect`, Trace, And Stream Onto `RunLog`
+## Task 5: Move `termination`, `compaction`, `step-back`, Trace, And Stream Onto `RunLog`
 
 **Files:**
 - Modify: `agiwo/agent/compaction.py`
-- Modify: `agiwo/agent/retrospect/executor.py`
+- Modify: `agiwo/agent/review/executor.py`
 - Modify: `agiwo/agent/termination/limits.py`
 - Modify: `agiwo/agent/termination/summarizer.py`
 - Modify: `agiwo/agent/trace_writer.py`
 - Modify: `agiwo/agent/models/stream.py`
 - Test: `tests/agent/test_compact.py`
-- Test: `tests/agent/test_retrospect.py`
+- Test: `tests/agent/test_step-back.py`
 - Test: `tests/agent/test_termination.py`
 - Test: `tests/agent/test_run_contracts.py`
 
 - [ ] **Step 1: Write failing policy/trace expectations**
 
 ```python
-# tests/agent/test_retrospect.py
+# tests/agent/test_step-back.py
 from agiwo.agent.models.log import RunLogEntryKind
 
 
-async def test_retrospect_is_recorded_as_run_log_entry(storage, runtime) -> None:
-    await runtime.trigger_retrospect()
+async def test_step-back_is_recorded_as_run_log_entry(storage, runtime) -> None:
+    await runtime.trigger_step-back()
 
     entries = await storage.list_entries(session_id="sess-1")
-    assert RunLogEntryKind.RETROSPECT_APPLIED in [entry.kind for entry in entries]
+    assert RunLogEntryKind.STEP_BACK_APPLIED in [entry.kind for entry in entries]
 ```
 
 ```python
@@ -809,7 +809,7 @@ async def test_termination_entry_records_phase_and_reason(runtime, storage) -> N
 
 - [ ] **Step 2: Run the focused tests**
 
-Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_retrospect.py tests/agent/test_termination.py tests/agent/test_run_contracts.py -v`
+Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_step-back.py tests/agent/test_termination.py tests/agent/test_run_contracts.py -v`
 Expected: FAIL because these paths still update step/run storage and trace/stream side effects directly.
 
 - [ ] **Step 3: Make policies and view builders consume/write `RunLog`**
@@ -831,9 +831,9 @@ await writer.append_entry(
 ```
 
 ```python
-# agiwo/agent/retrospect/executor.py
+# agiwo/agent/review/executor.py
 await writer.append_entry(
-    RetrospectApplied(
+    StepBackApplied(
         sequence=await context.session_runtime.allocate_sequence(),
         session_id=context.session_id,
         run_id=context.run_id,
@@ -901,13 +901,13 @@ def stream_items_from_entries(entries: list[RunLogEntry]) -> list[AgentStreamIte
 
 - [ ] **Step 4: Rerun the focused policy tests**
 
-Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_retrospect.py tests/agent/test_termination.py tests/agent/test_run_contracts.py -v`
+Run: `uv run pytest tests/agent/test_compact.py tests/agent/test_step-back.py tests/agent/test_termination.py tests/agent/test_run_contracts.py -v`
 Expected: PASS with assertions updated to read `RunLog`-backed views and stream items.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add agiwo/agent/compaction.py agiwo/agent/retrospect/executor.py agiwo/agent/termination/limits.py agiwo/agent/termination/summarizer.py agiwo/agent/trace_writer.py agiwo/agent/models/stream.py tests/agent/test_compact.py tests/agent/test_retrospect.py tests/agent/test_termination.py tests/agent/test_run_contracts.py
+git add agiwo/agent/compaction.py agiwo/agent/review/executor.py agiwo/agent/termination/limits.py agiwo/agent/termination/summarizer.py agiwo/agent/trace_writer.py agiwo/agent/models/stream.py tests/agent/test_compact.py tests/agent/test_step-back.py tests/agent/test_termination.py tests/agent/test_run_contracts.py
 git commit -m "refactor: record runtime policies in run log"
 ```
 
@@ -1155,7 +1155,7 @@ The plan covers every Phase 1 requirement from the design spec:
 
 1. `RunLog` as the only source of truth: Tasks 1, 3, 4, 5
 2. deleting `Run`, `StepRecord`, and `AgentHooks`: Tasks 1, 2, 7
-3. first-class `termination`, `compaction`, and `retrospect`: Task 5
+3. first-class `termination`, `compaction`, and `step-back`: Task 5
 4. trace/stream rebuilt from `RunLog`: Task 5
 5. public `Agent` execution entrypoints preserved: Task 4
 6. minimal console/query adaptation without full scheduler migration: Task 6

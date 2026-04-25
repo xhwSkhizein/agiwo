@@ -679,10 +679,6 @@ class DeclareMilestonesTool(BaseTool):
     )
     concurrency_safe = False
 
-    def __init__(self, port: SchedulerToolControl) -> None:
-        self._port = port
-        super().__init__()
-
     def get_parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
@@ -692,13 +688,24 @@ class DeclareMilestonesTool(BaseTool):
                     "description": (
                         "Ordered list of milestone objects. Each must have: "
                         "id (string, unique identifier) and "
-                        "description (string, what 'done' looks like)."
+                        "description (string, what 'done' looks like). "
+                        "An optional status may be provided to mark "
+                        "progress or switch the active milestone."
                     ),
                     "items": {
                         "type": "object",
                         "properties": {
                             "id": {"type": "string"},
                             "description": {"type": "string"},
+                            "status": {
+                                "type": "string",
+                                "enum": [
+                                    "pending",
+                                    "active",
+                                    "completed",
+                                    "abandoned",
+                                ],
+                            },
                         },
                         "required": ["id", "description"],
                     },
@@ -756,13 +763,20 @@ class DeclareMilestonesTool(BaseTool):
                 )
             milestone_id = milestone["id"].strip()
             description = milestone["description"].strip()
+            status = milestone.get("status")
             ids.append(milestone_id)
-            normalized_milestones.append(
-                {
-                    "id": milestone_id,
-                    "description": description,
-                }
-            )
+            normalized = {
+                "id": milestone_id,
+                "description": description,
+            }
+            if isinstance(status, str) and status in {
+                "pending",
+                "active",
+                "completed",
+                "abandoned",
+            }:
+                normalized["status"] = status
+            normalized_milestones.append(normalized)
         return ToolResult.success(
             tool_name=self.name,
             tool_call_id=context.tool_call_id,
@@ -790,10 +804,6 @@ class ReviewTrajectoryTool(BaseTool):
         "removed after processing."
     )
     concurrency_safe = False
-
-    def __init__(self, port: SchedulerToolControl) -> None:
-        self._port = port
-        super().__init__()
 
     def get_parameters(self) -> dict[str, Any]:
         return {

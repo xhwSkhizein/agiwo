@@ -325,6 +325,7 @@ class SQLiteRunLogStorage(RunLogStorage):
             RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
             RunLogEntryKind.TOOL_STEP_COMMITTED.value,
             RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED.value,
+            RunLogEntryKind.CONTEXT_STEPS_HIDDEN.value,
             RunLogEntryKind.RUN_ROLLED_BACK.value,
         ]
         placeholders = ",".join("?" for _ in kinds)
@@ -405,6 +406,7 @@ class SQLiteRunLogStorage(RunLogStorage):
         run_id: str | None = None,
         agent_id: str | None = None,
         include_rolled_back: bool = False,
+        include_hidden_from_context: bool = True,
         limit: int = 1000,
         order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
@@ -414,6 +416,7 @@ class SQLiteRunLogStorage(RunLogStorage):
             RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
             RunLogEntryKind.TOOL_STEP_COMMITTED.value,
             RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED.value,
+            RunLogEntryKind.CONTEXT_STEPS_HIDDEN.value,
             RunLogEntryKind.RUN_ROLLED_BACK.value,
         ]
         placeholders = ",".join("?" for _ in kinds)
@@ -437,6 +440,7 @@ class SQLiteRunLogStorage(RunLogStorage):
         step_views = build_step_views_from_entries(
             entries,
             include_rolled_back=include_rolled_back,
+            include_hidden_from_context=include_hidden_from_context,
         )
         if start_seq is not None:
             step_views = [step for step in step_views if step.sequence >= start_seq]

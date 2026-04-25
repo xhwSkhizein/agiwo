@@ -85,8 +85,8 @@ HookPhase.BEFORE_TOOL_CALL
 HookPhase.AFTER_TOOL_CALL
 HookPhase.BEFORE_COMPACTION
 HookPhase.AFTER_COMPACTION
-HookPhase.BEFORE_RETROSPECT
-HookPhase.AFTER_RETROSPECT
+HookPhase.BEFORE_REVIEW
+HookPhase.AFTER_STEP_BACK
 HookPhase.BEFORE_TERMINATION
 HookPhase.AFTER_TERMINATION
 HookPhase.AFTER_STEP_COMMIT
@@ -187,7 +187,7 @@ phase-specific `*_advice` field:
 - `before_llm`: `llm_advice`
 - `before_tool_call`: `tool_advice`
 - `before_compaction`: `compaction_advice`
-- `before_retrospect`: `retrospect_advice`
+- `before_review`: `review_advice`
 - `before_termination`: `termination_advice`
 
 ### Observe-Only Phases
@@ -197,7 +197,7 @@ These phases should return nothing useful; results are ignored.
 - `after_llm`
 - `after_tool_call`
 - `after_compaction`
-- `after_retrospect`
+- `after_step_back`
 - `after_termination`
 - `after_step_commit`
 - `run_finalized`

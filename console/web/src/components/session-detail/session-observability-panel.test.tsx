@@ -34,15 +34,16 @@ describe("SessionObservabilityPanel", () => {
           ],
           decision_events: [
             {
-              kind: "termination",
+              kind: "step_back",
               sequence: 8,
               run_id: "run-1",
               agent_id: "agent-1",
               created_at: "2026-04-22T12:01:00Z",
-              summary: "completed via finished",
+              summary: "2 results condensed after checkpoint seq 4",
               details: {
-                reason: "completed",
-                source: "finished",
+                affected_count: 2,
+                checkpoint_seq: 4,
+                experience: "switch plan",
               },
             },
           ],
@@ -54,7 +55,9 @@ describe("SessionObservabilityPanel", () => {
     expect(screen.getByText("Trace Context")).toBeInTheDocument();
     expect(screen.getByText("Runtime Decisions")).toBeInTheDocument();
     expect(screen.getByText("hello")).toBeInTheDocument();
-    expect(screen.getByText("completed via finished")).toBeInTheDocument();
+    expect(screen.getByText("2 results condensed after checkpoint seq 4")).toBeInTheDocument();
+    expect(screen.getByText("checkpoint_seq 4")).toBeInTheDocument();
+    expect(screen.getByText("switch plan")).toBeInTheDocument();
     expect(screen.getByText("Recent Traces")).toBeInTheDocument();
   });
 });

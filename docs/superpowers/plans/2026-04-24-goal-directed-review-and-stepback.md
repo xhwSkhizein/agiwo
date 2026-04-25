@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace token/round-count-based retrospect with a goal-aligned review + step-back mechanism that preserves KV cache via targeted content replacement.
+**Goal:** Replace the legacy token/round-count-based tool-result rewrite flow with a goal-aligned review + step-back mechanism that preserves KV cache via targeted content replacement.
 
 **Architecture:** New `agiwo/agent/review/` package (GoalManager → ReviewEnforcer → StepBackExecutor). System enforces review at checkpoints, agent provides alignment assessment and experience, system executes KV-cache-safe content condensation without message deletion or reordering.
 
@@ -18,7 +18,7 @@
 
 **Files:**
 - Create: `agiwo/agent/models/review.py`
-- Modify: `agiwo/agent/models/run.py` — replace `RetrospectState` with `ReviewState`
+- Modify: `agiwo/agent/models/run.py` — replace the legacy review-tracking state with `ReviewState`
 - Test: `tests/agent/test_review_models.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -161,20 +161,20 @@ Expected: all 6 tests PASS
 
 - [ ] **Step 5: Add ReviewState to RunLedger in `agiwo/agent/models/run.py`**
 
-Read the file first to understand current layout. Replace `RetrospectState` import and usage:
+Read the file first to understand current layout. Replace the legacy review-tracking state import and usage:
 
 ```python
 # Line 24: change import
 from agiwo.agent.models.review import ReviewState
 
-# Lines 97-103: replace RetrospectState with a comment that it's removed
+# Lines 97-103: replace the legacy review-tracking state with a comment that it's removed
 # (keep it for now in Phase 1, will be fully cleaned up in Phase 9)
 
 # Line 133: add new field to RunLedger
 review: ReviewState = field(default_factory=ReviewState)
 ```
 
-The `retrospect: RetrospectState` field (line 133) stays for now — it will be removed in the cleanup phase.
+The legacy review-tracking field on `RunLedger` (line 133) stays for now — it will be removed in the cleanup phase.
 
 - [ ] **Step 6: Commit**
 
@@ -378,7 +378,7 @@ Expected: all tests PASS
 - [ ] **Step 5: Create `agiwo/agent/review/__init__.py`**
 
 ```python
-"""Goal-directed review — replaces token/round-based retrospect.
+"""Goal-directed review — replaces token/round-based step-back.
 
 Public API consumed by ``run_tool_batch.py``:
 
@@ -1070,7 +1070,7 @@ git commit -m "feat: add StepBackExecutor with KV-cache-safe content condensatio
 
 ## Phase 4: ReviewBatch — glue between review components
 
-### Task 5: ReviewBatch — per-batch lifecycle (replaces RetrospectBatch)
+### Task 5: ReviewBatch — per-batch lifecycle (replaces ReviewBatch)
 
 **Files:**
 - Modify: `agiwo/agent/review/__init__.py` — add `ReviewBatch` class
@@ -1224,7 +1224,7 @@ from agiwo.tool.base import BaseTool, ToolResult
 class ReviewBatch:
     """Per-batch review lifecycle object.
 
-    Replaces ``RetrospectBatch``.  Caller interacts through three methods:
+    Replaces ``ReviewBatch``.  Caller interacts through three methods:
 
     * ``process_result()``  — returns final content (may inject <system-review>)
     * ``register_step()``   — registers a committed step for later lookup
@@ -1638,7 +1638,7 @@ class ReviewTrajectoryTool(BaseTool):
 
 - [ ] **Step 4: Add imports at top of `agiwo/scheduler/runtime_tools.py`**
 
-Add `import time` at the top if not already present (it already is — used by `RetrospectToolResultTool`).
+Add `import time` at the top if not already present (it already is — used by `ReviewTrajectoryTool`).
 
 - [ ] **Step 5: Register new tools in `agiwo/scheduler/engine.py`**
 
@@ -1656,7 +1656,7 @@ In `__init__` (around line 96), add to `_scheduling_tools` tuple:
             ReviewTrajectoryTool(self._tool_control),
 ```
 
-Note: Keep `RetrospectToolResultTool(self._tool_control)` for now — it will be removed in the cleanup phase.
+Note: Keep `ReviewTrajectoryTool(self._tool_control)` for now — it will be removed in the cleanup phase.
 
 - [ ] **Step 6: Run test to verify it passes**
 
@@ -1772,7 +1772,7 @@ git commit -m "feat: add Goal-Directed Review section to system prompt"
 ### Task 8: Update AgentOptions config fields
 
 **Files:**
-- Modify: `agiwo/agent/models/config.py` — replace 4 retrospect fields with 2 review fields
+- Modify: `agiwo/agent/models/config.py` — replace 4 step-back fields with 2 review fields
 - Modify: `console/server/models/agent_config.py` — same
 - Test: `tests/agent/test_config.py` (create if not exists, or update existing)
 
@@ -1781,10 +1781,10 @@ git commit -m "feat: add Goal-Directed Review section to system prompt"
 Read `agiwo/agent/models/config.py` lines 73-76. Replace:
 
 ```python
-    enable_tool_retrospect: bool = True
-    retrospect_token_threshold: int = 1024
-    retrospect_round_interval: int = 5
-    retrospect_accumulated_token_threshold: int = 8192
+    enable_goal_directed_review: bool = True
+    review_step_interval: int = 1024
+    review_step_interval: int = 5
+    review_step_interval: int = 8192
 ```
 
 With:
@@ -1795,17 +1795,17 @@ With:
     review_on_error: bool = True
 ```
 
-Keep `enable_context_rollback: bool = True` (it's unrelated to retrospect).
+Keep `enable_context_rollback: bool = True` (it's unrelated to step-back).
 
 - [ ] **Step 2: Replace fields in `console/server/models/agent_config.py`**
 
 Read lines 32-35. Replace:
 
 ```python
-    enable_tool_retrospect: bool = True
-    retrospect_token_threshold: int = Field(default=1024, ge=1)
-    retrospect_round_interval: int = Field(default=5, ge=1)
-    retrospect_accumulated_token_threshold: int = Field(default=8192, ge=1)
+    enable_goal_directed_review: bool = True
+    review_step_interval: int = Field(default=1024, ge=1)
+    review_step_interval: int = Field(default=5, ge=1)
+    review_step_interval: int = Field(default=8192, ge=1)
 ```
 
 With:
@@ -1828,14 +1828,14 @@ Fix any test failures related to the renamed fields (update tests that reference
 
 ```bash
 git add agiwo/agent/models/config.py console/server/models/agent_config.py
-git commit -m "feat: replace retrospect config fields with review config fields"
+git commit -m "feat: replace legacy review config fields with review config fields"
 ```
 
 ---
 
 ## Phase 7: Log, Stream & Runtime Decision Type Updates
 
-### Task 9: Replace RetrospectApplied → StepBackApplied in log, stream, runtime_decision models
+### Task 9: Replace StepBackApplied → StepBackApplied in log, stream, runtime_decision models
 
 **Files:**
 - Modify: `agiwo/agent/models/log.py` — add `StepBackApplied`, keep old type temporarily
@@ -1846,11 +1846,11 @@ git commit -m "feat: replace retrospect config fields with review config fields"
 - Modify: `agiwo/agent/hooks.py` — add `BEFORE_REVIEW`/`AFTER_STEP_BACK` phases
 - Modify: `agiwo/agent/__init__.py` — update exports
 
-Note: Old types (`RetrospectApplied`, `RetrospectAppliedEvent`, etc.) stay until the cleanup phase.
+Note: Old types (`StepBackApplied`, `StepBackAppliedEvent`, etc.) stay until the cleanup phase.
 
 - [ ] **Step 1: Add `StepBackApplied` to `agiwo/agent/models/log.py`**
 
-Add after the `RetrospectApplied` class:
+Add after the `StepBackApplied` class:
 
 ```python
 @dataclass(frozen=True, kw_only=True)
@@ -1865,7 +1865,7 @@ class StepBackApplied(RunLogEntry):
     )
 ```
 
-Add `"step_back_applied"` to `RunLogEntryKind` enum. Keep the existing `RETROSPECT_APPLIED` for backward compatibility for now.
+Add `"step_back_applied"` to `RunLogEntryKind` enum. Keep the existing `STEP_BACK_APPLIED` for backward compatibility for now.
 
 - [ ] **Step 2: Add `StepBackAppliedEvent` to `agiwo/agent/models/stream.py`**
 
@@ -1937,17 +1937,17 @@ Fix any failures.
 
 ```bash
 git add agiwo/agent/models/log.py agiwo/agent/models/stream.py agiwo/agent/models/runtime_decision.py agiwo/agent/storage/serialization.py agiwo/agent/trace_writer.py agiwo/agent/hooks.py agiwo/agent/__init__.py
-git commit -m "feat: add StepBack log/stream/decision types alongside old retrospect types"
+git commit -m "feat: add StepBack log/stream/decision types alongside old step-back types"
 ```
 
 ---
 
 ## Phase 8: Core Integration — wire ReviewBatch into run_tool_batch
 
-### Task 10: Replace RetrospectBatch with ReviewBatch in run_tool_batch.py
+### Task 10: Replace ReviewBatch with ReviewBatch in run_tool_batch.py
 
 **Files:**
-- Modify: `agiwo/agent/run_tool_batch.py` — swap `RetrospectBatch` for `ReviewBatch`, remove `rebuild_messages` call
+- Modify: `agiwo/agent/run_tool_batch.py` — swap `ReviewBatch` for `ReviewBatch`, remove `rebuild_messages` call
 - Modify: `agiwo/agent/runtime/state_writer.py` — add `record_step_back_applied` method
 - Test: `tests/agent/test_run_tool_batch_review.py`
 
@@ -1966,7 +1966,7 @@ class TestExecuteToolBatchCycleWithReview:
         """When tool results come back and a review interval is met,
         <system-review> should be injected into the final tool result content."""
         # Setup context, runtime, tool calls, mock execute_tool_batch
-        # Verify that ReviewBatch is used, not RetrospectBatch
+        # Verify that ReviewBatch is used, not ReviewBatch
         # Verify no rebuild_messages call
         pass  # Detailed implementation in actual step
 
@@ -1991,12 +1991,12 @@ Read current file (98 lines). The key changes:
 **Change import** (line 8):
 ```python
 # OLD:
-from agiwo.agent.retrospect import RetrospectBatch
+from agiwo.agent.review import ReviewBatch
 # NEW:
 from agiwo.agent.review import ReviewBatch
 ```
 
-**In `execute_tool_batch_cycle`** (line 35): Replace `RetrospectBatch` with `ReviewBatch`:
+**In `execute_tool_batch_cycle`** (line 35): Replace `ReviewBatch` with `ReviewBatch`:
 ```python
 batch = ReviewBatch(context.config, context.ledger, runtime.tools_map)
 ```
@@ -2006,7 +2006,7 @@ batch = ReviewBatch(context.config, context.ledger, runtime.tools_map)
 content=batch.process_result(result, current_seq=tool_step.sequence),
 ```
 
-**In `_apply_retrospect_outcome` → rename to `_apply_review_outcome`:**
+**In `_apply_step-back_outcome` → rename to `_apply_review_outcome`:**
 
 ```python
 async def _apply_review_outcome(
@@ -2050,7 +2050,7 @@ async def _apply_review_outcome(
     )
 ```
 
-**Update call site** (line 63): Change from `_apply_retrospect_outcome` to `_apply_review_outcome`.
+**Update call site** (line 63): Change from `_apply_step-back_outcome` to `_apply_review_outcome`.
 
 - [ ] **Step 3: Add `record_step_back_applied` to `agiwo/agent/runtime/state_writer.py`**
 
@@ -2110,7 +2110,7 @@ Update imports accordingly.
 .venv/bin/python -m pytest tests/agent/ -v --tb=short
 ```
 
-Fix any regressions. Tests that directly test `RetrospectBatch` will fail — those will be addressed in the cleanup phase.
+Fix any regressions. Tests that directly test `ReviewBatch` will fail — those will be addressed in the cleanup phase.
 
 - [ ] **Step 6: Commit**
 
@@ -2121,69 +2121,69 @@ git commit -m "feat: integrate ReviewBatch into run_tool_batch with targeted con
 
 ---
 
-## Phase 9: Cleanup — remove old retrospect code
+## Phase 9: Cleanup — remove old step-back code
 
-### Task 11: Delete the retrospect package and clean up all references
+### Task 11: Delete the step-back package and clean up all references
 
 **Files to delete:**
-- `agiwo/agent/retrospect/__init__.py`
-- `agiwo/agent/retrospect/triggers.py`
-- `agiwo/agent/retrospect/executor.py`
-- `agiwo/agent/retrospect/` directory
-- `tests/agent/test_retrospect.py`
+- `agiwo/agent/review/__init__.py`
+- `agiwo/agent/review/triggers.py`
+- `agiwo/agent/review/executor.py`
+- `agiwo/agent/review/` directory
+- `tests/agent/test_step-back.py`
 
 **Files to modify (remove old type references):**
-- `agiwo/agent/models/run.py` — remove `RetrospectState`, remove `retrospect` field from `RunLedger`
-- `agiwo/agent/models/log.py` — remove `RetrospectApplied`
-- `agiwo/agent/models/stream.py` — remove `RetrospectAppliedEvent`
-- `agiwo/agent/models/runtime_decision.py` — remove `RetrospectDecisionView`, remove `latest_retrospect` from `RuntimeDecisionState`
-- `agiwo/agent/hooks.py` — remove `BEFORE_RETROSPECT`/`AFTER_RETROSPECT` from `HookPhase`
-- `agiwo/agent/runtime/state_writer.py` — remove `record_retrospect_applied`/`build_retrospect_applied_entry`
-- `agiwo/agent/storage/serialization.py` — remove `RetrospectApplied` handling, update `RuntimeDecisionState` construction
-- `agiwo/agent/trace_writer.py` — remove `RetrospectApplied` from type unions
-- `agiwo/agent/__init__.py` — remove old retrospect exports
-- `agiwo/scheduler/runtime_tools.py` — remove `RetrospectToolResultTool`
-- `agiwo/scheduler/engine.py` — remove `RetrospectToolResultTool` import and instantiation
-- `console/server/services/runtime/session_view_service.py` — remove `latest_retrospect` branch
+- `agiwo/agent/models/run.py` — remove the legacy review-tracking state and field from `RunLedger`
+- `agiwo/agent/models/log.py` — remove `StepBackApplied`
+- `agiwo/agent/models/stream.py` — remove `StepBackAppliedEvent`
+- `agiwo/agent/models/runtime_decision.py` — remove `StepBackDecisionView`, remove `latest_step_back` from `RuntimeDecisionState`
+- `agiwo/agent/hooks.py` — remove `BEFORE_REVIEW`/`AFTER_STEP_BACK` from `HookPhase`
+- `agiwo/agent/runtime/state_writer.py` — remove `record_step_back_applied`/`build_step_back_applied_entry`
+- `agiwo/agent/storage/serialization.py` — remove `StepBackApplied` handling, update `RuntimeDecisionState` construction
+- `agiwo/agent/trace_writer.py` — remove `StepBackApplied` from type unions
+- `agiwo/agent/__init__.py` — remove old step-back exports
+- `agiwo/scheduler/runtime_tools.py` — remove `ReviewTrajectoryTool`
+- `agiwo/scheduler/engine.py` — remove `ReviewTrajectoryTool` import and instantiation
+- `console/server/services/runtime/session_view_service.py` — remove `latest_step_back` branch
 - `scripts/repo_guard.py` — remove AGW045-049 rules, add new review rules
 
 **Test files to modify:**
-- `tests/scheduler/test_runtime_facts.py` — remove retrospect references
+- `tests/scheduler/test_runtime_facts.py` — remove step-back references
 - `tests/agent/test_runtime_decision_views.py` — update to use `StepBackDecisionView`
-- `tests/agent/test_run_log_replay_parity.py` — remove retrospect references
+- `tests/agent/test_run_log_replay_parity.py` — remove step-back references
 - `tests/observability/test_collector.py` — update to use `StepBackApplied`
 - `console/tests/test_run_query_service.py` — update to use `StepBackDecisionView`
 
-- [ ] **Step 1: Delete retrospect package**
+- [ ] **Step 1: Delete step-back package**
 
 ```bash
-rm -rf agiwo/agent/retrospect/
-rm tests/agent/test_retrospect.py
+rm -rf agiwo/agent/review/
+rm tests/agent/test_step-back.py
 ```
 
 - [ ] **Step 2: Clean up `agiwo/agent/models/run.py`**
 
-Remove `RetrospectState` class (lines 97-103) and its import. Remove `retrospect: RetrospectState` field from `RunLedger` (line 133).
+Remove the legacy review-tracking state class (lines 97-103) and its import. Remove the old review-tracking field from `RunLedger` (line 133).
 
 - [ ] **Step 3: Clean up `agiwo/agent/models/log.py`**
 
-Remove `RetrospectApplied` class (lines 177-186). Keep `RETROSPECT_APPLIED` kind for backwards compatibility with existing stored log entries.
+Remove `StepBackApplied` class (lines 177-186). Keep `STEP_BACK_APPLIED` kind for backwards compatibility with existing stored log entries.
 
 - [ ] **Step 4: Clean up `agiwo/agent/models/stream.py`**
 
-Remove `RetrospectAppliedEvent` class. Add `StepBackAppliedEvent` to `AgentStreamItem` TypeAlias if not already.
+Remove `StepBackAppliedEvent` class. Add `StepBackAppliedEvent` to `AgentStreamItem` TypeAlias if not already.
 
 - [ ] **Step 5: Clean up `agiwo/agent/models/runtime_decision.py`**
 
-Remove `RetrospectDecisionView`. Remove `latest_retrospect` from `RuntimeDecisionState`. Add `latest_step_back`.
+Remove `StepBackDecisionView`. Remove `latest_step_back` from `RuntimeDecisionState`. Add `latest_step_back`.
 
 - [ ] **Step 6: Clean up `agiwo/agent/hooks.py`**
 
-Remove `BEFORE_RETROSPECT`/`AFTER_RETROSPECT` from `HookPhase`. Remove from `_DECISION_SUPPORT_PHASES` and `_DECISION_SUPPORT_ALLOWLISTS`. Add `BEFORE_REVIEW`/`AFTER_STEP_BACK` if not already done in Task 9.
+Remove `BEFORE_REVIEW`/`AFTER_STEP_BACK` from `HookPhase`. Remove from `_DECISION_SUPPORT_PHASES` and `_DECISION_SUPPORT_ALLOWLISTS`. Add `BEFORE_REVIEW`/`AFTER_STEP_BACK` if not already done in Task 9.
 
 - [ ] **Step 7: Clean up `agiwo/agent/runtime/state_writer.py`**
 
-Remove `record_retrospect_applied` and `build_retrospect_applied_entry` functions.
+Remove `record_step_back_applied` and `build_step_back_applied_entry` functions.
 
 - [ ] **Step 8: Clean up remaining files**
 
@@ -2191,7 +2191,7 @@ Update `storage/serialization.py`, `trace_writer.py`, `__init__.py`, `runtime_to
 
 - [ ] **Step 9: Update all test files**
 
-Update test files listed above to use new types and remove retrospect references.
+Update test files listed above to use new types and remove step-back references.
 
 - [ ] **Step 10: Run full test suite**
 
@@ -2205,7 +2205,7 @@ Fix all remaining failures until green.
 
 ```bash
 git add -A
-git commit -m "refactor: remove retrospect package, clean up all old type references"
+git commit -m "refactor: remove step-back package, clean up all old type references"
 ```
 
 ---
@@ -2215,19 +2215,19 @@ git commit -m "refactor: remove retrospect package, clean up all old type refere
 ### Task 12: Update console to show step-back decisions
 
 **Files:**
-- Modify: `console/server/services/runtime/session_view_service.py` — replace `latest_retrospect` with `latest_step_back`
+- Modify: `console/server/services/runtime/session_view_service.py` — replace `latest_step_back` with `latest_step_back`
 
 - [ ] **Step 1: Update `session_view_service.py`**
 
-Read lines 258-279. Replace the `latest_retrospect` block:
+Read lines 258-279. Replace the `latest_step_back` block:
 
 ```python
 # OLD:
-if runtime_decisions.latest_retrospect is not None:
-    decision = runtime_decisions.latest_retrospect
+if runtime_decisions.latest_step_back is not None:
+    decision = runtime_decisions.latest_step_back
     decisions.append(
         RuntimeDecisionRecord(
-            kind="retrospect",
+            kind="step-back",
             ...
         )
     )
@@ -2278,7 +2278,7 @@ git commit -m "feat: update console to show step_back decisions"
 
 - [ ] **Step 1: Update `docs/guides/context-optimization.md`**
 
-Replace the "Tool Result Retrospect" section with "Goal-Directed Review" covering:
+Replace the "Tool Result StepBack" section with "Goal-Directed Review" covering:
 - Milestones concept
 - System-review mechanism
 - Step-back execution
@@ -2290,8 +2290,8 @@ Replace the "Tool Result Retrospect" section with "Goal-Directed Review" coverin
 
 ```bash
 mkdir -p docs/plans/archived
-mv docs/plans/2026-04-04-context-rollback-and-retrospect-design.md docs/plans/archived/
-mv docs/plans/2026-04-05-retrospect-batch-refactor-design.md docs/plans/archived/
+mv docs/plans/2026-04-04-context-rollback-and-step-back-design.md docs/plans/archived/
+mv docs/plans/2026-04-05-step-back-batch-refactor-design.md docs/plans/archived/
 ```
 
 - [ ] **Step 3: Run full test suite**

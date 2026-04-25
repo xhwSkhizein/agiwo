@@ -4,8 +4,10 @@ import pytest
 
 from agiwo.agent import (
     CompactionApplied,
+    CompactionFailed,
     MessageRole,
     RunFinished,
+    RunRolledBack,
     RunStarted,
     StepBackApplied,
     TerminationDecided,
@@ -189,3 +191,75 @@ async def test_run_query_service_exposes_runtime_decision_state() -> None:
     assert state.latest_termination is not None
     assert state.latest_termination.reason is TerminationReason.COMPLETED
     assert snapshot.runtime_decisions.latest_termination is not None
+
+
+@pytest.mark.asyncio
+async def test_run_query_service_lists_recent_runtime_decisions_descending() -> None:
+    storage = InMemoryRunLogStorage()
+    await storage.append_entries(
+        [
+            CompactionApplied(
+                sequence=1,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                start_sequence=1,
+                end_sequence=2,
+                before_token_estimate=500,
+                after_token_estimate=120,
+                message_count=2,
+                transcript_path="/tmp/compact.json",
+                summary="compact",
+            ),
+            CompactionFailed(
+                sequence=2,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                error="timeout",
+                attempt=1,
+                max_attempts=2,
+                terminal=False,
+            ),
+            StepBackApplied(
+                sequence=3,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                affected_count=2,
+                checkpoint_seq=2,
+                experience="switch plan",
+            ),
+            RunRolledBack(
+                sequence=4,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                start_sequence=3,
+                end_sequence=4,
+                reason="cleanup",
+            ),
+            TerminationDecided(
+                sequence=5,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                termination_reason=TerminationReason.MAX_STEPS,
+                phase="pre_llm",
+                source="non_recoverable_limit",
+            ),
+        ]
+    )
+    service = RunQueryService(run_storage=storage)
+
+    decisions = await service.list_runtime_decision_events("sess-1", limit=10)
+
+    assert [decision.kind for decision in decisions] == [
+        "termination",
+        "rollback",
+        "step_back",
+        "compaction_failed",
+        "compaction",
+    ]
+    assert decisions[1].details["reason"] == "cleanup"
+    assert decisions[3].details["error"] == "timeout"

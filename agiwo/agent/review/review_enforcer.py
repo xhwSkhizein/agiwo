@@ -17,6 +17,9 @@ class ReviewTrigger(Enum):
 def _build_review_notice(
     milestone: Milestone | None,
     step_count: int,
+    *,
+    trigger_reason: str,
+    review_advice: str | None = None,
 ) -> str:
     """Build the <system-review> notice text."""
     if milestone is not None:
@@ -28,12 +31,19 @@ def _build_review_notice(
 
     inner_text = (
         f"{milestone_text}\n\n"
-        f"Steps since last review: {step_count}\n\n"
-        f"Question: Do your recent steps meaningfully advance the current goal?\n"
-        f"If not, use review_trajectory to:\n"
-        f"  1. Indicate misalignment (aligned=false)\n"
-        f"  2. Provide a concise experience summary of what was learned\n"
-        f"If aligned, use review_trajectory with aligned=true and a brief note."
+        f"Trigger: {trigger_reason}\n"
+        f"Steps since last review: {step_count}\n"
+    )
+    if review_advice:
+        inner_text += f"Hook advice: {review_advice}\n"
+
+    inner_text += (
+        "\n"
+        "Question: Do your recent steps meaningfully advance the current goal?\n"
+        "If not, use review_trajectory to:\n"
+        "  1. Indicate misalignment (aligned=false)\n"
+        "  2. Provide a concise experience summary of what was learned\n"
+        "If aligned, use review_trajectory with aligned=true and a brief note."
     )
 
     return f"\n\n<system-review>\n{inner_text}\n</system-review>"
@@ -57,7 +67,10 @@ def check_review_trigger(
 
     # Milestone switch (agent just completed/activated a milestone).
     # Initial milestone declarations should not immediately trigger a review.
-    if state.is_review_pending and tool_name != "declare_milestones":
+    if (
+        state.pending_review_reason == "milestone_switch"
+        and tool_name != "declare_milestones"
+    ):
         return ReviewTrigger.MILESTONE_SWITCH
 
     # Consecutive errors
@@ -76,12 +89,20 @@ def inject_system_review(
     content: str,
     milestone: Milestone | None,
     step_count: int,
+    *,
+    trigger_reason: str,
+    review_advice: str | None = None,
 ) -> str:
     """Append a <system-review> notice to the tool result content.
 
     Returns content unchanged when no notice should be injected.
     """
-    notice = _build_review_notice(milestone, step_count)
+    notice = _build_review_notice(
+        milestone,
+        step_count,
+        trigger_reason=trigger_reason,
+        review_advice=review_advice,
+    )
     return content + notice
 
 

@@ -34,7 +34,7 @@ It does **not**:
 Before execution starts, lock these decisions:
 
 1. **Do not add a generic `TimelineView` just to satisfy old wording in the spec.** The shipped public read surface should stay `RunView`, `StepView`, replayed `AgentStreamItem`, and explicit runtime-decision views.
-2. **Add a dedicated runtime-decision read model** for `termination`, `compaction`, `retrospect`, and rollback, rather than making callers replay raw `RunLog` families manually.
+2. **Add a dedicated runtime-decision read model** for `termination`, `compaction`, `step-back`, and rollback, rather than making callers replay raw `RunLog` families manually.
 3. **Treat live/replay parity as a first-class acceptance criterion.** The refactor is not “done” until live stream/trace/query results can be cross-checked against replayed `RunLog`.
 4. **Use targeted extractions, not broad rewrites, for oversized modules.** The main hotspot to reduce is `agiwo/scheduler/runner.py`.
 
@@ -76,7 +76,7 @@ Before execution starts, lock these decisions:
 - `docs/superpowers/reviews/2026-04-22-agent-runtime-audit.md`
   - Record a concrete spec-to-code audit matrix and classify each item as shipped, spec-update-needed, or code-gap.
 - `agiwo/agent/models/runtime_decision.py`
-  - Define the stable read models for latest `termination`, `compaction`, `retrospect`, and rollback state.
+  - Define the stable read models for latest `termination`, `compaction`, `step-back`, and rollback state.
 - `agiwo/agent/storage/base.py` / `agiwo/agent/storage/sqlite.py`
   - Expose a stable query facade for runtime-decision state without forcing callers to replay raw entries.
 - `agiwo/scheduler/runtime_facts.py`
@@ -184,7 +184,7 @@ import pytest
 
 from agiwo.agent import (
     CompactionApplied,
-    RetrospectApplied,
+    StepBackApplied,
     TerminationDecided,
     TerminationReason,
 )
@@ -206,7 +206,7 @@ async def test_storage_builds_latest_runtime_decision_state() -> None:
                 phase="before_termination",
                 source="limit",
             ),
-            RetrospectApplied(
+            StepBackApplied(
                 sequence=2,
                 session_id="sess-1",
                 run_id="run-1",
@@ -225,8 +225,8 @@ async def test_storage_builds_latest_runtime_decision_state() -> None:
     assert isinstance(state, RuntimeDecisionState)
     assert state.latest_termination is not None
     assert state.latest_termination.reason is TerminationReason.MAX_STEPS
-    assert state.latest_retrospect is not None
-    assert state.latest_retrospect.trigger == "token_threshold"
+    assert state.latest_step_back is not None
+    assert state.latest_step_back.trigger == "token_threshold"
 ```
 
 - [ ] **Step 2: Run the targeted tests to confirm the gap**
@@ -252,7 +252,7 @@ class TerminationDecisionView:
 
 
 @dataclass(frozen=True, slots=True)
-class RetrospectDecisionView:
+class StepBackDecisionView:
     run_id: str
     sequence: int
     affected_sequences: tuple[int, ...]
@@ -274,7 +274,7 @@ class RollbackDecisionView:
 @dataclass(frozen=True, slots=True)
 class RuntimeDecisionState:
     latest_compaction: CompactMetadata | None = None
-    latest_retrospect: RetrospectDecisionView | None = None
+    latest_step_back: StepBackDecisionView | None = None
     latest_termination: TerminationDecisionView | None = None
     latest_rollback: RollbackDecisionView | None = None
 ```
@@ -303,7 +303,7 @@ class RunLogStorage(ABC):
 async def get_runtime_decision_state(... ) -> RuntimeDecisionState:
     entries = await self.list_entries(...)
     latest_compaction = ...
-    latest_retrospect = ...
+    latest_step_back = ...
     latest_termination = ...
     latest_rollback = ...
     return RuntimeDecisionState(...)

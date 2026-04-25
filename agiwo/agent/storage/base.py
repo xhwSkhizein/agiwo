@@ -134,6 +134,7 @@ class RunLogStorage(ABC):
         run_id: str | None = None,
         agent_id: str | None = None,
         include_rolled_back: bool = False,
+        include_hidden_from_context: bool = True,
         limit: int = 1000,
         order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
@@ -182,7 +183,10 @@ class RunLogStorage(ABC):
         session_id: str,
         tool_call_id: str,
     ) -> StepView | None:
-        steps = await self.list_step_views(session_id=session_id, limit=100_000)
+        steps = await self.list_step_views(
+            session_id=session_id,
+            limit=100_000,
+        )
         for step in steps:
             if step.tool_call_id == tool_call_id:
                 return step
@@ -339,6 +343,7 @@ class InMemoryRunLogStorage(RunLogStorage):
         run_id: str | None = None,
         agent_id: str | None = None,
         include_rolled_back: bool = False,
+        include_hidden_from_context: bool = True,
         limit: int = 1000,
         order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
@@ -351,6 +356,7 @@ class InMemoryRunLogStorage(RunLogStorage):
         step_views = build_step_views_from_entries(
             entries,
             include_rolled_back=include_rolled_back,
+            include_hidden_from_context=include_hidden_from_context,
         )
         if start_seq is not None:
             step_views = [step for step in step_views if step.sequence >= start_seq]

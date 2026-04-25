@@ -9,6 +9,7 @@ from agiwo.agent import (
     TerminationReason,
     UserStepCommitted,
 )
+from agiwo.agent.models.log import ContextStepsHidden
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 
 from server.services.runtime.run_query_service import RunQueryService
@@ -77,3 +78,35 @@ async def test_console_run_query_service_matches_run_log_replay_views() -> None:
     assert decision_state == await storage.get_runtime_decision_state(
         session_id="sess-1"
     )
+
+
+@pytest.mark.asyncio
+async def test_console_step_queries_hide_review_metadata_by_default() -> None:
+    storage = InMemoryRunLogStorage()
+    await storage.append_entries(
+        [
+            AssistantStepCommitted(
+                sequence=1,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                step_id="step-review-result",
+                role=MessageRole.ASSISTANT,
+                content="Trajectory review: aligned=True.",
+            ),
+            ContextStepsHidden(
+                sequence=2,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                step_ids=["step-review-result"],
+                reason="review_metadata",
+            ),
+        ]
+    )
+    service = RunQueryService(run_storage=storage)
+
+    page = await service.list_session_steps("sess-1", limit=20, order="asc")
+
+    assert page.items == []
+    assert page.total == 0

@@ -11,6 +11,7 @@ from agiwo.agent.models.log import (
     CommittedStep,
     CompactionApplied,
     CompactionFailed,
+    ContextStepsHidden,
     ContextAssembled,
     HookFailed,
     LLMCallCompleted,
@@ -56,6 +57,7 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.COMPACTION_FAILED: CompactionFailed,
     RunLogEntryKind.STEP_BACK_APPLIED: StepBackApplied,
     RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED: StepCondensedContentUpdated,
+    RunLogEntryKind.CONTEXT_STEPS_HIDDEN: ContextStepsHidden,
     RunLogEntryKind.TERMINATION_DECIDED: TerminationDecided,
     RunLogEntryKind.HOOK_FAILED: HookFailed,
 }
@@ -284,6 +286,20 @@ def _build_hidden_sequences(
     return hidden_sequences
 
 
+def _build_hidden_step_ids(
+    entries: list[RunLogEntry],
+    *,
+    include_hidden_from_context: bool,
+) -> set[str]:
+    if include_hidden_from_context:
+        return set()
+    hidden_step_ids: set[str] = set()
+    for entry in entries:
+        if isinstance(entry, ContextStepsHidden):
+            hidden_step_ids.update(entry.step_ids)
+    return hidden_step_ids
+
+
 def _iter_visible_committed_steps(
     entries: list[RunLogEntry],
     *,
@@ -306,11 +322,16 @@ def build_step_views_from_entries(
     entries: list[RunLogEntry],
     *,
     include_rolled_back: bool = False,
+    include_hidden_from_context: bool = True,
 ) -> list[StepView]:
     condensation_by_step_id = _build_condensation_map(entries)
     hidden_sequences = _build_hidden_sequences(
         entries,
         include_rolled_back=include_rolled_back,
+    )
+    hidden_step_ids = _build_hidden_step_ids(
+        entries,
+        include_hidden_from_context=include_hidden_from_context,
     )
 
     step_views: list[StepView] = []
@@ -318,6 +339,8 @@ def build_step_views_from_entries(
         entries,
         hidden_sequences=hidden_sequences,
     ):
+        if entry.step_id in hidden_step_ids:
+            continue
         step_view = build_step_view_from_entry(entry)
         condensed_content = condensation_by_step_id.get(step_view.id)
         if condensed_content is not None:

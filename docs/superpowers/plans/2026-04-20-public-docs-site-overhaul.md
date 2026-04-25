@@ -400,7 +400,7 @@ Agiwo is not just a prompt wrapper or graph builder. It is a runtime harness tha
 - scheduler orchestration
 - persistence and traces
 - control-plane projection
-- optimization loops such as context rollback and tool-result retrospect
+- optimization loops such as context rollback and tool-result step-back
 ```
 
 - [ ] **Step 3: Make multi-agent and custom-tools pages match current code reality**

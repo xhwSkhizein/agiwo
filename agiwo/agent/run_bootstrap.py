@@ -105,6 +105,7 @@ async def _load_existing_steps(
         session_id=context.session_id,
         agent_id=context.agent_id,
         start_seq=compact_start_seq if compact_start_seq > 0 else None,
+        include_hidden_from_context=False,
     )
 
 

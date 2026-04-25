@@ -9,11 +9,14 @@ from uuid import uuid4
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
+    CompactionFailed,
+    HookFailed,
     LLMCallCompleted,
     LLMCallStarted,
     RunFailed as RunFailedEntry,
     RunFinished,
     RunLogEntry,
+    RunRolledBack,
     RunStarted,
     StepBackApplied,
     TerminationDecided,
@@ -79,6 +82,8 @@ def _build_assistant_span_from_entries(
             "model_name": m.model_name if m else None,
             "provider": m.provider if m else None,
             "has_tool_calls": bool(completed.tool_calls),
+            "sequence": completed.sequence,
+            "agent_id": completed.agent_id,
         },
         run_id=completed.run_id,
         start_time=start or completed.created_at,
@@ -185,7 +190,12 @@ def _build_tool_span_from_entry(
         kind=SpanKind.TOOL_CALL,
         name=step.name or "tool",
         depth=parent_depth + 1,
-        attributes={"tool_name": step.name, "tool_call_id": step.tool_call_id},
+        attributes={
+            "tool_name": step.name,
+            "tool_call_id": step.tool_call_id,
+            "sequence": step.sequence,
+            "agent_id": step.agent_id,
+        },
         tool_details={
             "tool_name": step.name,
             "tool_call_id": step.tool_call_id,
@@ -197,6 +207,7 @@ def _build_tool_span_from_entry(
             **({"metrics": {"duration_ms": dur}} if m else {}),
         },
         run_id=step.run_id,
+        step_id=step.step_id,
         start_time=start or step.created_at,
         end_time=end,
         duration_ms=dur,
@@ -210,35 +221,89 @@ def _build_tool_span_from_entry(
 
 def _build_runtime_span_from_entry(
     trace_id: str,
-    entry: CompactionApplied | StepBackApplied | TerminationDecided,
+    entry: (
+        CompactionApplied
+        | CompactionFailed
+        | HookFailed
+        | RunRolledBack
+        | StepBackApplied
+        | TerminationDecided
+    ),
     run_span: Span | None,
 ) -> Span:
     parent_id = run_span.span_id if run_span else None
     parent_depth = run_span.depth if run_span else 0
-    attributes: dict[str, Any] = {}
+    attributes: dict[str, Any] = {
+        "sequence": entry.sequence,
+        "agent_id": entry.agent_id,
+    }
     name = "runtime"
+    status = SpanStatus.OK
+    error_message: str | None = None
     if isinstance(entry, CompactionApplied):
         name = "compaction"
-        attributes = {
-            "start_sequence": entry.start_sequence,
-            "end_sequence": entry.end_sequence,
-            "transcript_path": entry.transcript_path,
-            "summary": entry.summary,
-        }
+        attributes.update(
+            {
+                "start_sequence": entry.start_sequence,
+                "end_sequence": entry.end_sequence,
+                "before_token_estimate": entry.before_token_estimate,
+                "after_token_estimate": entry.after_token_estimate,
+                "message_count": entry.message_count,
+                "transcript_path": entry.transcript_path,
+                "summary": entry.summary,
+            }
+        )
+    elif isinstance(entry, CompactionFailed):
+        name = "compaction_failed"
+        status = SpanStatus.ERROR
+        error_message = entry.error
+        attributes.update(
+            {
+                "error": entry.error,
+                "attempt": entry.attempt,
+                "max_attempts": entry.max_attempts,
+                "terminal": entry.terminal,
+            }
+        )
     elif isinstance(entry, StepBackApplied):
         name = "step_back"
-        attributes = {
-            "affected_count": entry.affected_count,
-            "checkpoint_seq": entry.checkpoint_seq,
-            "experience": entry.experience,
-        }
+        attributes.update(
+            {
+                "affected_count": entry.affected_count,
+                "checkpoint_seq": entry.checkpoint_seq,
+                "experience": entry.experience,
+            }
+        )
+    elif isinstance(entry, RunRolledBack):
+        name = "rollback"
+        attributes.update(
+            {
+                "start_sequence": entry.start_sequence,
+                "end_sequence": entry.end_sequence,
+                "reason": entry.reason,
+            }
+        )
     elif isinstance(entry, TerminationDecided):
         name = "termination"
-        attributes = {
-            "termination_reason": entry.termination_reason.value,
-            "phase": entry.phase,
-            "source": entry.source,
-        }
+        attributes.update(
+            {
+                "termination_reason": entry.termination_reason.value,
+                "phase": entry.phase,
+                "source": entry.source,
+            }
+        )
+    elif isinstance(entry, HookFailed):
+        name = "hook_failed"
+        status = SpanStatus.ERROR
+        error_message = entry.error
+        attributes.update(
+            {
+                "phase": entry.phase,
+                "handler_name": entry.handler_name,
+                "critical": entry.critical,
+                "error": entry.error,
+            }
+        )
     span = Span(
         trace_id=trace_id,
         parent_span_id=parent_id,
@@ -250,14 +315,22 @@ def _build_runtime_span_from_entry(
         start_time=entry.created_at,
         end_time=entry.created_at,
         duration_ms=0.0,
-        status=SpanStatus.OK,
+        status=status,
+        error_message=error_message,
     )
     return span
 
 
 def _append_runtime_entry_to_trace(
     trace: Trace,
-    entry: CompactionApplied | StepBackApplied | TerminationDecided,
+    entry: (
+        CompactionApplied
+        | CompactionFailed
+        | HookFailed
+        | RunRolledBack
+        | StepBackApplied
+        | TerminationDecided
+    ),
     *,
     run_spans: dict[str, Span],
 ) -> None:
@@ -280,6 +353,7 @@ def _create_run_span(
     run_spans: dict[str, Span],
     created_at: datetime | None = None,
     depth_hint: int = 0,
+    start_sequence: int | None = None,
 ) -> Span:
     parent = run_spans.get(parent_run_id) if parent_run_id else None
     is_root = trace.root_span_id is None
@@ -296,6 +370,7 @@ def _create_run_span(
             "session_id": session_id,
             "nested": not is_root,
             "parent_run_id": parent_run_id,
+            "start_sequence": start_sequence,
         },
         run_id=run_id,
         start_time=created_at or datetime.now(timezone.utc),
@@ -374,6 +449,7 @@ def _start_run_span_from_entry(
         run_spans=run_spans,
         created_at=entry.created_at,
         depth_hint=entry.depth,
+        start_sequence=entry.sequence,
     )
 
 
@@ -384,6 +460,13 @@ def _complete_trace_from_run_finished(
     preview_length: int,
 ) -> None:
     span = run_spans.get(entry.run_id)
+    if span is not None:
+        span.attributes["end_sequence"] = entry.sequence
+        span.attributes["termination_reason"] = (
+            entry.termination_reason.value
+            if entry.termination_reason is not None
+            else None
+        )
     _complete_run_span(
         span,
         completed_at=entry.created_at,
@@ -406,6 +489,8 @@ def _complete_trace_from_run_failed(
     entry: RunFailedEntry,
 ) -> None:
     span = run_spans.get(entry.run_id)
+    if span is not None:
+        span.attributes["end_sequence"] = entry.sequence
     _complete_run_span(
         span,
         completed_at=entry.created_at,
@@ -504,7 +589,17 @@ def _apply_runtime_entry_to_trace(
     *,
     run_spans: dict[str, Span],
 ) -> bool:
-    if not isinstance(entry, (CompactionApplied, StepBackApplied, TerminationDecided)):
+    if not isinstance(
+        entry,
+        (
+            CompactionApplied,
+            CompactionFailed,
+            HookFailed,
+            RunRolledBack,
+            StepBackApplied,
+            TerminationDecided,
+        ),
+    ):
         return False
     _append_runtime_entry_to_trace(
         trace,

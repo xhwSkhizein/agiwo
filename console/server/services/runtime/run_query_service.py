@@ -3,8 +3,19 @@
 from dataclasses import dataclass
 
 from agiwo.agent import RunLogStorage, RunView, RuntimeDecisionState, StepView
+from agiwo.agent.models.log import (
+    CompactionApplied,
+    CompactionFailed,
+    RunRolledBack,
+    StepBackApplied,
+    TerminationDecided,
+)
 
 from server.models.session import PageSlice
+from server.models.session import RuntimeDecisionRecord
+from server.services.runtime.runtime_observability import (
+    build_runtime_decision_record_from_entry,
+)
 
 
 @dataclass(slots=True)
@@ -61,6 +72,7 @@ class RunQueryService:
             end_seq=end_seq,
             run_id=run_id,
             agent_id=agent_id,
+            include_hidden_from_context=False,
             limit=limit + 1,
             order=order,
         )
@@ -72,7 +84,13 @@ class RunQueryService:
             and run_id is None
             and agent_id is None
         ):
-            total = await self.run_storage.get_committed_step_count(session_id)
+            total = len(
+                await self.run_storage.list_step_views(
+                    session_id=session_id,
+                    include_hidden_from_context=False,
+                    limit=100_000,
+                )
+            )
         return PageSlice(
             items=raw_steps[:limit],
             limit=limit,
@@ -103,6 +121,40 @@ class RunQueryService:
             run_id=run_id,
             agent_id=agent_id,
         )
+
+    async def list_runtime_decision_events(
+        self,
+        session_id: str,
+        *,
+        run_id: str | None = None,
+        agent_id: str | None = None,
+        limit: int = 20,
+    ) -> list[RuntimeDecisionRecord]:
+        entries = await self.run_storage.list_entries(
+            session_id=session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+            limit=100_000,
+        )
+        decision_entries = [
+            entry
+            for entry in entries
+            if isinstance(
+                entry,
+                (
+                    CompactionApplied,
+                    CompactionFailed,
+                    StepBackApplied,
+                    RunRolledBack,
+                    TerminationDecided,
+                ),
+            )
+        ]
+        decision_entries.sort(key=lambda entry: entry.sequence, reverse=True)
+        return [
+            build_runtime_decision_record_from_entry(entry)
+            for entry in decision_entries[:limit]
+        ]
 
     async def batch_get_session_summaries(
         self,
