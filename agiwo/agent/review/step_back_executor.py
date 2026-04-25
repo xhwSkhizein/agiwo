@@ -21,9 +21,13 @@ class StepBackOutcome:
     """Structured cleanup outcome used by review finalization."""
 
     mode: Literal["none", "metadata_only", "step_back"] = "none"
+    aligned: bool | None = None
+    active_milestone_id: str | None = None
     review_tool_call_id: str | None = None
+    review_step_id: str | None = None
     hidden_step_ids: list[str] = field(default_factory=list)
     content_updates: list[ContentUpdate] = field(default_factory=list)
+    condensed_step_ids: list[str] = field(default_factory=list)
     affected_count: int = 0
     checkpoint_seq: int = 0
     experience: str | None = None
@@ -96,8 +100,10 @@ async def execute_step_back(
 
     return StepBackOutcome(
         mode="step_back",
+        aligned=False,
         review_tool_call_id=review_tool_call_id,
         content_updates=content_updates,
+        condensed_step_ids=[update.step_id for update in content_updates],
         affected_count=len(content_updates),
         checkpoint_seq=checkpoint_seq,
         experience=experience,

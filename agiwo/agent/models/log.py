@@ -3,9 +3,10 @@
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from agiwo.agent.models.input import MessageContent, UserInput
+from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 from agiwo.config.termination import TerminationReason
@@ -34,6 +35,10 @@ class RunLogEntryKind(str, Enum):
     CONTEXT_STEPS_HIDDEN = "context_steps_hidden"
     TERMINATION_DECIDED = "termination_decided"
     HOOK_FAILED = "hook_failed"
+    REVIEW_MILESTONES_UPDATED = "review_milestones_updated"
+    REVIEW_TRIGGER_DECIDED = "review_trigger_decided"
+    REVIEW_CHECKPOINT_RECORDED = "review_checkpoint_recorded"
+    REVIEW_OUTCOME_RECORDED = "review_outcome_recorded"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -225,6 +230,58 @@ class HookFailed(RunLogEntry):
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.HOOK_FAILED)
 
 
+@dataclass(frozen=True, kw_only=True)
+class ReviewMilestonesUpdated(RunLogEntry):
+    milestones: list[Milestone] = field(default_factory=list)
+    active_milestone_id: str | None = None
+    source_tool_call_id: str | None = None
+    source_step_id: str | None = None
+    reason: Literal["declared", "updated", "completed", "activated"] = "updated"
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.REVIEW_MILESTONES_UPDATED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReviewTriggerDecided(RunLogEntry):
+    trigger_reason: Literal["step_interval", "consecutive_errors", "milestone_switch"]
+    active_milestone_id: str | None = None
+    review_count_since_checkpoint: int = 0
+    trigger_tool_call_id: str | None = None
+    trigger_tool_step_id: str | None = None
+    notice_step_id: str | None = None
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.REVIEW_TRIGGER_DECIDED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReviewCheckpointRecorded(RunLogEntry):
+    checkpoint_seq: int
+    milestone_id: str | None = None
+    review_tool_call_id: str | None = None
+    review_step_id: str | None = None
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.REVIEW_CHECKPOINT_RECORDED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReviewOutcomeRecorded(RunLogEntry):
+    mode: Literal["metadata_only", "step_back"]
+    aligned: bool | None = None
+    experience: str | None = None
+    active_milestone_id: str | None = None
+    review_tool_call_id: str | None = None
+    review_step_id: str | None = None
+    hidden_step_ids: list[str] = field(default_factory=list)
+    notice_cleaned_step_ids: list[str] = field(default_factory=list)
+    condensed_step_ids: list[str] = field(default_factory=list)
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.REVIEW_OUTCOME_RECORDED
+    )
+
+
 def build_committed_step_entry(step: StepView) -> CommittedStep:
     if step.agent_id is None:
         raise ValueError(
@@ -288,6 +345,10 @@ __all__ = [
     "LLMCallCompleted",
     "LLMCallStarted",
     "MessagesRebuilt",
+    "ReviewCheckpointRecorded",
+    "ReviewMilestonesUpdated",
+    "ReviewOutcomeRecorded",
+    "ReviewTriggerDecided",
     "RunRolledBack",
     "StepBackApplied",
     "StepCondensedContentUpdated",

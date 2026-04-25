@@ -6,6 +6,7 @@ from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.step import StepView
 from agiwo.agent.prompt import assemble_run_messages
+from agiwo.agent.review import build_review_state_from_entries
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.state_writer import RunStateWriter
 
@@ -27,6 +28,7 @@ async def prepare_run_context(
     """Build all state needed before the main loop starts."""
     before_run_hook_result = await context.hooks.before_run(user_input, context)
     memories = await _retrieve_memories(context, user_input)
+    await _restore_review_state(context)
 
     user_step = await _build_user_step(context, user_input)
     latest_compact = await context.session_runtime.get_latest_compact_metadata(
@@ -107,6 +109,14 @@ async def _load_existing_steps(
         start_seq=compact_start_seq if compact_start_seq > 0 else None,
         include_hidden_from_context=False,
     )
+
+
+async def _restore_review_state(context: RunContext) -> None:
+    entries = await context.session_runtime.list_run_log_entries(
+        agent_id=context.agent_id,
+        limit=100_000,
+    )
+    context.ledger.review = build_review_state_from_entries(entries)
 
 
 __all__ = ["RunBootstrapResult", "prepare_run_context"]

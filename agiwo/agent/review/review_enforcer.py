@@ -1,8 +1,14 @@
 """Review Enforcer — trigger detection and system-review notice injection."""
 
 from enum import Enum
+import re
 
 from agiwo.agent.models.review import Milestone, ReviewState
+
+_SYSTEM_REVIEW_BLOCK_RE = re.compile(
+    r"\n*<system-review>\s*.*?\s*</system-review>\s*",
+    re.DOTALL,
+)
 
 
 class ReviewTrigger(Enum):
@@ -57,7 +63,6 @@ def check_review_trigger(
     step_interval: int,
     error_threshold: int,
     tool_name: str = "",
-    current_seq: int = 0,
 ) -> ReviewTrigger:
     """Check if a review should be triggered. Returns the trigger type or NONE."""
     if not enabled:
@@ -77,9 +82,8 @@ def check_review_trigger(
     if is_error and state.consecutive_errors >= error_threshold:
         return ReviewTrigger.CONSECUTIVE_ERRORS
 
-    # Step interval since last review
-    steps_since_review = current_seq - state.last_review_seq
-    if steps_since_review >= step_interval:
+    # Tool count since last checkpoint/review.
+    if state.review_count_since_checkpoint >= step_interval:
         return ReviewTrigger.STEP_INTERVAL
 
     return ReviewTrigger.NONE
@@ -106,8 +110,14 @@ def inject_system_review(
     return content + notice
 
 
+def strip_system_review_notices(content: str) -> str:
+    """Remove prompt-visible system-review notices from tool result content."""
+    return _SYSTEM_REVIEW_BLOCK_RE.sub("", content).rstrip()
+
+
 __all__ = [
     "ReviewTrigger",
     "check_review_trigger",
     "inject_system_review",
+    "strip_system_review_notices",
 ]

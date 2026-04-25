@@ -4,7 +4,13 @@ import pytest
 
 import agiwo.agent.run_tool_batch as run_tool_batch_module
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.models.log import build_committed_step_entry
+from agiwo.agent.models.log import (
+    ReviewCheckpointRecorded,
+    ReviewMilestonesUpdated,
+    ReviewOutcomeRecorded,
+    ReviewTriggerDecided,
+    build_committed_step_entry,
+)
 from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.run import RunLedger, TerminationReason
 from agiwo.agent.runtime.session import SessionRuntime
@@ -157,6 +163,91 @@ async def test_execute_tool_batch_cycle_injects_hook_review_advice(
     )
     assert hooks.before_review_calls[0]["trigger_reason"] == "step_interval"
     assert hooks.before_review_calls[0]["step_count"] == 1
+    entries = await storage.list_entries(session_id=context.session_id)
+    trigger_facts = [
+        entry for entry in entries if isinstance(entry, ReviewTriggerDecided)
+    ]
+    assert len(trigger_facts) == 1
+    assert trigger_facts[0].trigger_reason == "step_interval"
+    assert trigger_facts[0].trigger_tool_call_id == "tc_search"
+    assert trigger_facts[0].trigger_tool_step_id == committed_steps[0].id
+    assert trigger_facts[0].notice_step_id == committed_steps[0].id
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_batch_cycle_records_declared_milestone_fact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_tool_batch(*args, **kwargs):
+        del args, kwargs
+        return [
+            ToolResult.success(
+                tool_name="declare_milestones",
+                tool_call_id="tc_declare",
+                content="Milestones declared",
+                output={
+                    "milestones": [
+                        {
+                            "id": "locate",
+                            "description": "Locate the auth bug",
+                        }
+                    ]
+                },
+            )
+        ]
+
+    monkeypatch.setattr(
+        run_tool_batch_module, "execute_tool_batch", fake_execute_tool_batch
+    )
+
+    storage = InMemoryRunLogStorage()
+    session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
+    context = _FakeContext(
+        config=AgentOptions(
+            enable_goal_directed_review=True,
+            review_step_interval=100,
+        ),
+        ledger=RunLedger(),
+        hooks=_FakeHooks(),
+        session_runtime=session_runtime,
+    )
+    runtime = _FakeRuntime(tools_map=_review_tools_map())
+    committed_steps = []
+
+    async def commit_step(step):
+        committed_step = await _commit_step_to_ledger_and_storage(context, step)
+        committed_steps.append(committed_step)
+        return committed_step
+
+    async def set_termination_reason(reason: TerminationReason, tool_name: str) -> None:
+        del reason, tool_name
+
+    await run_tool_batch_module.execute_tool_batch_cycle(
+        context=context,
+        runtime=runtime,
+        tool_calls=[
+            {
+                "id": "tc_declare",
+                "type": "function",
+                "function": {"name": "declare_milestones"},
+            }
+        ],
+        assistant_step_id="assistant-step",
+        set_termination_reason=set_termination_reason,
+        commit_step=commit_step,
+    )
+
+    entries = await storage.list_entries(session_id=context.session_id)
+    milestone_facts = [
+        entry for entry in entries if isinstance(entry, ReviewMilestonesUpdated)
+    ]
+    assert len(milestone_facts) == 1
+    assert milestone_facts[0].source_tool_call_id == "tc_declare"
+    assert milestone_facts[0].source_step_id == committed_steps[0].id
+    assert milestone_facts[0].active_milestone_id == "locate"
+    assert [(m.id, m.status) for m in milestone_facts[0].milestones] == [
+        ("locate", "active")
+    ]
 
 
 @pytest.mark.asyncio
@@ -219,6 +310,187 @@ async def test_execute_tool_batch_cycle_injects_review_without_hook_advice(
     assert len(tool_messages) == 1
     assert "<system-review>" in tool_messages[0]["content"]
     assert "Hook advice:" not in tool_messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_batch_cycle_injects_only_one_review_per_tool_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_tool_batch(*args, **kwargs):
+        del args, kwargs
+        return [
+            ToolResult.success(
+                tool_name="search",
+                tool_call_id=f"tc_search_{index}",
+                content=f"Found results {index}",
+                output={},
+            )
+            for index in range(4)
+        ]
+
+    monkeypatch.setattr(
+        run_tool_batch_module, "execute_tool_batch", fake_execute_tool_batch
+    )
+
+    storage = InMemoryRunLogStorage()
+    session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
+    hooks = _FakeHooks(review_advice=None)
+    ledger = RunLedger()
+    ledger.review.milestones = [
+        Milestone(id="locate", description="Locate the auth bug", status="active")
+    ]
+    context = _FakeContext(
+        config=AgentOptions(
+            enable_goal_directed_review=True,
+            review_step_interval=1,
+        ),
+        ledger=ledger,
+        hooks=hooks,
+        session_runtime=session_runtime,
+    )
+    runtime = _FakeRuntime(tools_map=_review_tools_map())
+
+    async def commit_step(step):
+        return await _commit_step_to_ledger_and_storage(context, step)
+
+    async def set_termination_reason(reason: TerminationReason, tool_name: str) -> None:
+        del reason, tool_name
+
+    await run_tool_batch_module.execute_tool_batch_cycle(
+        context=context,
+        runtime=runtime,
+        tool_calls=[
+            {
+                "id": f"tc_search_{index}",
+                "type": "function",
+                "function": {"name": "search"},
+            }
+            for index in range(4)
+        ],
+        assistant_step_id="assistant-step",
+        set_termination_reason=set_termination_reason,
+        commit_step=commit_step,
+    )
+
+    tool_messages = [
+        msg for msg in context.ledger.messages if msg.get("role") == "tool"
+    ]
+    assert sum("<system-review>" in msg["content"] for msg in tool_messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_aligned_review_cleans_prior_system_review_from_context_and_storage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batches = [
+        [
+            ToolResult.success(
+                tool_name="search",
+                tool_call_id="tc_search",
+                content="Found results",
+                output={},
+            )
+        ],
+        [
+            ToolResult.success(
+                tool_name="review_trajectory",
+                tool_call_id="tc_review",
+                content="Trajectory review: aligned=True.",
+                output={"aligned": True, "experience": ""},
+            )
+        ],
+    ]
+
+    async def fake_execute_tool_batch(*args, **kwargs):
+        del args, kwargs
+        return batches.pop(0)
+
+    monkeypatch.setattr(
+        run_tool_batch_module, "execute_tool_batch", fake_execute_tool_batch
+    )
+
+    storage = InMemoryRunLogStorage()
+    session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
+    hooks = _FakeHooks(review_advice=None)
+    ledger = RunLedger()
+    ledger.review.milestones = [
+        Milestone(id="locate", description="Locate the auth bug", status="active")
+    ]
+    context = _FakeContext(
+        config=AgentOptions(
+            enable_goal_directed_review=True,
+            review_step_interval=1,
+        ),
+        ledger=ledger,
+        hooks=hooks,
+        session_runtime=session_runtime,
+    )
+    runtime = _FakeRuntime(tools_map=_review_tools_map())
+
+    async def commit_step(step):
+        return await _commit_step_to_ledger_and_storage(context, step)
+
+    async def set_termination_reason(reason: TerminationReason, tool_name: str) -> None:
+        del reason, tool_name
+
+    await run_tool_batch_module.execute_tool_batch_cycle(
+        context=context,
+        runtime=runtime,
+        tool_calls=[
+            {"id": "tc_search", "type": "function", "function": {"name": "search"}}
+        ],
+        assistant_step_id="assistant-step-search",
+        set_termination_reason=set_termination_reason,
+        commit_step=commit_step,
+    )
+    assert "<system-review>" in context.ledger.messages[-1]["content"]
+
+    await run_tool_batch_module.execute_tool_batch_cycle(
+        context=context,
+        runtime=runtime,
+        tool_calls=[
+            {
+                "id": "tc_review",
+                "type": "function",
+                "function": {"name": "review_trajectory"},
+            }
+        ],
+        assistant_step_id="assistant-step-review",
+        set_termination_reason=set_termination_reason,
+        commit_step=commit_step,
+    )
+
+    search_message = next(
+        msg for msg in context.ledger.messages if msg.get("tool_call_id") == "tc_search"
+    )
+    assert search_message["content"] == "Found results"
+
+    replayed_steps = await storage.list_step_views(
+        session_id=context.session_id,
+        include_hidden_from_context=False,
+    )
+    search_step = next(
+        step for step in replayed_steps if step.tool_call_id == "tc_search"
+    )
+    assert search_step.to_message()["content"] == "Found results"
+    entries = await storage.list_entries(session_id=context.session_id)
+    checkpoints = [
+        entry for entry in entries if isinstance(entry, ReviewCheckpointRecorded)
+    ]
+    outcomes = [entry for entry in entries if isinstance(entry, ReviewOutcomeRecorded)]
+    assert len(checkpoints) == 1
+    assert checkpoints[0].review_tool_call_id == "tc_review"
+    assert checkpoints[0].review_step_id
+    assert checkpoints[0].milestone_id == "locate"
+    assert len(outcomes) == 1
+    assert outcomes[0].aligned is True
+    assert outcomes[0].mode == "metadata_only"
+    assert outcomes[0].review_tool_call_id == "tc_review"
+    assert outcomes[0].hidden_step_ids == [
+        "assistant-step-review",
+        checkpoints[0].review_step_id,
+    ]
+    assert outcomes[0].notice_cleaned_step_ids == [search_step.id]
 
 
 @pytest.mark.asyncio
@@ -294,6 +566,15 @@ async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
     assert len(tool_messages) == 1
     assert tool_messages[0]["tool_call_id"] == "tc_search"
     assert tool_messages[0]["content"] == "[EXPERIENCE] narrow the search"
+    entries = await storage.list_entries(session_id=context.session_id)
+    outcomes = [entry for entry in entries if isinstance(entry, ReviewOutcomeRecorded)]
+    assert len(outcomes) == 1
+    assert outcomes[0].aligned is False
+    assert outcomes[0].mode == "step_back"
+    assert outcomes[0].experience == "narrow the search"
+    assert outcomes[0].review_tool_call_id == "tc_review"
+    assert outcomes[0].condensed_step_ids
+    assert outcomes[0].notice_cleaned_step_ids == []
 
 
 def test_remove_review_tool_call_omits_empty_tool_calls_key() -> None:

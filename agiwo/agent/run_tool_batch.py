@@ -61,6 +61,7 @@ async def execute_tool_batch_cycle(
             assistant_step_id=assistant_step_id,
             tool_step_id=tool_step.id,
         )
+        milestones_update = batch.consume_milestones_update_request()
         review_notice = batch.consume_review_notice_request()
         if review_notice is not None:
             review_advice = await context.hooks.before_review(
@@ -78,6 +79,25 @@ async def execute_tool_batch_cycle(
             )
         committed_step = await commit_step(tool_step)
         batch.register_step(call_id, committed_step.id, committed_step.sequence)
+        if milestones_update is not None:
+            await writer.record_review_milestones_updated(
+                milestones=milestones_update.milestones,
+                active_milestone_id=milestones_update.active_milestone_id,
+                source_tool_call_id=milestones_update.source_tool_call_id,
+                source_step_id=committed_step.id,
+                reason=milestones_update.reason,
+            )
+        if review_notice is not None:
+            await writer.record_review_trigger_decided(
+                trigger_reason=review_notice.trigger.value,
+                active_milestone_id=review_notice.milestone.id
+                if review_notice.milestone is not None
+                else None,
+                review_count_since_checkpoint=review_notice.step_count,
+                trigger_tool_call_id=result.tool_call_id or None,
+                trigger_tool_step_id=committed_step.id,
+                notice_step_id=committed_step.id,
+            )
 
         if not terminated and result.termination_reason is not None:
             await set_termination_reason(result.termination_reason, result.tool_name)
@@ -115,6 +135,30 @@ async def _apply_review_outcome(
     _remove_review_tool_call(
         context.ledger.messages,
         review_tool_call_id=outcome.review_tool_call_id,
+    )
+
+    if outcome.aligned is True:
+        await writer.record_review_checkpoint_recorded(
+            checkpoint_seq=outcome.checkpoint_seq,
+            milestone_id=outcome.active_milestone_id,
+            review_tool_call_id=outcome.review_tool_call_id,
+            review_step_id=outcome.review_step_id,
+        )
+
+    await writer.record_review_outcome_recorded(
+        aligned=outcome.aligned,
+        mode=outcome.mode,
+        experience=outcome.experience,
+        active_milestone_id=outcome.active_milestone_id,
+        review_tool_call_id=outcome.review_tool_call_id,
+        review_step_id=outcome.review_step_id,
+        hidden_step_ids=outcome.hidden_step_ids,
+        notice_cleaned_step_ids=[
+            update.step_id
+            for update in outcome.content_updates
+            if update.step_id and update.step_id not in outcome.condensed_step_ids
+        ],
+        condensed_step_ids=outcome.condensed_step_ids,
     )
 
     if outcome.mode == "step_back":
