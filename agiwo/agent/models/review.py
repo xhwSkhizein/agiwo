@@ -26,6 +26,18 @@ class ReviewCheckpoint:
 
 
 @dataclass
+class PendingReviewNotice:
+    """Outstanding one-shot review notice in prompt-visible context."""
+
+    trigger_reason: str
+    active_milestone_id: str | None
+    review_count_since_checkpoint: int
+    trigger_tool_call_id: str
+    trigger_tool_step_id: str
+    notice_step_id: str
+
+
+@dataclass
 class ReviewState:
     """Per-run review tracking state, stored on RunLedger."""
 
@@ -34,10 +46,13 @@ class ReviewState:
     latest_checkpoint: ReviewCheckpoint | None = None
     consecutive_errors: int = 0
     pending_review_reason: Literal["milestone_switch"] | None = None
+    review_count_since_checkpoint: int = 0
+    pending_review_notice: PendingReviewNotice | None = None
 
 
 __all__ = [
     "Milestone",
+    "PendingReviewNotice",
     "ReviewCheckpoint",
     "ReviewState",
 ]

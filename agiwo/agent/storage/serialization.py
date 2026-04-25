@@ -17,6 +17,10 @@ from agiwo.agent.models.log import (
     LLMCallCompleted,
     LLMCallStarted,
     MessagesRebuilt,
+    ReviewCheckpointRecorded,
+    ReviewMilestonesUpdated,
+    ReviewOutcomeRecorded,
+    ReviewTriggerDecided,
     RunFailed,
     RunFinished,
     RunLogEntry,
@@ -30,6 +34,7 @@ from agiwo.agent.models.log import (
     UserStepCommitted,
     build_compact_metadata_from_entry,
 )
+from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.runtime_decision import (
     CompactionDecisionView,
     CompactionFailureDecisionView,
@@ -60,6 +65,10 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.CONTEXT_STEPS_HIDDEN: ContextStepsHidden,
     RunLogEntryKind.TERMINATION_DECIDED: TerminationDecided,
     RunLogEntryKind.HOOK_FAILED: HookFailed,
+    RunLogEntryKind.REVIEW_MILESTONES_UPDATED: ReviewMilestonesUpdated,
+    RunLogEntryKind.REVIEW_TRIGGER_DECIDED: ReviewTriggerDecided,
+    RunLogEntryKind.REVIEW_CHECKPOINT_RECORDED: ReviewCheckpointRecorded,
+    RunLogEntryKind.REVIEW_OUTCOME_RECORDED: ReviewOutcomeRecorded,
 }
 
 
@@ -153,6 +162,14 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
         metrics = normalized.get("metrics")
         if isinstance(metrics, dict):
             normalized["metrics"] = StepMetrics(**metrics)
+    if entry_type is ReviewMilestonesUpdated:
+        milestones = normalized.get("milestones")
+        if isinstance(milestones, list):
+            normalized["milestones"] = [
+                item if isinstance(item, Milestone) else Milestone(**item)
+                for item in milestones
+                if isinstance(item, (dict, Milestone))
+            ]
     normalized.pop("kind", None)
     return entry_type(**normalized)
 
