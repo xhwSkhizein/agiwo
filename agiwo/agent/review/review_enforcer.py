@@ -1,8 +1,14 @@
 """Review Enforcer — trigger detection and system-review notice injection."""
 
 from enum import Enum
+import re
 
 from agiwo.agent.models.review import Milestone, ReviewState
+
+_SYSTEM_REVIEW_BLOCK_RE = re.compile(
+    r"\n*<system-review>\s*.*?\s*</system-review>\s*",
+    re.DOTALL,
+)
 
 
 class ReviewTrigger(Enum):
@@ -106,8 +112,14 @@ def inject_system_review(
     return content + notice
 
 
+def strip_system_review_notices(content: str) -> str:
+    """Remove prompt-visible system-review notices from tool result content."""
+    return _SYSTEM_REVIEW_BLOCK_RE.sub("", content).rstrip()
+
+
 __all__ = [
     "ReviewTrigger",
     "check_review_trigger",
     "inject_system_review",
+    "strip_system_review_notices",
 ]

@@ -16,8 +16,10 @@ from agiwo.agent.review.review_enforcer import (
     ReviewTrigger,
     check_review_trigger,
     inject_system_review,
+    strip_system_review_notices,
 )
 from agiwo.agent.review.step_back_executor import (
+    ContentUpdate,
     StepBackOutcome,
     execute_step_back,
 )
@@ -48,6 +50,7 @@ class ReviewBatch:
         self._feedback: str | None = None
         self._step_lookup: dict[str, dict[str, Any]] = {}
         self._pending_review_notice: ReviewNoticeRequest | None = None
+        self._review_requested = False
 
     @property
     def enabled(self) -> bool:
@@ -93,6 +96,11 @@ class ReviewBatch:
         else:
             self._ledger.review.consecutive_errors = 0
 
+        if self._review_requested or _has_prompt_visible_system_review(
+            self._ledger.messages
+        ):
+            return content
+
         trigger = check_review_trigger(
             state=self._ledger.review,
             enabled=True,
@@ -117,6 +125,7 @@ class ReviewBatch:
             step_count=step_count,
             trigger=trigger,
         )
+        self._review_requested = True
         return inject_system_review(
             content,
             milestone,
@@ -151,6 +160,15 @@ class ReviewBatch:
             return StepBackOutcome()
 
         if self._pending_outcome.mode != "step_back":
+            cleanup_updates = await _build_system_review_cleanup_updates(
+                self._ledger.messages,
+                storage=storage,
+                session_id=session_id,
+                run_id=run_id,
+                agent_id=agent_id,
+                review_tool_call_id=self._pending_outcome.review_tool_call_id,
+            )
+            self._pending_outcome.content_updates.extend(cleanup_updates)
             return self._pending_outcome
 
         if storage is None:
@@ -289,4 +307,63 @@ __all__ = [
     "execute_step_back",
     "get_active_milestone",
     "inject_system_review",
+    "strip_system_review_notices",
 ]
+
+
+def _has_prompt_visible_system_review(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        content = message.get("content")
+        if message.get("role") == "tool" and _has_system_review_text(content):
+            return True
+    return False
+
+
+def _has_system_review_text(content: object) -> bool:
+    return isinstance(content, str) and "<system-review>" in content
+
+
+async def _build_system_review_cleanup_updates(
+    messages: list[dict[str, Any]],
+    *,
+    storage: RunLogStorage | None,
+    session_id: str,
+    run_id: str,
+    agent_id: str,
+    review_tool_call_id: str | None,
+) -> list[ContentUpdate]:
+    updates: list[ContentUpdate] = []
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+        tool_call_id = message.get("tool_call_id")
+        if not isinstance(tool_call_id, str) or not tool_call_id:
+            continue
+        if review_tool_call_id and tool_call_id == review_tool_call_id:
+            continue
+
+        content = message.get("content")
+        if not _has_system_review_text(content):
+            continue
+
+        cleaned_content = strip_system_review_notices(content)
+        step_id = ""
+        if storage is not None:
+            step = await storage.get_step_by_tool_call_id(session_id, tool_call_id)
+            step_id = step.id if step is not None else ""
+            if step_id:
+                await storage.append_step_condensed_content(
+                    session_id,
+                    run_id,
+                    agent_id,
+                    step_id,
+                    cleaned_content,
+                )
+        updates.append(
+            ContentUpdate(
+                step_id=step_id,
+                tool_call_id=tool_call_id,
+                content=cleaned_content,
+            )
+        )
+    return updates
