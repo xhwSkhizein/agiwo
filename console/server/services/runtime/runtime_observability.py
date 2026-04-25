@@ -217,6 +217,34 @@ def _new_review_cycle_from_notice(
     )
 
 
+def _milestone_description_by_id(
+    milestones: list[MilestoneRecord],
+) -> dict[str, str]:
+    return {milestone.id: milestone.description for milestone in milestones}
+
+
+def _new_review_cycle_from_trigger_span(
+    span: Span,
+    *,
+    trace: Trace,
+    milestone_descriptions: dict[str, str],
+) -> ReviewCycleRecord:
+    sequence = _span_sequence(span)
+    active_milestone_id = _string_value(span.attributes.get("active_milestone_id"))
+    return ReviewCycleRecord(
+        cycle_id=f"{span.run_id or 'run'}:{sequence}:{span.span_id}",
+        run_id=span.run_id or "",
+        agent_id=_runtime_agent_id(trace, span),
+        trigger_reason=_json_text(span.attributes.get("trigger_reason")) or "unknown",
+        steps_since_last_review=_as_int(
+            span.attributes.get("review_count_since_checkpoint")
+        ),
+        active_milestone=milestone_descriptions.get(active_milestone_id or ""),
+        active_milestone_id=active_milestone_id,
+        started_at=span.start_time,
+    )
+
+
 def _find_latest_review_cycle(
     cycles: list[ReviewCycleRecord],
     *,
@@ -292,6 +320,30 @@ def _extract_declared_milestones(span: Span) -> list[dict[str, Any]]:
         if milestones:
             return milestones
     return []
+
+
+def _extract_review_fact_milestones(span: Span) -> list[dict[str, Any]]:
+    raw_milestones = span.attributes.get("milestones")
+    if not isinstance(raw_milestones, list):
+        return []
+    milestones: list[dict[str, Any]] = []
+    for raw in raw_milestones:
+        if not isinstance(raw, dict):
+            continue
+        milestone_id = _string_value(raw.get("id"))
+        description = _string_value(raw.get("description"))
+        if milestone_id is None or description is None:
+            continue
+        milestones.append(
+            {
+                "id": milestone_id,
+                "description": description,
+                "status": _string_value(raw.get("status")) or "pending",
+                "declared_at_seq": _as_int(raw.get("declared_at_seq")),
+                "completed_at_seq": _as_int(raw.get("completed_at_seq")),
+            }
+        )
+    return milestones
 
 
 def _milestone_id_from_description(
@@ -807,70 +859,7 @@ def _timeline_events_from_tool_span(
 ) -> list[TraceTimelineEventRecord]:
     tool_details = dict(span.tool_details or {})
     tool_name = str(tool_details.get("tool_name") or span.name)
-    raw_output = _json_text(tool_details.get("output"))
-    review_notice = parse_system_review_notice(raw_output)
     events: list[TraceTimelineEventRecord] = []
-    if review_notice is not None:
-        events.append(
-            _review_checkpoint_event_from_span(
-                trace,
-                span,
-                sequence=sequence,
-                review_notice=review_notice,
-            )
-        )
-    if tool_name == "review_trajectory":
-        aligned_match = _ALIGNED_RE.search(raw_output)
-        aligned = (
-            aligned_match.group("value").lower()
-            if aligned_match is not None
-            else "unknown"
-        )
-        events.append(
-            TraceTimelineEventRecord(
-                kind="review_result",
-                timestamp=span.start_time,
-                sequence=sequence,
-                run_id=span.run_id,
-                agent_id=_runtime_agent_id(trace, span),
-                span_id=span.span_id,
-                step_id=span.step_id,
-                title="Review Result",
-                summary=(
-                    "trajectory aligned"
-                    if aligned == "true"
-                    else "trajectory misaligned"
-                    if aligned == "false"
-                    else "trajectory reviewed"
-                ),
-                status=status,
-                details={
-                    "tool_name": tool_name,
-                    "tool_call_id": tool_details.get("tool_call_id"),
-                    "aligned": aligned,
-                    "raw_output": raw_output,
-                },
-            )
-        )
-        return events
-    if tool_name == "declare_milestones":
-        milestones = _extract_declared_milestones(span)
-        events.append(
-            TraceTimelineEventRecord(
-                kind="milestone_update",
-                timestamp=span.start_time,
-                sequence=sequence,
-                run_id=span.run_id,
-                agent_id=_runtime_agent_id(trace, span),
-                span_id=span.span_id,
-                step_id=span.step_id,
-                title="Milestone Update",
-                summary=f"{len(milestones)} milestones declared/updated",
-                status=status,
-                details={"milestones": milestones},
-            )
-        )
-        return events
     events.append(
         TraceTimelineEventRecord(
             kind="tool_call",
@@ -895,6 +884,62 @@ def _timeline_event_from_runtime_span(
     *,
     status: str,
 ) -> TraceTimelineEventRecord | None:
+    sequence = _span_sequence(span)
+    if span.name == "review_trigger":
+        trigger_reason = span.attributes.get("trigger_reason") or "unknown"
+        step_count = _as_int(span.attributes.get("review_count_since_checkpoint"))
+        step_summary = (
+            f"{step_count} steps" if step_count is not None else "unknown steps"
+        )
+        return TraceTimelineEventRecord(
+            kind="review_checkpoint",
+            timestamp=span.start_time,
+            sequence=sequence,
+            run_id=span.run_id,
+            agent_id=_runtime_agent_id(trace, span),
+            span_id=span.span_id,
+            step_id=_string_value(span.attributes.get("notice_step_id")),
+            title="Review Checkpoint",
+            summary=f"triggered by {trigger_reason} after {step_summary}",
+            status=status,
+            details=dict(span.attributes),
+        )
+    if span.name == "review_outcome":
+        aligned = _as_optional_bool(span.attributes.get("aligned"))
+        return TraceTimelineEventRecord(
+            kind="review_result",
+            timestamp=span.start_time,
+            sequence=sequence,
+            run_id=span.run_id,
+            agent_id=_runtime_agent_id(trace, span),
+            span_id=span.span_id,
+            step_id=_string_value(span.attributes.get("review_step_id")),
+            title="Review Result",
+            summary=(
+                "trajectory aligned"
+                if aligned is True
+                else "trajectory misaligned"
+                if aligned is False
+                else "trajectory reviewed"
+            ),
+            status=status,
+            details=dict(span.attributes),
+        )
+    if span.name == "review_milestones":
+        milestones = _extract_review_fact_milestones(span)
+        return TraceTimelineEventRecord(
+            kind="milestone_update",
+            timestamp=span.start_time,
+            sequence=sequence,
+            run_id=span.run_id,
+            agent_id=_runtime_agent_id(trace, span),
+            span_id=span.span_id,
+            step_id=_string_value(span.attributes.get("source_step_id")),
+            title="Milestone Update",
+            summary=f"{len(milestones)} milestones declared/updated",
+            status=status,
+            details={"milestones": milestones, **dict(span.attributes)},
+        )
     record = build_runtime_decision_record_from_span(trace, span)
     if record is None:
         return None
@@ -1013,7 +1058,7 @@ def _apply_runtime_review_outcome_to_cycles(
         cycle = _find_latest_review_cycle(
             cycles,
             run_id=decision.run_id,
-            predicate=lambda item: item.aligned is False and not item.step_back_applied,
+            predicate=lambda item: item.aligned is False,
         )
         if cycle is None:
             cycle = _fallback_review_cycle(trace, span)
@@ -1042,6 +1087,69 @@ def _apply_runtime_review_outcome_to_cycles(
     if start_sequence is not None and end_sequence is not None:
         cycle.rollback_range = (start_sequence, end_sequence)
     cycle.resolved_at = decision.created_at
+
+
+def _apply_review_outcome_fact_to_cycles(
+    cycles: list[ReviewCycleRecord],
+    *,
+    trace: Trace,
+    span: Span,
+    milestone_descriptions: dict[str, str],
+) -> None:
+    active_milestone_id = _string_value(span.attributes.get("active_milestone_id"))
+    cycle = _find_latest_review_cycle(
+        cycles,
+        run_id=span.run_id or "",
+        predicate=lambda item: item.aligned is None,
+    )
+    if cycle is None:
+        cycle = _fallback_review_cycle(trace, span)
+        cycle.active_milestone_id = active_milestone_id
+        cycle.active_milestone = milestone_descriptions.get(active_milestone_id or "")
+        cycles.append(cycle)
+
+    aligned = _as_optional_bool(span.attributes.get("aligned"))
+    cycle.aligned = aligned
+    cycle.active_milestone_id = active_milestone_id or cycle.active_milestone_id
+    if cycle.active_milestone_id is not None:
+        cycle.active_milestone = milestone_descriptions.get(cycle.active_milestone_id)
+    experience = _string_value(span.attributes.get("experience"))
+    if experience:
+        cycle.experience = experience
+    mode = _string_value(span.attributes.get("mode"))
+    condensed_step_ids = span.attributes.get("condensed_step_ids")
+    if mode == "step_back":
+        cycle.step_back_applied = True
+        if isinstance(condensed_step_ids, list):
+            cycle.affected_count = len(condensed_step_ids)
+    cycle.resolved_at = span.start_time
+
+
+def _update_review_cycles_from_review_fact_span(
+    cycles: list[ReviewCycleRecord],
+    *,
+    trace: Trace,
+    span: Span,
+    milestone_descriptions: dict[str, str],
+) -> bool:
+    if span.name == "review_trigger":
+        cycles.append(
+            _new_review_cycle_from_trigger_span(
+                span,
+                trace=trace,
+                milestone_descriptions=milestone_descriptions,
+            )
+        )
+        return True
+    if span.name == "review_outcome":
+        _apply_review_outcome_fact_to_cycles(
+            cycles,
+            trace=trace,
+            span=span,
+            milestone_descriptions=milestone_descriptions,
+        )
+        return True
+    return span.name in {"review_milestones", "review_checkpoint"}
 
 
 def _update_review_cycles_from_tool_span(
@@ -1087,11 +1195,17 @@ def _update_review_cycles_from_runtime_span(
 def build_trace_review_cycles(trace: Trace) -> list[ReviewCycleRecord]:
     cycles: list[ReviewCycleRecord] = []
     milestones = _collect_milestones_from_trace(trace)
+    milestone_descriptions = _milestone_description_by_id(milestones)
 
     for span in sorted(trace.spans, key=_span_sort_key):
-        if span.kind == SpanKind.TOOL_CALL:
-            _update_review_cycles_from_tool_span(cycles, trace=trace, span=span)
-        elif span.kind == SpanKind.RUNTIME:
+        if span.kind == SpanKind.RUNTIME:
+            if _update_review_cycles_from_review_fact_span(
+                cycles,
+                trace=trace,
+                span=span,
+                milestone_descriptions=milestone_descriptions,
+            ):
+                continue
             _update_review_cycles_from_runtime_span(cycles, trace=trace, span=span)
 
     _attach_cycle_milestone_ids(cycles, milestones)
@@ -1183,19 +1297,23 @@ def _collect_milestones_from_trace(trace: Trace) -> list[MilestoneRecord]:
     milestones: list[MilestoneRecord] = []
     milestone_index_by_id: dict[str, int] = {}
     for span in sorted(trace.spans, key=_span_sort_key):
-        if span.kind != SpanKind.TOOL_CALL:
-            continue
-        if _review_tool_name(span) != "declare_milestones":
+        if span.kind != SpanKind.RUNTIME or span.name != "review_milestones":
             continue
         sequence = _span_sequence(span)
-        for raw in _extract_declared_milestones(span):
+        for raw in _extract_review_fact_milestones(span):
             milestone_id = str(raw["id"])
             record = MilestoneRecord(
                 id=milestone_id,
                 description=str(raw["description"]),
                 status=str(raw.get("status") or "pending"),
-                declared_at_seq=sequence,
-                completed_at_seq=sequence if raw.get("status") == "completed" else None,
+                declared_at_seq=_as_int(raw.get("declared_at_seq")) or sequence,
+                completed_at_seq=(
+                    _as_int(raw.get("completed_at_seq"))
+                    if raw.get("completed_at_seq") is not None
+                    else sequence
+                    if raw.get("status") == "completed"
+                    else None
+                ),
             )
             existing_index = milestone_index_by_id.get(milestone_id)
             if existing_index is None:
@@ -1240,6 +1358,19 @@ def _latest_checkpoint_for_board(
     latest_cycle: ReviewCycleRecord | None,
     active_milestone_id: str | None,
 ) -> ReviewCheckpointRecord | None:
+    for span in reversed(sorted(trace.spans, key=_span_sort_key)):
+        if span.kind != SpanKind.RUNTIME or span.name != "review_checkpoint":
+            continue
+        milestone_id = _string_value(span.attributes.get("milestone_id"))
+        if milestone_id is None:
+            milestone_id = active_milestone_id
+        if milestone_id is None:
+            return None
+        return ReviewCheckpointRecord(
+            seq=_as_int(span.attributes.get("checkpoint_seq")) or _span_sequence(span),
+            milestone_id=milestone_id,
+            confirmed_at=span.start_time or trace.start_time,
+        )
     if latest_cycle is None:
         return None
     milestone_id = (

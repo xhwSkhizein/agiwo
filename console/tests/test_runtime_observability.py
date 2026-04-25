@@ -76,6 +76,43 @@ def _trace_with_review_and_llm() -> Trace:
         ),
         Span(
             trace_id="trace-1",
+            span_id="runtime-milestones",
+            parent_span_id="run-1-root",
+            kind=SpanKind.RUNTIME,
+            name="review_milestones",
+            depth=1,
+            run_id="run-1",
+            start_time=datetime(2026, 4, 25, 0, 0, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 4, 25, 0, 0, 0, tzinfo=timezone.utc),
+            duration_ms=0.0,
+            status=SpanStatus.OK,
+            attributes={
+                "agent_id": "agent-1",
+                "sequence": 2,
+                "active_milestone_id": "inspect",
+                "source_tool_call_id": "tc-milestones",
+                "source_step_id": "step-milestones",
+                "reason": "declared",
+                "milestones": [
+                    {
+                        "id": "inspect",
+                        "description": "Inspect auth",
+                        "status": "active",
+                        "declared_at_seq": 2,
+                        "completed_at_seq": None,
+                    },
+                    {
+                        "id": "fix",
+                        "description": "Apply fix",
+                        "status": "pending",
+                        "declared_at_seq": 2,
+                        "completed_at_seq": None,
+                    },
+                ],
+            },
+        ),
+        Span(
+            trace_id="trace-1",
             span_id="tool-1",
             parent_span_id="run-1-root",
             kind=SpanKind.TOOL_CALL,
@@ -104,6 +141,29 @@ def _trace_with_review_and_llm() -> Trace:
         ),
         Span(
             trace_id="trace-1",
+            span_id="runtime-review-trigger",
+            parent_span_id="run-1-root",
+            kind=SpanKind.RUNTIME,
+            name="review_trigger",
+            depth=1,
+            run_id="run-1",
+            start_time=datetime(2026, 4, 25, 0, 0, 2, tzinfo=timezone.utc),
+            end_time=datetime(2026, 4, 25, 0, 0, 2, tzinfo=timezone.utc),
+            duration_ms=0.0,
+            status=SpanStatus.OK,
+            attributes={
+                "agent_id": "agent-1",
+                "sequence": 6,
+                "trigger_reason": "step_interval",
+                "active_milestone_id": "inspect",
+                "review_count_since_checkpoint": 8,
+                "trigger_tool_call_id": "tc-1",
+                "trigger_tool_step_id": "step-1",
+                "notice_step_id": "step-1",
+            },
+        ),
+        Span(
+            trace_id="trace-1",
             span_id="tool-2",
             parent_span_id="run-1-root",
             kind=SpanKind.TOOL_CALL,
@@ -122,6 +182,32 @@ def _trace_with_review_and_llm() -> Trace:
                 "input_args": {"aligned": False, "experience": "Auth grep was noisy."},
                 "output": "Trajectory review: aligned=false. Auth grep was noisy.",
                 "status": "completed",
+            },
+        ),
+        Span(
+            trace_id="trace-1",
+            span_id="runtime-review-outcome",
+            parent_span_id="run-1-root",
+            kind=SpanKind.RUNTIME,
+            name="review_outcome",
+            depth=1,
+            run_id="run-1",
+            start_time=datetime(2026, 4, 25, 0, 0, 3, tzinfo=timezone.utc),
+            end_time=datetime(2026, 4, 25, 0, 0, 3, tzinfo=timezone.utc),
+            duration_ms=0.0,
+            status=SpanStatus.OK,
+            attributes={
+                "agent_id": "agent-1",
+                "sequence": 7,
+                "aligned": False,
+                "mode": "step_back",
+                "experience": "switch plan",
+                "active_milestone_id": "inspect",
+                "review_tool_call_id": "tc-review",
+                "review_step_id": "step-2",
+                "hidden_step_ids": ["assistant-review", "step-2"],
+                "notice_cleaned_step_ids": [],
+                "condensed_step_ids": ["step-a", "step-b"],
             },
         ),
         Span(
@@ -171,11 +257,10 @@ def test_build_trace_review_cycles_groups_checkpoint_result_and_step_back() -> N
 
     assert len(cycles) == 1
     cycle = cycles[0]
-    assert cycle.cycle_id == "run-1:6:tool-1"
+    assert cycle.cycle_id == "run-1:6:runtime-review-trigger"
     assert cycle.trigger_reason == "step_interval"
     assert cycle.steps_since_last_review == 8
     assert cycle.active_milestone == "Inspect auth"
-    assert cycle.hook_advice == "narrow the search"
     assert cycle.aligned is False
     assert cycle.experience == "switch plan"
     assert cycle.step_back_applied is True
@@ -184,12 +269,7 @@ def test_build_trace_review_cycles_groups_checkpoint_result_and_step_back() -> N
 
 def test_build_trace_review_cycles_disambiguates_missing_sequences() -> None:
     trace = _trace_with_review_and_llm()
-    trace.spans = [
-        span
-        for span in trace.spans
-        if span.kind != SpanKind.RUNTIME
-        and (span.kind != SpanKind.TOOL_CALL or span.name != "review_trajectory")
-    ]
+    trace.spans = [span for span in trace.spans if span.kind != SpanKind.RUNTIME]
     for index, span in enumerate(trace.spans):
         if span.kind == SpanKind.TOOL_CALL:
             span.attributes.pop("sequence", None)
@@ -226,10 +306,7 @@ def test_build_trace_review_cycles_disambiguates_missing_sequences() -> None:
 
     cycles = build_trace_review_cycles(trace)
 
-    assert [cycle.cycle_id for cycle in cycles] == [
-        "run-1:0:review-notice-2",
-        "run-1:0:review-notice-extra",
-    ]
+    assert cycles == []
 
 
 def test_build_trace_mainline_events_returns_readable_narrative_sequence() -> None:
@@ -239,69 +316,19 @@ def test_build_trace_mainline_events_returns_readable_narrative_sequence() -> No
 
     assert [event.kind for event in events] == [
         "run_started",
+        "milestone_update",
         "review_checkpoint",
         "review_result",
         "runtime_decision",
         "run_finished",
     ]
-    assert events[1].summary == "triggered by step_interval after 8 steps"
-    assert events[2].summary == "trajectory misaligned"
-    assert events[3].details["kind"] == "step_back"
+    assert events[2].summary == "triggered by step_interval after 8 steps"
+    assert events[3].summary == "trajectory misaligned"
+    assert events[4].details["kind"] == "step_back"
 
 
 def test_build_session_milestone_board_and_conversation_events() -> None:
     trace = _trace_with_review_and_llm()
-    trace.spans.insert(
-        1,
-        Span(
-            trace_id="trace-1",
-            span_id="tool-milestones",
-            parent_span_id="run-1-root",
-            kind=SpanKind.TOOL_CALL,
-            name="declare_milestones",
-            depth=1,
-            run_id="run-1",
-            step_id="step-milestones",
-            start_time=datetime(2026, 4, 25, 0, 0, 0, tzinfo=timezone.utc),
-            end_time=datetime(2026, 4, 25, 0, 0, 0, tzinfo=timezone.utc),
-            duration_ms=5.0,
-            status=SpanStatus.OK,
-            attributes={"agent_id": "agent-1", "sequence": 2},
-            tool_details={
-                "tool_name": "declare_milestones",
-                "tool_call_id": "tc-milestones",
-                "input_args": {
-                    "milestones": [
-                        {
-                            "id": "inspect",
-                            "description": "Inspect auth",
-                            "status": "active",
-                        },
-                        {
-                            "id": "fix",
-                            "description": "Apply fix",
-                            "status": "pending",
-                        },
-                    ]
-                },
-                "output": {
-                    "milestones": [
-                        {
-                            "id": "inspect",
-                            "description": "Inspect auth",
-                            "status": "active",
-                        },
-                        {
-                            "id": "fix",
-                            "description": "Apply fix",
-                            "status": "pending",
-                        },
-                    ]
-                },
-                "status": "completed",
-            },
-        ),
-    )
     review_cycles = build_trace_review_cycles(trace)
 
     board = build_session_milestone_board(

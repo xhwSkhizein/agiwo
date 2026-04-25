@@ -2,6 +2,7 @@
 
 import json
 from collections import OrderedDict
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -13,6 +14,10 @@ from agiwo.agent.models.log import (
     HookFailed,
     LLMCallCompleted,
     LLMCallStarted,
+    ReviewCheckpointRecorded,
+    ReviewMilestonesUpdated,
+    ReviewOutcomeRecorded,
+    ReviewTriggerDecided,
     RunFailed as RunFailedEntry,
     RunFinished,
     RunLogEntry,
@@ -225,6 +230,10 @@ def _build_runtime_span_from_entry(
         CompactionApplied
         | CompactionFailed
         | HookFailed
+        | ReviewCheckpointRecorded
+        | ReviewMilestonesUpdated
+        | ReviewOutcomeRecorded
+        | ReviewTriggerDecided
         | RunRolledBack
         | StepBackApplied
         | TerminationDecided
@@ -304,6 +313,54 @@ def _build_runtime_span_from_entry(
                 "error": entry.error,
             }
         )
+    elif isinstance(entry, ReviewMilestonesUpdated):
+        name = "review_milestones"
+        attributes.update(
+            {
+                "milestones": [asdict(milestone) for milestone in entry.milestones],
+                "active_milestone_id": entry.active_milestone_id,
+                "source_tool_call_id": entry.source_tool_call_id,
+                "source_step_id": entry.source_step_id,
+                "reason": entry.reason,
+            }
+        )
+    elif isinstance(entry, ReviewTriggerDecided):
+        name = "review_trigger"
+        attributes.update(
+            {
+                "trigger_reason": entry.trigger_reason,
+                "active_milestone_id": entry.active_milestone_id,
+                "review_count_since_checkpoint": (entry.review_count_since_checkpoint),
+                "trigger_tool_call_id": entry.trigger_tool_call_id,
+                "trigger_tool_step_id": entry.trigger_tool_step_id,
+                "notice_step_id": entry.notice_step_id,
+            }
+        )
+    elif isinstance(entry, ReviewCheckpointRecorded):
+        name = "review_checkpoint"
+        attributes.update(
+            {
+                "checkpoint_seq": entry.checkpoint_seq,
+                "milestone_id": entry.milestone_id,
+                "review_tool_call_id": entry.review_tool_call_id,
+                "review_step_id": entry.review_step_id,
+            }
+        )
+    elif isinstance(entry, ReviewOutcomeRecorded):
+        name = "review_outcome"
+        attributes.update(
+            {
+                "aligned": entry.aligned,
+                "mode": entry.mode,
+                "experience": entry.experience,
+                "active_milestone_id": entry.active_milestone_id,
+                "review_tool_call_id": entry.review_tool_call_id,
+                "review_step_id": entry.review_step_id,
+                "hidden_step_ids": list(entry.hidden_step_ids),
+                "notice_cleaned_step_ids": list(entry.notice_cleaned_step_ids),
+                "condensed_step_ids": list(entry.condensed_step_ids),
+            }
+        )
     span = Span(
         trace_id=trace_id,
         parent_span_id=parent_id,
@@ -327,6 +384,10 @@ def _append_runtime_entry_to_trace(
         CompactionApplied
         | CompactionFailed
         | HookFailed
+        | ReviewCheckpointRecorded
+        | ReviewMilestonesUpdated
+        | ReviewOutcomeRecorded
+        | ReviewTriggerDecided
         | RunRolledBack
         | StepBackApplied
         | TerminationDecided
@@ -595,6 +656,10 @@ def _apply_runtime_entry_to_trace(
             CompactionApplied,
             CompactionFailed,
             HookFailed,
+            ReviewCheckpointRecorded,
+            ReviewMilestonesUpdated,
+            ReviewOutcomeRecorded,
+            ReviewTriggerDecided,
             RunRolledBack,
             StepBackApplied,
             TerminationDecided,
