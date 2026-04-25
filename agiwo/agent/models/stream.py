@@ -110,6 +110,19 @@ class MessagesRebuiltEvent(AgentStreamItemBase):
 
 
 @dataclass(kw_only=True)
+class ContextStepsHiddenEvent(AgentStreamItemBase):
+    step_ids: list[str]
+    reason: str
+    type: Literal["context_steps_hidden"] = "context_steps_hidden"
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = self._base_dict()
+        payload["step_ids"] = list(self.step_ids)
+        payload["reason"] = self.reason
+        return payload
+
+
+@dataclass(kw_only=True)
 class CompactionAppliedEvent(AgentStreamItemBase):
     start_sequence: int
     end_sequence: int
@@ -315,6 +328,12 @@ def _stream_item_from_runtime_entry(
             reason=entry.reason,
             message_count=len(entry.messages),
         )
+    elif isinstance(entry, ContextStepsHidden):
+        item = ContextStepsHiddenEvent(
+            **base_kwargs,
+            step_ids=list(entry.step_ids),
+            reason=entry.reason,
+        )
     elif isinstance(entry, CompactionApplied):
         item = CompactionAppliedEvent(
             **base_kwargs,
@@ -445,6 +464,7 @@ AgentStreamItem: TypeAlias = (
     | StepDeltaEvent
     | StepCompletedEvent
     | MessagesRebuiltEvent
+    | ContextStepsHiddenEvent
     | CompactionAppliedEvent
     | CompactionFailedEvent
     | StepBackAppliedEvent
@@ -460,6 +480,7 @@ __all__ = [
     "AgentStreamItemBase",
     "CompactionAppliedEvent",
     "CompactionFailedEvent",
+    "ContextStepsHiddenEvent",
     "MessagesRebuiltEvent",
     "RunRolledBackEvent",
     "RunCompletedEvent",

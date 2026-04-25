@@ -22,6 +22,7 @@ async for event in agent.run_stream("Tell me about Python"):
 | `step_delta` | incremental assistant deltas via `event.delta` |
 | `step_completed` | committed `StepView` via `event.step` |
 | `messages_rebuilt` | rebuilt prompt messages after runtime mutation |
+| `context_steps_hidden` | step ids that should be removed from public transcript |
 | `compaction_applied` | committed compaction summary + transcript range |
 | `compaction_failed` | committed compaction failure fact |
 | `step_back_applied` | committed step-back rewrite fact |
@@ -114,3 +115,28 @@ Agent.run_stream()
 ```
 
 All execution paths — `run()`, `run_stream()`, `start()`, and scheduler `route_root_input()` — share this pipeline. The difference is only in how the consumer processes events.
+
+## `context_steps_hidden`
+
+When the runtime later decides that some committed steps were only temporary
+review metadata, it emits a dedicated stream event:
+
+```json
+{
+  "type": "context_steps_hidden",
+  "session_id": "sess-1",
+  "run_id": "run-1",
+  "agent_id": "agent-1",
+  "step_ids": ["step-review-call", "step-review-result"],
+  "reason": "review_metadata"
+}
+```
+
+Clients should treat this as a reconciliation signal:
+
+- remove or fold any already-rendered transcript entries whose `step_id` is in
+  `step_ids`
+- keep the rest of the conversation intact
+
+This keeps the live transcript aligned with historical step queries, which
+already hide steps that were marked `hidden_from_context`.

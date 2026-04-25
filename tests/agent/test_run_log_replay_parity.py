@@ -58,7 +58,10 @@ def test_hidden_context_fact_does_not_emit_public_stream_events() -> None:
         ),
     ]
 
-    assert stream_items_from_entries(entries) == []
+    items = stream_items_from_entries(entries)
+
+    assert [item.type for item in items] == ["context_steps_hidden"]
+    assert items[0].step_ids == ["step-review-call"]
 
 
 @pytest.mark.asyncio

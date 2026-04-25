@@ -18,7 +18,7 @@ from agiwo.agent.models.log import (
 )
 from agiwo.agent.models.run import RunMetrics
 from agiwo.agent.models.step import MessageRole, StepMetrics
-from agiwo.observability.trace import SpanStatus, Trace
+from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
     AgentState,
@@ -389,6 +389,193 @@ async def test_get_session_detail_returns_summary_session_and_root_scheduler_sta
     assert (
         payload["observability"]["decision_events"][0]["details"]["reason"]
         == "completed"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_session_detail_includes_milestone_board_and_conversation_events(
+    client,
+) -> None:
+    await _seed_session_context(client)
+    await _seed_runs_and_steps(client)
+    runtime = _runtime(client)
+    created_at = datetime(2026, 4, 2, 8, 0, 5, tzinfo=timezone.utc)
+    root_span = Span(
+        trace_id="trace-mainline",
+        kind=SpanKind.AGENT,
+        name="agent-alpha",
+        depth=0,
+        run_id="run-a2",
+        start_time=created_at,
+        end_time=created_at.replace(second=9),
+        duration_ms=4000.0,
+        status=SpanStatus.OK,
+        attributes={
+            "agent_id": "agent-alpha",
+            "session_id": "session-a",
+            "nested": False,
+            "parent_run_id": None,
+            "start_sequence": 3,
+            "end_sequence": 10,
+        },
+        output_preview="done again",
+    )
+    await runtime.trace_storage.save_trace(
+        Trace(
+            trace_id="trace-mainline",
+            agent_id="agent-alpha",
+            session_id="session-a",
+            status=SpanStatus.OK,
+            start_time=created_at,
+            end_time=created_at.replace(second=9),
+            duration_ms=4000.0,
+            root_span_id=root_span.span_id,
+            spans=[
+                root_span,
+                Span(
+                    trace_id="trace-mainline",
+                    parent_span_id=root_span.span_id,
+                    kind=SpanKind.TOOL_CALL,
+                    name="declare_milestones",
+                    depth=1,
+                    run_id="run-a2",
+                    step_id="step-milestones",
+                    start_time=created_at.replace(second=6),
+                    end_time=created_at.replace(second=6),
+                    duration_ms=5.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 6,
+                        "agent_id": "agent-alpha",
+                        "tool_name": "declare_milestones",
+                    },
+                    tool_details={
+                        "tool_name": "declare_milestones",
+                        "input_args": {
+                            "milestones": [
+                                {
+                                    "id": "inspect",
+                                    "description": "Inspect auth flow",
+                                    "status": "active",
+                                },
+                                {
+                                    "id": "fix",
+                                    "description": "Apply auth fix",
+                                    "status": "pending",
+                                },
+                            ]
+                        },
+                        "output": {
+                            "milestones": [
+                                {
+                                    "id": "inspect",
+                                    "description": "Inspect auth flow",
+                                    "status": "active",
+                                },
+                                {
+                                    "id": "fix",
+                                    "description": "Apply auth fix",
+                                    "status": "pending",
+                                },
+                            ]
+                        },
+                        "status": "completed",
+                    },
+                ),
+                Span(
+                    trace_id="trace-mainline",
+                    parent_span_id=root_span.span_id,
+                    kind=SpanKind.TOOL_CALL,
+                    name="web_search",
+                    depth=1,
+                    run_id="run-a2",
+                    step_id="step-1",
+                    start_time=created_at.replace(second=7),
+                    end_time=created_at.replace(second=7),
+                    duration_ms=20.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 7,
+                        "agent_id": "agent-alpha",
+                        "tool_name": "web_search",
+                    },
+                    tool_details={
+                        "tool_name": "web_search",
+                        "output": (
+                            "<system-review>\n"
+                            'Active milestone: "Inspect auth flow"\n\n'
+                            "Trigger: step_interval\n"
+                            "Steps since last review: 4\n"
+                            "</system-review>"
+                        ),
+                        "status": "completed",
+                    },
+                ),
+                Span(
+                    trace_id="trace-mainline",
+                    parent_span_id=root_span.span_id,
+                    kind=SpanKind.TOOL_CALL,
+                    name="review_trajectory",
+                    depth=1,
+                    run_id="run-a2",
+                    step_id="step-2",
+                    start_time=created_at.replace(second=8),
+                    end_time=created_at.replace(second=8),
+                    duration_ms=10.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 8,
+                        "agent_id": "agent-alpha",
+                        "tool_name": "review_trajectory",
+                    },
+                    tool_details={
+                        "tool_name": "review_trajectory",
+                        "input_args": {
+                            "aligned": False,
+                            "experience": "Need to switch from search to code inspection.",
+                        },
+                        "output": (
+                            "Trajectory review: aligned=false. "
+                            "Need to switch from search to code inspection."
+                        ),
+                        "status": "completed",
+                    },
+                ),
+                Span(
+                    trace_id="trace-mainline",
+                    parent_span_id=root_span.span_id,
+                    kind=SpanKind.RUNTIME,
+                    name="step_back",
+                    depth=1,
+                    run_id="run-a2",
+                    start_time=created_at.replace(second=9),
+                    end_time=created_at.replace(second=9),
+                    duration_ms=0.0,
+                    status=SpanStatus.OK,
+                    attributes={
+                        "sequence": 9,
+                        "agent_id": "agent-alpha",
+                        "affected_count": 2,
+                        "checkpoint_seq": 5,
+                        "experience": "Switch to code inspection.",
+                    },
+                ),
+            ],
+        )
+    )
+
+    response = await client.get("/api/sessions/session-a")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["milestone_board"]["active_milestone_id"] == "inspect"
+    assert (
+        payload["milestone_board"]["latest_review_outcome"]["step_back_applied"] is True
+    )
+    assert payload["review_cycles"][0]["trigger_reason"] == "step_interval"
+    assert payload["conversation_events"][0]["kind"] == "user_message"
+    assert any(
+        event["kind"] == "review_event" for event in payload["conversation_events"]
     )
 
 

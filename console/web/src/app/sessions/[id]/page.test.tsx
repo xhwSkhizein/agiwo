@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 const apiMocks = vi.hoisted(() => ({
@@ -24,7 +24,7 @@ vi.mock("@/lib/api", async () => {
 import SessionDetailPage from "./page";
 
 describe("SessionDetailPage", () => {
-  test("renders observability with runtime decisions and recent traces", async () => {
+  test("switches between mainline and debug session views", async () => {
     apiMocks.getSessionDetail.mockResolvedValue({
       summary: {
         session_id: "sess-1",
@@ -67,6 +67,67 @@ describe("SessionDetailPage", () => {
       },
       chat_context: null,
       scheduler_state: null,
+      milestone_board: {
+        session_id: "sess-1",
+        run_id: "run-1",
+        milestones: [
+          {
+            id: "inspect",
+            description: "Inspect auth flow",
+            status: "active",
+            declared_at_seq: 3,
+            completed_at_seq: null,
+          },
+        ],
+        active_milestone_id: "inspect",
+        latest_checkpoint: {
+          seq: 8,
+          milestone_id: "inspect",
+          confirmed_at: "2026-04-22T12:00:01Z",
+        },
+        latest_review_outcome: {
+          aligned: false,
+          experience: "switch plan",
+          step_back_applied: true,
+          affected_count: 2,
+          trigger_reason: "step_interval",
+          active_milestone: "Inspect auth flow",
+          resolved_at: "2026-04-22T12:00:02Z",
+        },
+        pending_review_reason: null,
+      },
+      review_cycles: [
+        {
+          cycle_id: "run-1:8",
+          run_id: "run-1",
+          agent_id: "agent-1",
+          trigger_reason: "step_interval",
+          steps_since_last_review: 8,
+          active_milestone: "Inspect auth flow",
+          hook_advice: "narrow the search",
+          aligned: false,
+          experience: "switch plan",
+          step_back_applied: true,
+          rollback_range: null,
+          affected_count: 2,
+          started_at: "2026-04-22T12:00:01Z",
+          resolved_at: "2026-04-22T12:00:02Z",
+          raw_notice: "Trigger: step_interval",
+        },
+      ],
+      conversation_events: [
+        {
+          id: "evt-1",
+          session_id: "sess-1",
+          run_id: "run-1",
+          sequence: 1,
+          kind: "assistant_message",
+          priority: "primary",
+          title: "Assistant",
+          summary: "I will inspect auth",
+          details: {},
+        },
+      ],
       observability: {
         recent_traces: [
           {
@@ -123,9 +184,16 @@ describe("SessionDetailPage", () => {
     render(<SessionDetailPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Observability")).toBeInTheDocument();
+      expect(screen.getByText("Milestone Board")).toBeInTheDocument();
     });
 
+    expect(screen.getAllByText("Inspect auth flow").length).toBeGreaterThan(0);
+    expect(screen.getByText("Conversation")).toBeInTheDocument();
+    expect(screen.queryByText("Observability")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Debug" }));
+
+    expect(screen.getByText("Observability")).toBeInTheDocument();
     expect(screen.getByText("Trace Context")).toBeInTheDocument();
     expect(screen.getByText("Runtime Decisions")).toBeInTheDocument();
     expect(screen.getByText("completed via finished")).toBeInTheDocument();

@@ -328,4 +328,82 @@ describe("useChatStream", () => {
     );
     expect(assistantMessages.some((message) => message.isStreaming)).toBe(false);
   });
+
+  test("removes hidden review metadata when context_steps_hidden arrives", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(
+        streamFromEvents([
+          {
+            type: "run_started",
+            session_id: "sess-1",
+            run_id: "run-1",
+            agent_id: "root-1",
+            parent_run_id: null,
+            depth: 0,
+          },
+          {
+            type: "step_completed",
+            session_id: "sess-1",
+            run_id: "run-1",
+            agent_id: "root-1",
+            parent_run_id: null,
+            depth: 0,
+            step: {
+              id: "step-review-result",
+              sequence: 10,
+              role: "tool",
+              agent_id: "root-1",
+              content: "Trajectory review: aligned=false.",
+              content_for_user: null,
+              reasoning_content: null,
+              user_input: null,
+              tool_calls: null,
+              tool_call_id: "tc-review",
+              name: "review_trajectory",
+              condensed_content: null,
+              metrics: null,
+              created_at: null,
+              parent_run_id: null,
+              depth: 0,
+            },
+          },
+          {
+            type: "context_steps_hidden",
+            session_id: "sess-1",
+            run_id: "run-1",
+            agent_id: "root-1",
+            parent_run_id: null,
+            depth: 0,
+            step_ids: ["step-review-result"],
+            reason: "review_metadata",
+          },
+          {
+            type: "run_completed",
+            session_id: "sess-1",
+            run_id: "run-1",
+            agent_id: "root-1",
+            parent_run_id: null,
+            depth: 0,
+            response: "done",
+          },
+        ]),
+      ),
+    );
+
+    const { result } = renderHook(() => useChatStream("/api/sessions/sess-1/input"));
+
+    await act(async () => {
+      await result.current.sendMessage("Hi");
+    });
+
+    await waitFor(() => {
+      expect(result.current.isStreaming).toBe(false);
+    });
+
+    expect(
+      result.current.messages.some(
+        (message) => message.stepId === "step-review-result",
+      ),
+    ).toBe(false);
+  });
 });

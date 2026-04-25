@@ -12,7 +12,10 @@ import { SectionCard } from "@/components/section-card";
 import { ErrorStateMessage, FullPageMessage } from "@/components/state-message";
 import { TokenMetricsBadges } from "@/components/token-metrics-badges";
 import { TokenSummaryCards } from "@/components/token-summary-cards";
+import { TraceLlmCalls } from "@/components/trace-detail/trace-llm-calls";
 import { TraceLoopTimeline } from "@/components/trace-detail/trace-loop-timeline";
+import { TraceMainlineEvents } from "@/components/trace-detail/trace-mainline-events";
+import { TraceReviewCycles } from "@/components/trace-detail/trace-review-cycles";
 import { TraceRuntimeDecisions } from "@/components/trace-detail/trace-runtime-decisions";
 import { TraceStatusBadge } from "@/components/trace-status-badge";
 import { getTrace } from "@/lib/api";
@@ -196,6 +199,7 @@ export default function TraceDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<"mainline" | "debug">("mainline");
 
   useEffect(() => {
     getTrace(traceId)
@@ -297,11 +301,39 @@ export default function TraceDetailPage() {
             <MetricCard
               label="Review Events"
               valueClassName="text-lg font-medium"
-              value={String(reviewEventCount)}
+              value={String(trace.review_cycles.length || reviewEventCount)}
             />
           </>
         }
       />
+
+      <SectionCard
+        title="View Mode"
+        bodyClassName="flex flex-wrap gap-2 px-4 py-4"
+      >
+        <button
+          type="button"
+          onClick={() => setViewMode("mainline")}
+          className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+            viewMode === "mainline"
+              ? "border-accent bg-panel-strong text-foreground"
+              : "border-line text-ink-muted hover:border-line-strong hover:text-foreground"
+          }`}
+        >
+          Mainline
+        </button>
+        <button
+          type="button"
+          onClick={() => setViewMode("debug")}
+          className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+            viewMode === "debug"
+              ? "border-accent bg-panel-strong text-foreground"
+              : "border-line text-ink-muted hover:border-line-strong hover:text-foreground"
+          }`}
+        >
+          Debug
+        </button>
+      </SectionCard>
 
       {trace.input_query && (
         <SectionCard className="p-4">
@@ -310,28 +342,37 @@ export default function TraceDetailPage() {
         </SectionCard>
       )}
 
-      <TraceRuntimeDecisions decisions={trace.runtime_decisions} />
-
-      <TraceLoopTimeline events={trace.timeline_events} />
-
-      <SectionCard
-        className="overflow-hidden"
-        title={`Span Waterfall (${trace.spans.length} spans)`}
-        headerClassName="border-b border-line px-4 py-3"
-      >
-        <div>
-          {trace.spans.map((span) => (
-            <SpanRow
-              key={span.span_id}
-              span={span}
-              traceStartMs={traceStartMs}
-              traceDurationMs={traceDurationMs}
-              expanded={expandedSpans.has(span.span_id)}
-              onToggle={() => toggleSpan(span.span_id)}
-            />
-          ))}
-        </div>
-      </SectionCard>
+      {viewMode === "mainline" ? (
+        <>
+          <TraceMainlineEvents events={trace.mainline_events} />
+          <TraceReviewCycles cycles={trace.review_cycles} />
+          <TraceRuntimeDecisions decisions={trace.runtime_decisions} />
+        </>
+      ) : (
+        <>
+          <TraceLlmCalls llmCalls={trace.llm_calls} />
+          <TraceRuntimeDecisions decisions={trace.runtime_decisions} />
+          <TraceLoopTimeline events={trace.timeline_events} />
+          <SectionCard
+            className="overflow-hidden"
+            title={`Span Waterfall (${trace.spans.length} spans)`}
+            headerClassName="border-b border-line px-4 py-3"
+          >
+            <div>
+              {trace.spans.map((span) => (
+                <SpanRow
+                  key={span.span_id}
+                  span={span}
+                  traceStartMs={traceStartMs}
+                  traceDurationMs={traceDurationMs}
+                  expanded={expandedSpans.has(span.span_id)}
+                  onToggle={() => toggleSpan(span.span_id)}
+                />
+              ))}
+            </div>
+          </SectionCard>
+        </>
+      )}
 
       {trace.final_output && (
         <SectionCard className="p-4">
