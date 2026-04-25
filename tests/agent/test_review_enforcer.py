@@ -32,17 +32,15 @@ class TestCheckReviewTrigger:
 
     def test_step_interval_trigger(self):
         state = ReviewState(
-            last_review_seq=5,
             consecutive_errors=0,
+            review_count_since_checkpoint=9,
         )
-        # current_seq=14, last_review_seq=5, diff=9 >= interval=8
         trigger = check_review_trigger(
             state=state,
             enabled=True,
             is_error=False,
             step_interval=8,
             error_threshold=2,
-            current_seq=14,
         )
         assert trigger == ReviewTrigger.STEP_INTERVAL
 
@@ -58,14 +56,13 @@ class TestCheckReviewTrigger:
         assert trigger == ReviewTrigger.MILESTONE_SWITCH
 
     def test_error_priority_wins_over_step_interval(self):
-        state = ReviewState(consecutive_errors=2, last_review_seq=1)
+        state = ReviewState(consecutive_errors=2, review_count_since_checkpoint=19)
         trigger = check_review_trigger(
             state=state,
             enabled=True,
             is_error=True,
             step_interval=8,
             error_threshold=2,
-            current_seq=20,
         )
         assert trigger == ReviewTrigger.CONSECUTIVE_ERRORS
 
@@ -82,14 +79,13 @@ class TestCheckReviewTrigger:
         assert trigger == ReviewTrigger.NONE
 
     def test_below_interval_no_trigger(self):
-        state = ReviewState(last_review_seq=5)
+        state = ReviewState(review_count_since_checkpoint=2)
         trigger = check_review_trigger(
             state=state,
             enabled=True,
             is_error=False,
             step_interval=8,
             error_threshold=2,
-            current_seq=7,
         )
         assert trigger == ReviewTrigger.NONE
 

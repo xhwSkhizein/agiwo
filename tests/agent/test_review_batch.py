@@ -213,7 +213,6 @@ class TestReviewBatch:
     def test_process_result_injects_review_when_step_interval_triggered(self):
         config = AgentOptions(enable_goal_directed_review=True, review_step_interval=1)
         ledger = RunLedger()
-        ledger.review.last_review_seq = 0
         ledger.review.milestones = [
             Milestone(id="a", description="Find the bug", status="active")
         ]
@@ -226,6 +225,78 @@ class TestReviewBatch:
         content = batch.process_result(result, current_seq=2)
         assert "<system-review>" in content
         assert "</system-review>" in content
+        assert "Find the bug" in content
+
+    def test_step_interval_uses_non_review_tool_count_not_sequence_delta(self):
+        config = AgentOptions(enable_goal_directed_review=True, review_step_interval=2)
+        ledger = RunLedger()
+        ledger.review.last_review_seq = 0
+        ledger.review.milestones = [
+            Milestone(id="a", description="Find the bug", status="active")
+        ]
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
+        batch = ReviewBatch(config, ledger, tools_map)
+
+        first = batch.process_result(
+            FakeToolResult("search", "first", tool_call_id="tc_1"),
+            current_seq=100,
+        )
+        second = batch.process_result(
+            FakeToolResult("read", "second", tool_call_id="tc_2"),
+            current_seq=101,
+        )
+
+        assert "<system-review>" not in first
+        assert "<system-review>" in second
+        assert ledger.review.review_count_since_checkpoint == 2
+        assert "Steps since last review: 2" in second
+
+    def test_review_trajectory_resets_count_and_does_not_count_itself(self):
+        config = AgentOptions(enable_goal_directed_review=True, review_step_interval=2)
+        ledger = RunLedger()
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
+        batch = ReviewBatch(config, ledger, tools_map)
+        batch.process_result(FakeToolResult("search", "first"), current_seq=1)
+
+        batch.process_result(
+            FakeToolResult(
+                "review_trajectory",
+                "Trajectory review: aligned=True.",
+                tool_call_id="tc_review",
+                output={"aligned": True, "experience": ""},
+            ),
+            current_seq=2,
+        )
+        content = batch.process_result(FakeToolResult("read", "second"), current_seq=50)
+
+        assert ledger.review.review_count_since_checkpoint == 1
+        assert "<system-review>" not in content
+
+    def test_declare_milestones_counts_toward_step_interval(self):
+        config = AgentOptions(enable_goal_directed_review=True, review_step_interval=1)
+        ledger = RunLedger()
+        tools_map = {
+            "review_trajectory": FakeTool("review_trajectory"),
+            "declare_milestones": FakeTool("declare_milestones"),
+        }
+        batch = ReviewBatch(config, ledger, tools_map)
+        result = FakeToolResult(
+            "declare_milestones",
+            "Milestones declared: a",
+            tool_call_id="tc_declare",
+            output={"milestones": [{"id": "a", "description": "Find the bug"}]},
+        )
+
+        content = batch.process_result(result, current_seq=4)
+
+        assert "<system-review>" in content
+        assert ledger.review.review_count_since_checkpoint == 1
         assert "Find the bug" in content
 
     def test_process_result_does_not_set_pending_on_milestone_declaration(self):

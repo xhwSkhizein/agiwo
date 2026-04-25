@@ -81,6 +81,8 @@ class ReviewBatch:
                 tool_step_id=tool_step_id,
             )
 
+        self._record_review_count_for_tool(result.tool_name)
+
         if result.tool_name == "declare_milestones" and result.is_success:
             milestones = _parse_declared_milestones(result.output)
             if milestones:
@@ -89,7 +91,6 @@ class ReviewBatch:
                     milestones,
                     current_seq=current_seq,
                 )
-            return content
 
         is_error = not result.is_success
         if is_error:
@@ -109,7 +110,6 @@ class ReviewBatch:
             step_interval=self._config.review_step_interval,
             error_threshold=2,
             tool_name=result.tool_name,
-            current_seq=current_seq,
         )
 
         if trigger is ReviewTrigger.NONE:
@@ -119,7 +119,7 @@ class ReviewBatch:
             self._ledger.review.pending_review_reason = None
 
         milestone = get_active_milestone(self._ledger.review)
-        step_count = max(current_seq - self._ledger.review.last_review_seq, 0)
+        step_count = self._ledger.review.review_count_since_checkpoint
         self._pending_review_notice = ReviewNoticeRequest(
             content=content,
             milestone=milestone,
@@ -146,6 +146,11 @@ class ReviewBatch:
             "id": step_id,
             "sequence": sequence,
         }
+
+    def _record_review_count_for_tool(self, tool_name: str) -> None:
+        if tool_name == "review_trajectory":
+            return
+        self._ledger.review.review_count_since_checkpoint += 1
 
     async def finalize(
         self,
@@ -230,6 +235,7 @@ class ReviewBatch:
                 else "",
             )
             self._ledger.review.last_review_seq = current_seq
+            self._ledger.review.review_count_since_checkpoint = 0
             self._ledger.review.pending_review_reason = None
             self._pending_outcome = StepBackOutcome(
                 mode="metadata_only",
@@ -241,6 +247,7 @@ class ReviewBatch:
         if aligned is False:
             experience = output.get("experience")
             self._feedback = experience if isinstance(experience, str) else content
+            self._ledger.review.review_count_since_checkpoint = 0
             self._pending_outcome = StepBackOutcome(
                 mode="step_back",
                 review_tool_call_id=self._review_tool_call_id,
@@ -249,6 +256,7 @@ class ReviewBatch:
             return content
 
         self._ledger.review.last_review_seq = current_seq
+        self._ledger.review.review_count_since_checkpoint = 0
         self._ledger.review.pending_review_reason = None
         self._pending_outcome = StepBackOutcome(
             mode="metadata_only",

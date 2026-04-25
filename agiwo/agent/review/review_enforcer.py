@@ -63,7 +63,6 @@ def check_review_trigger(
     step_interval: int,
     error_threshold: int,
     tool_name: str = "",
-    current_seq: int = 0,
 ) -> ReviewTrigger:
     """Check if a review should be triggered. Returns the trigger type or NONE."""
     if not enabled:
@@ -83,9 +82,8 @@ def check_review_trigger(
     if is_error and state.consecutive_errors >= error_threshold:
         return ReviewTrigger.CONSECUTIVE_ERRORS
 
-    # Step interval since last review
-    steps_since_review = current_seq - state.last_review_seq
-    if steps_since_review >= step_interval:
+    # Tool count since last checkpoint/review.
+    if state.review_count_since_checkpoint >= step_interval:
         return ReviewTrigger.STEP_INTERVAL
 
     return ReviewTrigger.NONE
