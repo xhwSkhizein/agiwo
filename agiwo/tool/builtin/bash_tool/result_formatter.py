@@ -84,6 +84,9 @@ class BashResultFormatter:
         payload.update(extra)
 
         content = f"exit_code: {payload['exit_code']}\nstdout: {payload['stdout']}"
+        guidance = payload.get("guidance")
+        if guidance:
+            content += f"\nguidance: {guidance}"
         return ToolResult.success(
             tool_name=self._tool_name,
             tool_call_id=tool_call_id,

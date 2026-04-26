@@ -260,7 +260,7 @@ class SchedulerToolControl:
 
     async def _resolve_waitset_targets(self, request: SleepRequest) -> list[str]:
         if request.wait_for is not None:
-            return request.wait_for
+            return await self._validate_explicit_waitset_targets(request)
         # Fetch all children with pagination to avoid missing children beyond page_size
         all_children: list[AgentState] = []
         offset = 0
@@ -279,6 +279,52 @@ class SchedulerToolControl:
                 break
             offset += len(page)
         return [child.id for child in all_children]
+
+    async def _validate_explicit_waitset_targets(
+        self, request: SleepRequest
+    ) -> list[str]:
+        assert request.wait_for is not None
+        wait_for = [target.strip() for target in request.wait_for if target.strip()]
+        if not wait_for:
+            return []
+
+        missing: list[str] = []
+        wrong_session: list[str] = []
+        wrong_parent: list[str] = []
+        for target_id in wait_for:
+            target_state = await self._store.get_state(target_id)
+            if target_state is None:
+                missing.append(target_id)
+                continue
+            if target_state.session_id != request.session_id:
+                wrong_session.append(target_id)
+                continue
+            if target_state.parent_id != request.agent_id:
+                wrong_parent.append(target_id)
+
+        if missing or wrong_session or wrong_parent:
+            details: list[str] = []
+            if missing:
+                details.append(f"unknown targets: {', '.join(missing)}")
+            if wrong_session:
+                details.append(
+                    f"targets from another session: {', '.join(wrong_session)}"
+                )
+            if wrong_parent:
+                details.append(
+                    f"targets not direct children of agent '{request.agent_id}': "
+                    f"{', '.join(wrong_parent)}"
+                )
+            detail_text = "; ".join(details)
+            raise ValueError(
+                "wait_for only accepts direct child agent IDs created by "
+                "spawn_child_agent or fork_child_agent. "
+                f"{detail_text}. "
+                "If this ID came from bash(background=true), inspect it with "
+                "bash_process instead of sleep_and_wait."
+            )
+
+        return wait_for
 
     async def _collect_completed_child_ids(self, child_ids: list[str]) -> list[str]:
         completed_ids: list[str] = []

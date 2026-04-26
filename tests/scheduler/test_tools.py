@@ -372,6 +372,66 @@ class TestSleepAndWaitTool:
         assert state.wake_condition.wait_for == (child.output["child_id"],)
 
     @pytest.mark.asyncio
+    async def test_sleep_waitset_rejects_unknown_explicit_wait_for(
+        self, store, control, context
+    ):
+        await _register_parent(store)
+
+        sleep_tool = SleepAndWaitTool(control)
+        result = await sleep_tool.execute(
+            {
+                "wake_type": "waitset",
+                "wait_for": ["e2cf1f96-5ce8-4a6b-899a-ce7029e2083d"],
+                "tool_call_id": "tc-invalid",
+            },
+            context,
+        )
+
+        assert result.is_success is False
+        assert "wait_for only accepts direct child agent IDs" in result.content
+        assert "bash(background=true)" in result.content
+        assert "bash_process" in result.content
+
+        state = await store.get_state("orch")
+        assert state is not None
+        assert state.status == AgentStateStatus.RUNNING
+        assert state.wake_condition is None
+
+    @pytest.mark.asyncio
+    async def test_sleep_waitset_rejects_non_child_explicit_wait_for(
+        self, store, control, context
+    ):
+        await _register_parent(store)
+        await store.save_state(
+            AgentState(
+                id="other-root-child",
+                session_id="sess-1",
+                status=AgentStateStatus.COMPLETED,
+                task="not a direct child",
+                parent_id="other-root",
+                depth=1,
+            )
+        )
+
+        sleep_tool = SleepAndWaitTool(control)
+        result = await sleep_tool.execute(
+            {
+                "wake_type": "waitset",
+                "wait_for": ["other-root-child"],
+                "tool_call_id": "tc-invalid-parent",
+            },
+            context,
+        )
+
+        assert result.is_success is False
+        assert "targets not direct children of agent 'orch'" in result.content
+
+        state = await store.get_state("orch")
+        assert state is not None
+        assert state.status == AgentStateStatus.RUNNING
+        assert state.wake_condition is None
+
+    @pytest.mark.asyncio
     async def test_sleep_timer(self, store, control, context):
         await _register_parent(store)
 
