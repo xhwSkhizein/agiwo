@@ -12,6 +12,7 @@ import { SectionCard } from "@/components/section-card";
 import { ErrorStateMessage, FullPageMessage } from "@/components/state-message";
 import { TokenMetricsBadges } from "@/components/token-metrics-badges";
 import { TokenSummaryCards } from "@/components/token-summary-cards";
+import { TraceDiagnostics } from "@/components/trace-detail/trace-diagnostics";
 import { TraceLlmCalls } from "@/components/trace-detail/trace-llm-calls";
 import { TraceLoopTimeline } from "@/components/trace-detail/trace-loop-timeline";
 import { TraceMainlineEvents } from "@/components/trace-detail/trace-mainline-events";
@@ -485,6 +486,7 @@ export default function TraceDetailPage() {
         </div>
       ) : (
         <>
+          <TraceDiagnostics trace={trace} />
           <TraceLlmCalls llmCalls={trace.llm_calls} />
           <TraceRuntimeDecisions decisions={trace.runtime_decisions} />
           <TraceLoopTimeline events={trace.timeline_events} />
