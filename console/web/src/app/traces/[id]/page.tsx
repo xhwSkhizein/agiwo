@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { Clock, Zap, Cpu, Wrench } from "lucide-react";
+import { Activity, Clock, Cpu, Flag, GitBranch, Wrench, Zap } from "lucide-react";
 import { BackHeader } from "@/components/back-header";
 import { JsonDisclosure } from "@/components/json-disclosure";
 import { MetricCard } from "@/components/metric-card";
@@ -37,6 +37,101 @@ function KindIcon({ kind }: { kind: string }) {
   if (kind === "llm_call") return <Zap className="h-3.5 w-3.5 text-success" />;
   if (kind === "tool_call") return <Wrench className="h-3.5 w-3.5 text-warning" />;
   return <Clock className="h-3.5 w-3.5 text-ink-faint" />;
+}
+
+function latestObjective(trace: TraceDetail): string {
+  const latestCycle = trace.review_cycles[trace.review_cycles.length - 1];
+  if (latestCycle?.active_milestone) {
+    return latestCycle.active_milestone;
+  }
+
+  const milestoneEvent = [...trace.mainline_events]
+    .reverse()
+    .find((event) => event.kind === "milestone_update");
+  const milestones = Array.isArray(milestoneEvent?.details.milestones)
+    ? milestoneEvent.details.milestones
+    : [];
+  const active = milestones.find(
+    (item) =>
+      item &&
+      typeof item === "object" &&
+      "status" in item &&
+      item.status === "active" &&
+      "description" in item,
+  );
+  if (active && typeof active === "object" && "description" in active) {
+    return String(active.description);
+  }
+  return "No active milestone";
+}
+
+function latestAlignment(trace: TraceDetail): string {
+  const latestCycle = trace.review_cycles[trace.review_cycles.length - 1];
+  if (!latestCycle) {
+    return "No review cycle";
+  }
+  if (latestCycle.aligned === true) {
+    return "Aligned";
+  }
+  if (latestCycle.aligned === false && latestCycle.step_back_applied) {
+    return `${latestCycle.affected_count ?? 0} steps condensed`;
+  }
+  if (latestCycle.aligned === false) {
+    return "Drift detected";
+  }
+  return "Checkpoint recorded";
+}
+
+function TraceInsightRail({ trace }: { trace: TraceDetail }) {
+  const slowestSpan = [...trace.spans]
+    .filter((span) => span.duration_ms !== null)
+    .sort((a, b) => (b.duration_ms ?? 0) - (a.duration_ms ?? 0))[0];
+  const latestDecision = trace.runtime_decisions[trace.runtime_decisions.length - 1];
+
+  return (
+    <div className="grid gap-3 lg:grid-cols-4">
+      <div className="rounded-xl border border-line bg-panel px-4 py-3 lg:col-span-2">
+        <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-ink-faint">
+          <Flag className="h-3.5 w-3.5" />
+          Objective
+        </div>
+        <p className="text-sm leading-6 text-foreground">{latestObjective(trace)}</p>
+      </div>
+      <div className="rounded-xl border border-line bg-panel px-4 py-3">
+        <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-ink-faint">
+          <Activity className="h-3.5 w-3.5" />
+          Alignment
+        </div>
+        <p className="text-sm text-foreground">{latestAlignment(trace)}</p>
+      </div>
+      <div className="rounded-xl border border-line bg-panel px-4 py-3">
+        <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-ink-faint">
+          <GitBranch className="h-3.5 w-3.5" />
+          Latest Decision
+        </div>
+        <p className="truncate text-sm text-foreground">
+          {latestDecision?.summary || "No runtime decision"}
+        </p>
+      </div>
+      <div className="rounded-xl border border-line bg-panel px-4 py-3 lg:col-span-4">
+        <div className="flex flex-wrap gap-2 text-xs text-ink-muted">
+          <span className="rounded-full border border-line bg-panel-muted px-2 py-1">
+            {trace.mainline_events.length} narrative events
+          </span>
+          <span className="rounded-full border border-line bg-panel-muted px-2 py-1">
+            {trace.review_cycles.length} review cycles
+          </span>
+          <span className="rounded-full border border-line bg-panel-muted px-2 py-1">
+            {trace.runtime_decisions.length} runtime decisions
+          </span>
+          <span className="rounded-full border border-line bg-panel-muted px-2 py-1">
+            slowest {slowestSpan?.name || "-"}{" "}
+            {slowestSpan?.duration_ms ? formatDurationMs(slowestSpan.duration_ms) : ""}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -307,12 +402,12 @@ export default function TraceDetailPage() {
         }
       />
 
-      <SectionCard
-        title="View Mode"
-        bodyClassName="flex flex-wrap gap-2 px-4 py-4"
-      >
+      <TraceInsightRail trace={trace} />
+
+      <div className="flex flex-wrap gap-2">
         <button
           type="button"
+          aria-pressed={viewMode === "mainline"}
           onClick={() => setViewMode("mainline")}
           className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
             viewMode === "mainline"
@@ -324,6 +419,7 @@ export default function TraceDetailPage() {
         </button>
         <button
           type="button"
+          aria-pressed={viewMode === "debug"}
           onClick={() => setViewMode("debug")}
           className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
             viewMode === "debug"
@@ -333,7 +429,7 @@ export default function TraceDetailPage() {
         >
           Debug
         </button>
-      </SectionCard>
+      </div>
 
       {trace.input_query && (
         <SectionCard className="p-4">
@@ -343,11 +439,13 @@ export default function TraceDetailPage() {
       )}
 
       {viewMode === "mainline" ? (
-        <>
+        <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <TraceMainlineEvents events={trace.mainline_events} />
-          <TraceReviewCycles cycles={trace.review_cycles} />
-          <TraceRuntimeDecisions decisions={trace.runtime_decisions} />
-        </>
+          <div className="space-y-6">
+            <TraceReviewCycles cycles={trace.review_cycles} />
+            <TraceRuntimeDecisions decisions={trace.runtime_decisions} />
+          </div>
+        </div>
       ) : (
         <>
           <TraceLlmCalls llmCalls={trace.llm_calls} />

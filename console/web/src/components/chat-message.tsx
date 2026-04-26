@@ -1,7 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, ChevronDown, ChevronRight, Clock, Loader2, User, Wrench } from "lucide-react";
+import {
+  Bot,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Loader2,
+  User,
+  Wrench,
+} from "lucide-react";
 import type { ChatMessage, ChatRole } from "@/lib/chat-types";
 import type { ToolCallPayload } from "@/lib/api";
 import { JsonDisclosure } from "@/components/json-disclosure";
@@ -45,22 +53,27 @@ function ToolCallList({ toolCalls }: { toolCalls: ToolCallPayload[] }) {
   }
 
   return (
-    <div className="mt-2 space-y-1">
+    <div className="mt-2 flex flex-wrap gap-1.5">
       {toolCalls.map((toolCall, index) => {
         const fn = toolCall.function;
+        const args = fn ? fn.arguments : JSON.stringify(toolCall);
 
         return (
-          <div
+          <details
             key={index}
-            className="text-xs bg-zinc-800/50 rounded px-3 py-2 font-mono overflow-auto max-h-32"
+            className="group rounded-md border border-line bg-panel-muted text-xs"
           >
-            <span className="text-amber-400">
-              {fn ? fn.name : "tool_call"}
-            </span>
-            <span className="text-zinc-500 ml-2">
-              {fn ? fn.arguments : JSON.stringify(toolCall)}
-            </span>
-          </div>
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1.5 text-ink-muted transition-colors hover:text-foreground">
+              <Wrench className="h-3 w-3 text-warning" />
+              <span className="font-medium">{fn ? fn.name : "tool_call"}</span>
+              <span className="max-w-56 truncate font-mono text-[11px] text-ink-faint">
+                {args}
+              </span>
+            </summary>
+            <pre className="max-h-40 overflow-auto border-t border-line px-2.5 py-2 font-mono text-[11px] text-ink-muted whitespace-pre-wrap break-words">
+              {args}
+            </pre>
+          </details>
         );
       })}
     </div>
@@ -106,6 +119,71 @@ function OriginalContentToggle({ content }: { content: string }) {
   );
 }
 
+function compactText(value: string | undefined, maxLength: number): string {
+  if (!value) {
+    return "No text result";
+  }
+  const trimmed = value.trim();
+  if (trimmed.length <= maxLength) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxLength - 1)}…`;
+}
+
+function ToolResultMessage({ message }: { message: ChatMessage }) {
+  const preview = compactText(message.text, 320);
+  const hasLongResult = Boolean(message.text && message.text.trim().length > 320);
+
+  return (
+    <details className="group rounded-lg border border-line bg-panel-muted/70">
+      <summary className="cursor-pointer list-none px-3 py-2">
+        <div className="flex min-w-0 items-start gap-2">
+          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-warning/10">
+            <Wrench className="h-3 w-3 text-warning" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-ink-soft">
+                {message.name || "tool result"}
+              </span>
+              {message.sequence !== undefined && (
+                <span className="text-[11px] text-ink-faint">seq {message.sequence}</span>
+              )}
+              {message.sourceAgentId && (
+                <span className="font-mono text-[11px] text-ink-faint">
+                  {message.sourceAgentId.slice(0, 8)}
+                </span>
+              )}
+              <span className="ml-auto text-[11px] text-ink-faint group-open:hidden">
+                expand
+              </span>
+            </div>
+            <p className="mt-1 max-h-16 overflow-hidden text-xs leading-5 text-ink-muted">
+              {preview}
+            </p>
+          </div>
+        </div>
+      </summary>
+      <div className="border-t border-line px-3 pb-3 pt-2">
+        {message.text && (
+          <div className="max-h-72 overflow-auto rounded-md bg-panel px-3 py-2 text-xs leading-5 text-ink-soft whitespace-pre-wrap break-words">
+            {message.text}
+          </div>
+        )}
+        {hasLongResult && (
+          <p className="mt-2 text-[11px] text-ink-faint">
+            Long result is collapsed by default to keep the run narrative readable.
+          </p>
+        )}
+        {message.originalContent && (
+          <OriginalContentToggle content={message.originalContent} />
+        )}
+        <RawPayload value={message.rawContent} />
+      </div>
+    </details>
+  );
+}
+
 /**
  * Render a single chat message with a role-specific avatar, header, and conditional content sections.
  *
@@ -118,6 +196,14 @@ function OriginalContentToggle({ content }: { content: string }) {
  * @returns A JSX element representing the formatted chat message.
  */
 export function ChatMessageItem({ message }: { message: ChatMessage }) {
+  if (message.role === "tool") {
+    return (
+      <div className="pl-10">
+        <ToolResultMessage message={message} />
+      </div>
+    );
+  }
+
   const roleStyle = ROLE_STYLES[message.role];
   const Icon = roleStyle.icon;
 
@@ -125,7 +211,7 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
     <div className="flex gap-3">
       <div className="shrink-0 mt-1">
         <div
-          className={`w-7 h-7 rounded-full flex items-center justify-center ${roleStyle.avatarClassName}`}
+          className={`w-7 h-7 rounded-lg flex items-center justify-center ${roleStyle.avatarClassName}`}
         >
           <Icon className={`w-3.5 h-3.5 ${roleStyle.iconClassName}`} />
         </div>
@@ -133,7 +219,7 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <span className="text-xs font-medium text-zinc-400 uppercase">
+          <span className="text-xs font-medium text-ink-muted uppercase">
             {message.role}
             {message.name && ` — ${message.name}`}
             {message.sourceAgentId && ` — ${message.sourceAgentId.slice(0, 8)}`}
@@ -144,8 +230,8 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
         </div>
 
         {message.reasoningContent && (
-          <div className="mb-2 px-3 py-2 rounded bg-zinc-800/50 text-xs text-zinc-400 whitespace-pre-wrap max-h-32 overflow-auto">
-            <span className="text-zinc-500 font-medium">Thinking: </span>
+          <div className="mb-2 max-h-32 overflow-auto rounded-md border border-line bg-panel-muted px-3 py-2 text-xs text-ink-muted whitespace-pre-wrap">
+            <span className="text-ink-faint font-medium">Thinking: </span>
             {message.reasoningContent}
           </div>
         )}
@@ -158,7 +244,7 @@ export function ChatMessageItem({ message }: { message: ChatMessage }) {
 
         {!message.userInput && message.text && (
           <div
-            className={`text-sm whitespace-pre-wrap break-words ${roleStyle.contentClassName || ""}`}
+            className={`text-sm leading-6 whitespace-pre-wrap break-words ${roleStyle.contentClassName || ""}`}
           >
             {message.text}
           </div>
