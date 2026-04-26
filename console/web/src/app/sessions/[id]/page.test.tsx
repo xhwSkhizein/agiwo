@@ -9,6 +9,8 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "sess-1" }),
+  useRouter: () => ({ replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/lib/api", async () => {

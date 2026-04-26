@@ -8,12 +8,14 @@ import {
   ErrorStateMessage,
   TextStateMessage,
 } from "@/components/state-message";
+import { CopyButton } from "@/components/copy-button";
+import { MonoText } from "@/components/mono-text";
 import { PaginationControls } from "@/components/pagination-controls";
 import { TraceStatusBadge } from "@/components/trace-status-badge";
 import { listTraces } from "@/lib/api";
 import type { TraceListItem } from "@/lib/api";
 import { formatTokenCount, formatUsd } from "@/lib/metrics";
-import { formatRoundedMs } from "@/lib/time";
+import { formatLocalDateTime, formatRoundedMs } from "@/lib/time";
 
 const TRACE_STATUS_FILTERS = [
   { label: "All", value: "" },
@@ -208,17 +210,16 @@ function TracesPageContent() {
           <table className="w-full text-sm">
             <thead className="bg-zinc-900 text-zinc-400 text-xs uppercase tracking-wide">
               <tr>
-                <th className="text-left px-4 py-3">Input</th>
+                <th className="text-left px-4 py-3">Trace</th>
+                <th className="text-left px-4 py-3">Input / Output</th>
+                <th className="text-left px-4 py-3">Session</th>
                 <th className="text-left px-4 py-3">Agent</th>
                 <th className="text-center px-4 py-3">Status</th>
                 <th className="text-right px-4 py-3">Cost</th>
-                <th className="text-right px-4 py-3">Input</th>
-                <th className="text-right px-4 py-3">Output</th>
-                <th className="text-right px-4 py-3">Total</th>
-                <th className="text-right px-4 py-3">Cache R/C</th>
-                <th className="text-right px-4 py-3">LLM</th>
-                <th className="text-right px-4 py-3">Tools</th>
+                <th className="text-right px-4 py-3">Tokens</th>
+                <th className="text-right px-4 py-3">Calls</th>
                 <th className="text-right px-4 py-3">Duration</th>
+                <th className="text-right px-4 py-3">Started</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800">
@@ -227,16 +228,58 @@ function TracesPageContent() {
                   key={t.trace_id}
                   className="hover:bg-zinc-900/50 transition-colors"
                 >
-                  <td className="px-4 py-3 max-w-xs">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`/traces/${t.trace_id}`}
+                        className="font-mono text-xs text-zinc-200 transition-colors hover:text-white"
+                      >
+                        {t.trace_id.slice(0, 12)}
+                      </Link>
+                      <CopyButton
+                        value={t.trace_id}
+                        label="Copy"
+                        className="h-5 px-1.5"
+                      />
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 min-w-[20rem] max-w-md">
                     <Link
                       href={`/traces/${t.trace_id}`}
-                      className="text-zinc-200 hover:text-white block"
+                      className="block text-zinc-200 transition-colors hover:text-white"
                     >
-                      {t.input_query || t.trace_id.slice(0, 12)}
+                      <span className="line-clamp-2">
+                        {t.input_query || "Trace detail"}
+                      </span>
+                      {t.final_output ? (
+                        <span className="mt-1 block truncate text-xs text-zinc-500">
+                          {t.final_output}
+                        </span>
+                      ) : null}
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-zinc-400">
-                    {t.agent_id || "-"}
+                    {t.session_id ? (
+                      <Link
+                        href={`/sessions/${t.session_id}`}
+                        className="transition-colors hover:text-zinc-200"
+                      >
+                        <MonoText truncate className="max-w-[9rem]">
+                          {t.session_id}
+                        </MonoText>
+                      </Link>
+                    ) : (
+                      "-"
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-zinc-400">
+                    {t.agent_id ? (
+                      <MonoText truncate className="max-w-[9rem]">
+                        {t.agent_id}
+                      </MonoText>
+                    ) : (
+                      "-"
+                    )}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <TraceStatusBadge status={t.status} />
@@ -245,25 +288,20 @@ function TracesPageContent() {
                     {formatUsd(t.total_token_cost)}
                   </td>
                   <td className="px-4 py-3 text-right text-zinc-400">
-                    {formatTokenCount(t.total_input_tokens)}
+                    <div>{formatTokenCount(t.total_tokens)}</div>
+                    <div className="text-[11px] text-zinc-500">
+                      {formatTokenCount(t.total_input_tokens)} in / {formatTokenCount(t.total_output_tokens)} out
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right text-zinc-400">
-                    {formatTokenCount(t.total_output_tokens)}
-                  </td>
-                  <td className="px-4 py-3 text-right text-zinc-400">
-                    {formatTokenCount(t.total_tokens)}
-                  </td>
-                  <td className="px-4 py-3 text-right text-zinc-500">
-                    {formatTokenCount(t.total_cache_read_tokens)} / {formatTokenCount(t.total_cache_creation_tokens)}
-                  </td>
-                  <td className="px-4 py-3 text-right text-zinc-400">
-                    {t.total_llm_calls}
-                  </td>
-                  <td className="px-4 py-3 text-right text-zinc-400">
-                    {t.total_tool_calls}
+                    <div>{t.total_llm_calls} llm</div>
+                    <div className="text-[11px] text-zinc-500">{t.total_tool_calls} tools</div>
                   </td>
                   <td className="px-4 py-3 text-right text-zinc-400">
                     {formatRoundedMs(t.duration_ms)}
+                  </td>
+                  <td className="px-4 py-3 text-right text-xs text-zinc-500">
+                    {formatLocalDateTime(t.start_time)}
                   </td>
                 </tr>
               ))}

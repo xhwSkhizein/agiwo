@@ -56,14 +56,18 @@ export function TraceMainlineEvents({
           No mainline narrative available for this trace.
         </div>
       ) : (
-        events.map((event) => {
+        <div className="relative space-y-3 before:absolute before:left-[1.05rem] before:top-3 before:h-[calc(100%-1.5rem)] before:w-px before:bg-line">
+          {events.map((event) => {
           const previewItems = eventPreviewItems(event);
           return (
             <details
               key={event.id}
-              className="rounded-xl border border-line bg-panel px-3 py-3"
+              className="relative ml-10 rounded-xl border border-line bg-panel px-3 py-3"
             >
               <summary className="cursor-pointer list-none">
+                <div className="absolute -left-10 top-3 flex h-8 w-8 items-center justify-center rounded-full border border-line bg-panel font-mono text-[11px] text-ink-muted">
+                  {event.sequence ?? "-"}
+                </div>
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-medium text-foreground">
@@ -117,7 +121,8 @@ export function TraceMainlineEvents({
               </div>
             </details>
           );
-        })
+        })}
+        </div>
       )}
     </SectionCard>
   );

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Workflow } from "lucide-react";
 import { BackHeader } from "@/components/back-header";
 import { MetricCard } from "@/components/metric-card";
@@ -12,6 +12,7 @@ import { ConversationEventList } from "@/components/session-detail/conversation-
 import { MilestoneBoard } from "@/components/session-detail/milestone-board";
 import { SessionObservabilityPanel } from "@/components/session-detail/session-observability-panel";
 import { SessionStepCard } from "@/components/session-detail/session-step-card";
+import { contentText } from "@/components/step-content-preview";
 import {
   useSessionDetailResource,
   useSessionRunsPage,
@@ -33,12 +34,37 @@ import {
 import { getSchedulerRunResultView } from "@/lib/scheduler-run-result";
 import { formatLocalDateTime } from "@/lib/time";
 
+type StepRoleFilter = "all" | "user" | "assistant" | "tool";
+
+function stepMatchesSearch(step: { content: unknown; content_for_user: string | null; name: string | null; role: string; sequence: number }, query: string): boolean {
+  if (!query) {
+    return true;
+  }
+  const haystack = [
+    step.role,
+    String(step.sequence),
+    step.name ?? "",
+    step.content_for_user ?? "",
+    contentText(step.content) ?? "",
+    JSON.stringify(step.content ?? ""),
+  ]
+    .join("\n")
+    .toLowerCase();
+  return haystack.includes(query.toLowerCase());
+}
+
 export default function SessionDetailPage() {
   const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const sessionId = params.id as string;
-  const [viewMode, setViewMode] = useState<"mainline" | "debug">("mainline");
+  const [viewMode, setViewMode] = useState<"mainline" | "debug">(
+    searchParams.get("view") === "debug" ? "debug" : "mainline",
+  );
   const [runsOffset, setRunsOffset] = useState(0);
   const [runsPageSize, setRunsPageSize] = useState(50);
+  const [stepRoleFilter, setStepRoleFilter] = useState<StepRoleFilter>("all");
+  const [stepSearch, setStepSearch] = useState("");
   const debugActive = viewMode === "debug";
   const detailState = useSessionDetailResource(sessionId);
   const runsState = useSessionRunsPage(
@@ -72,6 +98,26 @@ export default function SessionDetailPage() {
       })),
     [runs],
   );
+  const filteredSteps = useMemo(
+    () =>
+      steps.filter((step) => {
+        if (stepRoleFilter !== "all" && step.role !== stepRoleFilter) {
+          return false;
+        }
+        return stepMatchesSearch(step, stepSearch.trim());
+      }),
+    [stepRoleFilter, stepSearch, steps],
+  );
+  const updateViewMode = (nextViewMode: "mainline" | "debug") => {
+    setViewMode(nextViewMode);
+    const next = new URLSearchParams(searchParams.toString());
+    if (nextViewMode === "debug") {
+      next.set("view", "debug");
+    } else {
+      next.delete("view");
+    }
+    router.replace(`/sessions/${sessionId}${next.toString() ? `?${next}` : ""}`);
+  };
 
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-6">
@@ -165,7 +211,7 @@ export default function SessionDetailPage() {
             <button
               type="button"
               aria-pressed={viewMode === "mainline"}
-              onClick={() => setViewMode("mainline")}
+              onClick={() => updateViewMode("mainline")}
               className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
                 viewMode === "mainline"
                   ? "border-accent bg-panel-strong text-foreground"
@@ -177,7 +223,7 @@ export default function SessionDetailPage() {
             <button
               type="button"
               aria-pressed={viewMode === "debug"}
-              onClick={() => setViewMode("debug")}
+              onClick={() => updateViewMode("debug")}
               className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
                 viewMode === "debug"
                   ? "border-accent bg-panel-strong text-foreground"
@@ -314,8 +360,13 @@ export default function SessionDetailPage() {
                 </EmptyStateMessage>
               ) : (
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-sm font-medium text-zinc-300">Steps</h2>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-sm font-medium text-zinc-300">Steps</h2>
+                      <p className="text-xs text-zinc-500">
+                        Showing {filteredSteps.length} of {steps.length}
+                      </p>
+                    </div>
                     {stepsState.hasMore && (
                       <button
                         type="button"
@@ -327,7 +378,40 @@ export default function SessionDetailPage() {
                       </button>
                     )}
                   </div>
-                  {steps.map((step) => (
+                  <div className="grid gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-3 md:grid-cols-[1fr_auto]">
+                    <label className="space-y-1">
+                      <span className="text-xs uppercase tracking-wide text-zinc-500">Search steps</span>
+                      <input
+                        value={stepSearch}
+                        onChange={(event) => setStepSearch(event.target.value)}
+                        placeholder="tool name, content, sequence"
+                        className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600"
+                      />
+                    </label>
+                    <div className="flex items-end gap-1">
+                      {(["all", "user", "assistant", "tool"] as StepRoleFilter[]).map((role) => (
+                        <button
+                          key={role}
+                          type="button"
+                          aria-pressed={stepRoleFilter === role}
+                          onClick={() => setStepRoleFilter(role)}
+                          className={`rounded-full border px-3 py-1.5 text-xs capitalize transition-colors ${
+                            stepRoleFilter === role
+                              ? "border-accent bg-panel-strong text-foreground"
+                              : "border-line text-ink-muted hover:border-line-strong hover:text-foreground"
+                          }`}
+                        >
+                          {role}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {filteredSteps.length === 0 ? (
+                    <EmptyStateMessage className="text-zinc-500 text-center py-8">
+                      No steps match the current filters
+                    </EmptyStateMessage>
+                  ) : null}
+                  {filteredSteps.map((step) => (
                     <SessionStepCard key={step.id} step={step} />
                   ))}
                 </div>

@@ -74,40 +74,42 @@ export function ConversationEventList({
           No conversation events for the selected filter.
         </div>
       ) : (
-        filteredEvents.map((event) => (
-          <details
-            key={event.id}
-            className={`rounded-xl border px-3 py-3 ${eventCardClass(event)}`}
-          >
-            <summary className="cursor-pointer list-none">
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-medium text-foreground">
-                    {event.title}
-                  </span>
-                  <span className="rounded-full border border-line px-2 py-0.5 text-[11px] uppercase tracking-wide text-ink-muted">
-                    {event.kind}
-                  </span>
-                  <span className="rounded-full border border-line px-2 py-0.5 text-[11px] uppercase tracking-wide text-ink-muted">
-                    {event.priority}
-                  </span>
-                  <span className="text-xs text-ink-muted">
-                    seq {event.sequence ?? "-"}
-                  </span>
+        <div className="relative space-y-3 before:absolute before:left-[1.05rem] before:top-3 before:h-[calc(100%-1.5rem)] before:w-px before:bg-line">
+          {filteredEvents.map((event) => (
+            <details
+              key={event.id}
+              className={`group relative ml-10 rounded-xl border px-3 py-3 ${eventCardClass(event)}`}
+            >
+              <summary className="cursor-pointer list-none">
+                <div className="absolute -left-10 top-3 flex h-8 w-8 items-center justify-center rounded-full border border-line bg-panel font-mono text-[11px] text-ink-muted">
+                  {event.sequence ?? "-"}
                 </div>
-                <p className="text-sm text-foreground">{event.summary}</p>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-foreground">
+                      {event.title}
+                    </span>
+                    <span className="rounded-full border border-line px-2 py-0.5 text-[11px] uppercase tracking-wide text-ink-muted">
+                      {event.kind}
+                    </span>
+                    <span className="rounded-full border border-line px-2 py-0.5 text-[11px] uppercase tracking-wide text-ink-muted">
+                      {event.priority}
+                    </span>
+                  </div>
+                  <p className="text-sm text-foreground">{event.summary}</p>
+                </div>
+              </summary>
+              <div className="mt-3">
+                <JsonDisclosure
+                  label="Details"
+                  value={event.details}
+                  className="bg-panel"
+                  contentClassName="bg-panel"
+                />
               </div>
-            </summary>
-            <div className="mt-3">
-              <JsonDisclosure
-                label="Details"
-                value={event.details}
-                className="bg-panel"
-                contentClassName="bg-panel"
-              />
-            </div>
-          </details>
-        ))
+            </details>
+          ))}
+        </div>
       )}
     </SectionCard>
   );
