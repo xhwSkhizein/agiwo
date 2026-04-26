@@ -3,7 +3,13 @@
 import { JsonDisclosure } from "@/components/json-disclosure";
 import { MonoText } from "@/components/mono-text";
 import { SectionCard } from "@/components/section-card";
-import type { TraceTimelineEvent } from "@/lib/api";
+import {
+  StepContentPreview,
+  StructuredValuePreview,
+  ToolCallPreviewList,
+  contentText,
+} from "@/components/step-content-preview";
+import type { ToolCallPayload, TraceTimelineEvent } from "@/lib/api";
 import { formatLocalDateTime } from "@/lib/time";
 
 function timelineStatusBadgeClass(status: string): string {
@@ -14,6 +20,99 @@ function timelineStatusBadgeClass(status: string): string {
     return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
   }
   return "border-line bg-panel-muted text-ink-muted";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function detailChips(event: TraceTimelineEvent): string[] {
+  const details = event.details;
+  if (event.kind === "llm_call") {
+    return [
+      typeof details.finish_reason === "string" ? details.finish_reason : "",
+      Array.isArray(details.messages) ? `${details.messages.length} messages` : "",
+      Array.isArray(details.response_tool_calls)
+        ? `${details.response_tool_calls.length} tool calls`
+        : "",
+    ].filter(Boolean);
+  }
+  if (event.kind === "tool_call") {
+    return [
+      typeof details.tool_name === "string" ? details.tool_name : "",
+      typeof details.tool_call_id === "string" ? details.tool_call_id : "",
+      typeof details.status === "string" ? details.status : "",
+    ].filter(Boolean);
+  }
+  if (event.kind === "review_checkpoint") {
+    return [
+      typeof details.trigger_reason === "string" ? details.trigger_reason : "",
+      typeof details.steps_since_last_review === "number"
+        ? `${details.steps_since_last_review} steps`
+        : "",
+      typeof details.active_milestone === "string" ? details.active_milestone : "",
+    ].filter(Boolean);
+  }
+  if (event.kind === "runtime_decision" || event.kind === "review_result") {
+    return [
+      typeof details.kind === "string" ? details.kind : "",
+      typeof details.experience === "string" ? details.experience : "",
+      typeof details.affected_count === "number" ? `${details.affected_count} affected` : "",
+    ].filter(Boolean);
+  }
+  return [];
+}
+
+function TimelineDetailPreview({ event }: { event: TraceTimelineEvent }) {
+  const details = event.details;
+
+  if (event.kind === "llm_call") {
+    const response = details.response_content;
+    const toolCalls: ToolCallPayload[] = Array.isArray(details.response_tool_calls)
+      ? (details.response_tool_calls as ToolCallPayload[])
+      : [];
+    return (
+      <div className="space-y-3">
+        <div>
+          <div className="mb-1 text-xs font-medium text-ink-faint">Response</div>
+          <StepContentPreview value={response} emptyLabel="No assistant response content" />
+        </div>
+        {toolCalls.length > 0 ? <ToolCallPreviewList toolCalls={toolCalls} /> : null}
+      </div>
+    );
+  }
+
+  if (event.kind === "tool_call") {
+    const preferredOutput = details.content_for_user ?? details.output ?? details.error;
+    return (
+      <div className="space-y-3">
+        <div>
+          <div className="mb-1 text-xs font-medium text-ink-faint">Arguments</div>
+          <StructuredValuePreview value={details.input_args ?? {}} />
+        </div>
+        <div>
+          <div className="mb-1 text-xs font-medium text-ink-faint">Result</div>
+          <StepContentPreview value={preferredOutput} emptyLabel="No tool result content" />
+        </div>
+      </div>
+    );
+  }
+
+  if (event.kind === "milestone_update" && Array.isArray(details.milestones)) {
+    return (
+      <div className="space-y-2">
+        {details.milestones.slice(0, 6).map((milestone, index) => (
+          <div key={index} className="rounded-md bg-panel-muted px-3 py-2 text-sm text-ink-soft">
+            {isRecord(milestone) && typeof milestone.description === "string"
+              ? milestone.description
+              : contentText(milestone) ?? `Milestone ${index + 1}`}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return <StructuredValuePreview value={details} />;
 }
 
 export function TraceLoopTimeline({
@@ -49,6 +148,18 @@ export function TraceLoopTimeline({
                   ) : null}
                 </div>
                 <p className="text-sm text-foreground">{event.summary}</p>
+                {detailChips(event).length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {detailChips(event).map((item, chipIndex) => (
+                      <span
+                        key={`${event.kind}-${event.sequence ?? "na"}-${chipIndex}`}
+                        className="rounded-full border border-line bg-panel-muted px-2 py-1 text-[11px] text-ink-muted"
+                      >
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="flex flex-wrap gap-3 text-xs text-ink-muted">
                   {event.run_id && (
                     <span>
@@ -65,9 +176,10 @@ export function TraceLoopTimeline({
                 </div>
               </div>
             </summary>
-            <div className="mt-3">
+            <div className="mt-3 space-y-3">
+              <TimelineDetailPreview event={event} />
               <JsonDisclosure
-                label="Details"
+                label="Raw details JSON"
                 value={event.details}
                 className="bg-panel"
                 contentClassName="bg-panel"

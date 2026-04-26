@@ -1,34 +1,17 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import { Bot, ChevronDown, ChevronRight, User, Wrench } from "lucide-react";
+import { Bot, User, Wrench } from "lucide-react";
 
+import {
+  RawJsonBlock,
+  StepContentPreview,
+  ToolCallPreviewList,
+  contentText,
+} from "@/components/step-content-preview";
 import { TokenMetricsBadges } from "@/components/token-metrics-badges";
 import { UserInputDetail } from "@/components/user-input-detail";
-import type { StepResponse, ToolCallPayload } from "@/lib/api";
+import type { StepResponse } from "@/lib/api";
 import { parseGenericMetrics } from "@/lib/metrics";
-
-function StepCardOriginalToggle({ content }: { content: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const toggle = useCallback(() => setExpanded((prev) => !prev), []);
-  return (
-    <div className="mt-1">
-      <button
-        type="button"
-        onClick={toggle}
-        className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-      >
-        {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-        {expanded ? "Hide original result" : "View original result"}
-      </button>
-      {expanded && (
-        <div className="mt-1 max-h-64 overflow-auto rounded bg-zinc-800/50 px-3 py-2 text-xs text-zinc-400 whitespace-pre-wrap">
-          {content}
-        </div>
-      )}
-    </div>
-  );
-}
 
 export function SessionStepCard({ step }: { step: StepResponse }) {
   const isUser = step.role === "user";
@@ -36,17 +19,18 @@ export function SessionStepCard({ step }: { step: StepResponse }) {
   const isTool = step.role === "tool";
   const metrics = parseGenericMetrics(step.metrics ?? undefined);
 
-  const getToolLabel = (toolCall: ToolCallPayload): string =>
-    toolCall.function?.name || "tool_call";
-  const getToolArgs = (toolCall: ToolCallPayload): string =>
-    toolCall.function?.arguments || JSON.stringify(toolCall);
-
   const hasStructuredUserInput =
     isUser && step.user_input !== null && step.user_input !== undefined;
   const hasCondensed = isTool && typeof step.condensed_content === "string";
-  const displayContent = hasCondensed ? step.condensed_content : step.content;
-  const originalContent =
-    hasCondensed && typeof step.content === "string" ? step.content : null;
+  const assistantContent =
+    step.content_for_user ?? contentText(step.content) ?? step.content;
+  const toolContent = step.condensed_content ?? step.content_for_user ?? step.content;
+  const displayContent = isAssistant
+    ? assistantContent
+    : isTool
+      ? toolContent
+      : step.content;
+  const originalContent = hasCondensed ? step.content : null;
 
   return (
     <div
@@ -83,30 +67,25 @@ export function SessionStepCard({ step }: { step: StepResponse }) {
         </div>
       )}
 
-      {!hasStructuredUserInput && Boolean(displayContent) && (
-        <div className="max-h-96 overflow-auto">
-          <div className="text-sm whitespace-pre-wrap break-words">
-            {typeof displayContent === "string"
-              ? displayContent
-              : JSON.stringify(displayContent, null, 2)}
-          </div>
-        </div>
+      {!hasStructuredUserInput && (
+        <StepContentPreview
+          value={displayContent}
+          emptyLabel={
+            isAssistant
+              ? "No assistant message content"
+              : isTool
+                ? "No tool result content"
+                : "No step content"
+          }
+        />
       )}
 
-      {originalContent && <StepCardOriginalToggle content={originalContent} />}
+      {originalContent !== null && originalContent !== undefined && (
+        <RawJsonBlock className="mt-3" label="Original result" value={originalContent} />
+      )}
 
       {step.tool_calls && step.tool_calls.length > 0 && (
-        <div className="mt-2 space-y-1">
-          {step.tool_calls.map((toolCall, index) => (
-            <div
-              key={index}
-              className="max-h-48 overflow-auto rounded bg-zinc-800/50 px-3 py-2 font-mono text-xs"
-            >
-              <span className="text-amber-400">{getToolLabel(toolCall)}</span>
-              <span className="ml-2 text-zinc-500">{getToolArgs(toolCall)}</span>
-            </div>
-          ))}
-        </div>
+        <ToolCallPreviewList toolCalls={step.tool_calls} />
       )}
 
       {step.metrics && (
@@ -119,6 +98,8 @@ export function SessionStepCard({ step }: { step: StepResponse }) {
           />
         </div>
       )}
+
+      <RawJsonBlock className="mt-3" label="Raw step JSON" value={step} />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -50,29 +50,55 @@ export function JsonDisclosure({
   contentClassName,
 }: JsonDisclosureProps) {
   const [expanded, setExpanded] = useState(false);
-  const serialized = useMemo(
-    () => (expanded ? JSON.stringify(value, null, 2) : null),
-    [expanded, value],
-  );
+  const [copied, setCopied] = useState(false);
+  const serialized = useMemo(() => JSON.stringify(value, null, 2), [value]);
+  const copyLabel = label.toLowerCase().includes("json")
+    ? `Copy ${label}`
+    : `Copy ${label} JSON`;
+
+  const copyJson = async () => {
+    if (!serialized) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(serialized);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  };
 
   return (
     <div className={cn("rounded-xl border border-line bg-panel-muted", className)}>
-      <button
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => {
-          setExpanded((current) => !current);
-        }}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-ink-muted transition-colors hover:text-foreground"
-      >
-        {expanded ? (
-          <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-        ) : (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0" />
-        )}
-        <span className="font-medium">{label}</span>
-        <span className="ml-auto text-[11px] text-ink-faint">{summarizeValue(value)}</span>
-      </button>
+      <div className="flex items-center gap-1 px-3 py-2 text-xs text-ink-muted">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => {
+            setExpanded((current) => !current);
+          }}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left transition-colors hover:text-foreground"
+        >
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="font-medium">{label}</span>
+          <span className="ml-auto text-[11px] text-ink-faint">{summarizeValue(value)}</span>
+        </button>
+        <button
+          type="button"
+          onClick={copyJson}
+          className="inline-flex h-6 items-center gap-1 rounded border border-line px-1.5 text-[11px] text-ink-faint transition-colors hover:border-line-strong hover:text-foreground"
+          aria-label={copyLabel}
+          title={copyLabel}
+        >
+          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+          <span>{copied ? "Copied" : "Copy"}</span>
+        </button>
+      </div>
       {expanded && (
         <pre
           className={cn(
