@@ -217,8 +217,10 @@ class SleepAndWaitTool(BaseTool):
 
     name = "sleep_and_wait"
     description = (
-        "Put the current agent to sleep and wait for a condition. "
-        "Use 'waitset' to wait for spawned child agents to finish. "
+        "Put the current agent to sleep and wait for a scheduler condition. "
+        "Use 'waitset' only to wait for spawned child agents from "
+        "spawn_child_agent or fork_child_agent. Do not use waitset for bash "
+        "background jobs; use bash_process for jobs returned by bash(background=true). "
         "Use 'timer' to sleep for a fixed duration. "
         "Use 'periodic' to periodically wake up and check."
     )
@@ -245,7 +247,13 @@ class SleepAndWaitTool(BaseTool):
                 "wait_for": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional list of specific child agent IDs to wait for. If omitted, waits for all children.",
+                    "description": (
+                        "Optional list of direct child agent IDs to wait for. "
+                        "IDs must come from spawn_child_agent/fork_child_agent. "
+                        "Do not pass bash background job IDs here; use "
+                        "bash_process for those jobs. If omitted, waits for all "
+                        "direct child agents."
+                    ),
                 },
                 "timeout": {
                     "type": "number",

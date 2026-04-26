@@ -76,8 +76,11 @@ class BashTool(BaseTool):
     def description(self) -> str:
         lines = (
             "Terminal-style bash tool. Pass one shell command via `command`. "
-            "Set `background=true` to start a background job. "
-            "Use the separate `bash_process` tool to inspect, stop, or feed background jobs. "
+            "Set `background=true` to start a background shell job and return "
+            "a bash job_id immediately. Use the separate `bash_process` tool "
+            "to inspect, read logs, stop, or feed background jobs. Do not pass "
+            "bash job_id values to sleep_and_wait; sleep_and_wait waits for "
+            "scheduler child agents only. "
             "Set `pty=true` for interactive CLI commands that require a TTY. "
             "Built-in safety guard blocks destructive commands, and risky commands may require confirmation."
         )
@@ -217,6 +220,11 @@ class BashTool(BaseTool):
                 state="running",
                 background=True,
                 mode="pty" if use_pty else "pipe",
+                guidance=(
+                    "Use bash_process with this job_id to check status, read logs, "
+                    "send input, or stop the job. Do not pass this job_id to "
+                    "sleep_and_wait; sleep_and_wait waits for scheduler child agents."
+                ),
             )
 
         result: CommandResult = await self.config.sandbox.execute_command(

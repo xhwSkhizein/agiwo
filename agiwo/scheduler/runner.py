@@ -587,7 +587,12 @@ class SchedulerRunner:
         for child_id in target_ids:
             child = children_by_id.get(child_id)
             if child is None:
-                failed[child_id] = "Agent state not found"
+                failed[child_id] = (
+                    "Invalid wait target: no direct child agent state exists for "
+                    "this ID. sleep_and_wait(wait_for=...) only accepts child "
+                    "agent IDs from spawn_child_agent/fork_child_agent. If this "
+                    "ID came from bash(background=true), use bash_process."
+                )
             elif child.status == AgentStateStatus.FAILED:
                 failed[child_id] = child.result_summary or "Unknown failure"
             elif child.status == AgentStateStatus.COMPLETED:

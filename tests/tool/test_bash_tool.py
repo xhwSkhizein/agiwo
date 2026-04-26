@@ -141,6 +141,24 @@ class TestBashToolBackgroundJobs:
             bash_tool.config.sandbox.started_process_calls[-1]["agent_id"] == "agent_1"
         )
 
+    async def test_background_result_points_to_bash_process_not_sleep_wait(
+        self, bash_tool, mock_context
+    ):
+        result = await bash_tool.execute(
+            {
+                "command": "sleep 30",
+                "background": True,
+                "tool_call_id": "tc_background_guidance",
+            },
+            mock_context,
+        )
+
+        assert result.output["ok"] is True
+        assert result.output["background"] is True
+        assert result.output["job_id"]
+        assert "Use bash_process" in result.content
+        assert "Do not pass this job_id to sleep_and_wait" in result.content
+
     async def test_start_background_job_with_pty(self, bash_tool, mock_context):
         result = await bash_tool.execute(
             {

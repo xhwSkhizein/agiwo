@@ -28,6 +28,7 @@ from agiwo.scheduler.models import (
     SchedulerRunResult,
     SchedulerConfig,
     SchedulerEventType,
+    WaitMode,
     WakeCondition,
     WakeType,
 )
@@ -741,6 +742,30 @@ class TestSchedulerRunnerCleanup:
 
 
 class TestSchedulerTimeoutDispatch:
+    @pytest.mark.asyncio
+    async def test_waitset_timeout_reports_invalid_wait_target(self):
+        scheduler = Scheduler(_fast_config())
+        state = AgentState(
+            id="root-invalid-wait",
+            session_id="sess-invalid-wait",
+            status=AgentStateStatus.WAITING,
+            task="root task",
+            wake_condition=WakeCondition(
+                type=WakeType.WAITSET,
+                wait_for=("e2cf1f96-5ce8-4a6b-899a-ce7029e2083d",),
+                wait_mode=WaitMode.ALL,
+                timeout_at=datetime.now(timezone.utc),
+            ),
+            is_persistent=True,
+        )
+        await scheduler._store.save_state(state)
+
+        message = await scheduler._runner._build_timeout_message(state)
+
+        assert "Invalid wait target" in message
+        assert "Agent state not found" not in message
+        assert "bash_process" in message
+
     @pytest.mark.asyncio
     async def test_enforce_timeouts_deduplicates_dispatched_state(self):
         scheduler = Scheduler(_fast_config())
