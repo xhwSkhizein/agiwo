@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -10,10 +11,12 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Flag,
   Loader2,
   Moon,
   PanelRight,
   Play,
+  ShieldCheck,
   Workflow,
   XCircle,
 } from "lucide-react";
@@ -38,8 +41,11 @@ import type {
   AgentConfig,
   AgentStateDetail,
   AgentStateListItem,
+  ConversationEvent,
   PendingEventItem,
+  ReviewCycle,
   RunCompletedEventPayload,
+  SessionMilestoneBoard,
   StreamEventPayload,
 } from "@/lib/api";
 import type { ChatMessage } from "@/lib/chat-types";
@@ -50,6 +56,11 @@ import {
   getHighestMessageSequence,
   messagesFromSteps,
 } from "@/lib/chat-types";
+import {
+  activeMilestoneFromBoard,
+  milestoneStatusClass,
+  reviewSummary,
+} from "@/lib/insights";
 import { getSchedulerRunResultView } from "@/lib/scheduler-run-result";
 import { formatLocalDateTime } from "@/lib/time";
 import { formatWakeConditionSummary } from "@/lib/wake-condition";
@@ -118,6 +129,139 @@ function statusFromSchedulerState(
   }
 }
 
+interface InsightEmptyProps {
+  children: ReactNode;
+}
+
+interface ExecutionInsightPanelProps {
+  board: SessionMilestoneBoard | null;
+  reviewCycles: ReviewCycle[];
+  events: ConversationEvent[];
+}
+
+function InsightEmpty({ children }: InsightEmptyProps) {
+  return (
+    <div className="rounded-lg border border-dashed border-line px-3 py-4 text-xs text-ink-faint">
+      {children}
+    </div>
+  );
+}
+
+function ExecutionInsightPanel({
+  board,
+  reviewCycles,
+  events,
+}: ExecutionInsightPanelProps) {
+  const activeMilestone = activeMilestoneFromBoard(board);
+  const latestReview = reviewCycles[reviewCycles.length - 1] ?? null;
+  const keyEvents = events
+    .filter((event) => event.priority !== "muted")
+    .slice(-6)
+    .reverse();
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-line bg-panel/80 p-3">
+        <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-ink-faint">
+          <Flag className="h-3.5 w-3.5" />
+          Current Objective
+        </div>
+        {activeMilestone ? (
+          <div className="space-y-2">
+            <p className="text-sm leading-5 text-foreground">
+              {activeMilestone.description}
+            </p>
+            <div className="flex flex-wrap gap-2 text-[11px]">
+              <span
+                className={`rounded-full border px-2 py-0.5 uppercase tracking-wide ${milestoneStatusClass(activeMilestone.status)}`}
+              >
+                {activeMilestone.status}
+              </span>
+              <span className="rounded-full border border-line px-2 py-0.5 text-ink-muted">
+                declared {activeMilestone.declared_at_seq ?? "-"}
+              </span>
+              {activeMilestone.completed_at_seq !== null && (
+                <span className="rounded-full border border-line px-2 py-0.5 text-ink-muted">
+                  completed {activeMilestone.completed_at_seq}
+                </span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <InsightEmpty>No active milestone declared.</InsightEmpty>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-line bg-panel/80 p-3">
+        <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-ink-faint">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Alignment
+        </div>
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wide ${
+                latestReview?.aligned === false
+                  ? "border-warning/50 bg-warning/10 text-warning"
+                  : "border-line bg-panel-muted text-ink-muted"
+              }`}
+            >
+              {reviewSummary(latestReview)}
+            </span>
+            {latestReview?.trigger_reason && (
+              <span className="text-[11px] text-ink-faint">
+                {latestReview.trigger_reason}
+              </span>
+            )}
+          </div>
+          {latestReview?.experience ? (
+            <p className="max-h-24 overflow-auto text-xs leading-5 text-ink-muted">
+              {latestReview.experience}
+            </p>
+          ) : (
+            <p className="text-xs text-ink-faint">
+              Reviews will appear here when checkpoints resolve.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-line bg-panel/80 p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="text-xs uppercase tracking-wide text-ink-faint">
+            Key Events
+          </div>
+          <span className="text-[11px] text-ink-faint">{keyEvents.length}</span>
+        </div>
+        {keyEvents.length === 0 ? (
+          <InsightEmpty>No key events replayed yet.</InsightEmpty>
+        ) : (
+          <div className="space-y-2">
+            {keyEvents.map((event) => (
+              <div
+                key={event.id}
+                className="rounded-md border border-line bg-panel-muted px-2.5 py-2"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                    {event.title}
+                  </span>
+                  <span className="text-[11px] text-ink-faint">
+                    seq {event.sequence ?? "-"}
+                  </span>
+                </div>
+                <p className="mt-1 max-h-16 overflow-hidden text-xs leading-5 text-ink-muted">
+                  {event.summary}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Render the scheduler chat page UI for interacting with an agent's sessions, orchestration state, and child agents.
  *
@@ -149,6 +293,10 @@ function SchedulerChatPageContent() {
     useState<OrchestrationStatus>("idle");
   const [stateId, setStateId] = useState<string | null>(null);
   const [rootState, setRootState] = useState<AgentStateDetail | null>(null);
+  const [milestoneBoard, setMilestoneBoard] =
+    useState<SessionMilestoneBoard | null>(null);
+  const [reviewCycles, setReviewCycles] = useState<ReviewCycle[]>([]);
+  const [conversationEvents, setConversationEvents] = useState<ConversationEvent[]>([]);
   const [pendingEvents, setPendingEvents] = useState<PendingEventItem[]>([]);
   const [children, setChildren] = useState<AgentStateListItem[]>([]);
   const [expandedChildren, setExpandedChildren] = useState<Set<string>>(
@@ -191,6 +339,9 @@ function SchedulerChatPageContent() {
     async (targetSessionId: string) => {
       const detail = await getSessionDetail(targetSessionId);
       setRootState(detail.scheduler_state);
+      setMilestoneBoard(detail.milestone_board);
+      setReviewCycles(detail.review_cycles);
+      setConversationEvents(detail.conversation_events);
       setStateId(detail.scheduler_state?.id ?? null);
       setOrchestrationStatus(statusFromSchedulerState(detail.scheduler_state));
       if (!detail.scheduler_state?.id) {
@@ -251,6 +402,9 @@ function SchedulerChatPageContent() {
             getPendingEvents(nextStateId),
           ]);
           setRootState(detail.scheduler_state);
+          setMilestoneBoard(detail.milestone_board);
+          setReviewCycles(detail.review_cycles);
+          setConversationEvents(detail.conversation_events);
           setChildren(nextChildren);
           setPendingEvents(nextPendingEvents);
           setOrchestrationStatus(statusFromSchedulerState(detail.scheduler_state));
@@ -406,6 +560,9 @@ function SchedulerChatPageContent() {
     if (!sessionId) {
       clearMessages();
       setRootState(null);
+      setMilestoneBoard(null);
+      setReviewCycles([]);
+      setConversationEvents([]);
       setStateId(null);
       setPendingEvents([]);
       setChildren([]);
@@ -476,6 +633,9 @@ function SchedulerChatPageContent() {
     setChildren([]);
     setPendingEvents([]);
     setChildMessages({});
+    setMilestoneBoard(null);
+    setReviewCycles([]);
+    setConversationEvents([]);
     sendMessage(text);
   };
 
@@ -511,6 +671,9 @@ function SchedulerChatPageContent() {
       setPendingEvents([]);
       setChildMessages({});
       setRootState(null);
+      setMilestoneBoard(null);
+      setReviewCycles([]);
+      setConversationEvents([]);
       setStateId(null);
       setOrchestrationStatus("idle");
     },
@@ -561,6 +724,9 @@ function SchedulerChatPageContent() {
     updateSessionUrl(targetSessionId);
     clearMessages();
     setChildMessages({});
+    setMilestoneBoard(null);
+    setReviewCycles([]);
+    setConversationEvents([]);
     setExpandedChildren(new Set());
     try {
       const [detail, stepsPage] = await Promise.all([
@@ -698,9 +864,11 @@ function SchedulerChatPageContent() {
             </EmptyStateMessage>
           )}
 
-          {messages.map((msg) => (
-            <ChatMessageItem key={msg.id} message={msg} />
-          ))}
+          <div className="mx-auto max-w-4xl space-y-4">
+            {messages.map((msg) => (
+              <ChatMessageItem key={msg.id} message={msg} />
+            ))}
+          </div>
           <div ref={messagesEndRef} />
         </div>
 
@@ -734,6 +902,9 @@ function SchedulerChatPageContent() {
                 router.replace(url.pathname + url.search);
                 clearMessages();
                 setRootState(null);
+                setMilestoneBoard(null);
+                setReviewCycles([]);
+                setConversationEvents([]);
                 setStateId(null);
                 setOrchestrationStatus("idle");
               }
@@ -788,6 +959,12 @@ function SchedulerChatPageContent() {
         </div>
 
         <div className="flex-1 overflow-auto space-y-4 p-4">
+          <ExecutionInsightPanel
+            board={milestoneBoard}
+            reviewCycles={reviewCycles}
+            events={conversationEvents}
+          />
+
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3 space-y-2">
             <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-zinc-500">
               <Workflow className="w-3.5 h-3.5" />
