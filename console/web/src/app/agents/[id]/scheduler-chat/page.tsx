@@ -56,6 +56,11 @@ import {
   getHighestMessageSequence,
   messagesFromSteps,
 } from "@/lib/chat-types";
+import {
+  activeMilestoneFromBoard,
+  milestoneStatusClass,
+  reviewSummary,
+} from "@/lib/insights";
 import { getSchedulerRunResultView } from "@/lib/scheduler-run-result";
 import { formatLocalDateTime } from "@/lib/time";
 import { formatWakeConditionSummary } from "@/lib/wake-condition";
@@ -124,36 +129,17 @@ function statusFromSchedulerState(
   }
 }
 
-function milestoneStatusClass(status: string): string {
-  if (status === "completed") {
-    return "border-success/40 bg-success/10 text-success";
-  }
-  if (status === "active") {
-    return "border-accent/70 bg-accent/10 text-foreground";
-  }
-  if (status === "abandoned") {
-    return "border-danger/40 bg-danger/10 text-danger";
-  }
-  return "border-line bg-panel-muted text-ink-muted";
+interface InsightEmptyProps {
+  children: ReactNode;
 }
 
-function reviewSummary(cycle: ReviewCycle | null): string {
-  if (!cycle) {
-    return "No review cycle yet";
-  }
-  if (cycle.aligned === true) {
-    return "Aligned";
-  }
-  if (cycle.aligned === false && cycle.step_back_applied) {
-    return `${cycle.affected_count ?? 0} steps condensed`;
-  }
-  if (cycle.aligned === false) {
-    return "Drift detected";
-  }
-  return "Checkpoint recorded";
+interface ExecutionInsightPanelProps {
+  board: SessionMilestoneBoard | null;
+  reviewCycles: ReviewCycle[];
+  events: ConversationEvent[];
 }
 
-function InsightEmpty({ children }: { children: ReactNode }) {
+function InsightEmpty({ children }: InsightEmptyProps) {
   return (
     <div className="rounded-lg border border-dashed border-line px-3 py-4 text-xs text-ink-faint">
       {children}
@@ -165,14 +151,8 @@ function ExecutionInsightPanel({
   board,
   reviewCycles,
   events,
-}: {
-  board: SessionMilestoneBoard | null;
-  reviewCycles: ReviewCycle[];
-  events: ConversationEvent[];
-}) {
-  const activeMilestone =
-    board?.milestones.find((milestone) => milestone.id === board.active_milestone_id) ??
-    null;
+}: ExecutionInsightPanelProps) {
+  const activeMilestone = activeMilestoneFromBoard(board);
   const latestReview = reviewCycles[reviewCycles.length - 1] ?? null;
   const keyEvents = events
     .filter((event) => event.priority !== "muted")

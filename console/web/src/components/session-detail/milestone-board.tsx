@@ -2,20 +2,8 @@
 
 import { SectionCard } from "@/components/section-card";
 import type { ReviewCycle, SessionMilestoneBoard } from "@/lib/api";
+import { milestoneStatusClass } from "@/lib/insights";
 import { formatLocalDateTime } from "@/lib/time";
-
-function milestoneStatusClass(status: string): string {
-  if (status === "completed") {
-    return "border-emerald-500/40 bg-emerald-500/10 text-emerald-200";
-  }
-  if (status === "active") {
-    return "border-accent bg-panel-strong text-foreground";
-  }
-  if (status === "abandoned") {
-    return "border-red-500/40 bg-red-500/10 text-red-200";
-  }
-  return "border-line bg-panel-muted text-ink-muted";
-}
 
 function latestReviewSummary(board: SessionMilestoneBoard | null): string {
   const outcome = board?.latest_review_outcome;

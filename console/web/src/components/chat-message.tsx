@@ -56,7 +56,9 @@ function ToolCallList({ toolCalls }: { toolCalls: ToolCallPayload[] }) {
     <div className="mt-2 flex flex-wrap gap-1.5">
       {toolCalls.map((toolCall, index) => {
         const fn = toolCall.function;
-        const args = fn ? fn.arguments : JSON.stringify(toolCall);
+        const args = fn
+          ? stringifyDisplayValue(fn.arguments)
+          : stringifyDisplayValue(toolCall);
 
         return (
           <details
@@ -130,7 +132,26 @@ function compactText(value: string | undefined, maxLength: number): string {
   return `${trimmed.slice(0, maxLength - 1)}…`;
 }
 
-function ToolResultMessage({ message }: { message: ChatMessage }) {
+function stringifyDisplayValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    const serialized = JSON.stringify(value);
+    if (typeof serialized === "string") {
+      return serialized;
+    }
+  } catch {
+    // Fall back to String for values that cannot be serialized.
+  }
+  return String(value);
+}
+
+interface ToolResultMessageProps {
+  message: ChatMessage;
+}
+
+function ToolResultMessage({ message }: ToolResultMessageProps) {
   const preview = compactText(message.text, 320);
   const hasLongResult = Boolean(message.text && message.text.trim().length > 320);
 
@@ -161,6 +182,11 @@ function ToolResultMessage({ message }: { message: ChatMessage }) {
             <p className="mt-1 max-h-16 overflow-hidden text-xs leading-5 text-ink-muted">
               {preview}
             </p>
+            {hasLongResult && (
+              <p className="mt-1 text-[11px] text-ink-faint group-open:hidden">
+                Long result is collapsed by default to keep the run narrative readable.
+              </p>
+            )}
           </div>
         </div>
       </summary>
@@ -169,11 +195,6 @@ function ToolResultMessage({ message }: { message: ChatMessage }) {
           <div className="max-h-72 overflow-auto rounded-md bg-panel px-3 py-2 text-xs leading-5 text-ink-soft whitespace-pre-wrap break-words">
             {message.text}
           </div>
-        )}
-        {hasLongResult && (
-          <p className="mt-2 text-[11px] text-ink-faint">
-            Long result is collapsed by default to keep the run narrative readable.
-          </p>
         )}
         {message.originalContent && (
           <OriginalContentToggle content={message.originalContent} />

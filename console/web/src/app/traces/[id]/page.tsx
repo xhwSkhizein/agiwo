@@ -20,6 +20,7 @@ import { TraceRuntimeDecisions } from "@/components/trace-detail/trace-runtime-d
 import { TraceStatusBadge } from "@/components/trace-status-badge";
 import { getTrace } from "@/lib/api";
 import type { TraceDetail, SpanResponse } from "@/lib/api";
+import { latestAlignment, latestObjective } from "@/lib/insights";
 import {
   formatDurationMs,
   parseGenericMetrics,
@@ -39,50 +40,11 @@ function KindIcon({ kind }: { kind: string }) {
   return <Clock className="h-3.5 w-3.5 text-ink-faint" />;
 }
 
-function latestObjective(trace: TraceDetail): string {
-  const latestCycle = trace.review_cycles[trace.review_cycles.length - 1];
-  if (latestCycle?.active_milestone) {
-    return latestCycle.active_milestone;
-  }
-
-  const milestoneEvent = [...trace.mainline_events]
-    .reverse()
-    .find((event) => event.kind === "milestone_update");
-  const milestones = Array.isArray(milestoneEvent?.details.milestones)
-    ? milestoneEvent.details.milestones
-    : [];
-  const active = milestones.find(
-    (item) =>
-      item &&
-      typeof item === "object" &&
-      "status" in item &&
-      item.status === "active" &&
-      "description" in item,
-  );
-  if (active && typeof active === "object" && "description" in active) {
-    return String(active.description);
-  }
-  return "No active milestone";
+interface TraceInsightRailProps {
+  trace: TraceDetail;
 }
 
-function latestAlignment(trace: TraceDetail): string {
-  const latestCycle = trace.review_cycles[trace.review_cycles.length - 1];
-  if (!latestCycle) {
-    return "No review cycle";
-  }
-  if (latestCycle.aligned === true) {
-    return "Aligned";
-  }
-  if (latestCycle.aligned === false && latestCycle.step_back_applied) {
-    return `${latestCycle.affected_count ?? 0} steps condensed`;
-  }
-  if (latestCycle.aligned === false) {
-    return "Drift detected";
-  }
-  return "Checkpoint recorded";
-}
-
-function TraceInsightRail({ trace }: { trace: TraceDetail }) {
+function TraceInsightRail({ trace }: TraceInsightRailProps) {
   const slowestSpan = [...trace.spans]
     .filter((span) => span.duration_ms !== null)
     .sort((a, b) => (b.duration_ms ?? 0) - (a.duration_ms ?? 0))[0];
