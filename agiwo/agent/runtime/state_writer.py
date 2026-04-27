@@ -6,9 +6,14 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
     CompactionFailed,
+    ContextRepairApplied,
     ContextStepsHidden,
     ContextAssembled,
+    GoalMilestonesUpdated,
     HookFailed,
+    IntrospectionCheckpointRecorded,
+    IntrospectionOutcomeRecorded,
+    IntrospectionTriggered,
     LLMCallCompleted,
     LLMCallStarted,
     MessagesRebuilt,
@@ -20,13 +25,14 @@ from agiwo.agent.models.log import (
     RunFinished,
     RunStarted,
     StepBackApplied,
+    StepCondensedContentUpdated,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
     build_committed_step_entry,
 )
 from agiwo.agent.models.input import UserInput
-from agiwo.agent.models.review import Milestone
+from agiwo.agent.introspect.models import Milestone
 from agiwo.agent.models.run import CompactMetadata, RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.runtime.context import RunContext
@@ -290,6 +296,29 @@ class RunStateWriter:
             ]
         )
 
+    async def record_goal_milestones_updated(
+        self,
+        *,
+        milestones: list[Milestone],
+        active_milestone_id: str | None,
+        source_tool_call_id: str | None,
+        source_step_id: str | None,
+        reason: Literal["declared", "updated", "completed", "activated"],
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_goal_milestones_updated_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    milestones=list(milestones),
+                    active_milestone_id=active_milestone_id,
+                    source_tool_call_id=source_tool_call_id,
+                    source_step_id=source_step_id,
+                    reason=reason,
+                )
+            ]
+        )
+
     async def record_review_trigger_decided(
         self,
         *,
@@ -317,6 +346,33 @@ class RunStateWriter:
             ]
         )
 
+    async def record_introspection_triggered(
+        self,
+        *,
+        trigger_reason: Literal[
+            "step_interval", "consecutive_errors", "milestone_switch"
+        ],
+        active_milestone_id: str | None,
+        review_count_since_boundary: int,
+        trigger_tool_call_id: str | None,
+        trigger_tool_step_id: str | None,
+        notice_step_id: str | None,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_introspection_triggered_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    trigger_reason=trigger_reason,
+                    active_milestone_id=active_milestone_id,
+                    review_count_since_boundary=review_count_since_boundary,
+                    trigger_tool_call_id=trigger_tool_call_id,
+                    trigger_tool_step_id=trigger_tool_step_id,
+                    notice_step_id=notice_step_id,
+                )
+            ]
+        )
+
     async def record_review_checkpoint_recorded(
         self,
         *,
@@ -328,6 +384,27 @@ class RunStateWriter:
         return await self.append_entries(
             [
                 build_review_checkpoint_recorded_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    checkpoint_seq=checkpoint_seq,
+                    milestone_id=milestone_id,
+                    review_tool_call_id=review_tool_call_id,
+                    review_step_id=review_step_id,
+                )
+            ]
+        )
+
+    async def record_introspection_checkpoint_recorded(
+        self,
+        *,
+        checkpoint_seq: int,
+        milestone_id: str | None,
+        review_tool_call_id: str | None,
+        review_step_id: str | None,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_introspection_checkpoint_recorded_entry(
                     self._state,
                     sequence=await self._state.session_runtime.allocate_sequence(),
                     checkpoint_seq=checkpoint_seq,
@@ -365,6 +442,83 @@ class RunStateWriter:
                     hidden_step_ids=list(hidden_step_ids),
                     notice_cleaned_step_ids=list(notice_cleaned_step_ids),
                     condensed_step_ids=list(condensed_step_ids),
+                )
+            ]
+        )
+
+    async def record_introspection_outcome_recorded(
+        self,
+        *,
+        aligned: bool | None,
+        mode: Literal["metadata_only", "step_back"],
+        experience: str | None,
+        active_milestone_id: str | None,
+        review_tool_call_id: str | None,
+        review_step_id: str | None,
+        hidden_step_ids: list[str],
+        notice_cleaned_step_ids: list[str],
+        condensed_step_ids: list[str],
+        boundary_seq: int,
+        repair_start_seq: int | None,
+        repair_end_seq: int | None,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_introspection_outcome_recorded_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    aligned=aligned,
+                    mode=mode,
+                    experience=experience,
+                    active_milestone_id=active_milestone_id,
+                    review_tool_call_id=review_tool_call_id,
+                    review_step_id=review_step_id,
+                    hidden_step_ids=list(hidden_step_ids),
+                    notice_cleaned_step_ids=list(notice_cleaned_step_ids),
+                    condensed_step_ids=list(condensed_step_ids),
+                    boundary_seq=boundary_seq,
+                    repair_start_seq=repair_start_seq,
+                    repair_end_seq=repair_end_seq,
+                )
+            ]
+        )
+
+    async def record_context_repair_applied(
+        self,
+        *,
+        mode: Literal["step_back"],
+        affected_count: int,
+        start_seq: int,
+        end_seq: int,
+        experience: str,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_context_repair_applied_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    mode=mode,
+                    affected_count=affected_count,
+                    start_seq=start_seq,
+                    end_seq=end_seq,
+                    experience=experience,
+                )
+            ]
+        )
+
+    async def record_step_condensed_content_updated(
+        self,
+        *,
+        step_id: str,
+        condensed_content: str,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_step_condensed_content_updated_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    step_id=step_id,
+                    condensed_content=condensed_content,
                 )
             ]
         )
@@ -626,6 +780,152 @@ def build_context_steps_hidden_entry(
     )
 
 
+def build_step_condensed_content_updated_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    step_id: str,
+    condensed_content: str,
+) -> StepCondensedContentUpdated:
+    return StepCondensedContentUpdated(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        step_id=step_id,
+        condensed_content=condensed_content,
+    )
+
+
+def build_goal_milestones_updated_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    milestones: list[Milestone],
+    active_milestone_id: str | None,
+    source_tool_call_id: str | None,
+    source_step_id: str | None,
+    reason: Literal["declared", "updated", "completed", "activated"],
+) -> GoalMilestonesUpdated:
+    return GoalMilestonesUpdated(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        milestones=list(milestones),
+        active_milestone_id=active_milestone_id,
+        source_tool_call_id=source_tool_call_id,
+        source_step_id=source_step_id,
+        reason=reason,
+    )
+
+
+def build_introspection_triggered_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    trigger_reason: Literal["step_interval", "consecutive_errors", "milestone_switch"],
+    active_milestone_id: str | None,
+    review_count_since_boundary: int,
+    trigger_tool_call_id: str | None,
+    trigger_tool_step_id: str | None,
+    notice_step_id: str | None,
+) -> IntrospectionTriggered:
+    return IntrospectionTriggered(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        trigger_reason=trigger_reason,
+        active_milestone_id=active_milestone_id,
+        review_count_since_boundary=review_count_since_boundary,
+        trigger_tool_call_id=trigger_tool_call_id,
+        trigger_tool_step_id=trigger_tool_step_id,
+        notice_step_id=notice_step_id,
+    )
+
+
+def build_introspection_checkpoint_recorded_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    checkpoint_seq: int,
+    milestone_id: str | None,
+    review_tool_call_id: str | None,
+    review_step_id: str | None,
+) -> IntrospectionCheckpointRecorded:
+    return IntrospectionCheckpointRecorded(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        checkpoint_seq=checkpoint_seq,
+        milestone_id=milestone_id,
+        review_tool_call_id=review_tool_call_id,
+        review_step_id=review_step_id,
+    )
+
+
+def build_introspection_outcome_recorded_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    aligned: bool | None,
+    mode: Literal["metadata_only", "step_back"],
+    experience: str | None,
+    active_milestone_id: str | None,
+    review_tool_call_id: str | None,
+    review_step_id: str | None,
+    hidden_step_ids: list[str],
+    notice_cleaned_step_ids: list[str],
+    condensed_step_ids: list[str],
+    boundary_seq: int,
+    repair_start_seq: int | None,
+    repair_end_seq: int | None,
+) -> IntrospectionOutcomeRecorded:
+    return IntrospectionOutcomeRecorded(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        aligned=aligned,
+        mode=mode,
+        experience=experience,
+        active_milestone_id=active_milestone_id,
+        review_tool_call_id=review_tool_call_id,
+        review_step_id=review_step_id,
+        hidden_step_ids=list(hidden_step_ids),
+        notice_cleaned_step_ids=list(notice_cleaned_step_ids),
+        condensed_step_ids=list(condensed_step_ids),
+        boundary_seq=boundary_seq,
+        repair_start_seq=repair_start_seq,
+        repair_end_seq=repair_end_seq,
+    )
+
+
+def build_context_repair_applied_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    mode: Literal["step_back"],
+    affected_count: int,
+    start_seq: int,
+    end_seq: int,
+    experience: str,
+) -> ContextRepairApplied:
+    return ContextRepairApplied(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        mode=mode,
+        affected_count=affected_count,
+        start_seq=start_seq,
+        end_seq=end_seq,
+        experience=experience,
+    )
+
+
 def build_review_milestones_updated_entry(
     state: RunContext,
     *,
@@ -750,8 +1050,13 @@ __all__ = [
     "build_compaction_applied_entry",
     "build_compaction_failed_entry",
     "build_context_assembled_entry",
+    "build_context_repair_applied_entry",
     "build_context_steps_hidden_entry",
+    "build_goal_milestones_updated_entry",
     "build_hook_failed_entry",
+    "build_introspection_checkpoint_recorded_entry",
+    "build_introspection_outcome_recorded_entry",
+    "build_introspection_triggered_entry",
     "build_llm_call_completed_entry",
     "build_llm_call_started_entry",
     "build_messages_rebuilt_entry",
@@ -760,6 +1065,7 @@ __all__ = [
     "build_review_outcome_recorded_entry",
     "build_review_trigger_decided_entry",
     "build_step_back_applied_entry",
+    "build_step_condensed_content_updated_entry",
     "build_run_failed_entry",
     "build_run_finished_entry",
     "build_run_started_entry",
