@@ -1,7 +1,6 @@
 """Read-model builders for session and trace runtime observability."""
 
 import json
-import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -30,19 +29,6 @@ from server.models.session import (
     TraceMainlineEventRecord,
     TraceTimelineEventRecord,
 )
-
-_SYSTEM_REVIEW_BLOCK_RE = re.compile(
-    r"<system-review>\s*(?P<body>.*?)\s*</system-review>",
-    re.IGNORECASE | re.DOTALL,
-)
-_TRIGGER_RE = re.compile(r"^Trigger:\s*(?P<value>.+)$", re.MULTILINE)
-_STEPS_RE = re.compile(r"^Steps since last review:\s*(?P<value>\d+)$", re.MULTILINE)
-_MILESTONE_RE = re.compile(
-    r'^Active milestone:\s*"(?P<value>.+)"\s*$',
-    re.MULTILINE,
-)
-_HOOK_ADVICE_RE = re.compile(r"^Hook advice:\s*(?P<value>.+)$", re.MULTILINE)
-_ALIGNED_RE = re.compile(r"aligned\s*=\s*(?P<value>true|false)", re.IGNORECASE)
 
 _TIMELINE_KIND_ORDER = {
     "run_started": 0,
@@ -165,57 +151,6 @@ def _string_value(value: object) -> str | None:
 
 def _normalize_tool_details(span: Span) -> dict[str, Any]:
     return dict(span.tool_details or {})
-
-
-def _review_tool_name(span: Span) -> str:
-    tool_details = _normalize_tool_details(span)
-    tool_name = tool_details.get("tool_name")
-    if isinstance(tool_name, str) and tool_name:
-        return tool_name
-    return span.name
-
-
-def _parse_review_result(
-    tool_details: dict[str, Any],
-    raw_output: str,
-) -> tuple[bool | None, str | None]:
-    input_args = tool_details.get("input_args")
-    if isinstance(input_args, dict):
-        aligned = _as_optional_bool(input_args.get("aligned"))
-        experience = _string_value(input_args.get("experience"))
-        if aligned is not None:
-            return aligned, experience
-    aligned_match = _ALIGNED_RE.search(raw_output)
-    aligned = (
-        aligned_match.group("value").strip().lower() == "true"
-        if aligned_match is not None
-        else None
-    )
-    experience = None
-    if raw_output:
-        _, _, tail = raw_output.partition(".")
-        experience = tail.strip() or None
-    return aligned, experience
-
-
-def _new_review_cycle_from_notice(
-    span: Span,
-    notice: dict[str, Any],
-    *,
-    trace: Trace,
-) -> ReviewCycleRecord:
-    sequence = _span_sequence(span)
-    return ReviewCycleRecord(
-        cycle_id=f"{span.run_id or 'run'}:{sequence}:{span.span_id}",
-        run_id=span.run_id or "",
-        agent_id=_runtime_agent_id(trace, span),
-        trigger_reason=str(notice.get("trigger_reason") or "unknown"),
-        steps_since_last_review=_as_int(notice.get("steps_since_last_review")),
-        active_milestone=_string_value(notice.get("active_milestone")),
-        hook_advice=_string_value(notice.get("hook_advice")),
-        started_at=span.start_time,
-        raw_notice=_string_value(notice.get("raw_notice")),
-    )
 
 
 def _milestone_description_by_id(
@@ -731,36 +666,6 @@ def build_runtime_decision_record_from_span(
     return builder(trace, span) if builder is not None else None
 
 
-def parse_system_review_notice(text: str) -> dict[str, Any] | None:
-    match = _SYSTEM_REVIEW_BLOCK_RE.search(text)
-    if match is None:
-        return None
-    body = match.group("body").strip()
-    trigger_match = _TRIGGER_RE.search(body)
-    step_match = _STEPS_RE.search(body)
-    milestone_match = _MILESTONE_RE.search(body)
-    advice_match = _HOOK_ADVICE_RE.search(body)
-    return {
-        "raw_notice": body,
-        "trigger_reason": (
-            trigger_match.group("value").strip()
-            if trigger_match is not None
-            else "unknown"
-        ),
-        "steps_since_last_review": (
-            int(step_match.group("value")) if step_match is not None else None
-        ),
-        "active_milestone": (
-            milestone_match.group("value").strip()
-            if milestone_match is not None
-            else None
-        ),
-        "hook_advice": (
-            advice_match.group("value").strip() if advice_match is not None else None
-        ),
-    }
-
-
 def build_trace_runtime_decisions(trace: Trace) -> list[RuntimeDecisionRecord]:
     decisions: list[RuntimeDecisionRecord] = []
     for span in trace.spans:
@@ -1057,30 +962,6 @@ def build_trace_mainline_events(trace: Trace) -> list[TraceMainlineEventRecord]:
     ]
 
 
-def _apply_review_result_to_cycles(
-    cycles: list[ReviewCycleRecord],
-    *,
-    trace: Trace,
-    span: Span,
-    tool_details: dict[str, Any],
-    raw_output: str,
-) -> None:
-    cycle = _find_latest_review_cycle(
-        cycles,
-        run_id=span.run_id or "",
-        predicate=lambda item: item.aligned is None,
-    )
-    if cycle is None:
-        cycle = _fallback_review_cycle(trace, span)
-        cycles.append(cycle)
-
-    aligned, experience = _parse_review_result(tool_details, raw_output)
-    cycle.aligned = aligned
-    if experience:
-        cycle.experience = experience
-    cycle.resolved_at = span.start_time
-
-
 def _apply_runtime_review_outcome_to_cycles(
     cycles: list[ReviewCycleRecord],
     *,
@@ -1184,29 +1065,6 @@ def _update_review_cycles_from_review_fact_span(
         )
         return True
     return span.name in {"review_milestones", "review_checkpoint"}
-
-
-def _update_review_cycles_from_tool_span(
-    cycles: list[ReviewCycleRecord],
-    *,
-    trace: Trace,
-    span: Span,
-) -> None:
-    tool_details = _normalize_tool_details(span)
-    raw_output = _json_text(tool_details.get("output"))
-    review_notice = parse_system_review_notice(raw_output)
-    if review_notice is not None:
-        cycles.append(_new_review_cycle_from_notice(span, review_notice, trace=trace))
-        return
-    if _review_tool_name(span) != "review_trajectory":
-        return
-    _apply_review_result_to_cycles(
-        cycles,
-        trace=trace,
-        span=span,
-        tool_details=tool_details,
-        raw_output=raw_output,
-    )
 
 
 def _update_review_cycles_from_runtime_span(
@@ -1641,5 +1499,4 @@ __all__ = [
     "build_trace_review_cycles",
     "build_trace_runtime_decisions",
     "build_trace_timeline_events",
-    "parse_system_review_notice",
 ]

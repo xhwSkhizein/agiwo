@@ -9,7 +9,6 @@ from typing import Any
 
 from agiwo.agent.introspect.models import GoalState, IntrospectionState
 from agiwo.agent.models.input import UserInput
-from agiwo.agent.models.review import ReviewState
 from agiwo.config.termination import TerminationReason
 from agiwo.utils.serialization import serialize_optional_datetime
 
@@ -125,7 +124,6 @@ class RunLedger:
     compaction: CompactionState = field(default_factory=CompactionState)
     goal: GoalState = field(default_factory=GoalState)
     introspection: IntrospectionState = field(default_factory=IntrospectionState)
-    review: ReviewState = field(default_factory=ReviewState)
 
 
 @dataclass

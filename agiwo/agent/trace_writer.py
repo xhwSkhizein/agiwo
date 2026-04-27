@@ -19,10 +19,6 @@ from agiwo.agent.models.log import (
     IntrospectionTriggered,
     LLMCallCompleted,
     LLMCallStarted,
-    ReviewCheckpointRecorded,
-    ReviewMilestonesUpdated,
-    ReviewOutcomeRecorded,
-    ReviewTriggerDecided,
     RunFailed as RunFailedEntry,
     RunFinished,
     RunLogEntry,
@@ -240,10 +236,6 @@ def _build_runtime_span_from_entry(
         | IntrospectionCheckpointRecorded
         | IntrospectionOutcomeRecorded
         | IntrospectionTriggered
-        | ReviewCheckpointRecorded
-        | ReviewMilestonesUpdated
-        | ReviewOutcomeRecorded
-        | ReviewTriggerDecided
         | RunRolledBack
         | StepBackApplied
         | TerminationDecided
@@ -335,7 +327,7 @@ def _build_runtime_span_from_entry(
                 "error": entry.error,
             }
         )
-    elif isinstance(entry, (GoalMilestonesUpdated, ReviewMilestonesUpdated)):
+    elif isinstance(entry, GoalMilestonesUpdated):
         name = "review_milestones"
         attributes.update(
             {
@@ -346,13 +338,9 @@ def _build_runtime_span_from_entry(
                 "reason": entry.reason,
             }
         )
-    elif isinstance(entry, (IntrospectionTriggered, ReviewTriggerDecided)):
+    elif isinstance(entry, IntrospectionTriggered):
         name = "review_trigger"
-        review_count = (
-            entry.review_count_since_boundary
-            if isinstance(entry, IntrospectionTriggered)
-            else entry.review_count_since_checkpoint
-        )
+        review_count = entry.review_count_since_boundary
         attributes.update(
             {
                 "trigger_reason": entry.trigger_reason,
@@ -364,7 +352,7 @@ def _build_runtime_span_from_entry(
                 "notice_step_id": entry.notice_step_id,
             }
         )
-    elif isinstance(entry, (IntrospectionCheckpointRecorded, ReviewCheckpointRecorded)):
+    elif isinstance(entry, IntrospectionCheckpointRecorded):
         name = "review_checkpoint"
         attributes.update(
             {
@@ -374,7 +362,7 @@ def _build_runtime_span_from_entry(
                 "review_step_id": entry.review_step_id,
             }
         )
-    elif isinstance(entry, (IntrospectionOutcomeRecorded, ReviewOutcomeRecorded)):
+    elif isinstance(entry, IntrospectionOutcomeRecorded):
         name = "review_outcome"
         attributes.update(
             {
@@ -420,10 +408,6 @@ def _append_runtime_entry_to_trace(
         | IntrospectionCheckpointRecorded
         | IntrospectionOutcomeRecorded
         | IntrospectionTriggered
-        | ReviewCheckpointRecorded
-        | ReviewMilestonesUpdated
-        | ReviewOutcomeRecorded
-        | ReviewTriggerDecided
         | RunRolledBack
         | StepBackApplied
         | TerminationDecided
@@ -697,10 +681,6 @@ def _apply_runtime_entry_to_trace(
             IntrospectionCheckpointRecorded,
             IntrospectionOutcomeRecorded,
             IntrospectionTriggered,
-            ReviewCheckpointRecorded,
-            ReviewMilestonesUpdated,
-            ReviewOutcomeRecorded,
-            ReviewTriggerDecided,
             RunRolledBack,
             StepBackApplied,
             TerminationDecided,
