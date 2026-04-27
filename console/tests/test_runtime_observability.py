@@ -361,6 +361,16 @@ def test_build_session_milestone_board_and_conversation_events() -> None:
             sequence=2,
             role=MessageRole.ASSISTANT,
             content="I will inspect auth",
+            tool_calls=[
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {
+                        "name": "read_file",
+                        "arguments": '{"path":"auth.py"}',
+                    },
+                }
+            ],
         ),
         StepView(
             id="step-tool",
@@ -385,6 +395,10 @@ def test_build_session_milestone_board_and_conversation_events() -> None:
         "milestone_event",
         "review_event",
     ]
+    assert events[0].details["content"] == "please inspect auth"
+    assert events[1].details["content"] == "I will inspect auth"
+    assert events[1].details["tool_calls"][0]["function"]["name"] == "read_file"
+    assert events[2].details["tool_name"] == "declare_milestones"
     assert events[-1].summary == "Review misaligned; 2 steps condensed"
 
 

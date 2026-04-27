@@ -112,15 +112,14 @@ function buildTrace(): TraceDetail {
 }
 
 describe("TraceDiagnostics", () => {
-  test("renders risk signals, paired tool transactions, and LLM prompt messages", () => {
+  test("renders risks, LLM content, tool calls, and tool results in one chain", () => {
     render(<TraceDiagnostics trace={buildTrace()} />);
 
-    expect(screen.getByText("Diagnostic Summary")).toBeInTheDocument();
+    expect(screen.getByText("Agent Execution Diagnostics")).toBeInTheDocument();
     expect(screen.getByText(/errored span/)).toBeInTheDocument();
     expect(screen.getByText(/high token usage/)).toBeInTheDocument();
-    expect(screen.getByText("Execution Chain")).toBeInTheDocument();
-    expect(screen.getByText("Tool Transactions")).toBeInTheDocument();
-    expect(screen.getByText("LLM Call Inspector")).toBeInTheDocument();
+    expect(screen.getByText("Assistant message")).toBeInTheDocument();
+    expect(screen.getByText("Prompt context (2 messages, 1 tool available)")).toBeInTheDocument();
     expect(screen.getByText("Find the bug.")).toBeInTheDocument();
     expect(screen.getAllByText("read_file").length).toBeGreaterThan(0);
     expect(screen.getAllByText("file missing").length).toBeGreaterThan(0);

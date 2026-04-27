@@ -376,6 +376,24 @@ def _summary_from_step(step: StepView) -> str:
     return _summarize_text(step.get_display_text())
 
 
+def _step_event_details(step: StepView, **extra: Any) -> dict[str, Any]:
+    stored_step = step.to_dict()
+    details = {
+        "step_id": step.id,
+        "role": step.role.value,
+        "content": step.content,
+        "content_for_user": step.content_for_user,
+        "condensed_content": step.condensed_content,
+        "user_input": stored_step.get("user_input"),
+        "tool_calls": step.tool_calls,
+        "tool_call_id": step.tool_call_id,
+        "tool_name": step.name,
+        "is_error": True if step.is_error else None,
+        **extra,
+    }
+    return {key: value for key, value in details.items() if value is not None}
+
+
 def _review_cycle_summary(cycle: ReviewCycleRecord) -> str:
     if cycle.aligned is True:
         return "Review aligned with milestone"
@@ -1474,10 +1492,7 @@ def build_conversation_events(
                     priority="primary",
                     title="User",
                     summary=_summary_from_step(step),
-                    details={
-                        "step_id": step.id,
-                        "role": step.role.value,
-                    },
+                    details=_step_event_details(step),
                 )
             )
             continue
@@ -1493,10 +1508,7 @@ def build_conversation_events(
                     priority="primary",
                     title="Assistant",
                     summary=_summary_from_step(step),
-                    details={
-                        "step_id": step.id,
-                        "role": step.role.value,
-                    },
+                    details=_step_event_details(step),
                 )
             )
             continue
@@ -1513,10 +1525,7 @@ def build_conversation_events(
                     priority="muted",
                     title="Compressed History",
                     summary=_summarize_text(step.condensed_content),
-                    details={
-                        "step_id": step.id,
-                        "tool_name": tool_name,
-                    },
+                    details=_step_event_details(step, tool_name=tool_name),
                 )
             )
             continue
@@ -1533,10 +1542,7 @@ def build_conversation_events(
                     priority="secondary",
                     title="Milestones Updated",
                     summary=summary,
-                    details={
-                        "step_id": step.id,
-                        "tool_name": tool_name,
-                    },
+                    details=_step_event_details(step, tool_name=tool_name),
                 )
             )
             continue
@@ -1552,10 +1558,7 @@ def build_conversation_events(
                     priority="muted",
                     title="Review",
                     summary=_summary_from_step(step),
-                    details={
-                        "step_id": step.id,
-                        "tool_name": tool_name,
-                    },
+                    details=_step_event_details(step, tool_name=tool_name),
                 )
             )
             continue
@@ -1570,10 +1573,7 @@ def build_conversation_events(
                 priority="secondary",
                 title=f"Tool: {tool_name}",
                 summary=_summary_from_step(step),
-                details={
-                    "step_id": step.id,
-                    "tool_name": tool_name,
-                },
+                details=_step_event_details(step, tool_name=tool_name),
             )
         )
 
