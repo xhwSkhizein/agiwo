@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from agiwo.agent.introspect.models import GoalState, IntrospectionState
 from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.review import ReviewState
 from agiwo.config.termination import TerminationReason
@@ -122,6 +123,8 @@ class RunLedger:
     tokens: TokenStats = field(default_factory=TokenStats)
     steps: StepStats = field(default_factory=StepStats)
     compaction: CompactionState = field(default_factory=CompactionState)
+    goal: GoalState = field(default_factory=GoalState)
+    introspection: IntrospectionState = field(default_factory=IntrospectionState)
     review: ReviewState = field(default_factory=ReviewState)
 
 
