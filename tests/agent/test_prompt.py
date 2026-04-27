@@ -74,3 +74,33 @@ async def test_build_system_prompt_skips_skill_section_when_disabled(
     )
 
     assert "## Skills" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_build_system_prompt_includes_tools_document(tmp_path: Path) -> None:
+    workspace = build_agent_workspace(root_path=tmp_path, agent_name="planner")
+    workspace.workspace.mkdir(parents=True)
+    workspace.tools_path.write_text("# TOOLS.md\n\nUse Browser CLI for rendered pages.")
+
+    prompt = await build_system_prompt(
+        base_prompt="Base system prompt",
+        workspace=workspace,
+        tools=[],
+        allowed_skills=[],
+        bootstrapper=NoopBootstrapper(),
+        document_store=WorkspaceDocumentStore(),
+    )
+
+    assert "# TOOLS.md" in prompt
+    assert "Use Browser CLI for rendered pages." in prompt
+
+
+def test_workspace_document_store_reads_tools_document(tmp_path: Path) -> None:
+    workspace = build_agent_workspace(root_path=tmp_path, agent_name="planner")
+    workspace.workspace.mkdir(parents=True)
+    workspace.tools_path.write_text("Tool practice")
+
+    documents = WorkspaceDocumentStore().read(workspace)
+
+    assert documents.tools_text == "Tool practice"
+    assert "TOOLS.md:" in documents.change_token

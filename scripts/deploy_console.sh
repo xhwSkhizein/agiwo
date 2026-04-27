@@ -15,6 +15,8 @@ Options:
   --publish HOST:PORT   Port mapping passed to container up (default: 8422:8422)
   --network-mode MODE   Docker network mode passed to container up (bridge|host; default: bridge)
   --mount SRC:ALIAS     Additional host mount; may be repeated
+  --browser-cli-source PATH
+                        Build and install Browser CLI from a local source checkout
   --pull                Forward --pull to container up
   --no-build            Skip docker build and use the existing image tag
   --help                Show this help text
@@ -35,6 +37,7 @@ NAME="agiwo-console"
 IMAGE="agiwo-console:local"
 PUBLISH="8422:8422"
 NETWORK_MODE="bridge"
+BROWSER_CLI_SOURCE=""
 DO_BUILD=1
 PULL=0
 MOUNTS=()
@@ -100,6 +103,10 @@ while [[ $# -gt 0 ]]; do
       MOUNTS+=("${2:-}")
       shift 2
       ;;
+    --browser-cli-source)
+      BROWSER_CLI_SOURCE="${2:-}"
+      shift 2
+      ;;
     --pull)
       PULL=1
       shift
@@ -144,6 +151,7 @@ fi
 
 require_cmd docker
 require_cmd uv
+source "$ROOT/scripts/lib/browser_cli_wheel.sh"
 
 is_valid_env_name() {
   [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
@@ -176,6 +184,8 @@ while IFS='=' read -r raw_key raw_value || [[ -n "$raw_key${raw_value:-}" ]]; do
     DISCOVERED_ENV_NAMES+=("$value")
   fi
 done < "$ENV_FILE"
+
+stage_browser_cli_wheel "deploy_console"
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
   echo "[deploy_console] building image: $IMAGE"

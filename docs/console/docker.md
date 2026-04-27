@@ -40,6 +40,40 @@ container through `uv run --project console agiwo-console container up`.
 It forwards common container options such as `--mount`, `--env`, `--env-name`,
 `--publish`, and `--network-mode`.
 
+## Local Browser CLI Development Build
+
+For deployments that should use a local Browser CLI checkout instead of the
+published package version, pass `--browser-cli-source` when using the source
+deployment script:
+
+```bash
+scripts/deploy_console.sh \
+  --env-file .env \
+  --data-dir "$HOME/agiwo-data" \
+  --network-mode host \
+  --browser-cli-source "$HOME/workspace/browser-cli"
+```
+
+The script builds a Browser CLI wheel from that checkout and installs it into
+the Console image after Agiwo's normal dependencies. Browser CLI packaged
+skills are installed into the default Agent skills directory,
+`/data/root/skills`, and refreshed at container startup. The container also
+sets `BROWSER_CLI_HOME` to `/data/root/browser-cli` by default and runs
+`browser-cli reload` during startup so the Browser CLI daemon is ready before
+Agents begin using shell tools. Startup output is written to
+`/data/runtime/browser-cli-reload.log`.
+
+Use `--network-mode host` on Linux when Agents in the Console container need to
+operate a host-side browser or Browser CLI extension-connected runtime.
+
+For an existing source-deployed container, rebuild and replace it with the same
+local Browser CLI override:
+
+```bash
+scripts/update_redeploy_console_docker.sh \
+  --browser-cli-source "$HOME/workspace/browser-cli"
+```
+
 ## Data Root
 
 `--data-dir` is the single persistent host directory for the managed container.
