@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 const apiMocks = vi.hoisted(() => ({
@@ -7,8 +7,6 @@ const apiMocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "trace-1" }),
-  useRouter: () => ({ replace: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/lib/api", async () => {
@@ -22,7 +20,7 @@ vi.mock("@/lib/api", async () => {
 import TraceDetailPage from "./page";
 
 describe("TraceDetailPage", () => {
-  test("switches between mainline and debug trace views", async () => {
+  test("renders unified trace diagnostics without mainline debug split", async () => {
     apiMocks.getTrace.mockResolvedValue({
       trace_id: "trace-1",
       agent_id: "agent-1",
@@ -139,17 +137,14 @@ describe("TraceDetailPage", () => {
     render(<TraceDetailPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Run Narrative")).toBeInTheDocument();
+      expect(screen.getByText("Agent Execution Diagnostics")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("Review Checkpoint")).toBeInTheDocument();
-    expect(screen.getByText("Review Cycles")).toBeInTheDocument();
-    expect(screen.queryByText("Loop Timeline")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Debug" }));
-
-    expect(screen.getByText("LLM Calls")).toBeInTheDocument();
-    expect(screen.getByText("Loop Timeline")).toBeInTheDocument();
-    expect(screen.getByText("Span Waterfall (0 spans)")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mainline" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Debug" })).not.toBeInTheDocument();
+    expect(screen.getByText("fix the bug")).toBeInTheDocument();
+    expect(screen.getAllByText("2 results condensed after checkpoint seq 4").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Run Narrative")).not.toBeInTheDocument();
+    expect(screen.queryByText("Span Waterfall (0 spans)")).not.toBeInTheDocument();
   });
 });

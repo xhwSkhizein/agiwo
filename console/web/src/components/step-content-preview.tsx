@@ -6,12 +6,22 @@ import { JsonDisclosure } from "@/components/json-disclosure";
 import type { ToolCallPayload } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-function tryParseJson(value: string): unknown {
+const JSON_PARSE_FAILED = Symbol("json_parse_failed");
+
+function tryParseJson(value: string): unknown | typeof JSON_PARSE_FAILED {
   try {
     return JSON.parse(value);
   } catch {
-    return null;
+    return JSON_PARSE_FAILED;
   }
+}
+
+function displayValue(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const parsed = tryParseJson(value);
+  return parsed !== JSON_PARSE_FAILED ? parsed : value;
 }
 
 export function stringifyPretty(value: unknown): string {
@@ -20,7 +30,7 @@ export function stringifyPretty(value: unknown): string {
   }
   if (typeof value === "string") {
     const parsed = tryParseJson(value);
-    if (parsed !== null) {
+    if (parsed !== JSON_PARSE_FAILED) {
       return JSON.stringify(parsed, null, 2);
     }
     return value;
@@ -174,22 +184,29 @@ export function ToolCallPreviewList({ toolCalls }: { toolCalls: ToolCallPayload[
       {toolCalls.map((toolCall, index) => {
         const toolName = toolCall.function?.name || "tool_call";
         const args = toolCall.function?.arguments ?? toolCall;
+        const parsedArgs = displayValue(args);
         return (
-          <details key={`${toolName}-${toolCall.id ?? index}`} className="rounded-lg border border-line bg-panel-muted">
-            <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs">
+          <div
+            key={`${toolName}-${toolCall.id ?? index}`}
+            className="rounded-lg border border-line bg-panel-muted"
+          >
+            <div className="flex items-center gap-2 border-b border-line px-3 py-2 text-xs">
               <Wrench className="h-3.5 w-3.5 text-warning" />
               <span className="font-medium text-ink-soft">{toolName}</span>
               {toolCall.id ? (
                 <span className="font-mono text-[11px] text-ink-faint">{toolCall.id}</span>
               ) : null}
-              <span className="ml-auto max-w-72 truncate font-mono text-[11px] text-ink-faint">
-                {compactText(stringifyPretty(args), 160)}
-              </span>
-            </summary>
-            <pre className="max-h-56 overflow-auto border-t border-line px-3 py-2 font-mono text-xs text-ink-muted whitespace-pre-wrap break-words">
-              {stringifyPretty(args)}
-            </pre>
-          </details>
+            </div>
+            <div className="px-3 py-2">
+              <StructuredValuePreview value={parsedArgs} />
+            </div>
+            <JsonDisclosure
+              label="Raw arguments"
+              value={parsedArgs}
+              className="m-2 mt-0 bg-panel"
+              contentClassName="bg-panel"
+            />
+          </div>
         );
       })}
     </div>

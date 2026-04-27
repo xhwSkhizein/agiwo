@@ -277,89 +277,14 @@ export default function SessionDetailPage() {
               <ConversationEventList events={detail.conversation_events} />
             </div>
           ) : (
-            <div className="space-y-6">
-              <SessionObservabilityPanel
-                sessionId={sessionId}
-                observability={detail.observability}
-              />
-
-              <div className="rounded-lg border border-zinc-800 overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-zinc-900 text-zinc-500 text-xs uppercase tracking-wide">
-                    <tr>
-                      <th className="text-left px-4 py-2.5">Run</th>
-                      <th className="text-right px-4 py-2.5">Cost</th>
-                      <th className="text-right px-4 py-2.5">Input</th>
-                      <th className="text-right px-4 py-2.5">Output</th>
-                      <th className="text-right px-4 py-2.5">Total</th>
-                      <th className="text-right px-4 py-2.5">Cache R/C</th>
-                      <th className="text-right px-4 py-2.5">Steps/Tools</th>
-                      <th className="text-right px-4 py-2.5">Duration</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-800">
-                    {runTableRows.map(({ run, metrics }) => {
-                      return (
-                        <tr key={run.id} className="hover:bg-zinc-900/50">
-                          <td className="px-4 py-2.5 text-zinc-300">
-                            <MonoText className="text-xs font-mono text-zinc-300">
-                              {run.id}
-                            </MonoText>
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-zinc-200">
-                            {formatUsd(metrics.tokenCost)}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-zinc-400">
-                            {formatTokenCount(metrics.inputTokens)}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-zinc-400">
-                            {formatTokenCount(metrics.outputTokens)}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-zinc-400">
-                            {formatTokenCount(metrics.totalTokens)}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-zinc-500">
-                            {formatTokenCount(metrics.cacheReadTokens)} / {formatTokenCount(metrics.cacheCreationTokens)}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-zinc-500">
-                            {metrics.stepCount} / {metrics.toolCallsCount}
-                          </td>
-                          <td className="px-4 py-2.5 text-right text-zinc-500">
-                            {formatDurationMs(metrics.durationMs)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              <PaginationControls
-                offset={runsOffset}
-                pageSize={runsPageSize}
-                itemCount={runs.length}
-                totalCount={runsState.total}
-                hasMore={runsState.hasMore}
-                itemLabel="runs"
-                disabled={loading}
-                onPageSizeChange={(nextPageSize) => {
-                  setRunsPageSize(nextPageSize);
-                  setRunsOffset(0);
-                }}
-                onPrevious={() => {
-                  setRunsOffset((current) => Math.max(0, current - runsPageSize));
-                }}
-                onNext={() => {
-                  setRunsOffset((current) => current + runsPageSize);
-                }}
-              />
-
-              {steps.length === 0 ? (
-                <EmptyStateMessage className="text-zinc-500 text-center py-8">
-                  No steps found
-                </EmptyStateMessage>
-              ) : (
-                <div className="space-y-3">
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+              <div className="min-w-0 space-y-3">
+                {steps.length === 0 ? (
+                  <EmptyStateMessage className="text-zinc-500 text-center py-8">
+                    No steps found
+                  </EmptyStateMessage>
+                ) : (
+                  <>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h2 className="text-sm font-medium text-zinc-300">Steps</h2>
@@ -414,8 +339,85 @@ export default function SessionDetailPage() {
                   {filteredSteps.map((step) => (
                     <SessionStepCard key={step.id} step={step} />
                   ))}
+                  </>
+                )}
+              </div>
+
+              <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+                <SessionObservabilityPanel
+                  sessionId={sessionId}
+                  observability={detail.observability}
+                  compact
+                />
+
+                <div className="rounded-2xl border border-line bg-panel">
+                  <div className="border-b border-line bg-panel-muted px-4 py-3 text-sm font-medium text-foreground">
+                    Runs
+                  </div>
+                  <div className="space-y-2 px-4 py-4">
+                    {runTableRows.length === 0 ? (
+                      <div className="rounded-xl border border-dashed border-line px-3 py-4 text-sm text-ink-muted">
+                        No runs loaded.
+                      </div>
+                    ) : (
+                      runTableRows.map(({ run, metrics }) => (
+                        <div
+                          key={run.id}
+                          className="rounded-xl border border-line bg-panel-muted px-3 py-3"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <MonoText className="truncate text-xs">{run.id.slice(0, 12)}</MonoText>
+                            <span className="rounded-full border border-line px-2 py-0.5 text-[11px] text-ink-muted">
+                              {run.status}
+                            </span>
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-ink-muted">
+                            <span>{metrics.stepCount} steps</span>
+                            <span>{metrics.toolCallsCount} tools</span>
+                            <span>{formatDurationMs(metrics.durationMs)}</span>
+                            <span>{formatUsd(metrics.tokenCost)}</span>
+                          </div>
+                          <details className="mt-2">
+                            <summary className="cursor-pointer list-none text-xs text-ink-faint">
+                              Token details
+                            </summary>
+                            <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-ink-muted">
+                              <span>in {formatTokenCount(metrics.inputTokens)}</span>
+                              <span>out {formatTokenCount(metrics.outputTokens)}</span>
+                              <span>total {formatTokenCount(metrics.totalTokens)}</span>
+                              <span>
+                                cache {formatTokenCount(metrics.cacheReadTokens)} /{" "}
+                                {formatTokenCount(metrics.cacheCreationTokens)}
+                              </span>
+                            </div>
+                          </details>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="border-t border-line px-3 py-3">
+                    <PaginationControls
+                      offset={runsOffset}
+                      pageSize={runsPageSize}
+                      itemCount={runs.length}
+                      totalCount={runsState.total}
+                      hasMore={runsState.hasMore}
+                      itemLabel="runs"
+                      disabled={loading}
+                      onPageSizeChange={(nextPageSize) => {
+                        setRunsPageSize(nextPageSize);
+                        setRunsOffset(0);
+                      }}
+                      onPrevious={() => {
+                        setRunsOffset((current) => Math.max(0, current - runsPageSize));
+                      }}
+                      onNext={() => {
+                        setRunsOffset((current) => current + runsPageSize);
+                      }}
+                    />
+                  </div>
                 </div>
-              )}
+              </aside>
             </div>
           )}
         </div>

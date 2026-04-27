@@ -146,13 +146,19 @@ function DecisionCard({ event }: { event: RuntimeDecisionEvent }) {
   );
 }
 
+interface SessionObservabilityPanelProps {
+  sessionId: string;
+  observability: SessionObservability | null;
+  compact?: boolean;
+  className?: string;
+}
+
 export function SessionObservabilityPanel({
   sessionId,
   observability,
-}: {
-  sessionId: string;
-  observability: SessionObservability | null;
-}) {
+  compact = false,
+  className,
+}: SessionObservabilityPanelProps) {
   const recentTraces = observability?.recent_traces ?? [];
   const decisionEvents = observability?.decision_events ?? [];
   const latestTrace = recentTraces[0] ?? null;
@@ -160,6 +166,7 @@ export function SessionObservabilityPanel({
   return (
     <SectionCard
       title="Observability"
+      className={className}
       action={
         <Link
           href={`/traces?session_id=${sessionId}`}
@@ -169,10 +176,14 @@ export function SessionObservabilityPanel({
           <ArrowRight className="h-3 w-3" />
         </Link>
       }
-      bodyClassName="grid gap-4 px-4 py-4 lg:grid-cols-[1.15fr_0.85fr]"
+      bodyClassName={
+        compact
+          ? "space-y-4 px-4 py-4"
+          : "grid gap-4 px-4 py-4 lg:grid-cols-[1.15fr_0.85fr]"
+      }
     >
       <div className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className={compact ? "grid gap-2" : "grid gap-3 md:grid-cols-3"}>
           <div className="rounded-xl border border-line bg-panel-muted px-3 py-3">
             <div className="text-[11px] uppercase tracking-wide text-ink-faint">Recent Traces</div>
             <div className="mt-2 text-lg font-semibold text-foreground">{recentTraces.length}</div>

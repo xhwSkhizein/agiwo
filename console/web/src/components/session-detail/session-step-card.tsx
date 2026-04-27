@@ -34,7 +34,7 @@ export function SessionStepCard({ step }: { step: StepResponse }) {
 
   return (
     <div
-      className={`rounded-lg border p-4 ${
+      className={`rounded-lg border ${
         isUser
           ? "border-blue-800/50 bg-blue-950/20"
           : isTool
@@ -42,64 +42,84 @@ export function SessionStepCard({ step }: { step: StepResponse }) {
             : "border-zinc-800 bg-zinc-900"
       }`}
     >
-      <div className="mb-2 flex items-center gap-2">
-        {isUser && <User className="h-4 w-4 text-blue-400" />}
-        {isAssistant && <Bot className="h-4 w-4 text-green-400" />}
-        {isTool && <Wrench className="h-4 w-4 text-amber-400" />}
-        <span className="text-xs font-medium uppercase tracking-wide text-zinc-400">
-          {step.role}
-          {isTool && step.name && ` — ${step.name}`}
-          {step.agent_id && ` — ${step.agent_id}`}
-        </span>
-        <span className="ml-auto text-xs text-zinc-600">#{step.sequence}</span>
+      <div className="border-b border-line px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          {isUser && <User className="h-4 w-4 text-blue-400" />}
+          {isAssistant && <Bot className="h-4 w-4 text-green-400" />}
+          {isTool && <Wrench className="h-4 w-4 text-amber-400" />}
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-400">
+            {isTool && step.name ? step.name : step.role}
+          </span>
+          <span className="ml-auto rounded-full border border-line px-2 py-0.5 text-[11px] text-zinc-500">
+            #{step.sequence}
+          </span>
+        </div>
       </div>
 
-      {step.reasoning_content && (
-        <div className="mb-2 max-h-48 overflow-auto rounded bg-zinc-800/50 px-3 py-2 text-xs text-zinc-400 whitespace-pre-wrap">
-          <span className="font-medium text-zinc-500">Thinking: </span>
-          {step.reasoning_content}
+      <div className="space-y-3 px-4 py-4">
+        {step.reasoning_content && (
+          <details className="rounded-lg border border-line bg-panel-muted">
+            <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-ink-muted">
+              Thinking
+            </summary>
+            <div className="max-h-48 overflow-auto border-t border-line px-3 py-2 text-xs text-zinc-400 whitespace-pre-wrap">
+              {step.reasoning_content}
+            </div>
+          </details>
+        )}
+
+        <div className="rounded-lg border border-line bg-panel px-3 py-3">
+          {hasStructuredUserInput ? (
+            <div className="max-h-96 overflow-auto">
+              <UserInputDetail input={step.user_input} maxTextLength={2000} />
+            </div>
+          ) : (
+            <StepContentPreview
+              value={displayContent}
+              emptyLabel={
+                isAssistant
+                  ? "No assistant message content"
+                  : isTool
+                    ? "No tool result content"
+                    : "No step content"
+              }
+            />
+          )}
         </div>
-      )}
 
-      {hasStructuredUserInput && (
-        <div className="max-h-96 overflow-auto">
-          <UserInputDetail input={step.user_input} maxTextLength={2000} />
-        </div>
-      )}
+        {step.tool_calls && step.tool_calls.length > 0 && (
+          <ToolCallPreviewList toolCalls={step.tool_calls} />
+        )}
 
-      {!hasStructuredUserInput && (
-        <StepContentPreview
-          value={displayContent}
-          emptyLabel={
-            isAssistant
-              ? "No assistant message content"
-              : isTool
-                ? "No tool result content"
-                : "No step content"
-          }
-        />
-      )}
+        {originalContent !== null && originalContent !== undefined && (
+          <RawJsonBlock label="Original result" value={originalContent} />
+        )}
 
-      {originalContent !== null && originalContent !== undefined && (
-        <RawJsonBlock className="mt-3" label="Original result" value={originalContent} />
-      )}
+        <details className="rounded-lg border border-line bg-panel-muted">
+          <summary className="cursor-pointer list-none px-3 py-2 text-xs font-medium text-ink-muted">
+            Step details
+          </summary>
+          <div className="space-y-3 border-t border-line px-3 py-3">
+            <div className="flex flex-wrap gap-3 text-xs text-ink-muted">
+              {step.agent_id ? <span>Agent {step.agent_id}</span> : null}
+              <span>Run {step.run_id}</span>
+              {step.tool_call_id ? <span>Tool call {step.tool_call_id}</span> : null}
+              {step.created_at ? <span>{step.created_at}</span> : null}
+            </div>
+            {step.metrics && (
+              <TokenMetricsBadges
+                metrics={metrics}
+                showDuration={true}
+                showModelName={true}
+                modelName={step.metrics?.model_name ?? null}
+                chipClassName="bg-panel-strong"
+              />
+            )}
 
-      {step.tool_calls && step.tool_calls.length > 0 && (
-        <ToolCallPreviewList toolCalls={step.tool_calls} />
-      )}
-
-      {step.metrics && (
-        <div className="mt-3">
-          <TokenMetricsBadges
-            metrics={metrics}
-            showDuration={true}
-            showModelName={true}
-            modelName={step.metrics?.model_name ?? null}
-          />
-        </div>
-      )}
-
-      <RawJsonBlock className="mt-3" label="Raw step JSON" value={step} />
+            <RawJsonBlock label="Raw step JSON" value={step} />
+          </div>
+        </details>
+      </div>
     </div>
   );
 }
