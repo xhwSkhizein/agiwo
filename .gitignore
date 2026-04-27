@@ -73,6 +73,7 @@ vector_db/
 .web-surfing/
 browser_data/
 console/browser_data/
+console/docker/browser-cli-wheels/*.whl
 
 # Trash
 trash/

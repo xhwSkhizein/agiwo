@@ -77,6 +77,16 @@ COPY agiwo ./agiwo
 COPY templates ./templates
 RUN --mount=type=cache,target=/root/.cache/pip PIP_CACHE_DIR=/root/.cache/pip pip install --no-deps --no-build-isolation .
 
+COPY console/docker/browser-cli-wheels /tmp/browser-cli-wheels
+RUN --mount=type=cache,target=/root/.cache/pip <<'EOF'
+set -e
+wheel="$(find /tmp/browser-cli-wheels -maxdepth 1 -type f -name '*.whl' | sort | tail -n 1)"
+if [ -n "$wheel" ]; then
+    PIP_CACHE_DIR=/root/.cache/pip pip install "$wheel"
+fi
+rm -rf /tmp/browser-cli-wheels
+EOF
+
 COPY console/pyproject.toml ./console/pyproject.toml
 RUN --mount=type=cache,target=/root/.cache/pip <<'EOF'
 set -e
@@ -99,6 +109,7 @@ EOF
 COPY console/server ./console/server
 COPY console/Dockerfile ./console/Dockerfile
 COPY console/docker ./console/docker
+RUN rm -f ./console/docker/browser-cli-wheels/*.whl
 RUN --mount=type=cache,target=/root/.cache/pip PIP_CACHE_DIR=/root/.cache/pip pip install --no-deps --no-build-isolation ./console
 
 RUN groupadd --system agiwo \
@@ -108,6 +119,12 @@ RUN install -d -o agiwo -g agiwo /opt/agiwo-console/web /data /tmp/nginx /tmp/ag
     && install -d -m 0777 /var/log/nginx \
     && chmod 1777 /tmp/nginx /tmp/agiwo-home \
     && chmod 0777 /var/log/nginx
+
+RUN install -d -m 0777 /data/root/skills \
+    && if command -v browser-cli >/dev/null 2>&1; then \
+        browser-cli install-skills --target /data/root/skills; \
+    fi \
+    && chown -R agiwo:agiwo /data/root
 
 COPY --chown=agiwo:agiwo --from=web-builder /build/console/web/.next/standalone /opt/agiwo-console/web
 COPY --chown=agiwo:agiwo --from=web-builder /build/console/web/.next/static /opt/agiwo-console/web/.next/static
