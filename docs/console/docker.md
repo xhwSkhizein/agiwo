@@ -62,6 +62,14 @@ skills are installed into the default Agent skills directory,
 Use `--network-mode host` on Linux when Agents in the Console container need to
 operate a host-side browser or Browser CLI extension-connected runtime.
 
+For an existing source-deployed container, rebuild and replace it with the same
+local Browser CLI override:
+
+```bash
+scripts/update_redeploy_console_docker.sh \
+  --browser-cli-source "$HOME/workspace/browser-cli"
+```
+
 ## Data Root
 
 `--data-dir` is the single persistent host directory for the managed container.
