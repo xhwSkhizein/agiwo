@@ -2,16 +2,17 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from agiwo.agent.introspect.apply import _remove_review_tool_call
+from agiwo.agent.introspect.models import Milestone
 import agiwo.agent.run_tool_batch as run_tool_batch_module
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.log import (
-    ReviewCheckpointRecorded,
-    ReviewMilestonesUpdated,
-    ReviewOutcomeRecorded,
-    ReviewTriggerDecided,
+    GoalMilestonesUpdated,
+    IntrospectionCheckpointRecorded,
+    IntrospectionOutcomeRecorded,
+    IntrospectionTriggered,
     build_committed_step_entry,
 )
-from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.run import RunLedger, TerminationReason
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunLogStorage
@@ -121,9 +122,10 @@ async def test_execute_tool_batch_cycle_injects_hook_review_advice(
     session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
     hooks = _FakeHooks(review_advice="Focus on auth.py before broadening the search.")
     ledger = RunLedger()
-    ledger.review.milestones = [
+    ledger.goal.milestones = [
         Milestone(id="locate", description="Locate the auth bug", status="active")
     ]
+    ledger.goal.active_milestone_id = "locate"
     context = _FakeContext(
         config=AgentOptions(
             enable_goal_directed_review=True,
@@ -165,7 +167,7 @@ async def test_execute_tool_batch_cycle_injects_hook_review_advice(
     assert hooks.before_review_calls[0]["step_count"] == 1
     entries = await storage.list_entries(session_id=context.session_id)
     trigger_facts = [
-        entry for entry in entries if isinstance(entry, ReviewTriggerDecided)
+        entry for entry in entries if isinstance(entry, IntrospectionTriggered)
     ]
     assert len(trigger_facts) == 1
     assert trigger_facts[0].trigger_reason == "step_interval"
@@ -239,7 +241,7 @@ async def test_execute_tool_batch_cycle_records_declared_milestone_fact(
 
     entries = await storage.list_entries(session_id=context.session_id)
     milestone_facts = [
-        entry for entry in entries if isinstance(entry, ReviewMilestonesUpdated)
+        entry for entry in entries if isinstance(entry, GoalMilestonesUpdated)
     ]
     assert len(milestone_facts) == 1
     assert milestone_facts[0].source_tool_call_id == "tc_declare"
@@ -273,9 +275,10 @@ async def test_execute_tool_batch_cycle_injects_review_without_hook_advice(
     session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
     hooks = _FakeHooks(review_advice=None)
     ledger = RunLedger()
-    ledger.review.milestones = [
+    ledger.goal.milestones = [
         Milestone(id="locate", description="Locate the auth bug", status="active")
     ]
+    ledger.goal.active_milestone_id = "locate"
     context = _FakeContext(
         config=AgentOptions(
             enable_goal_directed_review=True,
@@ -336,9 +339,10 @@ async def test_execute_tool_batch_cycle_injects_only_one_review_per_tool_batch(
     session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
     hooks = _FakeHooks(review_advice=None)
     ledger = RunLedger()
-    ledger.review.milestones = [
+    ledger.goal.milestones = [
         Milestone(id="locate", description="Locate the auth bug", status="active")
     ]
+    ledger.goal.active_milestone_id = "locate"
     context = _FakeContext(
         config=AgentOptions(
             enable_goal_directed_review=True,
@@ -413,9 +417,10 @@ async def test_aligned_review_cleans_prior_system_review_from_context_and_storag
     session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
     hooks = _FakeHooks(review_advice=None)
     ledger = RunLedger()
-    ledger.review.milestones = [
+    ledger.goal.milestones = [
         Milestone(id="locate", description="Locate the auth bug", status="active")
     ]
+    ledger.goal.active_milestone_id = "locate"
     context = _FakeContext(
         config=AgentOptions(
             enable_goal_directed_review=True,
@@ -475,9 +480,11 @@ async def test_aligned_review_cleans_prior_system_review_from_context_and_storag
     assert search_step.to_message()["content"] == "Found results"
     entries = await storage.list_entries(session_id=context.session_id)
     checkpoints = [
-        entry for entry in entries if isinstance(entry, ReviewCheckpointRecorded)
+        entry for entry in entries if isinstance(entry, IntrospectionCheckpointRecorded)
     ]
-    outcomes = [entry for entry in entries if isinstance(entry, ReviewOutcomeRecorded)]
+    outcomes = [
+        entry for entry in entries if isinstance(entry, IntrospectionOutcomeRecorded)
+    ]
     assert len(checkpoints) == 1
     assert checkpoints[0].review_tool_call_id == "tc_review"
     assert checkpoints[0].review_step_id
@@ -558,7 +565,8 @@ async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
     assert len(hooks.after_step_back_calls) == 1
     outcome = hooks.after_step_back_calls[0]
     assert outcome.mode == "step_back"
-    assert outcome.affected_count == 1
+    assert outcome.repair_plan is not None
+    assert outcome.repair_plan.affected_count == 1
     assert outcome.experience == "narrow the search"
     tool_messages = [
         msg for msg in context.ledger.messages if msg.get("role") == "tool"
@@ -567,7 +575,9 @@ async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
     assert tool_messages[0]["tool_call_id"] == "tc_search"
     assert tool_messages[0]["content"] == "[EXPERIENCE] narrow the search"
     entries = await storage.list_entries(session_id=context.session_id)
-    outcomes = [entry for entry in entries if isinstance(entry, ReviewOutcomeRecorded)]
+    outcomes = [
+        entry for entry in entries if isinstance(entry, IntrospectionOutcomeRecorded)
+    ]
     assert len(outcomes) == 1
     assert outcomes[0].aligned is False
     assert outcomes[0].mode == "step_back"
@@ -592,7 +602,7 @@ def test_remove_review_tool_call_omits_empty_tool_calls_key() -> None:
         }
     ]
 
-    run_tool_batch_module._remove_review_tool_call(
+    _remove_review_tool_call(
         messages,
         review_tool_call_id="tc_review",
     )
