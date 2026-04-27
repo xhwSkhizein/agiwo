@@ -9,6 +9,7 @@ from agiwo.agent import StepView
 from agiwo.agent.models.log import (
     CompactionApplied,
     CompactionFailed,
+    ContextRepairApplied,
     HookFailed,
     RunLogEntry,
     RunRolledBack,
@@ -490,6 +491,21 @@ def build_runtime_decision_record_from_entry(
             payload={
                 "affected_count": entry.affected_count,
                 "checkpoint_seq": entry.checkpoint_seq,
+                "experience": entry.experience,
+            },
+        )
+    if isinstance(entry, ContextRepairApplied):
+        return _build_runtime_decision_record(
+            kind="step_back",
+            sequence=entry.sequence,
+            run_id=entry.run_id,
+            agent_id=entry.agent_id,
+            created_at=entry.created_at,
+            payload={
+                "affected_count": entry.affected_count,
+                "checkpoint_seq": entry.start_seq - 1,
+                "start_sequence": entry.start_seq,
+                "end_sequence": entry.end_seq,
                 "experience": entry.experience,
             },
         )

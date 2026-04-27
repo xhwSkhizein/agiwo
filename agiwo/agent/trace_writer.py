@@ -11,7 +11,12 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
     CompactionFailed,
+    ContextRepairApplied,
+    GoalMilestonesUpdated,
     HookFailed,
+    IntrospectionCheckpointRecorded,
+    IntrospectionOutcomeRecorded,
+    IntrospectionTriggered,
     LLMCallCompleted,
     LLMCallStarted,
     ReviewCheckpointRecorded,
@@ -229,7 +234,12 @@ def _build_runtime_span_from_entry(
     entry: (
         CompactionApplied
         | CompactionFailed
+        | ContextRepairApplied
+        | GoalMilestonesUpdated
         | HookFailed
+        | IntrospectionCheckpointRecorded
+        | IntrospectionOutcomeRecorded
+        | IntrospectionTriggered
         | ReviewCheckpointRecorded
         | ReviewMilestonesUpdated
         | ReviewOutcomeRecorded
@@ -283,6 +293,18 @@ def _build_runtime_span_from_entry(
                 "experience": entry.experience,
             }
         )
+    elif isinstance(entry, ContextRepairApplied):
+        name = "step_back"
+        attributes.update(
+            {
+                "affected_count": entry.affected_count,
+                "checkpoint_seq": entry.start_seq - 1,
+                "start_sequence": entry.start_seq,
+                "end_sequence": entry.end_seq,
+                "experience": entry.experience,
+                "mode": entry.mode,
+            }
+        )
     elif isinstance(entry, RunRolledBack):
         name = "rollback"
         attributes.update(
@@ -313,7 +335,7 @@ def _build_runtime_span_from_entry(
                 "error": entry.error,
             }
         )
-    elif isinstance(entry, ReviewMilestonesUpdated):
+    elif isinstance(entry, (GoalMilestonesUpdated, ReviewMilestonesUpdated)):
         name = "review_milestones"
         attributes.update(
             {
@@ -324,19 +346,25 @@ def _build_runtime_span_from_entry(
                 "reason": entry.reason,
             }
         )
-    elif isinstance(entry, ReviewTriggerDecided):
+    elif isinstance(entry, (IntrospectionTriggered, ReviewTriggerDecided)):
         name = "review_trigger"
+        review_count = (
+            entry.review_count_since_boundary
+            if isinstance(entry, IntrospectionTriggered)
+            else entry.review_count_since_checkpoint
+        )
         attributes.update(
             {
                 "trigger_reason": entry.trigger_reason,
                 "active_milestone_id": entry.active_milestone_id,
-                "review_count_since_checkpoint": entry.review_count_since_checkpoint,
+                "review_count_since_checkpoint": review_count,
+                "review_count_since_boundary": review_count,
                 "trigger_tool_call_id": entry.trigger_tool_call_id,
                 "trigger_tool_step_id": entry.trigger_tool_step_id,
                 "notice_step_id": entry.notice_step_id,
             }
         )
-    elif isinstance(entry, ReviewCheckpointRecorded):
+    elif isinstance(entry, (IntrospectionCheckpointRecorded, ReviewCheckpointRecorded)):
         name = "review_checkpoint"
         attributes.update(
             {
@@ -346,12 +374,15 @@ def _build_runtime_span_from_entry(
                 "review_step_id": entry.review_step_id,
             }
         )
-    elif isinstance(entry, ReviewOutcomeRecorded):
+    elif isinstance(entry, (IntrospectionOutcomeRecorded, ReviewOutcomeRecorded)):
         name = "review_outcome"
         attributes.update(
             {
                 "aligned": entry.aligned,
                 "mode": entry.mode,
+                "boundary_seq": getattr(entry, "boundary_seq", None),
+                "repair_start_seq": getattr(entry, "repair_start_seq", None),
+                "repair_end_seq": getattr(entry, "repair_end_seq", None),
                 "experience": entry.experience,
                 "active_milestone_id": entry.active_milestone_id,
                 "review_tool_call_id": entry.review_tool_call_id,
@@ -383,7 +414,12 @@ def _append_runtime_entry_to_trace(
     entry: (
         CompactionApplied
         | CompactionFailed
+        | ContextRepairApplied
+        | GoalMilestonesUpdated
         | HookFailed
+        | IntrospectionCheckpointRecorded
+        | IntrospectionOutcomeRecorded
+        | IntrospectionTriggered
         | ReviewCheckpointRecorded
         | ReviewMilestonesUpdated
         | ReviewOutcomeRecorded
@@ -655,7 +691,12 @@ def _apply_runtime_entry_to_trace(
         (
             CompactionApplied,
             CompactionFailed,
+            ContextRepairApplied,
+            GoalMilestonesUpdated,
             HookFailed,
+            IntrospectionCheckpointRecorded,
+            IntrospectionOutcomeRecorded,
+            IntrospectionTriggered,
             ReviewCheckpointRecorded,
             ReviewMilestonesUpdated,
             ReviewOutcomeRecorded,
