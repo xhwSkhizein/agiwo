@@ -38,8 +38,6 @@ IMAGE="agiwo-console:local"
 PUBLISH="8422:8422"
 NETWORK_MODE="bridge"
 BROWSER_CLI_SOURCE=""
-BROWSER_CLI_WHEEL_DIR="$ROOT/console/docker/browser-cli-wheels"
-BROWSER_CLI_STAGED_WHEEL=""
 DO_BUILD=1
 PULL=0
 MOUNTS=()
@@ -153,48 +151,7 @@ fi
 
 require_cmd docker
 require_cmd uv
-
-stage_browser_cli_wheel() {
-  mkdir -p "$BROWSER_CLI_WHEEL_DIR"
-  rm -f "$BROWSER_CLI_WHEEL_DIR"/*.whl
-
-  if [[ -z "$BROWSER_CLI_SOURCE" ]]; then
-    return 0
-  fi
-
-  if [[ ! -d "$BROWSER_CLI_SOURCE" ]]; then
-    echo "Browser CLI source directory does not exist: $BROWSER_CLI_SOURCE" >&2
-    exit 1
-  fi
-
-  local source_dir
-  source_dir="$(cd "$BROWSER_CLI_SOURCE" && pwd)"
-  if [[ ! -f "$source_dir/pyproject.toml" ]]; then
-    echo "Browser CLI source must contain pyproject.toml: $source_dir" >&2
-    exit 1
-  fi
-
-  echo "[deploy_console] building Browser CLI wheel from: $source_dir"
-  (
-    cd "$source_dir"
-    uv build --wheel --out-dir "$BROWSER_CLI_WHEEL_DIR" --no-create-gitignore
-  )
-
-  BROWSER_CLI_STAGED_WHEEL="$(find "$BROWSER_CLI_WHEEL_DIR" -maxdepth 1 -type f -name '*.whl' | sort | tail -n 1)"
-  if [[ -z "$BROWSER_CLI_STAGED_WHEEL" || ! -f "$BROWSER_CLI_STAGED_WHEEL" ]]; then
-    echo "Browser CLI wheel build did not produce a wheel" >&2
-    exit 1
-  fi
-  echo "[deploy_console] staged Browser CLI wheel: $BROWSER_CLI_STAGED_WHEEL"
-}
-
-cleanup_browser_cli_wheel() {
-  if [[ -n "$BROWSER_CLI_STAGED_WHEEL" ]]; then
-    rm -f "$BROWSER_CLI_STAGED_WHEEL"
-  fi
-}
-
-trap cleanup_browser_cli_wheel EXIT
+source "$ROOT/scripts/lib/browser_cli_wheel.sh"
 
 is_valid_env_name() {
   [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
@@ -228,7 +185,7 @@ while IFS='=' read -r raw_key raw_value || [[ -n "$raw_key${raw_value:-}" ]]; do
   fi
 done < "$ENV_FILE"
 
-stage_browser_cli_wheel
+stage_browser_cli_wheel "deploy_console"
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
   echo "[deploy_console] building image: $IMAGE"

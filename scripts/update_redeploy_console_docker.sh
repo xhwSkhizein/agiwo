@@ -42,8 +42,6 @@ NAME="agiwo-console"
 IMAGE="agiwo-console:local"
 NETWORK_MODE="host"
 BROWSER_CLI_SOURCE=""
-BROWSER_CLI_WHEEL_DIR="$ROOT/console/docker/browser-cli-wheels"
-BROWSER_CLI_STAGED_WHEEL=""
 DO_PULL=1
 DO_BUILD=1
 KEEP_BACKUP=0
@@ -111,48 +109,7 @@ require_cmd jq
 if [[ -n "$BROWSER_CLI_SOURCE" ]]; then
   require_cmd uv
 fi
-
-stage_browser_cli_wheel() {
-  mkdir -p "$BROWSER_CLI_WHEEL_DIR"
-  rm -f "$BROWSER_CLI_WHEEL_DIR"/*.whl
-
-  if [[ -z "$BROWSER_CLI_SOURCE" ]]; then
-    return 0
-  fi
-
-  if [[ ! -d "$BROWSER_CLI_SOURCE" ]]; then
-    echo "Browser CLI source directory does not exist: $BROWSER_CLI_SOURCE" >&2
-    exit 1
-  fi
-
-  local source_dir
-  source_dir="$(cd "$BROWSER_CLI_SOURCE" && pwd)"
-  if [[ ! -f "$source_dir/pyproject.toml" ]]; then
-    echo "Browser CLI source must contain pyproject.toml: $source_dir" >&2
-    exit 1
-  fi
-
-  echo "[update_redeploy] building Browser CLI wheel from: $source_dir"
-  (
-    cd "$source_dir"
-    uv build --wheel --out-dir "$BROWSER_CLI_WHEEL_DIR" --no-create-gitignore
-  )
-
-  BROWSER_CLI_STAGED_WHEEL="$(find "$BROWSER_CLI_WHEEL_DIR" -maxdepth 1 -type f -name '*.whl' | sort | tail -n 1)"
-  if [[ -z "$BROWSER_CLI_STAGED_WHEEL" || ! -f "$BROWSER_CLI_STAGED_WHEEL" ]]; then
-    echo "Browser CLI wheel build did not produce a wheel" >&2
-    exit 1
-  fi
-  echo "[update_redeploy] staged Browser CLI wheel: $BROWSER_CLI_STAGED_WHEEL"
-}
-
-cleanup_browser_cli_wheel() {
-  if [[ -n "$BROWSER_CLI_STAGED_WHEEL" ]]; then
-    rm -f "$BROWSER_CLI_STAGED_WHEEL"
-  fi
-}
-
-trap cleanup_browser_cli_wheel EXIT
+source "$ROOT/scripts/lib/browser_cli_wheel.sh"
 
 if [[ ! -f "$ROOT/console/Dockerfile" ]]; then
   echo "Missing Dockerfile: $ROOT/console/Dockerfile" >&2
@@ -190,7 +147,7 @@ if [[ "$DO_PULL" -eq 1 ]]; then
 fi
 
 if [[ "$DO_BUILD" -eq 1 ]]; then
-  stage_browser_cli_wheel
+  stage_browser_cli_wheel "update_redeploy"
   echo "[update_redeploy] building image: $IMAGE"
   (
     cd "$ROOT"
@@ -213,11 +170,9 @@ else
 fi
 
 BACKUP="${NAME}-prev-$(date +%Y%m%d%H%M%S)"
-ENV_FILE="$(mktemp)"
 RESTORE_NEEDED=0
 
 cleanup() {
-  rm -f "$ENV_FILE"
   cleanup_browser_cli_wheel
 }
 
@@ -231,11 +186,11 @@ restore_on_error() {
       docker start "$NAME" >/dev/null
     fi
   fi
-  cleanup
   exit "$status"
 }
 
 trap restore_on_error ERR
+trap cleanup EXIT
 
 CURRENT_IMAGE="$(docker inspect "$NAME" --format "{{.Config.Image}}")"
 USER_SPEC="$(docker inspect "$NAME" --format "{{.Config.User}}")"
@@ -245,7 +200,8 @@ RESTART_NAME="$(docker inspect "$NAME" | jq -r '.[0].HostConfig.RestartPolicy.Na
 RESTART_COUNT="$(docker inspect "$NAME" | jq -r '.[0].HostConfig.RestartPolicy.MaximumRetryCount // 0')"
 mapfile -t BINDS < <(docker inspect "$NAME" | jq -r '.[0].HostConfig.Binds[]?')
 mapfile -t CMD_ARGS < <(docker inspect "$NAME" | jq -r '.[0].Config.Cmd[]?')
-docker inspect "$NAME" --format "{{range .Config.Env}}{{println .}}{{end}}" > "$ENV_FILE"
+ENV_ENTRIES=()
+mapfile -d '' -t ENV_ENTRIES < <(docker inspect "$NAME" | jq -r -j '.[0].Config.Env[]? + "\u0000"')
 
 echo "[update_redeploy] replacing $NAME from $CURRENT_IMAGE with $IMAGE"
 docker stop "$NAME" >/dev/null
@@ -260,7 +216,9 @@ if [[ -n "$RESTART_NAME" && "$RESTART_NAME" != "no" ]]; then
     RUN_ARGS+=(--restart "$RESTART_NAME")
   fi
 fi
-RUN_ARGS+=(--env-file "$ENV_FILE")
+for env_entry in "${ENV_ENTRIES[@]}"; do
+  RUN_ARGS+=(--env "$env_entry")
+done
 for bind in "${BINDS[@]}"; do
   RUN_ARGS+=(-v "$bind")
 done
@@ -291,7 +249,6 @@ for _ in $(seq 1 60); do
       echo "[update_redeploy] kept backup container: $BACKUP"
     fi
     RESTORE_NEEDED=0
-    cleanup
     trap - ERR
     docker ps --filter "name=^/${NAME}$" --format "{{.ID}} {{.Names}} {{.Image}} {{.Status}}"
     exit 0

@@ -22,7 +22,7 @@ if command -v browser-cli >/dev/null 2>&1; then
   if ! browser-cli install-skills --target "${AGIWO_ROOT_PATH}/skills"; then
     echo "warning: failed to install Browser CLI skills into ${AGIWO_ROOT_PATH}/skills" >&2
   fi
-  if ! browser-cli reload >/data/runtime/browser-cli-reload.log 2>&1; then
+  if ! browser-cli reload >>/data/runtime/browser-cli-reload.log 2>&1; then
     echo "warning: failed to start Browser CLI daemon; see /data/runtime/browser-cli-reload.log" >&2
   fi
 fi

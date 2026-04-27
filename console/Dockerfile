@@ -80,8 +80,15 @@ RUN --mount=type=cache,target=/root/.cache/pip PIP_CACHE_DIR=/root/.cache/pip pi
 COPY console/docker/browser-cli-wheels /tmp/browser-cli-wheels
 RUN --mount=type=cache,target=/root/.cache/pip <<'EOF'
 set -e
-wheel="$(find /tmp/browser-cli-wheels -maxdepth 1 -type f -name '*.whl' | sort | tail -n 1)"
-if [ -n "$wheel" ]; then
+wheels="$(find /tmp/browser-cli-wheels -maxdepth 1 -type f -name '*.whl' | sort)"
+wheel_count="$(printf '%s\n' "$wheels" | sed '/^$/d' | wc -l)"
+if [ "$wheel_count" -gt 1 ]; then
+    echo "Expected at most one Browser CLI wheel, found $wheel_count:" >&2
+    printf '%s\n' "$wheels" >&2
+    exit 1
+fi
+if [ "$wheel_count" -eq 1 ]; then
+    wheel="$wheels"
     PIP_CACHE_DIR=/root/.cache/pip pip install "$wheel"
 fi
 rm -rf /tmp/browser-cli-wheels
@@ -121,9 +128,6 @@ RUN install -d -o agiwo -g agiwo /opt/agiwo-console/web /data /tmp/nginx /tmp/ag
     && chmod 0777 /var/log/nginx
 
 RUN install -d -m 0777 /data/root/skills \
-    && if command -v browser-cli >/dev/null 2>&1; then \
-        browser-cli install-skills --target /data/root/skills; \
-    fi \
     && chown -R agiwo:agiwo /data/root
 
 COPY --chown=agiwo:agiwo --from=web-builder /build/console/web/.next/standalone /opt/agiwo-console/web

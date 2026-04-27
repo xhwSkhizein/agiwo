@@ -59,12 +59,14 @@ Browser CLI skills may be available:
 
 ## Browser CLI References
 
-- Browser CLI installed guide:
-  `/home/hongv/workspace/browser-cli/docs/installed-with-uv.md`
-- Browser CLI usage guide:
-  `/home/hongv/workspace/browser-cli/docs/browser-cli-usage-guide-zh.md`
+- Browser CLI upstream repository:
+  `https://github.com/xhwSkhizein/browser-cli`
+- Browser CLI runtime help:
+  `browser-cli --help`
+- Browser CLI path discovery:
+  `browser-cli paths`
 - Browser CLI task examples:
-  `/home/hongv/workspace/browser-cli/docs/examples/task-and-automation.md`
+  `browser-cli task examples`
 - Agiwo runtime tool boundaries:
   `docs/runtime-tool-boundaries.md`
 
