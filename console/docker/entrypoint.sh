@@ -2,6 +2,7 @@
 set -euo pipefail
 
 export AGIWO_ROOT_PATH="${AGIWO_ROOT_PATH:-/data/root}"
+export BROWSER_CLI_HOME="${BROWSER_CLI_HOME:-${AGIWO_ROOT_PATH}/browser-cli}"
 BACKEND_HOST="${BACKEND_HOST:-127.0.0.1}"
 BACKEND_PORT="${BACKEND_PORT:-18080}"
 
@@ -15,11 +16,14 @@ if [[ ! -w /data ]]; then
   exit 1
 fi
 
-mkdir -p "${AGIWO_ROOT_PATH}" "${AGIWO_ROOT_PATH}/skills" /data/runtime
+mkdir -p "${AGIWO_ROOT_PATH}" "${AGIWO_ROOT_PATH}/skills" "${BROWSER_CLI_HOME}" /data/runtime
 
 if command -v browser-cli >/dev/null 2>&1; then
   if ! browser-cli install-skills --target "${AGIWO_ROOT_PATH}/skills"; then
     echo "warning: failed to install Browser CLI skills into ${AGIWO_ROOT_PATH}/skills" >&2
+  fi
+  if ! browser-cli reload >/data/runtime/browser-cli-reload.log 2>&1; then
+    echo "warning: failed to start Browser CLI daemon; see /data/runtime/browser-cli-reload.log" >&2
   fi
 fi
 

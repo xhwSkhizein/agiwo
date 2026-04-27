@@ -57,7 +57,11 @@ scripts/deploy_console.sh \
 The script builds a Browser CLI wheel from that checkout and installs it into
 the Console image after Agiwo's normal dependencies. Browser CLI packaged
 skills are installed into the default Agent skills directory,
-`/data/root/skills`, and refreshed at container startup.
+`/data/root/skills`, and refreshed at container startup. The container also
+sets `BROWSER_CLI_HOME` to `/data/root/browser-cli` by default and runs
+`browser-cli reload` during startup so the Browser CLI daemon is ready before
+Agents begin using shell tools. Startup output is written to
+`/data/runtime/browser-cli-reload.log`.
 
 Use `--network-mode host` on Linux when Agents in the Console container need to
 operate a host-side browser or Browser CLI extension-connected runtime.
