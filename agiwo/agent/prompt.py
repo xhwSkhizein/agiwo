@@ -152,6 +152,13 @@ def _render_tools(tools: tuple[tuple[str, str], ...]) -> str:
     return f"---\n\n{rendered}"
 
 
+def _render_tools_document(documents: WorkspaceDocuments) -> str:
+    content = documents.tools_text
+    if not content:
+        return ""
+    return f"---\n\n{content}".strip()
+
+
 def _render_user(documents: WorkspaceDocuments) -> str:
     content = documents.user_text
     if not content:
@@ -297,6 +304,7 @@ async def build_system_prompt(
             current_date=current_dt.strftime("%Y-%m-%d"),
         ),
         _render_goal_directed_review(),
+        _render_tools_document(documents),
         _render_tools(
             tuple((tool.name, tool.get_short_description()) for tool in (tools or []))
         ),

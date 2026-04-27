@@ -12,6 +12,7 @@ class WorkspaceDocuments:
     identity_text: str | None
     soul_text: str | None
     user_text: str | None
+    tools_text: str | None
     change_token: str
 
 
@@ -22,14 +23,17 @@ class WorkspaceDocumentStore:
         identity = self._read_optional(workspace.identity_path, "IDENTITY.md")
         soul = self._read_optional(workspace.soul_path, "SOUL.md")
         user = self._read_optional(workspace.user_path, "USER.md")
+        tools = self._read_optional(workspace.tools_path, "TOOLS.md")
         return WorkspaceDocuments(
             identity_text=identity,
             soul_text=soul,
             user_text=user,
+            tools_text=tools,
             change_token=self._build_change_token(
                 workspace.identity_path,
                 workspace.soul_path,
                 workspace.user_path,
+                workspace.tools_path,
             ),
         )
 

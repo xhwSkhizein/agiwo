@@ -11,6 +11,7 @@ class AgentWorkspace:
     identity_path: Path
     soul_path: Path
     user_path: Path
+    tools_path: Path
 
 
 def build_agent_workspace(
@@ -29,4 +30,5 @@ def build_agent_workspace(
         identity_path=workspace / "IDENTITY.md",
         soul_path=workspace / "SOUL.md",
         user_path=workspace / "USER.md",
+        tools_path=workspace / "TOOLS.md",
     )
