@@ -17,6 +17,12 @@ fi
 
 mkdir -p "${AGIWO_ROOT_PATH}" "${AGIWO_ROOT_PATH}/skills" /data/runtime
 
+if command -v browser-cli >/dev/null 2>&1; then
+  if ! browser-cli install-skills --target "${AGIWO_ROOT_PATH}/skills"; then
+    echo "warning: failed to install Browser CLI skills into ${AGIWO_ROOT_PATH}/skills" >&2
+  fi
+fi
+
 backend_pid=""
 web_pid=""
 nginx_pid=""
