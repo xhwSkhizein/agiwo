@@ -11,9 +11,14 @@ from agiwo.agent.models.log import (
     CommittedStep,
     CompactionApplied,
     CompactionFailed,
+    ContextRepairApplied,
     ContextStepsHidden,
     ContextAssembled,
+    GoalMilestonesUpdated,
     HookFailed,
+    IntrospectionCheckpointRecorded,
+    IntrospectionOutcomeRecorded,
+    IntrospectionTriggered,
     LLMCallCompleted,
     LLMCallStarted,
     MessagesRebuilt,
@@ -34,7 +39,7 @@ from agiwo.agent.models.log import (
     UserStepCommitted,
     build_compact_metadata_from_entry,
 )
-from agiwo.agent.models.review import Milestone
+from agiwo.agent.introspect.models import Milestone
 from agiwo.agent.models.runtime_decision import (
     CompactionDecisionView,
     CompactionFailureDecisionView,
@@ -69,6 +74,11 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.REVIEW_TRIGGER_DECIDED: ReviewTriggerDecided,
     RunLogEntryKind.REVIEW_CHECKPOINT_RECORDED: ReviewCheckpointRecorded,
     RunLogEntryKind.REVIEW_OUTCOME_RECORDED: ReviewOutcomeRecorded,
+    RunLogEntryKind.GOAL_MILESTONES_UPDATED: GoalMilestonesUpdated,
+    RunLogEntryKind.INTROSPECTION_TRIGGERED: IntrospectionTriggered,
+    RunLogEntryKind.INTROSPECTION_CHECKPOINT_RECORDED: IntrospectionCheckpointRecorded,
+    RunLogEntryKind.INTROSPECTION_OUTCOME_RECORDED: IntrospectionOutcomeRecorded,
+    RunLogEntryKind.CONTEXT_REPAIR_APPLIED: ContextRepairApplied,
 }
 
 
@@ -162,7 +172,7 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
         metrics = normalized.get("metrics")
         if isinstance(metrics, dict):
             normalized["metrics"] = StepMetrics(**metrics)
-    if entry_type is ReviewMilestonesUpdated:
+    if entry_type in {ReviewMilestonesUpdated, GoalMilestonesUpdated}:
         milestones = normalized.get("milestones")
         if isinstance(milestones, list):
             normalized_milestones: list[Milestone] = []
@@ -174,7 +184,7 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
                     normalized_milestones.append(Milestone(**item))
                     continue
                 raise ValueError(
-                    "Invalid ReviewMilestonesUpdated.milestones item: "
+                    f"Invalid {entry_type.__name__}.milestones item: "
                     f"{type(item).__name__}"
                 )
             normalized["milestones"] = normalized_milestones

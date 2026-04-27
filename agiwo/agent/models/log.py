@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
+from agiwo.agent.introspect.models import Milestone
 from agiwo.agent.models.input import MessageContent, UserInput
-from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 from agiwo.config.termination import TerminationReason
@@ -39,6 +39,11 @@ class RunLogEntryKind(str, Enum):
     REVIEW_TRIGGER_DECIDED = "review_trigger_decided"
     REVIEW_CHECKPOINT_RECORDED = "review_checkpoint_recorded"
     REVIEW_OUTCOME_RECORDED = "review_outcome_recorded"
+    GOAL_MILESTONES_UPDATED = "goal_milestones_updated"
+    INTROSPECTION_TRIGGERED = "introspection_triggered"
+    INTROSPECTION_CHECKPOINT_RECORDED = "introspection_checkpoint_recorded"
+    INTROSPECTION_OUTCOME_RECORDED = "introspection_outcome_recorded"
+    CONTEXT_REPAIR_APPLIED = "context_repair_applied"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -231,6 +236,73 @@ class HookFailed(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
+class GoalMilestonesUpdated(RunLogEntry):
+    milestones: list[Milestone] = field(default_factory=list)
+    active_milestone_id: str | None = None
+    source_tool_call_id: str | None = None
+    source_step_id: str | None = None
+    reason: Literal["declared", "updated", "completed", "activated"] = "updated"
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.GOAL_MILESTONES_UPDATED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class IntrospectionTriggered(RunLogEntry):
+    trigger_reason: Literal["step_interval", "consecutive_errors", "milestone_switch"]
+    active_milestone_id: str | None = None
+    review_count_since_boundary: int = 0
+    trigger_tool_call_id: str | None = None
+    trigger_tool_step_id: str | None = None
+    notice_step_id: str | None = None
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.INTROSPECTION_TRIGGERED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class IntrospectionCheckpointRecorded(RunLogEntry):
+    checkpoint_seq: int
+    milestone_id: str | None = None
+    review_tool_call_id: str | None = None
+    review_step_id: str | None = None
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.INTROSPECTION_CHECKPOINT_RECORDED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class IntrospectionOutcomeRecorded(RunLogEntry):
+    mode: Literal["metadata_only", "step_back"]
+    boundary_seq: int
+    aligned: bool | None = None
+    experience: str | None = None
+    active_milestone_id: str | None = None
+    review_tool_call_id: str | None = None
+    review_step_id: str | None = None
+    hidden_step_ids: list[str] = field(default_factory=list)
+    notice_cleaned_step_ids: list[str] = field(default_factory=list)
+    condensed_step_ids: list[str] = field(default_factory=list)
+    repair_start_seq: int | None = None
+    repair_end_seq: int | None = None
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.INTROSPECTION_OUTCOME_RECORDED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextRepairApplied(RunLogEntry):
+    mode: Literal["step_back"]
+    affected_count: int
+    start_seq: int
+    end_seq: int
+    experience: str
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.CONTEXT_REPAIR_APPLIED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class ReviewMilestonesUpdated(RunLogEntry):
     milestones: list[Milestone] = field(default_factory=list)
     active_milestone_id: str | None = None
@@ -339,9 +411,14 @@ __all__ = [
     "CommittedStep",
     "CompactionApplied",
     "CompactionFailed",
+    "ContextRepairApplied",
     "ContextStepsHidden",
     "ContextAssembled",
+    "GoalMilestonesUpdated",
     "HookFailed",
+    "IntrospectionCheckpointRecorded",
+    "IntrospectionOutcomeRecorded",
+    "IntrospectionTriggered",
     "LLMCallCompleted",
     "LLMCallStarted",
     "MessagesRebuilt",
