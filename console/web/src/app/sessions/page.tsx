@@ -110,16 +110,15 @@ export default function SessionsPage() {
       ) : (
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 divide-y divide-zinc-800 overflow-hidden">
           {sessions.map((s) => (
-            <Link
+            <div
               key={s.session_id}
-              href={`/sessions/${s.session_id}`}
               className={cn(
-                "group block px-5 py-4 transition-colors duration-150",
+                "grid gap-4 px-5 py-4 transition-colors duration-150 md:grid-cols-[1fr_auto]",
                 "hover:bg-zinc-800/50"
               )}
             >
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
+              <Link href={`/sessions/${s.session_id}`} className="min-w-0">
+                <div className="min-w-0">
                   <div className="text-sm text-zinc-200">
                     <UserInputCompact
                       input={s.last_user_input}
@@ -135,30 +134,31 @@ export default function SessionsPage() {
                     </p>
                   )}
                 </div>
-                <div className="text-right shrink-0 space-y-1.5">
-                  <div className="flex items-center justify-end gap-2">
+              </Link>
+              <div className="flex shrink-0 items-start justify-between gap-3 md:justify-end">
+                <div className="space-y-1.5 text-left md:text-right">
+                  <div className="flex flex-wrap items-center gap-2 md:justify-end">
                     <PillBadge variant="default">{s.run_count} runs</PillBadge>
-                    <MonoText truncate className="max-w-[120px]">{s.agent_id || "unknown"}</MonoText>
+                    <PillBadge variant="pending">{s.step_count} steps</PillBadge>
                   </div>
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={(e) => handleDelete(s.session_id, e)}
-                      className={cn(
-                        "p-1.5 rounded-md text-zinc-500 hover:text-red-400 hover:bg-red-900/20",
-                        "transition-colors duration-150"
-                      )}
-                      aria-label={`Delete session ${s.session_id.slice(0, 8)}`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                    <p className="text-[11px] text-zinc-500">
-                      {formatRelativeTime(s.updated_at)}
-                    </p>
-                  </div>
+                  <MonoText truncate className="block max-w-[180px]">{s.agent_id || "unknown"}</MonoText>
+                  <p className="text-[11px] text-zinc-500">
+                    {formatRelativeTime(s.updated_at)}
+                  </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={(e) => handleDelete(s.session_id, e)}
+                  className={cn(
+                    "rounded-md p-1.5 text-zinc-500 transition-colors duration-150",
+                    "hover:bg-red-900/20 hover:text-red-400"
+                  )}
+                  aria-label={`Delete session ${s.session_id.slice(0, 8)}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}

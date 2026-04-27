@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Activity, Clock, Cpu, Flag, GitBranch, Wrench, Zap } from "lucide-react";
 import { BackHeader } from "@/components/back-header";
 import { JsonDisclosure } from "@/components/json-disclosure";
@@ -12,14 +12,20 @@ import { SectionCard } from "@/components/section-card";
 import { ErrorStateMessage, FullPageMessage } from "@/components/state-message";
 import { TokenMetricsBadges } from "@/components/token-metrics-badges";
 import { TokenSummaryCards } from "@/components/token-summary-cards";
+import { TraceDiagnostics } from "@/components/trace-detail/trace-diagnostics";
 import { TraceLlmCalls } from "@/components/trace-detail/trace-llm-calls";
 import { TraceLoopTimeline } from "@/components/trace-detail/trace-loop-timeline";
 import { TraceMainlineEvents } from "@/components/trace-detail/trace-mainline-events";
 import { TraceReviewCycles } from "@/components/trace-detail/trace-review-cycles";
 import { TraceRuntimeDecisions } from "@/components/trace-detail/trace-runtime-decisions";
 import { TraceStatusBadge } from "@/components/trace-status-badge";
+import {
+  StepContentPreview,
+  StructuredValuePreview,
+  ToolCallPreviewList,
+} from "@/components/step-content-preview";
 import { getTrace } from "@/lib/api";
-import type { TraceDetail, SpanResponse } from "@/lib/api";
+import type { ToolCallPayload, TraceDetail, SpanResponse } from "@/lib/api";
 import { latestAlignment, latestObjective } from "@/lib/insights";
 import {
   formatDurationMs,
@@ -92,8 +98,61 @@ function TraceInsightRail({ trace }: TraceInsightRailProps) {
           </span>
         </div>
       </div>
+      {trace.final_output ? (
+        <div className="rounded-xl border border-line bg-panel px-4 py-3 lg:col-span-4">
+          <div className="mb-2 text-xs uppercase tracking-wide text-ink-faint">
+            Final Output Preview
+          </div>
+          <p className="line-clamp-3 text-sm leading-6 text-foreground">
+            {trace.final_output}
+          </p>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function SpanDetailPreview({ span }: { span: SpanResponse }) {
+  if (span.kind === "llm_call" && span.llm_details) {
+    const toolCalls: ToolCallPayload[] = Array.isArray(
+      span.llm_details.response_tool_calls,
+    )
+      ? (span.llm_details.response_tool_calls as ToolCallPayload[])
+      : [];
+    return (
+      <div className="space-y-3 rounded-lg border border-line bg-panel px-3 py-3">
+        <div>
+          <div className="mb-1 text-xs font-medium text-ink-faint">Response</div>
+          <StepContentPreview
+            value={span.llm_details.response_content}
+            emptyLabel="No assistant response content"
+          />
+        </div>
+        {toolCalls.length > 0 ? <ToolCallPreviewList toolCalls={toolCalls} /> : null}
+      </div>
+    );
+  }
+
+  if (span.kind === "tool_call" && span.tool_details) {
+    const output =
+      span.tool_details.content_for_user ??
+      span.tool_details.output ??
+      span.tool_details.error;
+    return (
+      <div className="space-y-3 rounded-lg border border-line bg-panel px-3 py-3">
+        <div>
+          <div className="mb-1 text-xs font-medium text-ink-faint">Arguments</div>
+          <StructuredValuePreview value={span.tool_details.input_args ?? {}} />
+        </div>
+        <div>
+          <div className="mb-1 text-xs font-medium text-ink-faint">Result</div>
+          <StepContentPreview value={output} emptyLabel="No tool result content" />
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 /**
@@ -218,6 +277,8 @@ function SpanRow({
             </div>
           )}
 
+          <SpanDetailPreview span={span} />
+
           {span.llm_details && (
             <JsonDisclosure label="LLM Details" value={span.llm_details} />
           )}
@@ -251,12 +312,16 @@ function SpanRow({
  */
 export default function TraceDetailPage() {
   const params = useParams();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const traceId = params.id as string;
   const [trace, setTrace] = useState<TraceDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedSpans, setExpandedSpans] = useState<Set<string>>(new Set());
-  const [viewMode, setViewMode] = useState<"mainline" | "debug">("mainline");
+  const [viewMode, setViewMode] = useState<"mainline" | "debug">(
+    searchParams.get("view") === "debug" ? "debug" : "mainline",
+  );
 
   useEffect(() => {
     getTrace(traceId)
@@ -278,6 +343,17 @@ export default function TraceDetailPage() {
       else next.add(spanId);
       return next;
     });
+  };
+
+  const updateViewMode = (nextViewMode: "mainline" | "debug") => {
+    setViewMode(nextViewMode);
+    const next = new URLSearchParams(searchParams.toString());
+    if (nextViewMode === "debug") {
+      next.set("view", "debug");
+    } else {
+      next.delete("view");
+    }
+    router.replace(`/traces/${traceId}${next.toString() ? `?${next}` : ""}`);
   };
 
   if (loading) {
@@ -370,7 +446,7 @@ export default function TraceDetailPage() {
         <button
           type="button"
           aria-pressed={viewMode === "mainline"}
-          onClick={() => setViewMode("mainline")}
+          onClick={() => updateViewMode("mainline")}
           className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
             viewMode === "mainline"
               ? "border-accent bg-panel-strong text-foreground"
@@ -382,7 +458,7 @@ export default function TraceDetailPage() {
         <button
           type="button"
           aria-pressed={viewMode === "debug"}
-          onClick={() => setViewMode("debug")}
+          onClick={() => updateViewMode("debug")}
           className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
             viewMode === "debug"
               ? "border-accent bg-panel-strong text-foreground"
@@ -410,6 +486,7 @@ export default function TraceDetailPage() {
         </div>
       ) : (
         <>
+          <TraceDiagnostics trace={trace} />
           <TraceLlmCalls llmCalls={trace.llm_calls} />
           <TraceRuntimeDecisions decisions={trace.runtime_decisions} />
           <TraceLoopTimeline events={trace.timeline_events} />
