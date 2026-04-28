@@ -187,7 +187,11 @@ for result in tool_results:
     )
 
     committed_step = await commit_step(tool_step)
-    register_committed_tool_step(step_lookup, tool_call_id=call_id, step=committed_step)
+    register_committed_tool_step(
+        step_lookup,
+        tool_call_id=result.tool_call_id or "",
+        step=committed_step,
+    )
     if goal_update is not None:
         await writer.record_goal_milestones_updated(...)
     if notice is not None:
