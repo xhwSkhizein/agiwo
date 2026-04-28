@@ -609,3 +609,30 @@ def test_remove_review_tool_call_omits_empty_tool_calls_key() -> None:
 
     assert len(messages) == 1
     assert "tool_calls" not in messages[0]
+
+
+def test_remove_review_tool_call_preserves_structured_assistant_content() -> None:
+    messages = [
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Keep this structured content."}],
+            "tool_calls": [
+                {
+                    "id": "tc_review",
+                    "type": "function",
+                    "function": {"name": "review_trajectory", "arguments": "{}"},
+                }
+            ],
+        }
+    ]
+
+    _remove_review_tool_call(
+        messages,
+        review_tool_call_id="tc_review",
+    )
+
+    assert len(messages) == 1
+    assert messages[0]["content"] == [
+        {"type": "text", "text": "Keep this structured content."}
+    ]
+    assert "tool_calls" not in messages[0]

@@ -10,7 +10,7 @@ IntrospectionTriggerReason = Literal[
     "step_interval", "consecutive_errors", "milestone_switch"
 ]
 IntrospectionMode = Literal["metadata_only", "step_back"]
-ContextRepairMode = Literal["step_back"]
+ContextRepairMode = Literal["metadata_only", "step_back"]
 
 
 @dataclass

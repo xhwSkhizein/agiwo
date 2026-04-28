@@ -438,7 +438,7 @@ def build_runtime_decision_record_from_entry(
             created_at=entry.created_at,
             payload={
                 "affected_count": entry.affected_count,
-                "checkpoint_seq": entry.start_seq - 1,
+                "checkpoint_seq": max(0, entry.start_seq - 1),
                 "start_sequence": entry.start_seq,
                 "end_sequence": entry.end_seq,
                 "experience": entry.experience,

@@ -97,4 +97,5 @@ async def test_prepare_run_context_restores_introspect_state_from_run_log() -> N
     assert context.ledger.goal.active_milestone_id == "inspect"
     assert context.ledger.introspection.latest_aligned_checkpoint is not None
     assert context.ledger.introspection.latest_aligned_checkpoint.seq == 2
+    assert context.ledger.introspection.last_boundary_seq == 2
     assert context.ledger.introspection.review_count_since_boundary == 1

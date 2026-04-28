@@ -434,6 +434,18 @@ def build_runtime_decision_state_from_entries(
                 experience=entry.experience,
             )
             continue
+        if isinstance(entry, ContextRepairApplied):
+            latest_step_back = StepBackDecisionView(
+                session_id=entry.session_id,
+                run_id=entry.run_id,
+                agent_id=entry.agent_id,
+                sequence=entry.sequence,
+                created_at=entry.created_at,
+                affected_count=entry.affected_count,
+                checkpoint_seq=max(0, entry.start_seq - 1),
+                experience=entry.experience,
+            )
+            continue
         if isinstance(entry, RunRolledBack):
             latest_rollback = RollbackDecisionView(
                 session_id=entry.session_id,

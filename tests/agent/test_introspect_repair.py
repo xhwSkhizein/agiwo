@@ -30,6 +30,7 @@ def test_step_back_repairs_only_after_previous_boundary() -> None:
     )
 
     assert plan is not None
+    assert plan.mode == "step_back"
     assert plan.start_seq == 4
     assert plan.end_seq == 5
     assert [(u.tool_call_id, u.content) for u in plan.content_updates] == [
@@ -62,5 +63,6 @@ def test_aligned_review_cleans_prompt_notice() -> None:
     )
 
     assert plan is not None
+    assert plan.mode == "metadata_only"
     assert plan.content_updates[0].content == "result"
     assert plan.notice_cleaned_step_ids == ["step-search"]

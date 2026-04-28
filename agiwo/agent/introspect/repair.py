@@ -76,7 +76,7 @@ def build_context_repair_plan(
     if not updates:
         return None
     return ContextRepairPlan(
-        mode="step_back",
+        mode=outcome.mode,
         start_seq=start_seq,
         end_seq=end_seq,
         experience=outcome.experience or "",

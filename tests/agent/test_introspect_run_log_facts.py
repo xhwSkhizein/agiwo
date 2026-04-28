@@ -54,6 +54,7 @@ def test_introspection_outcome_round_trips_boundary_and_repair_range() -> None:
     assert isinstance(restored, IntrospectionOutcomeRecorded)
     assert restored.boundary_seq == 12
     assert restored.repair_start_seq == 4
+    assert restored.repair_end_seq == 11
 
 
 def test_context_repair_applied_round_trips() -> None:

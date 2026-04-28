@@ -109,7 +109,7 @@ async def apply_introspection_outcome(
 
     if outcome.mode == "step_back" and repair_plan is not None:
         repair_entries = await writer.record_context_repair_applied(
-            mode=repair_plan.mode,
+            mode="step_back",
             affected_count=repair_plan.affected_count,
             start_seq=repair_plan.start_seq,
             end_seq=repair_plan.end_seq,
@@ -204,10 +204,18 @@ def _remove_review_tool_call(
         else:
             message.pop("tool_calls", None)
         content = message.get("content")
-        if remaining_tool_calls or (isinstance(content, str) and content.strip()):
+        if remaining_tool_calls or _has_preservable_assistant_content(content):
             kept_messages.append(message)
 
     messages[:] = kept_messages
+
+
+def _has_preservable_assistant_content(content: object) -> bool:
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, (list, dict)):
+        return len(content) > 0
+    return False
 
 
 __all__ = [

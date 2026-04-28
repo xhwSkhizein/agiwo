@@ -81,7 +81,7 @@ def test_introspection_run_log_facts_project_to_runtime_spans() -> None:
         }
     ]
     assert (
-        spans_by_name["review_trigger"].attributes["review_count_since_checkpoint"] == 8
+        spans_by_name["review_trigger"].attributes["review_count_since_boundary"] == 8
     )
     assert spans_by_name["review_checkpoint"].attributes["checkpoint_seq"] == 42
     assert spans_by_name["review_outcome"].attributes["aligned"] is True

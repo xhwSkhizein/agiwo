@@ -5,11 +5,11 @@ import pytest
 from agiwo.agent import (
     CompactionApplied,
     CompactionFailed,
-    RunRolledBack,
     StepBackApplied,
     TerminationDecided,
     TerminationReason,
 )
+from agiwo.agent.models.log import ContextRepairApplied, RunRolledBack
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.agent.storage.serialization import build_runtime_decision_state_from_entries
 from agiwo.agent.storage.sqlite import SQLiteRunLogStorage
@@ -105,6 +105,31 @@ def test_build_runtime_decision_state_from_entries_replays_latest_views() -> Non
     )
     assert state.latest_rollback is not None
     assert state.latest_rollback.end_sequence == 4
+
+
+def test_context_repair_applied_replays_latest_step_back_decision() -> None:
+    now = datetime(2026, 4, 22, 12, 0, tzinfo=timezone.utc)
+    state = build_runtime_decision_state_from_entries(
+        [
+            ContextRepairApplied(
+                sequence=7,
+                session_id="sess-1",
+                run_id="run-1",
+                agent_id="agent-1",
+                mode="step_back",
+                affected_count=3,
+                start_seq=1,
+                end_seq=9,
+                experience="search drifted",
+                created_at=now,
+            )
+        ]
+    )
+
+    assert state.latest_step_back is not None
+    assert state.latest_step_back.affected_count == 3
+    assert state.latest_step_back.checkpoint_seq == 0
+    assert state.latest_step_back.experience == "search drifted"
 
 
 @pytest.mark.asyncio
