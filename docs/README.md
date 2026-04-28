@@ -15,6 +15,7 @@ Welcome to the Agiwo documentation. Agiwo is a streaming-first AI agent SDK and 
 - **[Streaming](./guides/streaming.md)** — real-time streaming responses
 - **[Hooks](./guides/hooks.md)** — observe and intercept agent lifecycle events
 - **[Storage & Observability](./guides/storage.md)** — persist runs, traces, and metrics
+- **[Context Optimization](./guides/context-optimization.md)** — context rollback, goal-directed review, and introspection repair
 - **[Skills](./guides/skills.md)** — file-based skill discovery and allowlisting
 - **[Release Publishing](./release.md)** — maintainer runbook for GitHub Release driven PyPI publishing
 
