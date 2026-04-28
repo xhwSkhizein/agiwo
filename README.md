@@ -56,6 +56,7 @@ The project favors explicit runtime wiring over hidden global state. Agent execu
 - Tool calling with builtin tools, custom `BaseTool` implementations, and agent-as-tool composition via `Agent.as_tool()`
 - Scheduler orchestration for roots and child agents, including `route_root_input` (unified entry point), `enqueue_input`, `wait_for`, `steer`, `cancel`, and `shutdown`
 - Run and step persistence plus trace collection with memory, SQLite, and MongoDB-backed storage options
+- Goal-directed context optimization with milestone tracking, forced trajectory review, and introspection-based context repair
 - Global skill discovery with per-agent allowlisting through explicit `allowed_skills`
 - Optional Console package for control-plane operations, trace inspection, session chat, and Feishu channel integration
 

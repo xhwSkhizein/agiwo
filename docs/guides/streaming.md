@@ -119,7 +119,7 @@ All execution paths — `run()`, `run_stream()`, `start()`, and scheduler `route
 ## `context_steps_hidden`
 
 When the runtime later decides that some committed steps were only temporary
-review metadata, it emits a dedicated stream event:
+introspection metadata, it emits a dedicated stream event:
 
 ```json
 {
@@ -128,7 +128,7 @@ review metadata, it emits a dedicated stream event:
   "run_id": "run-1",
   "agent_id": "agent-1",
   "step_ids": ["step-review-call", "step-review-result"],
-  "reason": "review_metadata"
+  "reason": "introspection_metadata"
 }
 ```
 
