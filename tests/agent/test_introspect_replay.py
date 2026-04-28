@@ -1,19 +1,19 @@
+from agiwo.agent.introspect.models import Milestone
+from agiwo.agent.introspect.replay import build_introspect_state_from_entries
 from agiwo.agent.models.log import (
-    ReviewCheckpointRecorded,
-    ReviewMilestonesUpdated,
-    ReviewOutcomeRecorded,
-    ReviewTriggerDecided,
+    GoalMilestonesUpdated,
+    IntrospectionCheckpointRecorded,
+    IntrospectionOutcomeRecorded,
+    IntrospectionTriggered,
     ToolStepCommitted,
 )
-from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.step import MessageRole
-from agiwo.agent.review.replay import build_review_state_from_entries
 
 
-def test_review_replay_restores_milestones_checkpoint_and_count() -> None:
-    state = build_review_state_from_entries(
+def test_introspect_replay_restores_goal_checkpoint_and_count() -> None:
+    state = build_introspect_state_from_entries(
         [
-            ReviewMilestonesUpdated(
+            GoalMilestonesUpdated(
                 sequence=1,
                 session_id="sess",
                 run_id="run",
@@ -35,7 +35,7 @@ def test_review_replay_restores_milestones_checkpoint_and_count() -> None:
                 name="web_search",
                 content="results",
             ),
-            ReviewCheckpointRecorded(
+            IntrospectionCheckpointRecorded(
                 sequence=3,
                 session_id="sess",
                 run_id="run",
@@ -70,23 +70,25 @@ def test_review_replay_restores_milestones_checkpoint_and_count() -> None:
         ]
     )
 
-    assert [m.id for m in state.milestones] == ["inspect"]
-    assert state.latest_checkpoint is not None
-    assert state.latest_checkpoint.seq == 3
-    assert state.review_count_since_checkpoint == 1
+    assert [m.id for m in state.goal.milestones] == ["inspect"]
+    assert state.goal.active_milestone_id == "inspect"
+    assert state.introspection.latest_aligned_checkpoint is not None
+    assert state.introspection.latest_aligned_checkpoint.seq == 3
+    assert state.introspection.last_boundary_seq == 3
+    assert state.introspection.review_count_since_boundary == 1
 
 
-def test_review_replay_tracks_pending_notice_until_outcome() -> None:
-    state = build_review_state_from_entries(
+def test_introspect_replay_tracks_pending_trigger_until_outcome() -> None:
+    state = build_introspect_state_from_entries(
         [
-            ReviewTriggerDecided(
+            IntrospectionTriggered(
                 sequence=2,
                 session_id="sess",
                 run_id="run",
                 agent_id="agent",
                 trigger_reason="step_interval",
                 active_milestone_id="inspect",
-                review_count_since_checkpoint=8,
+                review_count_since_boundary=8,
                 trigger_tool_call_id="tc-search",
                 trigger_tool_step_id="step-search",
                 notice_step_id="step-search",
@@ -94,42 +96,46 @@ def test_review_replay_tracks_pending_notice_until_outcome() -> None:
         ]
     )
 
-    assert state.pending_review_notice is not None
-    assert state.pending_review_notice.trigger_reason == "step_interval"
+    assert state.introspection.pending_trigger is not None
+    assert state.introspection.pending_trigger.trigger_reason == "step_interval"
+    assert state.introspection.notice_requested is True
 
-    state = build_review_state_from_entries(
+    state = build_introspect_state_from_entries(
         [
-            ReviewTriggerDecided(
+            IntrospectionTriggered(
                 sequence=2,
                 session_id="sess",
                 run_id="run",
                 agent_id="agent",
                 trigger_reason="step_interval",
                 active_milestone_id="inspect",
-                review_count_since_checkpoint=8,
+                review_count_since_boundary=8,
                 trigger_tool_call_id="tc-search",
                 trigger_tool_step_id="step-search",
                 notice_step_id="step-search",
             ),
-            ReviewOutcomeRecorded(
+            IntrospectionOutcomeRecorded(
                 sequence=3,
                 session_id="sess",
                 run_id="run",
                 agent_id="agent",
                 aligned=True,
                 mode="metadata_only",
+                boundary_seq=3,
             ),
         ]
     )
 
-    assert state.pending_review_notice is None
-    assert state.review_count_since_checkpoint == 0
+    assert state.introspection.pending_trigger is None
+    assert state.introspection.notice_requested is False
+    assert state.introspection.last_boundary_seq == 3
+    assert state.introspection.review_count_since_boundary == 0
 
 
-def test_review_replay_derives_pending_milestone_switch_until_triggered() -> None:
-    state = build_review_state_from_entries(
+def test_introspect_replay_derives_pending_milestone_switch_until_triggered() -> None:
+    state = build_introspect_state_from_entries(
         [
-            ReviewMilestonesUpdated(
+            GoalMilestonesUpdated(
                 sequence=1,
                 session_id="sess",
                 run_id="run",
@@ -141,7 +147,7 @@ def test_review_replay_derives_pending_milestone_switch_until_triggered() -> Non
                 active_milestone_id="inspect",
                 reason="declared",
             ),
-            ReviewMilestonesUpdated(
+            GoalMilestonesUpdated(
                 sequence=2,
                 session_id="sess",
                 run_id="run",
@@ -156,12 +162,12 @@ def test_review_replay_derives_pending_milestone_switch_until_triggered() -> Non
         ]
     )
 
-    assert state.pending_review_reason == "milestone_switch"
-    assert state.consecutive_errors == 0
+    assert state.introspection.pending_milestone_switch is True
+    assert state.introspection.consecutive_errors == 0
 
-    state = build_review_state_from_entries(
+    state = build_introspect_state_from_entries(
         [
-            ReviewMilestonesUpdated(
+            GoalMilestonesUpdated(
                 sequence=1,
                 session_id="sess",
                 run_id="run",
@@ -173,7 +179,7 @@ def test_review_replay_derives_pending_milestone_switch_until_triggered() -> Non
                 active_milestone_id="inspect",
                 reason="declared",
             ),
-            ReviewMilestonesUpdated(
+            GoalMilestonesUpdated(
                 sequence=2,
                 session_id="sess",
                 run_id="run",
@@ -185,17 +191,17 @@ def test_review_replay_derives_pending_milestone_switch_until_triggered() -> Non
                 active_milestone_id="fix",
                 reason="activated",
             ),
-            ReviewTriggerDecided(
+            IntrospectionTriggered(
                 sequence=3,
                 session_id="sess",
                 run_id="run",
                 agent_id="agent",
                 trigger_reason="milestone_switch",
                 active_milestone_id="fix",
-                review_count_since_checkpoint=0,
+                review_count_since_boundary=0,
             ),
         ]
     )
 
-    assert state.pending_review_reason is None
-    assert state.pending_review_notice is not None
+    assert state.introspection.pending_milestone_switch is False
+    assert state.introspection.pending_trigger is not None

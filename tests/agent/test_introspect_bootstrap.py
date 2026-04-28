@@ -3,13 +3,13 @@ from typing import cast
 
 import pytest
 
+from agiwo.agent.introspect.models import Milestone
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.log import (
-    ReviewCheckpointRecorded,
-    ReviewMilestonesUpdated,
+    GoalMilestonesUpdated,
+    IntrospectionCheckpointRecorded,
     ToolStepCommitted,
 )
-from agiwo.agent.models.review import Milestone
 from agiwo.agent.models.run import RunIdentity
 from agiwo.agent.models.step import MessageRole
 from agiwo.agent.run_bootstrap import prepare_run_context
@@ -21,11 +21,11 @@ from agiwo.utils.abort_signal import AbortSignal
 
 
 @pytest.mark.asyncio
-async def test_prepare_run_context_restores_review_state_from_run_log() -> None:
+async def test_prepare_run_context_restores_introspect_state_from_run_log() -> None:
     storage = InMemoryRunLogStorage()
     await storage.append_entries(
         [
-            ReviewMilestonesUpdated(
+            GoalMilestonesUpdated(
                 sequence=1,
                 session_id="sess-1",
                 run_id="run-old",
@@ -36,7 +36,7 @@ async def test_prepare_run_context_restores_review_state_from_run_log() -> None:
                 active_milestone_id="inspect",
                 reason="declared",
             ),
-            ReviewCheckpointRecorded(
+            IntrospectionCheckpointRecorded(
                 sequence=2,
                 session_id="sess-1",
                 run_id="run-old",
@@ -93,9 +93,9 @@ async def test_prepare_run_context_restores_review_state_from_run_log() -> None:
         writer=RunStateWriter(context),
     )
 
-    assert [milestone.id for milestone in context.ledger.review.milestones] == [
-        "inspect"
-    ]
-    assert context.ledger.review.latest_checkpoint is not None
-    assert context.ledger.review.latest_checkpoint.seq == 2
-    assert context.ledger.review.review_count_since_checkpoint == 1
+    assert [milestone.id for milestone in context.ledger.goal.milestones] == ["inspect"]
+    assert context.ledger.goal.active_milestone_id == "inspect"
+    assert context.ledger.introspection.latest_aligned_checkpoint is not None
+    assert context.ledger.introspection.latest_aligned_checkpoint.seq == 2
+    assert context.ledger.introspection.last_boundary_seq == 2
+    assert context.ledger.introspection.review_count_since_boundary == 1

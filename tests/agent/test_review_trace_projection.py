@@ -1,15 +1,15 @@
+from agiwo.agent.introspect.models import Milestone
 from agiwo.agent.models.log import (
-    ReviewCheckpointRecorded,
-    ReviewMilestonesUpdated,
-    ReviewOutcomeRecorded,
-    ReviewTriggerDecided,
+    GoalMilestonesUpdated,
+    IntrospectionCheckpointRecorded,
+    IntrospectionOutcomeRecorded,
+    IntrospectionTriggered,
     RunStarted,
 )
-from agiwo.agent.models.review import Milestone
 from agiwo.agent.trace_writer import AgentTraceCollector
 
 
-def test_review_run_log_facts_project_to_runtime_spans() -> None:
+def test_introspection_run_log_facts_project_to_runtime_spans() -> None:
     trace = AgentTraceCollector().build_from_entries(
         [
             RunStarted(
@@ -19,7 +19,7 @@ def test_review_run_log_facts_project_to_runtime_spans() -> None:
                 agent_id="agent-1",
                 user_input="inspect",
             ),
-            ReviewMilestonesUpdated(
+            GoalMilestonesUpdated(
                 sequence=2,
                 session_id="sess-1",
                 run_id="run-1",
@@ -32,19 +32,19 @@ def test_review_run_log_facts_project_to_runtime_spans() -> None:
                 source_step_id="step-milestones",
                 reason="declared",
             ),
-            ReviewTriggerDecided(
+            IntrospectionTriggered(
                 sequence=3,
                 session_id="sess-1",
                 run_id="run-1",
                 agent_id="agent-1",
                 trigger_reason="step_interval",
                 active_milestone_id="inspect",
-                review_count_since_checkpoint=8,
+                review_count_since_boundary=8,
                 trigger_tool_call_id="tc-search",
                 trigger_tool_step_id="step-search",
                 notice_step_id="step-search",
             ),
-            ReviewCheckpointRecorded(
+            IntrospectionCheckpointRecorded(
                 sequence=4,
                 session_id="sess-1",
                 run_id="run-1",
@@ -54,13 +54,14 @@ def test_review_run_log_facts_project_to_runtime_spans() -> None:
                 review_tool_call_id="tc-review",
                 review_step_id="step-review",
             ),
-            ReviewOutcomeRecorded(
+            IntrospectionOutcomeRecorded(
                 sequence=5,
                 session_id="sess-1",
                 run_id="run-1",
                 agent_id="agent-1",
                 aligned=True,
                 mode="metadata_only",
+                boundary_seq=42,
                 active_milestone_id="inspect",
                 review_tool_call_id="tc-review",
                 review_step_id="step-review",
@@ -80,7 +81,7 @@ def test_review_run_log_facts_project_to_runtime_spans() -> None:
         }
     ]
     assert (
-        spans_by_name["review_trigger"].attributes["review_count_since_checkpoint"] == 8
+        spans_by_name["review_trigger"].attributes["review_count_since_boundary"] == 8
     )
     assert spans_by_name["review_checkpoint"].attributes["checkpoint_seq"] == 42
     assert spans_by_name["review_outcome"].attributes["aligned"] is True

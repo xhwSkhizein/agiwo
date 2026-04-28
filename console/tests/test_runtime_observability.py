@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 
+from agiwo.agent.models.log import ContextRepairApplied
 from agiwo.agent import MessageRole, StepView
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 
 from server.services.runtime.runtime_observability import (
     build_conversation_events,
+    build_runtime_decision_record_from_entry,
     build_session_milestone_board,
     build_trace_llm_call_records,
     build_trace_mainline_events,
@@ -232,6 +234,25 @@ def _trace_with_review_and_llm() -> Trace:
         ),
     ]
     return trace
+
+
+def test_context_repair_observability_clamps_checkpoint_seq() -> None:
+    record = build_runtime_decision_record_from_entry(
+        ContextRepairApplied(
+            sequence=1,
+            session_id="sess-1",
+            run_id="run-1",
+            agent_id="agent-1",
+            mode="step_back",
+            affected_count=1,
+            start_seq=0,
+            end_seq=3,
+            experience="drifted",
+        )
+    )
+
+    assert record.details["checkpoint_seq"] == 0
+    assert record.details["start_sequence"] == 0
 
 
 def test_build_trace_llm_call_records_extracts_summary_fields() -> None:
