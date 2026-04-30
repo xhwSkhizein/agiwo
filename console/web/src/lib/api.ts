@@ -1,4 +1,5 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") ?? "";
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
 
 function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
@@ -17,13 +18,28 @@ export class ApiError extends Error {
 }
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(apiUrl(path), {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timeout = globalThis.setTimeout(() => {
+    controller.abort();
+  }, DEFAULT_FETCH_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(path), {
+      ...init,
+      signal: init?.signal ?? controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...init?.headers,
+      },
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Request timed out after ${DEFAULT_FETCH_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  } finally {
+    globalThis.clearTimeout(timeout);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
