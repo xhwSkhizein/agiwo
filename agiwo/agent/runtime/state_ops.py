@@ -13,7 +13,8 @@ from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
-from agiwo.agent.introspect.models import ContentUpdate
+
+ToolMessageContentUpdate = tuple[str, str]
 
 
 def replace_messages(state: RunContext, messages: Sequence[dict[str, Any]]) -> None:
@@ -31,13 +32,13 @@ def append_message(state: RunContext, message: Mapping[str, Any]) -> None:
 
 def apply_tool_message_content_updates(
     state: RunContext,
-    updates: Sequence[ContentUpdate],
+    updates: Sequence[ToolMessageContentUpdate],
 ) -> None:
-    for update in updates:
+    for tool_call_id, content in updates:
         _replace_tool_message_content(
             state.ledger.messages,
-            tool_call_id=update.tool_call_id,
-            content=update.content,
+            tool_call_id=tool_call_id,
+            content=content,
         )
 
 
@@ -184,6 +185,7 @@ def track_step_state(
 
 
 __all__ = [
+    "ToolMessageContentUpdate",
     "append_message",
     "apply_tool_message_content_updates",
     "record_compaction_metadata",

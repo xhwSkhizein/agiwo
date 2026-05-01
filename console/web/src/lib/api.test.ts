@@ -54,6 +54,28 @@ describe("fetch timeout and abort handling", () => {
     expect(fetchSignal?.aborted).toBe(true);
   });
 
+  test("cascades caller aborts that happened before fetch starts", async () => {
+    const callerController = new AbortController();
+    callerController.abort();
+    let fetchSignal: AbortSignal | undefined;
+    const abortError = new DOMException("Aborted", "AbortError");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        fetchSignal = init?.signal;
+        return Promise.reject(abortError);
+      }),
+    );
+    const api = await import("./api");
+
+    await expect(
+      api.getAgentState("state-1", { signal: callerController.signal }),
+    ).rejects.toBe(abortError);
+    expect(fetchSignal).toBeDefined();
+    expect(fetchSignal).not.toBe(callerController.signal);
+    expect(fetchSignal?.aborted).toBe(true);
+  });
+
   test("reports timeout only for the internal timeout abort", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(

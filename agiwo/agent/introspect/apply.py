@@ -91,7 +91,13 @@ async def apply_introspection_outcome(
         )
 
     if repair_plan is not None:
-        apply_tool_message_content_updates(context, repair_plan.content_updates)
+        apply_tool_message_content_updates(
+            context,
+            [
+                (update.tool_call_id, update.content)
+                for update in repair_plan.content_updates
+            ],
+        )
         for update in repair_plan.content_updates:
             projectable_entries.extend(
                 await writer.record_step_condensed_content_updated(

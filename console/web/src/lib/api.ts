@@ -22,7 +22,11 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const callerSignal = init?.signal;
   let timedOut = false;
   const abortFromCaller = () => controller.abort();
-  callerSignal?.addEventListener("abort", abortFromCaller);
+  if (callerSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    callerSignal?.addEventListener("abort", abortFromCaller);
+  }
   const timeout = globalThis.setTimeout(() => {
     timedOut = true;
     controller.abort();
