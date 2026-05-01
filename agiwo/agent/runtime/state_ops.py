@@ -46,7 +46,7 @@ def remove_tool_call_from_messages(
     *,
     tool_call_id: str | None,
 ) -> None:
-    if not tool_call_id:
+    if tool_call_id is None:
         return
 
     kept_messages: list[dict[str, Any]] = []

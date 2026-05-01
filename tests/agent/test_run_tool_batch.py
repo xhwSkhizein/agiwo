@@ -696,6 +696,94 @@ async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
     assert outcomes[0].notice_cleaned_step_ids == []
 
 
+@pytest.mark.asyncio
+async def test_step_back_excludes_trailing_batch_tool_after_review_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_tool_batch(*args, **kwargs):
+        del args, kwargs
+        return [
+            ToolResult.success(
+                tool_name="search",
+                tool_call_id="tc_search",
+                content="Verbose search output",
+                output={},
+            ),
+            ToolResult.success(
+                tool_name="review_trajectory",
+                tool_call_id="tc_review",
+                content="Trajectory review: aligned=False. narrow the search",
+                output={"aligned": False, "experience": "narrow the search"},
+            ),
+            ToolResult.success(
+                tool_name="read",
+                tool_call_id="tc_read",
+                content="Read output after review",
+                output={},
+            ),
+        ]
+
+    monkeypatch.setattr(
+        run_tool_batch_module, "execute_tool_batch", fake_execute_tool_batch
+    )
+
+    storage = InMemoryRunLogStorage()
+    session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
+    context = _FakeContext(
+        config=AgentOptions(
+            enable_goal_directed_review=True,
+            review_step_interval=100,
+        ),
+        ledger=RunLedger(),
+        hooks=_FakeHooks(),
+        session_runtime=session_runtime,
+    )
+    runtime = _FakeRuntime(tools_map=_review_tools_map())
+
+    async def commit_step(step):
+        return await _commit_step_to_ledger_and_storage(context, step)
+
+    async def set_termination_reason(reason: TerminationReason, tool_name: str) -> None:
+        del reason, tool_name
+
+    await run_tool_batch_module.execute_tool_batch_cycle(
+        context=context,
+        runtime=runtime,
+        tool_calls=[
+            {"id": "tc_search", "type": "function", "function": {"name": "search"}},
+            {
+                "id": "tc_review",
+                "type": "function",
+                "function": {"name": "review_trajectory"},
+            },
+            {"id": "tc_read", "type": "function", "function": {"name": "read"}},
+        ],
+        assistant_step_id="assistant-step",
+        set_termination_reason=set_termination_reason,
+        commit_step=commit_step,
+    )
+
+    tool_messages = [
+        msg for msg in context.ledger.messages if msg.get("role") == "tool"
+    ]
+    assert [(msg.get("tool_call_id"), msg.get("content")) for msg in tool_messages] == [
+        ("tc_search", "[EXPERIENCE] narrow the search"),
+        ("tc_read", "Read output after review"),
+    ]
+    entries = await storage.list_entries(session_id=context.session_id)
+    outcomes = [
+        entry for entry in entries if isinstance(entry, IntrospectionOutcomeRecorded)
+    ]
+    assert len(outcomes) == 1
+    assert outcomes[0].condensed_step_ids
+    condensed_steps = await storage.list_step_views(
+        session_id=context.session_id,
+        include_hidden_from_context=True,
+    )
+    read_step = next(step for step in condensed_steps if step.tool_call_id == "tc_read")
+    assert read_step.condensed_content is None
+
+
 def test_remove_review_tool_call_omits_empty_tool_calls_key() -> None:
     context = _FakeContext(
         config=AgentOptions(),
@@ -728,6 +816,40 @@ def test_remove_review_tool_call_omits_empty_tool_calls_key() -> None:
 
     assert len(context.ledger.messages) == 1
     assert "tool_calls" not in context.ledger.messages[0]
+
+
+def test_remove_tool_call_from_messages_treats_empty_string_as_real_id() -> None:
+    context = _FakeContext(
+        config=AgentOptions(),
+        ledger=RunLedger(
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "",
+                            "type": "function",
+                            "function": {
+                                "name": "review_trajectory",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                },
+                {"role": "tool", "tool_call_id": "", "content": "review"},
+            ]
+        ),
+        hooks=_FakeHooks(),
+        session_runtime=SessionRuntime(
+            session_id="sess-1",
+            run_log_storage=InMemoryRunLogStorage(),
+        ),
+    )
+
+    remove_tool_call_from_messages(context, tool_call_id="")
+
+    assert context.ledger.messages == []
 
 
 def test_remove_review_tool_call_preserves_structured_assistant_content() -> None:

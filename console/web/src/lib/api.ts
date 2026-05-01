@@ -19,25 +19,31 @@ export class ApiError extends Error {
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
+  const callerSignal = init?.signal;
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort();
+  callerSignal?.addEventListener("abort", abortFromCaller);
   const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
     controller.abort();
   }, DEFAULT_FETCH_TIMEOUT_MS);
   let res: Response;
   try {
     res = await fetch(apiUrl(path), {
       ...init,
-      signal: init?.signal ?? controller.signal,
+      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
         ...init?.headers,
       },
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
+    if (timedOut && err instanceof DOMException && err.name === "AbortError") {
       throw new Error(`Request timed out after ${DEFAULT_FETCH_TIMEOUT_MS / 1000}s`);
     }
     throw err;
   } finally {
+    callerSignal?.removeEventListener("abort", abortFromCaller);
     globalThis.clearTimeout(timeout);
   }
   if (!res.ok) {
@@ -884,8 +890,8 @@ export function listAgentStates(params?: { status?: string; limit?: number; offs
   return fetchJSON<PageResponse<AgentStateListItem>>(`/api/scheduler/states?${q}`);
 }
 
-export function getAgentState(stateId: string) {
-  return fetchJSON<AgentStateDetail>(`/api/scheduler/states/${stateId}`);
+export function getAgentState(stateId: string, init?: RequestInit) {
+  return fetchJSON<AgentStateDetail>(`/api/scheduler/states/${stateId}`, init);
 }
 
 export function getAgentStateChildren(stateId: string) {

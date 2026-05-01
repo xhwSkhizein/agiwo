@@ -22,7 +22,13 @@ async def build_tool_step_lookup(
     start_seq: int | None = None,
     end_seq: int | None = None,
 ) -> dict[str, dict[str, Any]]:
-    lookup = dict(batch_lookup)
+    lookup = {
+        tool_call_id: info
+        for tool_call_id, info in batch_lookup.items()
+        if _sequence_in_window(
+            info.get("sequence"), start_seq=start_seq, end_seq=end_seq
+        )
+    }
     steps = await context.session_runtime.run_log_storage.list_step_views(
         session_id=context.session_id,
         start_seq=start_seq,
@@ -42,6 +48,21 @@ async def build_tool_step_lookup(
             },
         )
     return lookup
+
+
+def _sequence_in_window(
+    sequence: object,
+    *,
+    start_seq: int | None,
+    end_seq: int | None,
+) -> bool:
+    if not isinstance(sequence, int):
+        return False
+    if start_seq is not None and sequence < start_seq:
+        return False
+    if end_seq is not None and sequence > end_seq:
+        return False
+    return True
 
 
 async def apply_introspection_outcome(
