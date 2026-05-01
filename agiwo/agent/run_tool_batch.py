@@ -147,7 +147,13 @@ async def execute_tool_batch_cycle(
             terminated = True
 
     if pending_outcome is not None:
-        full_lookup = await build_tool_step_lookup(context, step_lookup)
+        previous_boundary_seq = context.ledger.introspection.last_boundary_seq
+        full_lookup = await build_tool_step_lookup(
+            context,
+            step_lookup,
+            start_seq=previous_boundary_seq + 1,
+            end_seq=pending_outcome.boundary_seq,
+        )
         await apply_introspection_outcome(
             context,
             pending_outcome,

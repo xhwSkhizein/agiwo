@@ -144,10 +144,10 @@ export default function TraceDetailPage() {
         )}
         {trace.agent_id && (
           <Link
-            href={`/agents/${trace.agent_id}`}
+            href={`/scheduler/${trace.agent_id}`}
             className="ui-button ui-button-secondary min-h-9 px-3 py-1.5 text-xs"
           >
-            Open agent
+            Open scheduler state
           </Link>
         )}
       </div>

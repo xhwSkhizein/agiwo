@@ -60,11 +60,37 @@ def parse_declared_milestones(output: object) -> list[Milestone]:
     return milestones
 
 
-def _active_milestone_id(milestones: list[Milestone]) -> str | None:
+def active_milestone_id_from_milestones(milestones: list[Milestone]) -> str | None:
     for milestone in milestones:
         if milestone.status == "active":
             return milestone.id
     return None
+
+
+def milestone_transition_requires_introspection(
+    *,
+    previous: list[Milestone],
+    current: list[Milestone],
+    reason: str,
+    active_milestone_id: str | None,
+) -> bool:
+    previous_active_id = active_milestone_id_from_milestones(previous)
+    current_active_id = active_milestone_id or active_milestone_id_from_milestones(
+        current
+    )
+    if previous_active_id is not None and current_active_id != previous_active_id:
+        return True
+    if reason in {"completed", "activated"}:
+        return True
+
+    previous_status_by_id = {milestone.id: milestone.status for milestone in previous}
+    for milestone in current:
+        if (
+            previous_status_by_id.get(milestone.id) != "completed"
+            and milestone.status == "completed"
+        ):
+            return True
+    return False
 
 
 def _validate_milestones(milestones: list[Milestone]) -> None:
@@ -95,9 +121,7 @@ def update_goal_milestones(
     reason: GoalUpdateReason = "declared",
 ) -> GoalUpdate:
     _validate_milestones(milestones)
-    previous_active_id = state.active_milestone_id or _active_milestone_id(
-        state.milestones
-    )
+    previous_milestones = list(state.milestones)
     existing_by_id = {milestone.id: milestone for milestone in state.milestones}
     next_by_id = dict(existing_by_id)
 
@@ -113,13 +137,13 @@ def update_goal_milestones(
         next_by_id[milestone.id] = milestone
 
     next_milestones = list(next_by_id.values())
-    if _active_milestone_id(next_milestones) is None:
+    if active_milestone_id_from_milestones(next_milestones) is None:
         for milestone in next_milestones:
             if milestone.status == "pending":
                 milestone.status = "active"
                 break
 
-    active_id = _active_milestone_id(next_milestones)
+    active_id = active_milestone_id_from_milestones(next_milestones)
     state.milestones = next_milestones
     state.active_milestone_id = active_id
     return GoalUpdate(
@@ -127,8 +151,12 @@ def update_goal_milestones(
         active_milestone_id=active_id,
         source_tool_call_id=source_tool_call_id,
         reason=reason,
-        milestone_switch=previous_active_id is not None
-        and active_id != previous_active_id,
+        milestone_switch=milestone_transition_requires_introspection(
+            previous=previous_milestones,
+            current=next_milestones,
+            reason=reason,
+            active_milestone_id=active_id,
+        ),
     )
 
 
@@ -153,7 +181,9 @@ def handle_goal_tool_result(
 
 __all__ = [
     "GoalValidationError",
+    "active_milestone_id_from_milestones",
     "handle_goal_tool_result",
+    "milestone_transition_requires_introspection",
     "parse_declared_milestones",
     "update_goal_milestones",
 ]

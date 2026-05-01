@@ -14,6 +14,8 @@ from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
 
+ToolMessageContentUpdate = tuple[str, str]
+
 
 def replace_messages(state: RunContext, messages: Sequence[dict[str, Any]]) -> None:
     """Replace the ledger message list.
@@ -26,6 +28,56 @@ def replace_messages(state: RunContext, messages: Sequence[dict[str, Any]]) -> N
 
 def append_message(state: RunContext, message: Mapping[str, Any]) -> None:
     state.ledger.messages.append(copy.deepcopy(dict(message)))
+
+
+def apply_tool_message_content_updates(
+    state: RunContext,
+    updates: Sequence[ToolMessageContentUpdate],
+) -> None:
+    for tool_call_id, content in updates:
+        _replace_tool_message_content(
+            state.ledger.messages,
+            tool_call_id=tool_call_id,
+            content=content,
+        )
+
+
+def remove_tool_call_from_messages(
+    state: RunContext,
+    *,
+    tool_call_id: str | None,
+) -> None:
+    if tool_call_id is None:
+        return
+
+    kept_messages: list[dict[str, Any]] = []
+    for message in state.ledger.messages:
+        if message.get("role") == "tool":
+            if message.get("tool_call_id") != tool_call_id:
+                kept_messages.append(message)
+            continue
+
+        if message.get("role") != "assistant":
+            kept_messages.append(message)
+            continue
+
+        tool_calls = message.get("tool_calls")
+        if not isinstance(tool_calls, list):
+            kept_messages.append(message)
+            continue
+
+        remaining_tool_calls = [
+            tool_call for tool_call in tool_calls if tool_call.get("id") != tool_call_id
+        ]
+        if remaining_tool_calls:
+            message["tool_calls"] = remaining_tool_calls
+        else:
+            message.pop("tool_calls", None)
+        content = message.get("content")
+        if remaining_tool_calls or _has_preservable_assistant_content(content):
+            kept_messages.append(message)
+
+    state.ledger.messages[:] = kept_messages
 
 
 def set_tool_schemas(
@@ -84,6 +136,29 @@ def _extract_text_content(content: str | list[dict[str, Any]] | None) -> str | N
     return "\n".join(texts) if texts else None
 
 
+def _replace_tool_message_content(
+    messages: list[dict[str, Any]],
+    *,
+    tool_call_id: str,
+    content: str,
+) -> None:
+    for message in messages:
+        if message.get("role") != "tool":
+            continue
+        if message.get("tool_call_id") != tool_call_id:
+            continue
+        message["content"] = content
+        break
+
+
+def _has_preservable_assistant_content(content: object) -> bool:
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, (list, dict)):
+        return len(content) > 0
+    return False
+
+
 def _track_assistant_step(state: RunContext, step: StepView) -> None:
     ledger = state.ledger
     if not step.is_assistant_step():
@@ -110,8 +185,11 @@ def track_step_state(
 
 
 __all__ = [
+    "ToolMessageContentUpdate",
     "append_message",
+    "apply_tool_message_content_updates",
     "record_compaction_metadata",
+    "remove_tool_call_from_messages",
     "replace_messages",
     "set_termination_reason",
     "set_tool_schemas",
