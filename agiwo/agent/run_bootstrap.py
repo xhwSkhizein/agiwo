@@ -35,9 +35,15 @@ async def prepare_run_context(
         context.agent_id
     )
     compact_start_seq = latest_compact.end_seq + 1 if latest_compact is not None else 0
+    latest_rebuilt = await context.session_runtime.get_latest_messages_rebuilt(
+        context.agent_id
+    )
+    history_start_seq = (
+        latest_rebuilt.sequence + 1 if latest_rebuilt is not None else compact_start_seq
+    )
     existing_steps = await _load_existing_steps(
         context=context,
-        compact_start_seq=compact_start_seq,
+        compact_start_seq=history_start_seq,
     )
     existing_steps.append(user_step)
     existing_steps.sort(key=lambda step: step.sequence)
@@ -49,6 +55,7 @@ async def prepare_run_context(
         memories,
         before_run_hook_result,
         channel_context=user_message.context,
+        base_messages=latest_rebuilt.messages if latest_rebuilt is not None else None,
     )
     await writer.record_context_assembled(
         messages=assembled_messages,

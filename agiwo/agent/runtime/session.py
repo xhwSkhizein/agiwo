@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from agiwo.agent.models.log import RunLogEntry
+from agiwo.agent.models.log import MessagesRebuilt, RunLogEntry
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.storage.base import (
@@ -81,6 +81,14 @@ class SessionRuntime:
     ) -> CompactMetadata | None:
         """Retrieve the latest compact metadata for the given agent."""
         return await self.run_log_storage.get_latest_compact_metadata(
+            self.session_id, agent_id
+        )
+
+    async def get_latest_messages_rebuilt(
+        self, agent_id: str
+    ) -> MessagesRebuilt | None:
+        """Retrieve the latest complete message snapshot for an agent."""
+        return await self.run_log_storage.get_latest_messages_rebuilt(
             self.session_id, agent_id
         )
 

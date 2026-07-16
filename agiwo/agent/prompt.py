@@ -1,5 +1,6 @@
 """System prompt construction."""
 
+import copy
 import locale
 import platform
 from datetime import datetime
@@ -216,10 +217,13 @@ def assemble_run_messages(
     before_run_hook_result: str | None = None,
     *,
     channel_context: ChannelContext | None = None,
+    base_messages: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = [
-        step.to_message() for step in (existing_steps or [])
-    ]
+    messages = _build_initial_messages(
+        system_prompt,
+        existing_steps=existing_steps,
+        base_messages=base_messages,
+    )
     filtered_memories = filter_relevant_memories(messages, memories or [])
 
     preamble_parts: list[str] = []
@@ -237,9 +241,27 @@ def assemble_run_messages(
         elif preamble_text.strip():
             messages.append({"role": "user", "content": preamble_text})
 
-    if system_prompt:
+    if system_prompt and not (messages and messages[0].get("role") == "system"):
         messages.insert(0, {"role": "system", "content": system_prompt})
 
+    return messages
+
+
+def _build_initial_messages(
+    system_prompt: str,
+    *,
+    existing_steps: list[StepView] | None,
+    base_messages: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if base_messages is None:
+        return [step.to_message() for step in (existing_steps or [])]
+
+    messages = copy.deepcopy(base_messages)
+    messages.extend(step.to_message() for step in (existing_steps or []))
+    if messages and messages[0].get("role") == "system":
+        messages[0]["content"] = system_prompt
+    elif system_prompt:
+        messages.insert(0, {"role": "system", "content": system_prompt})
     return messages
 
 

@@ -8,6 +8,7 @@ from typing import Literal
 from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
+    MessagesRebuilt,
     RunLogEntry,
     RunLogEntryKind,
     RunRolledBack,
@@ -224,6 +225,19 @@ class RunLogStorage(ABC):
         if not compact_entries:
             return None
         return build_compact_metadata_from_entry(compact_entries[-1])
+
+    async def get_latest_messages_rebuilt(
+        self, session_id: str, agent_id: str
+    ) -> MessagesRebuilt | None:
+        entries = await self.list_entries(
+            session_id=session_id,
+            agent_id=agent_id,
+            kinds=[RunLogEntryKind.MESSAGES_REBUILT],
+            order="desc",
+            limit=1,
+        )
+        entry = entries[0] if entries else None
+        return entry if isinstance(entry, MessagesRebuilt) else None
 
     async def get_compact_history(
         self, session_id: str, agent_id: str
