@@ -252,31 +252,13 @@ async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -
                         "sequence": 7,
                         "agent_id": "agent-alpha",
                         "aligned": False,
-                        "mode": "step_back",
                         "experience": "switch plan",
                         "active_milestone_id": "fix",
                         "review_tool_call_id": "tc-review",
                         "review_step_id": "step-2",
-                        "condensed_step_ids": ["step-a", "step-b"],
-                    },
-                ),
-                Span(
-                    trace_id="trace-detail",
-                    parent_span_id=root_span.span_id,
-                    kind=SpanKind.RUNTIME,
-                    name="step_back",
-                    depth=1,
-                    run_id="run-1",
-                    start_time=created_at.replace(second=1),
-                    end_time=created_at.replace(second=1),
-                    duration_ms=0.0,
-                    status=SpanStatus.OK,
-                    attributes={
-                        "sequence": 8,
-                        "agent_id": "agent-alpha",
-                        "affected_count": 2,
-                        "checkpoint_seq": 4,
-                        "experience": "switch plan",
+                        "tool_usefulness": [
+                            {"tool_call_id": "tc-a", "tool_name": "bash", "score": 2}
+                        ],
                     },
                 ),
             ],
@@ -294,8 +276,7 @@ async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["runtime_decisions"][0]["kind"] == "step_back"
-    assert payload["runtime_decisions"][0]["details"]["experience"] == "switch plan"
+    assert payload["runtime_decisions"] == []
     assert [event["kind"] for event in payload["timeline_events"]] == [
         "run_started",
         "llm_call",
@@ -303,7 +284,6 @@ async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -
         "tool_call",
         "review_checkpoint",
         "review_result",
-        "runtime_decision",
         "run_finished",
     ]
     assert payload["timeline_events"][4]["details"]["trigger_reason"] == "step_interval"
@@ -311,11 +291,10 @@ async def test_get_trace_returns_runtime_decisions_and_timeline_events(client) -
         "run_started",
         "review_checkpoint",
         "review_result",
-        "runtime_decision",
         "run_finished",
     ]
     assert payload["review_cycles"][0]["trigger_reason"] == "step_interval"
-    assert payload["review_cycles"][0]["step_back_applied"] is True
+    assert payload["review_cycles"][0]["tool_usefulness"][0]["score"] == 2
     assert payload["llm_calls"][0]["model"] == "gpt-5.4"
     assert payload["llm_calls"][0]["response_tool_call_count"] == 1
 

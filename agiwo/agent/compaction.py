@@ -4,7 +4,6 @@ Compaction runtime — context compression for long conversations.
 Merges compaction/runtime.py + messages.py + parser.py + prompt.py + transcript.py.
 """
 
-import copy
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,8 +12,10 @@ from typing import Any
 
 import aiofiles
 
+from agiwo.agent.introspect.compaction_hints import format_experimental_usefulness_hint
+from agiwo.agent.llm_caller import ModelCallLimitExceeded, execute_model_call
+from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.run import CompactMetadata
-from agiwo.agent.llm_caller import stream_assistant_step
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.step_commit import StepCommitter
@@ -304,6 +305,11 @@ async def _compact(
     compact_prompt_content = prompt_template.format(
         previous_summary=previous_summary or "None",
     )
+    usefulness_hint = format_experimental_usefulness_hint(
+        state.ledger.introspection.latest_tool_usefulness
+    )
+    if usefulness_hint:
+        compact_prompt_content = f"{compact_prompt_content}\n\n{usefulness_hint}"
     latest_user_message = next(
         (m for m in reversed(current_messages) if m.get("role") == "user"),
         None,
@@ -319,38 +325,32 @@ async def _compact(
     await commit_step(compact_user_step, append_message=True)
     snapshot_messages = state.snapshot_messages()
 
-    started_entries = await writer.record_llm_call_started(
-        messages=copy.deepcopy(snapshot_messages),
-        tools=None,
-    )
-    await state.session_runtime.project_run_log_entries(
-        started_entries,
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        parent_run_id=state.parent_run_id,
-        depth=state.depth,
-    )
+    async def _project(entries: list[object]) -> None:
+        await state.session_runtime.project_run_log_entries(
+            entries,
+            run_id=state.run_id,
+            agent_id=state.agent_id,
+            parent_run_id=state.parent_run_id,
+            depth=state.depth,
+        )
 
-    step, llm_context = await stream_assistant_step(
-        model,
-        state,
-        abort_signal,
-        messages=snapshot_messages,
-        use_state_tools=False,
-        name="compact",
-    )
+    try:
+        call_result = await execute_model_call(
+            model=model,
+            state=state,
+            writer=writer,
+            phase=ModelCallPhase.COMPACTION,
+            abort_signal=abort_signal,
+            project_entries=_project,
+            messages=snapshot_messages,
+            use_state_tools=False,
+            name="compact",
+        )
+    except ModelCallLimitExceeded:
+        raise
+    step = call_result.step
+    llm_context = call_result.llm_context
     await commit_step(step, llm=llm_context, append_message=False)
-    completed_entries = await writer.record_llm_call_completed(
-        step=step,
-        llm=llm_context,
-    )
-    await state.session_runtime.project_run_log_entries(
-        completed_entries,
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        parent_run_id=state.parent_run_id,
-        depth=state.depth,
-    )
 
     response_content = step.content or ""
     analysis = parse_compact_response(response_content)

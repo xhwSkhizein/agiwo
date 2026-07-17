@@ -11,7 +11,6 @@ from agiwo.agent.models.log import (
     RunLogEntry,
     RunLogEntryKind,
     RunRolledBack,
-    StepCondensedContentUpdated,
     build_compact_metadata_from_entry,
 )
 from agiwo.agent.models.run import CompactMetadata, RunView
@@ -307,7 +306,6 @@ class SQLiteRunLogStorage(RunLogStorage):
             RunLogEntryKind.TERMINATION_DECIDED,
             RunLogEntryKind.COMPACTION_APPLIED,
             RunLogEntryKind.COMPACTION_FAILED,
-            RunLogEntryKind.STEP_BACK_APPLIED,
             RunLogEntryKind.RUN_ROLLED_BACK,
         )
         entries: list[RunLogEntry] = []
@@ -327,7 +325,6 @@ class SQLiteRunLogStorage(RunLogStorage):
         self,
         *,
         session_id: str,
-        include_hidden_from_context: bool = True,
     ) -> int:
         conn = await self._ensure_connection()
         step_kinds = [
@@ -355,27 +352,12 @@ class SQLiteRunLogStorage(RunLogStorage):
             *step_kinds,
             RunLogEntryKind.RUN_ROLLED_BACK.value,
         ]
-        if not include_hidden_from_context:
-            query += """
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM run_log_entries AS hidden,
-                       json_each(hidden.payload, '$.step_ids') AS hidden_step
-                  WHERE hidden.session_id = steps.session_id
-                    AND hidden.kind = ?
-                    AND hidden_step.value = json_extract(steps.payload, '$.step_id')
-              )
-            """
-            params.append(RunLogEntryKind.CONTEXT_STEPS_HIDDEN.value)
         async with conn.execute(query, params) as cursor:
             row = await cursor.fetchone()
         return int(row[0]) if row is not None else 0
 
     async def get_committed_step_count(self, session_id: str) -> int:
-        return await self.count_step_views(
-            session_id=session_id,
-            include_hidden_from_context=False,
-        )
+        return await self.count_step_views(session_id=session_id)
 
     async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
         if not session_ids:
@@ -399,10 +381,7 @@ class SQLiteRunLogStorage(RunLogStorage):
         self, session_ids: list[str]
     ) -> dict[str, int]:
         return {
-            session_id: await self.count_step_views(
-                session_id=session_id,
-                include_hidden_from_context=False,
-            )
+            session_id: await self.count_step_views(session_id=session_id)
             for session_id in session_ids
         }
 
@@ -415,7 +394,6 @@ class SQLiteRunLogStorage(RunLogStorage):
         run_id: str | None = None,
         agent_id: str | None = None,
         include_rolled_back: bool = False,
-        include_hidden_from_context: bool = True,
         limit: int = 1000,
         order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
@@ -424,8 +402,6 @@ class SQLiteRunLogStorage(RunLogStorage):
             RunLogEntryKind.USER_STEP_COMMITTED.value,
             RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
             RunLogEntryKind.TOOL_STEP_COMMITTED.value,
-            RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED.value,
-            RunLogEntryKind.CONTEXT_STEPS_HIDDEN.value,
             RunLogEntryKind.RUN_ROLLED_BACK.value,
         ]
         placeholders = ",".join("?" for _ in kinds)
@@ -449,7 +425,6 @@ class SQLiteRunLogStorage(RunLogStorage):
         step_views = build_step_views_from_entries(
             entries,
             include_rolled_back=include_rolled_back,
-            include_hidden_from_context=include_hidden_from_context,
         )
         if start_seq is not None:
             step_views = [step for step in step_views if step.sequence >= start_seq]
@@ -458,48 +433,6 @@ class SQLiteRunLogStorage(RunLogStorage):
         if order == "desc":
             step_views = list(reversed(step_views))
         return step_views[:limit]
-
-    async def append_step_condensed_content(
-        self,
-        session_id: str,
-        run_id: str,
-        agent_id: str,
-        step_id: str,
-        condensed_content: str,
-    ) -> bool:
-        conn = await self._ensure_connection()
-        kinds = [
-            RunLogEntryKind.USER_STEP_COMMITTED.value,
-            RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
-            RunLogEntryKind.TOOL_STEP_COMMITTED.value,
-        ]
-        placeholders = ",".join("?" for _ in kinds)
-        async with conn.execute(
-            f"""
-            SELECT 1 FROM run_log_entries
-            WHERE session_id = ? AND kind IN ({placeholders})
-              AND json_extract(payload, '$.step_id') = ?
-            LIMIT 1
-            """,
-            [session_id, *kinds, step_id],
-        ) as cursor:
-            row = await cursor.fetchone()
-        if row is None:
-            return False
-        sequence = await self.allocate_sequence(session_id)
-        await self.append_entries(
-            [
-                StepCondensedContentUpdated(
-                    sequence=sequence,
-                    session_id=session_id,
-                    run_id=run_id,
-                    agent_id=agent_id,
-                    step_id=step_id,
-                    condensed_content=condensed_content,
-                )
-            ]
-        )
-        return True
 
     async def _get_latest_entry_for_kind(
         self,

@@ -1195,7 +1195,9 @@ class TestSchedulerStream:
         assert items[-1].response == "Second answer"
 
     @pytest.mark.asyncio
-    async def test_persistent_root_max_steps_stream_settles_and_can_continue(self):
+    async def test_persistent_root_max_steps_per_run_stream_settles_and_can_continue(
+        self,
+    ):
         async with Scheduler(_fast_config()) as scheduler:
             model = MockModel(
                 [
@@ -1209,7 +1211,7 @@ class TestSchedulerStream:
                 id="stream-max-steps",
                 tools=[NoopTool()],
                 options=AgentOptions(
-                    max_steps=1,
+                    max_steps_per_run=1,
                     enable_termination_summary=False,
                 ),
             )

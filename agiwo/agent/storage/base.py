@@ -6,15 +6,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from agiwo.agent.models.log import (
-    AssistantStepCommitted,
     CompactionApplied,
     MessagesRebuilt,
     RunLogEntry,
     RunLogEntryKind,
     RunRolledBack,
-    StepCondensedContentUpdated,
-    ToolStepCommitted,
-    UserStepCommitted,
     build_compact_metadata_from_entry,
 )
 from agiwo.agent.models.runtime_decision import RuntimeDecisionState
@@ -117,17 +113,13 @@ class RunLogStorage(ABC):
 
     async def get_committed_step_count(self, session_id: str) -> int:
         """Count committed step entries for one session."""
-        return await self.count_step_views(
-            session_id=session_id,
-            include_hidden_from_context=False,
-        )
+        return await self.count_step_views(session_id=session_id)
 
     @abstractmethod
     async def count_step_views(
         self,
         *,
         session_id: str,
-        include_hidden_from_context: bool = True,
     ) -> int:
         """Count committed step views without materializing StepView objects."""
         ...
@@ -136,10 +128,7 @@ class RunLogStorage(ABC):
         self, session_ids: list[str]
     ) -> dict[str, int]:
         return {
-            session_id: await self.count_step_views(
-                session_id=session_id,
-                include_hidden_from_context=False,
-            )
+            session_id: await self.count_step_views(session_id=session_id)
             for session_id in session_ids
         }
 
@@ -153,7 +142,6 @@ class RunLogStorage(ABC):
         run_id: str | None = None,
         agent_id: str | None = None,
         include_rolled_back: bool = False,
-        include_hidden_from_context: bool = True,
         limit: int = 1000,
         order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
@@ -184,18 +172,6 @@ class RunLogStorage(ABC):
                 )
             ]
         )
-
-    @abstractmethod
-    async def append_step_condensed_content(
-        self,
-        session_id: str,
-        run_id: str,
-        agent_id: str,
-        step_id: str,
-        condensed_content: str,
-    ) -> bool:
-        """Append a step-condensation fact for an existing committed step."""
-        ...
 
     async def get_step_by_tool_call_id(
         self,
@@ -340,12 +316,10 @@ class InMemoryRunLogStorage(RunLogStorage):
         self,
         *,
         session_id: str,
-        include_hidden_from_context: bool = True,
     ) -> int:
         return len(
             build_step_views_from_entries(
                 self.run_log_entries.get(session_id, []),
-                include_hidden_from_context=include_hidden_from_context,
             )
         )
 
@@ -353,10 +327,7 @@ class InMemoryRunLogStorage(RunLogStorage):
         self, session_ids: list[str]
     ) -> dict[str, int]:
         return {
-            session_id: await self.count_step_views(
-                session_id=session_id,
-                include_hidden_from_context=False,
-            )
+            session_id: await self.count_step_views(session_id=session_id)
             for session_id in session_ids
         }
 
@@ -392,7 +363,6 @@ class InMemoryRunLogStorage(RunLogStorage):
         run_id: str | None = None,
         agent_id: str | None = None,
         include_rolled_back: bool = False,
-        include_hidden_from_context: bool = True,
         limit: int = 1000,
         order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
@@ -405,7 +375,6 @@ class InMemoryRunLogStorage(RunLogStorage):
         step_views = build_step_views_from_entries(
             entries,
             include_rolled_back=include_rolled_back,
-            include_hidden_from_context=include_hidden_from_context,
         )
         if start_seq is not None:
             step_views = [step for step in step_views if step.sequence >= start_seq]
@@ -414,38 +383,6 @@ class InMemoryRunLogStorage(RunLogStorage):
         if order == "desc":
             step_views = list(reversed(step_views))
         return step_views[:limit]
-
-    async def append_step_condensed_content(
-        self,
-        session_id: str,
-        run_id: str,
-        agent_id: str,
-        step_id: str,
-        condensed_content: str,
-    ) -> bool:
-        bucket = self.run_log_entries.get(session_id, [])
-        for entry in bucket:
-            if not isinstance(
-                entry,
-                (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
-            ):
-                continue
-            if entry.step_id == step_id:
-                sequence = await self.allocate_sequence(session_id)
-                await self.append_entries(
-                    [
-                        StepCondensedContentUpdated(
-                            sequence=sequence,
-                            session_id=session_id,
-                            run_id=run_id,
-                            agent_id=agent_id,
-                            step_id=step_id,
-                            condensed_content=condensed_content,
-                        )
-                    ]
-                )
-                return True
-        return False
 
     async def get_max_sequence(self, session_id: str) -> int:
         entries = self.run_log_entries.get(session_id, [])

@@ -6,10 +6,8 @@ from agiwo.agent import ChannelContext, ContentPart, ContentType, UserMessage
 from agiwo.agent import StepCompletedEvent
 from agiwo.agent.models.log import (
     CompactionFailed,
-    ContextStepsHidden,
     RunFinished,
     RunStarted,
-    ToolStepCommitted,
     UserStepCommitted,
 )
 from agiwo.agent.models.log import AssistantStepCommitted, RunRolledBack
@@ -350,67 +348,3 @@ def test_build_step_views_can_include_rolled_back_steps() -> None:
 
     assert visible == []
     assert [step.id for step in all_steps] == ["step-10"]
-
-
-def test_hidden_review_metadata_round_trips_through_storage() -> None:
-    entry = ContextStepsHidden(
-        sequence=9,
-        session_id="sess-1",
-        run_id="run-1",
-        agent_id="agent-1",
-        step_ids=["step-review-call", "step-review-result"],
-        reason="review_metadata",
-    )
-
-    payload = serialize_run_log_entry_for_storage(entry)
-    restored = deserialize_run_log_entry_from_storage(payload)
-
-    assert isinstance(restored, ContextStepsHidden)
-    assert restored.step_ids == ["step-review-call", "step-review-result"]
-    assert restored.reason == "review_metadata"
-
-
-def test_build_step_views_can_exclude_hidden_review_steps_from_context() -> None:
-    entries = [
-        UserStepCommitted(
-            sequence=1,
-            session_id="sess-1",
-            run_id="run-1",
-            agent_id="agent-1",
-            step_id="step-user",
-            role=MessageRole.USER,
-            content="hello",
-            user_input="hello",
-        ),
-        ToolStepCommitted(
-            sequence=2,
-            session_id="sess-1",
-            run_id="run-1",
-            agent_id="agent-1",
-            step_id="step-review-result",
-            role=MessageRole.TOOL,
-            content="Trajectory review: aligned=True.",
-            tool_call_id="tc_review",
-            name="review_trajectory",
-        ),
-        ContextStepsHidden(
-            sequence=3,
-            session_id="sess-1",
-            run_id="run-1",
-            agent_id="agent-1",
-            step_ids=["step-review-result"],
-            reason="review_metadata",
-        ),
-    ]
-
-    visible = build_step_views_from_entries(
-        entries,
-        include_hidden_from_context=False,
-    )
-    all_steps = build_step_views_from_entries(
-        entries,
-        include_hidden_from_context=True,
-    )
-
-    assert [step.id for step in visible] == ["step-user"]
-    assert [step.id for step in all_steps] == ["step-user", "step-review-result"]

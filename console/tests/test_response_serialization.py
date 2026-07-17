@@ -134,7 +134,7 @@ def test_scheduler_state_response_includes_last_run_result() -> None:
 
 
 def test_agent_config_view_model_and_registry_share_normalization_policy() -> None:
-    option_input = {"max_steps": 42}
+    option_input = {"max_steps_per_run": 42}
     option_schema = AgentOptionsInput.model_validate(option_input)
     model_param_input = {
         "base_url": " https://api.example.com/v1 ",
@@ -177,7 +177,7 @@ def test_session_detail_serializes_new_mainline_fields() -> None:
             ),
             latest_review_outcome=ReviewOutcomeRecord(
                 aligned=True,
-                step_back_applied=False,
+                tool_usefulness=[],
                 trigger_reason="step_interval",
                 active_milestone="Inspect the auth flow",
             ),
@@ -194,7 +194,7 @@ def test_session_detail_serializes_new_mainline_fields() -> None:
                 active_milestone_id="inspect",
                 aligned=True,
                 experience=None,
-                step_back_applied=False,
+                tool_usefulness=[],
             )
         ],
         conversation_events=[

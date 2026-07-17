@@ -132,7 +132,17 @@ def build_mailbox_input(
     elif hint_context is not None:
         context = hint_context
 
-    return UserMessage(content=merged_parts, context=context)
+    is_user_provided = any(
+        message.is_user_provided
+        for message in (base_message, *hint_messages)
+        if message is not None
+    )
+
+    return UserMessage(
+        content=merged_parts,
+        context=context,
+        is_user_provided=is_user_provided,
+    )
 
 
 def _extract_hint_messages(

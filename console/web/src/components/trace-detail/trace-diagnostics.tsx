@@ -94,11 +94,6 @@ function traceRiskSignals(trace: TraceDetail): string[] {
     signals.push(`slow span ${slowest.name} took ${formatDurationMs(slowest.duration_ms ?? 0)}`);
   }
 
-  const stepBacks = trace.runtime_decisions.filter((decision) => decision.kind === "step_back");
-  if (stepBacks.length > 0) {
-    signals.push(`${stepBacks.length} step-back decision${stepBacks.length === 1 ? "" : "s"}`);
-  }
-
   const compactionFailures = trace.runtime_decisions.filter(
     (decision) => decision.kind === "compaction_failed",
   );

@@ -1,44 +1,14 @@
-"""Data models for agent goal, trajectory introspection, and context repair."""
+"""Data models for trajectory introspection."""
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Literal
 
-MilestoneStatus = Literal["pending", "active", "completed", "abandoned"]
-GoalUpdateReason = Literal["declared", "updated", "completed", "activated"]
+from agiwo.agent.models.plan import Milestone
+
 IntrospectionTriggerReason = Literal[
     "step_interval", "consecutive_errors", "milestone_switch"
 ]
-IntrospectionMode = Literal["metadata_only", "step_back"]
-ContextRepairMode = Literal["metadata_only", "step_back"]
-
-
-@dataclass
-class Milestone:
-    """A verifiable sub-goal declared by the agent."""
-
-    id: str
-    description: str
-    status: MilestoneStatus = "pending"
-    declared_at_seq: int = 0
-    completed_at_seq: int | None = None
-
-
-@dataclass
-class GoalState:
-    """Goal contract state for the current agent session."""
-
-    milestones: list[Milestone] = field(default_factory=list)
-    active_milestone_id: str | None = None
-
-    @property
-    def active_milestone(self) -> Milestone | None:
-        if self.active_milestone_id is None:
-            return None
-        for milestone in self.milestones:
-            if milestone.id == self.active_milestone_id:
-                return milestone
-        return None
 
 
 @dataclass
@@ -73,15 +43,7 @@ class IntrospectionState:
     latest_aligned_checkpoint: IntrospectionCheckpoint | None = None
     pending_milestone_switch: bool = False
     notice_requested: bool = False
-
-
-@dataclass(frozen=True)
-class GoalUpdate:
-    milestones: list[Milestone]
-    active_milestone_id: str | None
-    source_tool_call_id: str | None
-    reason: GoalUpdateReason
-    milestone_switch: bool = False
+    latest_tool_usefulness: list["ToolUsefulnessEntry"] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -93,57 +55,30 @@ class IntrospectionNotice:
 
 
 @dataclass(frozen=True)
-class ContentUpdate:
-    step_id: str
+class ToolUsefulnessEntry:
     tool_call_id: str
-    content: str
-
-
-@dataclass
-class ContextRepairPlan:
-    mode: ContextRepairMode
-    start_seq: int
-    end_seq: int
-    experience: str
-    content_updates: list[ContentUpdate] = field(default_factory=list)
-    notice_cleaned_step_ids: list[str] = field(default_factory=list)
-
-    @property
-    def affected_count(self) -> int:
-        return len(self.content_updates)
-
-    @property
-    def condensed_step_ids(self) -> list[str]:
-        return [update.step_id for update in self.content_updates]
+    tool_name: str | None = None
+    score: int | None = None
 
 
 @dataclass
 class IntrospectionOutcome:
     aligned: bool | None
-    mode: IntrospectionMode
     boundary_seq: int
     experience: str | None = None
+    tool_usefulness: list[ToolUsefulnessEntry] = field(default_factory=list)
     active_milestone_id: str | None = None
     review_tool_call_id: str | None = None
     review_step_id: str | None = None
-    hidden_step_ids: list[str] = field(default_factory=list)
-    repair_plan: ContextRepairPlan | None = None
 
 
 __all__ = [
-    "ContentUpdate",
-    "ContextRepairMode",
-    "ContextRepairPlan",
-    "GoalState",
-    "GoalUpdate",
-    "GoalUpdateReason",
     "IntrospectionCheckpoint",
-    "IntrospectionMode",
     "IntrospectionNotice",
     "IntrospectionOutcome",
     "IntrospectionState",
     "IntrospectionTriggerReason",
     "Milestone",
-    "MilestoneStatus",
     "PendingIntrospectionNotice",
+    "ToolUsefulnessEntry",
 ]

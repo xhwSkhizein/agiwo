@@ -18,8 +18,18 @@ def sanitize_agent_options_data(
 class AgentOptionsInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_max_steps(cls, data: object) -> object:
+        if isinstance(data, dict) and "max_steps" in data:
+            raise ValueError(
+                "AgentOptions.max_steps was renamed to max_steps_per_run; "
+                "update the configuration and retry."
+            )
+        return data
+
     config_root: str = ""
-    max_steps: int = Field(default=50, ge=1)
+    max_steps_per_run: int = Field(default=50, ge=1)
     run_timeout: int = Field(default=600, ge=1)
     max_input_tokens_per_call: int | None = Field(default=None, ge=1)
     max_run_cost: float | None = Field(default=None, ge=0)
@@ -29,7 +39,7 @@ class AgentOptionsInput(BaseModel):
     stream_cleanup_timeout: float = Field(default=300.0, gt=0)
     compact_prompt: str = ""
     enable_context_rollback: bool = True
-    enable_goal_directed_review: bool = True
+    enable_trajectory_review: bool = True
     review_step_interval: int = Field(default=8, ge=1)
     review_on_error: bool = True
 

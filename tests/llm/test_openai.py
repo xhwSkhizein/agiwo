@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from tenacity import wait_none
 from agiwo.llm.openai import OpenAIModel
 
 
@@ -75,9 +74,10 @@ async def test_openai_model_arun_stream_basic(mock_get_settings, mock_openai_cli
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.openai.get_settings")
-async def test_openai_model_arun_stream_retries_stream_creation(
+async def test_openai_model_arun_stream_propagates_stream_creation_errors(
     mock_get_settings, mock_openai_client
 ):
+    """Provider adapters must not hide retries; agent execute_model_call owns them."""
     mock_settings = mock_get_settings.return_value
     mock_settings.openai_api_key = None
     model = OpenAIModel(
@@ -86,35 +86,15 @@ async def test_openai_model_arun_stream_retries_stream_creation(
         api_key="test-key",
     )
     model.client = mock_openai_client
-    model._create_stream.retry.wait = wait_none()
-
-    mock_chunk = MagicMock()
-    mock_chunk.usage = None
-    mock_chunk.choices = [
-        MagicMock(
-            delta=MagicMock(content="Recovered", tool_calls=None),
-            finish_reason="stop",
-        )
-    ]
-
-    class _MockStream:
-        def __aiter__(self):
-            return self._iterate()
-
-        async def _iterate(self):
-            yield mock_chunk
-
     mock_openai_client.chat.completions.create = AsyncMock(
-        side_effect=[ConnectionError("temporary"), _MockStream()]
+        side_effect=ConnectionError("temporary")
     )
 
-    messages = [{"role": "user", "content": "Hello"}]
-    chunks = []
-    async for chunk in model.arun_stream(messages):
-        chunks.append(chunk)
+    with pytest.raises(ConnectionError, match="temporary"):
+        async for _ in model.arun_stream([{"role": "user", "content": "Hello"}]):
+            pass
 
-    assert [chunk.content for chunk in chunks] == ["Recovered"]
-    assert mock_openai_client.chat.completions.create.await_count == 2
+    assert mock_openai_client.chat.completions.create.await_count == 1
 
 
 @pytest.mark.asyncio

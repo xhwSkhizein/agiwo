@@ -70,13 +70,17 @@ class UserMessage:
 
     content: list[ContentPart]
     context: ChannelContext | None = None
+    is_user_provided: bool = True
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "__type": "user_message",
             "content": [part.to_dict() for part in self.content],
             "context": self.context.to_dict() if self.context else None,
         }
+        if not self.is_user_provided:
+            payload["is_user_provided"] = False
+        return payload
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "UserMessage":
@@ -87,6 +91,7 @@ class UserMessage:
                 if data.get("context")
                 else None
             ),
+            is_user_provided=data.get("is_user_provided", True),
         )
 
     @classmethod
@@ -95,6 +100,37 @@ class UserMessage:
             return cls(content=[ContentPart(type=ContentType.TEXT, text=value)])
         if isinstance(value, list):
             return cls(content=value)
+        return value
+
+    @classmethod
+    def from_system(cls, value: "UserInput") -> "UserMessage":
+        """Build a system-generated user-role message (not from a real user)."""
+        normalized = cls.from_value(value)
+        return cls(
+            content=normalized.content,
+            context=normalized.context,
+            is_user_provided=False,
+        )
+
+    @classmethod
+    def require_user_provided(cls, value: "UserInput") -> "UserInput":
+        """Reject system-attributed messages at external entry points.
+
+        Genuine user entry points (``Agent.start`` / ``run`` / ``run_stream``,
+        Scheduler root input / steer, mid-run steer) must not accept forged
+        ``is_user_provided=False``. Internal system notices use ``from_system()``
+        and enter the runtime through scheduler-owned paths only.
+
+        Returns the original ``value`` unchanged so string / ContentPart list
+        inputs keep their existing storage shape.
+        """
+        message = cls.from_value(value)
+        if not message.is_user_provided:
+            raise ValueError(
+                "External user entry points cannot submit UserMessage with "
+                "is_user_provided=False; use UserMessage.from_system() only for "
+                "internal system-generated user-role turns."
+            )
         return value
 
     def extract_text(self) -> str:
@@ -141,10 +177,13 @@ class UserMessage:
 
     @classmethod
     def _serialize_message_payload(cls, message: "UserMessage") -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "content": cls._serialize_content_parts(message.content),
             "context": message.context.to_dict() if message.context else None,
         }
+        if not message.is_user_provided:
+            payload["is_user_provided"] = False
+        return payload
 
     @classmethod
     def serialize(cls, value: "UserInput") -> str:
@@ -181,7 +220,20 @@ class UserMessage:
         return cls.serialize(value)
 
     @classmethod
-    def from_storage_value(cls, value: "UserInput | None") -> "UserInput | None":
+    def from_storage_value(
+        cls, value: "UserInput | dict[str, Any] | None"
+    ) -> "UserInput | None":
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            input_type = value.get("__type")
+            if input_type == "content_parts":
+                return [
+                    ContentPart.from_dict(part) for part in value.get("parts") or []
+                ]
+            if input_type == "user_message" or "content" in value:
+                return cls.from_dict({**value, "__type": "user_message"})
+            return value
         if isinstance(value, str):
             return cls.deserialize(value)
         return value
@@ -204,6 +256,8 @@ class UserMessage:
             return cls._serialize_message_payload(normalized)
         if isinstance(normalized, list):
             return cls._serialize_content_parts(normalized)
+        if isinstance(normalized, dict) and "content" in normalized:
+            return normalized
         return normalized
 
     @classmethod

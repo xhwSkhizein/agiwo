@@ -10,14 +10,12 @@ from agiwo.agent.models.log import (
     CommittedStep,
     CompactionApplied,
     CompactionFailed,
-    ContextStepsHidden,
     MessagesRebuilt,
     RunFailed,
     RunFinished,
     RunLogEntry,
     RunRolledBack,
     RunStarted,
-    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
@@ -110,19 +108,6 @@ class MessagesRebuiltEvent(AgentStreamItemBase):
 
 
 @dataclass(kw_only=True)
-class ContextStepsHiddenEvent(AgentStreamItemBase):
-    step_ids: list[str]
-    reason: str
-    type: Literal["context_steps_hidden"] = "context_steps_hidden"
-
-    def to_dict(self) -> dict[str, Any]:
-        payload = self._base_dict()
-        payload["step_ids"] = list(self.step_ids)
-        payload["reason"] = self.reason
-        return payload
-
-
-@dataclass(kw_only=True)
 class CompactionAppliedEvent(AgentStreamItemBase):
     start_sequence: int
     end_sequence: int
@@ -153,21 +138,6 @@ class CompactionFailedEvent(AgentStreamItemBase):
         payload["attempt"] = self.attempt
         payload["max_attempts"] = self.max_attempts
         payload["terminal"] = self.terminal
-        return payload
-
-
-@dataclass(kw_only=True)
-class StepBackAppliedEvent(AgentStreamItemBase):
-    affected_count: int
-    checkpoint_seq: int
-    experience: str
-    type: Literal["step_back_applied"] = "step_back_applied"
-
-    def to_dict(self) -> dict[str, Any]:
-        payload = self._base_dict()
-        payload["affected_count"] = self.affected_count
-        payload["checkpoint_seq"] = self.checkpoint_seq
-        payload["experience"] = self.experience
         return payload
 
 
@@ -328,12 +298,6 @@ def _stream_item_from_runtime_entry(
             reason=entry.reason,
             message_count=len(entry.messages),
         )
-    elif isinstance(entry, ContextStepsHidden):
-        item = ContextStepsHiddenEvent(
-            **base_kwargs,
-            step_ids=list(entry.step_ids),
-            reason=entry.reason,
-        )
     elif isinstance(entry, CompactionApplied):
         item = CompactionAppliedEvent(
             **base_kwargs,
@@ -349,13 +313,6 @@ def _stream_item_from_runtime_entry(
             attempt=entry.attempt,
             max_attempts=entry.max_attempts,
             terminal=entry.terminal,
-        )
-    elif isinstance(entry, StepBackApplied):
-        item = StepBackAppliedEvent(
-            **base_kwargs,
-            affected_count=entry.affected_count,
-            checkpoint_seq=entry.checkpoint_seq,
-            experience=entry.experience,
         )
     elif isinstance(entry, TerminationDecided):
         item = TerminationDecidedEvent(
@@ -416,20 +373,8 @@ def stream_items_from_entries(
     entries: list[RunLogEntry],
     *,
     run_contexts: Mapping[str, dict[str, Any]] | None = None,
-    persisted_hidden_step_ids: set[str] | None = None,
 ) -> list["AgentStreamItem"]:
     items: list[AgentStreamItem] = []
-    local_hidden_step_ids = {
-        step_id
-        for entry in entries
-        if isinstance(entry, ContextStepsHidden)
-        for step_id in entry.step_ids
-    }
-    if persisted_hidden_step_ids is not None:
-        persisted_hidden_step_ids.update(local_hidden_step_ids)
-        hidden_step_ids = persisted_hidden_step_ids
-    else:
-        hidden_step_ids = local_hidden_step_ids
     resolved_run_contexts = _collect_run_contexts(
         entries,
         initial_run_contexts=run_contexts,
@@ -444,8 +389,6 @@ def stream_items_from_entries(
             entry,
             (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
         ):
-            if entry.step_id in hidden_step_ids:
-                continue
             base_kwargs = _base_kwargs_with_run_context(entry, resolved_run_contexts)
             base_kwargs["parent_run_id"] = entry.parent_run_id
             base_kwargs["depth"] = entry.depth
@@ -470,10 +413,8 @@ AgentStreamItem: TypeAlias = (
     | StepDeltaEvent
     | StepCompletedEvent
     | MessagesRebuiltEvent
-    | ContextStepsHiddenEvent
     | CompactionAppliedEvent
     | CompactionFailedEvent
-    | StepBackAppliedEvent
     | TerminationDecidedEvent
     | RunRolledBackEvent
     | RunCompletedEvent
@@ -486,13 +427,11 @@ __all__ = [
     "AgentStreamItemBase",
     "CompactionAppliedEvent",
     "CompactionFailedEvent",
-    "ContextStepsHiddenEvent",
     "MessagesRebuiltEvent",
     "RunRolledBackEvent",
     "RunCompletedEvent",
     "RunFailedEvent",
     "RunStartedEvent",
-    "StepBackAppliedEvent",
     "StepCompletedEvent",
     "StepDeltaEvent",
     "TerminationDecidedEvent",

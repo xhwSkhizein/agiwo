@@ -41,11 +41,9 @@ from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import RuntimeState, list_all_states
 from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
-    DeclareMilestonesTool,
     ForkChildAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
-    ReviewTrajectoryTool,
     SleepAndWaitTool,
     SpawnChildAgentTool,
 )
@@ -94,8 +92,6 @@ class Scheduler:
             QuerySpawnedAgentTool(self._tool_control),
             CancelAgentTool(self._tool_control),
             ListAgentsTool(self._tool_control),
-            DeclareMilestonesTool(),
-            ReviewTrajectoryTool(),
         )
         self._runner = SchedulerRunner(
             RunnerContext(
@@ -219,6 +215,7 @@ class Scheduler:
         persistent: bool = False,
         agent_config_id: str | None = None,
     ) -> str:
+        UserMessage.require_user_provided(user_input)
         # Get or create lock for this agent_id to prevent concurrent submit
         lock = self._rt.state_locks.setdefault(agent.id, asyncio.Lock())
         async with lock:
@@ -263,6 +260,7 @@ class Scheduler:
         *,
         agent: Agent | None = None,
     ) -> None:
+        UserMessage.require_user_provided(user_input)
         # Get or create lock for this state_id to prevent concurrent enqueue
         lock = self._rt.state_locks.setdefault(state_id, asyncio.Lock())
         async with lock:
@@ -523,6 +521,7 @@ class Scheduler:
         *,
         urgent: bool = False,
     ) -> bool:
+        UserMessage.require_user_provided(user_input)
         message = UserMessage.from_value(user_input)
         if not message.has_content():
             return False

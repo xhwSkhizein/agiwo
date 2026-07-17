@@ -134,7 +134,7 @@ async def _execute_status(
         f"总耗时: {float(metrics_summary.duration_ms) / 1000:.1f}s",
         "",
         "配置:",
-        f"  max_steps: {opts.max_steps}",
+        f"  max_steps_per_run: {opts.max_steps_per_run}",
         f"  run_timeout: {opts.run_timeout}s",
         f"  max_context_window: {max_context_window:,}",
         f"  max_output_tokens: {max_output_tokens:,}",

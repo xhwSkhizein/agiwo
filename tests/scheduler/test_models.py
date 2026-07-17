@@ -4,7 +4,7 @@ import copy
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 
-from agiwo.agent import TerminationReason
+from agiwo.agent import TerminationReason, UserMessage
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -345,7 +345,10 @@ class TestChildAgentConfigOverridesCodec:
 class TestBuildForkTaskNotice:
     def test_wraps_task_with_notice(self):
         result = build_fork_task_notice("Analyze data")
-        assert "<system-notice>" in result
-        assert "forked child agent" in result
-        assert "Do NOT use spawn_child_agent or fork_child_agent" in result
-        assert result.endswith("Analyze data")
+        assert isinstance(result, UserMessage)
+        assert result.is_user_provided is False
+        text = result.extract_text()
+        assert "<system-notice>" in text
+        assert "forked child agent" in text
+        assert "Do NOT use spawn_child_agent or fork_child_agent" in text
+        assert text.endswith("Analyze data")

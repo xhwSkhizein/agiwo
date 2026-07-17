@@ -16,13 +16,7 @@ logger = get_logger(__name__)
 
 
 class HookPhase(str, Enum):
-    """Agent runtime hook phases.
-
-    Review phases are intentionally asymmetric: BEFORE_REVIEW gates the
-    decision and can provide review_advice, while AFTER_STEP_BACK only fires
-    when condensation actually runs. A review that decides no step-back is
-    needed does not produce an after-review event.
-    """
+    """Agent runtime hook phases."""
 
     PREPARE = "prepare"
     ASSEMBLE_CONTEXT = "assemble_context"
@@ -33,7 +27,6 @@ class HookPhase(str, Enum):
     BEFORE_COMPACTION = "before_compaction"
     AFTER_COMPACTION = "after_compaction"
     BEFORE_REVIEW = "before_review"
-    AFTER_STEP_BACK = "after_step_back"
     BEFORE_TERMINATION = "before_termination"
     AFTER_TERMINATION = "after_termination"
     AFTER_STEP_COMMIT = "after_step_commit"
@@ -389,17 +382,6 @@ class HookRegistry:
         )
         advice = payload.get("review_advice")
         return advice if isinstance(advice, str) else None
-
-    async def after_step_back(
-        self,
-        outcome: object,
-        context: object | None = None,
-    ) -> None:
-        await self._dispatch(
-            HookPhase.AFTER_STEP_BACK,
-            {"outcome": outcome, "context": context},
-            allow_transform=False,
-        )
 
     async def after_run(self, result: object, context: object) -> None:
         await self._dispatch(

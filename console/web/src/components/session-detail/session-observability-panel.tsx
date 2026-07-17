@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, ArrowRight, ChevronRight, Clock3, GitBranch, Scissors, ShieldCheck } from "lucide-react";
+import { ArrowRight, ChevronRight, Clock3, GitBranch, Scissors, ShieldCheck } from "lucide-react";
 
 import { JsonDisclosure } from "@/components/json-disclosure";
 import { MonoText } from "@/components/mono-text";
@@ -15,7 +15,6 @@ function DecisionIcon({ kind }: { kind: RuntimeDecisionEvent["kind"] }) {
   if (kind === "termination") return <ShieldCheck className="h-4 w-4 text-red-300" />;
   if (kind === "compaction") return <Scissors className="h-4 w-4 text-cyan-300" />;
   if (kind === "compaction_failed") return <Scissors className="h-4 w-4 text-red-300" />;
-  if (kind === "step_back") return <Activity className="h-4 w-4 text-amber-300" />;
   return <GitBranch className="h-4 w-4 text-zinc-300" />;
 }
 
@@ -42,13 +41,6 @@ function formatPreviewDetailValue(value: unknown): string | null {
 }
 
 function decisionPreviewItems(event: RuntimeDecisionEvent): string[] {
-  if (event.kind === "step_back") {
-    return [
-      `affected_count ${String(event.details.affected_count ?? "-")}`,
-      `checkpoint_seq ${String(event.details.checkpoint_seq ?? "-")}`,
-      typeof event.details.experience === "string" ? event.details.experience : "",
-    ].filter(Boolean);
-  }
   if (event.kind === "compaction") {
     return [
       `seq ${String(event.details.start_sequence ?? "-")}-${String(event.details.end_sequence ?? "-")}`,

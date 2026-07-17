@@ -32,6 +32,19 @@ function buildStep(partial: Partial<StepResponse>): StepResponse {
 }
 
 describe("chat-types", () => {
+  test("filters system user notices from chat bubbles", () => {
+    const step = buildStep({
+      role: "user",
+      user_input: {
+        __type: "user_message",
+        content: [{ type: "text", text: "Assignment reminder" }],
+        is_user_provided: false,
+      },
+    });
+
+    expect(messageFromStep(step)).toBeNull();
+  });
+
   test("preserves structured user input without flattening it into plain text", () => {
     const step = buildStep({
       role: "user",

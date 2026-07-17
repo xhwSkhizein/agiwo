@@ -114,17 +114,16 @@ async def _load_existing_steps(
         session_id=context.session_id,
         agent_id=context.agent_id,
         start_seq=compact_start_seq if compact_start_seq > 0 else None,
-        include_hidden_from_context=False,
     )
 
 
 async def _restore_introspect_state(context: RunContext) -> None:
     entries = await context.session_runtime.list_run_log_entries(
-        agent_id=context.agent_id,
+        run_id=context.run_id,
         limit=100_000,
     )
     replay_state = build_introspect_state_from_entries(entries)
-    context.ledger.goal = replay_state.goal
+    context.ledger.plan = replay_state.plan
     context.ledger.introspection = replay_state.introspection
 
 

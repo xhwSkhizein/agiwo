@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from agiwo.agent.introspect.models import Milestone
 from agiwo.agent.models.input import MessageContent, UserInput
+from agiwo.agent.models.model_call import ModelCallPhase
+from agiwo.agent.models.plan import Milestone
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 from agiwo.config.termination import TerminationReason
@@ -25,21 +26,18 @@ class RunLogEntryKind(str, Enum):
     MESSAGES_REBUILT = "messages_rebuilt"
     LLM_CALL_STARTED = "llm_call_started"
     LLM_CALL_COMPLETED = "llm_call_completed"
+    LLM_CALL_FAILED = "llm_call_failed"
     USER_STEP_COMMITTED = "user_step_committed"
     ASSISTANT_STEP_COMMITTED = "assistant_step_committed"
     TOOL_STEP_COMMITTED = "tool_step_committed"
     COMPACTION_APPLIED = "compaction_applied"
     COMPACTION_FAILED = "compaction_failed"
-    STEP_BACK_APPLIED = "step_back_applied"
-    STEP_CONDENSED_CONTENT_UPDATED = "step_condensed_content_updated"
-    CONTEXT_STEPS_HIDDEN = "context_steps_hidden"
     TERMINATION_DECIDED = "termination_decided"
     HOOK_FAILED = "hook_failed"
-    GOAL_MILESTONES_UPDATED = "goal_milestones_updated"
+    RUN_PLAN_UPDATED = "run_plan_updated"
     INTROSPECTION_TRIGGERED = "introspection_triggered"
     INTROSPECTION_CHECKPOINT_RECORDED = "introspection_checkpoint_recorded"
     INTROSPECTION_OUTCOME_RECORDED = "introspection_outcome_recorded"
-    CONTEXT_REPAIR_APPLIED = "context_repair_applied"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -99,6 +97,11 @@ class MessagesRebuilt(RunLogEntry):
 
 @dataclass(frozen=True, kw_only=True)
 class LLMCallStarted(RunLogEntry):
+    logical_call_id: str
+    phase: ModelCallPhase
+    attempt_no: int
+    call_ordinal: int
+    retry_reason: str | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     tools: list[dict[str, Any]] | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.LLM_CALL_STARTED)
@@ -106,14 +109,36 @@ class LLMCallStarted(RunLogEntry):
 
 @dataclass(frozen=True, kw_only=True)
 class LLMCallCompleted(RunLogEntry):
+    logical_call_id: str
+    phase: ModelCallPhase
+    attempt_no: int
+    call_ordinal: int
+    retry_reason: str | None = None
     content: MessageContent | None = None
     reasoning_content: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
     finish_reason: str | None = None
     metrics: StepMetrics | None = None
+    response_observed: bool = True
     kind: RunLogEntryKind = field(
         init=False, default=RunLogEntryKind.LLM_CALL_COMPLETED
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class LLMCallFailed(RunLogEntry):
+    logical_call_id: str
+    phase: ModelCallPhase
+    attempt_no: int
+    call_ordinal: int
+    retry_reason: str | None = None
+    error: str
+    content: MessageContent | None = None
+    reasoning_content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    metrics: StepMetrics | None = None
+    response_observed: bool = False
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.LLM_CALL_FAILED)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -182,36 +207,6 @@ class CompactionFailed(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
-class StepBackApplied(RunLogEntry):
-    """Log entry recorded when step-back condenses off-track tool results."""
-
-    affected_count: int
-    checkpoint_seq: int
-    experience: str
-    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.STEP_BACK_APPLIED)
-
-
-@dataclass(frozen=True, kw_only=True)
-class StepCondensedContentUpdated(RunLogEntry):
-    step_id: str
-    condensed_content: str
-    kind: RunLogEntryKind = field(
-        init=False,
-        default=RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED,
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ContextStepsHidden(RunLogEntry):
-    step_ids: list[str]
-    reason: str
-    kind: RunLogEntryKind = field(
-        init=False,
-        default=RunLogEntryKind.CONTEXT_STEPS_HIDDEN,
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
 class TerminationDecided(RunLogEntry):
     termination_reason: TerminationReason
     phase: str
@@ -232,15 +227,20 @@ class HookFailed(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GoalMilestonesUpdated(RunLogEntry):
+class RunPlanUpdated(RunLogEntry):
     milestones: list[Milestone] = field(default_factory=list)
-    active_milestone_id: str | None = None
+    revision: int = 0
     source_tool_call_id: str | None = None
     source_step_id: str | None = None
     reason: Literal["declared", "updated", "completed", "activated"] = "updated"
-    kind: RunLogEntryKind = field(
-        init=False, default=RunLogEntryKind.GOAL_MILESTONES_UPDATED
-    )
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_PLAN_UPDATED)
+
+    @property
+    def active_milestone_id(self) -> str | None:
+        for milestone in self.milestones:
+            if milestone.status == "active":
+                return milestone.id
+        return None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -269,32 +269,15 @@ class IntrospectionCheckpointRecorded(RunLogEntry):
 
 @dataclass(frozen=True, kw_only=True)
 class IntrospectionOutcomeRecorded(RunLogEntry):
-    mode: Literal["metadata_only", "step_back"]
     boundary_seq: int
     aligned: bool | None = None
     experience: str | None = None
     active_milestone_id: str | None = None
     review_tool_call_id: str | None = None
     review_step_id: str | None = None
-    hidden_step_ids: list[str] = field(default_factory=list)
-    notice_cleaned_step_ids: list[str] = field(default_factory=list)
-    condensed_step_ids: list[str] = field(default_factory=list)
-    repair_start_seq: int | None = None
-    repair_end_seq: int | None = None
+    tool_usefulness: list[dict[str, Any]] = field(default_factory=list)
     kind: RunLogEntryKind = field(
         init=False, default=RunLogEntryKind.INTROSPECTION_OUTCOME_RECORDED
-    )
-
-
-@dataclass(frozen=True, kw_only=True)
-class ContextRepairApplied(RunLogEntry):
-    mode: Literal["step_back"]
-    affected_count: int
-    start_seq: int
-    end_seq: int
-    experience: str
-    kind: RunLogEntryKind = field(
-        init=False, default=RunLogEntryKind.CONTEXT_REPAIR_APPLIED
     )
 
 
@@ -355,20 +338,17 @@ __all__ = [
     "CommittedStep",
     "CompactionApplied",
     "CompactionFailed",
-    "ContextRepairApplied",
-    "ContextStepsHidden",
     "ContextAssembled",
-    "GoalMilestonesUpdated",
+    "RunPlanUpdated",
     "HookFailed",
     "IntrospectionCheckpointRecorded",
     "IntrospectionOutcomeRecorded",
     "IntrospectionTriggered",
     "LLMCallCompleted",
+    "LLMCallFailed",
     "LLMCallStarted",
     "MessagesRebuilt",
     "RunRolledBack",
-    "StepBackApplied",
-    "StepCondensedContentUpdated",
     "RunFailed",
     "RunFinished",
     "RunLogEntry",

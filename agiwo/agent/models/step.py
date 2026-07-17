@@ -148,6 +148,11 @@ class StepView:
             return self.user_input.context
         return None
 
+    def is_user_provided_input(self) -> bool:
+        if self.user_input is None:
+            return False
+        return UserMessage.from_value(self.user_input).is_user_provided
+
     def to_message(self) -> dict[str, Any]:
         msg: dict[str, Any] = {"role": self.role.value, "_sequence": self.sequence}
         effective_content = (

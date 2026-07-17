@@ -318,7 +318,9 @@ class SchedulerRunner:
         session_id: str,
         abort_signal: AbortSignal | None,
     ) -> RunOutput:
-        handle = agent.start(
+        # Bypass Agent.start provenance checks: external Scheduler APIs already
+        # validated user input, and wake/fork paths may inject from_system().
+        handle = agent._start_runtime(
             user_input,
             session_id=session_id,
             abort_signal=abort_signal,

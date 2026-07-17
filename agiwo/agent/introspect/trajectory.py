@@ -2,14 +2,15 @@
 
 import re
 
+from agiwo.agent.introspect.apply import parse_tool_usefulness_output
 from agiwo.agent.introspect.models import (
-    GoalState,
     IntrospectionNotice,
     IntrospectionOutcome,
     IntrospectionState,
     IntrospectionTriggerReason,
     Milestone,
 )
+from agiwo.agent.models.plan import RunPlan
 from agiwo.tool.base import ToolResult
 
 _SYSTEM_REVIEW_BLOCK_RE = re.compile(
@@ -28,7 +29,7 @@ def _build_review_notice(
     milestone_text = (
         f'Active milestone: "{milestone.description}"'
         if milestone is not None
-        else "No active milestone declared. Consider using declare_milestones."
+        else "No active milestone declared. Consider using update_plan."
     )
     inner_text = (
         f"{milestone_text}\n\n"
@@ -40,8 +41,10 @@ def _build_review_notice(
     inner_text += (
         "\n"
         "Question: Do your recent steps meaningfully advance the current goal?\n"
-        "If not, use review_trajectory with aligned=false and a concise "
-        "experience summary. If aligned, use review_trajectory with aligned=true."
+        "Use review_trajectory with aligned=true when on track, or aligned=false "
+        "with a concise experience summary when drifted. Optionally score each tool "
+        "in the review window via tool_usefulness (0=harmful, 1=low, 2=useful, "
+        "3=critical). Omit tools you cannot judge."
     )
     return f"\n\n<system-review>\n{inner_text}\n</system-review>"
 
@@ -81,7 +84,7 @@ def has_prompt_visible_system_review(messages: list[dict[str, object]]) -> bool:
 
 def maybe_build_introspection_notice(
     result: ToolResult,
-    goal: GoalState,
+    plan: RunPlan,
     state: IntrospectionState,
     *,
     step_interval: int,
@@ -101,7 +104,7 @@ def maybe_build_introspection_notice(
         return None
 
     trigger_reason: IntrospectionTriggerReason | None = None
-    if state.pending_milestone_switch and result.tool_name != "declare_milestones":
+    if state.pending_milestone_switch and result.tool_name != "update_plan":
         trigger_reason = "milestone_switch"
     elif (
         review_on_error
@@ -116,7 +119,7 @@ def maybe_build_introspection_notice(
         return None
     state.pending_milestone_switch = False
     state.notice_requested = True
-    milestone = goal.active_milestone
+    milestone = plan.active_milestone
     return IntrospectionNotice(
         content=append_system_review_notice(
             result.content or "",
@@ -132,38 +135,29 @@ def maybe_build_introspection_notice(
 
 def parse_introspection_outcome(
     result: ToolResult,
-    goal: GoalState,
+    plan: RunPlan,
     *,
     current_seq: int,
     assistant_step_id: str | None,
     tool_step_id: str | None,
 ) -> IntrospectionOutcome | None:
+    del assistant_step_id
     if result.tool_name != "review_trajectory" or not result.is_success:
         return None
     output = result.output if isinstance(result.output, dict) else {}
     aligned = output.get("aligned")
     experience_value = output.get("experience")
     experience = experience_value if isinstance(experience_value, str) else None
-    if aligned is True:
-        mode = "metadata_only"
-    elif aligned is False:
-        mode = "step_back"
-        experience = experience or (result.content or "")
-    else:
-        mode = "metadata_only"
+    if experience == "":
+        experience = None
     return IntrospectionOutcome(
         aligned=aligned if isinstance(aligned, bool) else None,
-        mode=mode,
         boundary_seq=current_seq,
         experience=experience,
-        active_milestone_id=goal.active_milestone_id,
+        tool_usefulness=parse_tool_usefulness_output(output.get("tool_usefulness")),
+        active_milestone_id=plan.active_milestone_id,
         review_tool_call_id=result.tool_call_id or None,
         review_step_id=tool_step_id,
-        hidden_step_ids=[
-            step_id
-            for step_id in (assistant_step_id, tool_step_id)
-            if step_id is not None
-        ],
     )
 
 

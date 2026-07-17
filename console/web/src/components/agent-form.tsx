@@ -46,7 +46,7 @@ type AgentFormState = {
   streamCleanupTimeout: number;
   compactPrompt: string;
   enableContextRollback: boolean;
-  enableGoalDirectedReview: boolean;
+  enableTrajectoryReview: boolean;
   reviewStepInterval: number;
   reviewOnError: boolean;
   maxOutputTokens: number;
@@ -81,7 +81,7 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   streamCleanupTimeout: 300,
   compactPrompt: "",
   enableContextRollback: true,
-  enableGoalDirectedReview: true,
+  enableTrajectoryReview: true,
   reviewStepInterval: 8,
   reviewOnError: true,
   maxOutputTokens: 4096,
@@ -122,7 +122,7 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     apiKeyEnvName: agent.model_params?.api_key_env_name ?? "",
     systemPrompt: agent.system_prompt,
     configRoot: agent.options?.config_root ?? "",
-    maxSteps: agent.options?.max_steps ?? 10,
+    maxSteps: agent.options?.max_steps_per_run ?? 10,
     runTimeout: agent.options?.run_timeout ?? 600,
     maxInputTokensPerCall:
       typeof agent.options?.max_input_tokens_per_call === "number"
@@ -139,8 +139,8 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     streamCleanupTimeout: agent.options?.stream_cleanup_timeout ?? 300,
     compactPrompt: agent.options?.compact_prompt ?? "",
     enableContextRollback: agent.options?.enable_context_rollback ?? true,
-    enableGoalDirectedReview:
-      agent.options?.enable_goal_directed_review ?? true,
+    enableTrajectoryReview:
+      agent.options?.enable_trajectory_review ?? true,
     reviewStepInterval: agent.options?.review_step_interval ?? 8,
     reviewOnError: agent.options?.review_on_error ?? true,
     maxOutputTokens: agent.model_params?.max_output_tokens ?? 4096,
@@ -438,7 +438,7 @@ export function AgentForm({
       allowed_skills: form.selectedSkills,
       options: {
         config_root: form.configRoot,
-        max_steps: form.maxSteps,
+        max_steps_per_run: form.maxSteps,
         run_timeout: form.runTimeout,
         max_input_tokens_per_call:
           form.maxInputTokensPerCall.trim() === ""
@@ -454,7 +454,7 @@ export function AgentForm({
         stream_cleanup_timeout: form.streamCleanupTimeout,
         compact_prompt: form.compactPrompt,
         enable_context_rollback: form.enableContextRollback,
-        enable_goal_directed_review: form.enableGoalDirectedReview,
+        enable_trajectory_review: form.enableTrajectoryReview,
         review_step_interval: form.reviewStepInterval,
         review_on_error: form.reviewOnError,
       },
@@ -488,7 +488,7 @@ export function AgentForm({
     form.terminationSummaryPrompt.trim() !== "" ||
     form.compactPrompt.trim() !== "" ||
     !form.enableContextRollback ||
-    !form.enableGoalDirectedReview ||
+    !form.enableTrajectoryReview ||
     form.reviewStepInterval !== DEFAULT_FORM_STATE.reviewStepInterval ||
     form.reviewOnError !== DEFAULT_FORM_STATE.reviewOnError;
 
@@ -807,15 +807,15 @@ export function AgentForm({
           />
 
           <ToggleCard
-            id={fieldId("enable-goal-directed-review")}
-            label="Enable Goal-Directed Review"
-            description="Inject milestone-aware review checkpoints and condense off-track tool output into experience summaries."
-            checked={form.enableGoalDirectedReview}
-            onChange={(checked) => setField("enableGoalDirectedReview", checked)}
+            id={fieldId("enable-trajectory-review")}
+            label="Enable Trajectory Review"
+            description="Append alignment, experience, and usefulness scores as review metadata without rewriting or hiding history."
+            checked={form.enableTrajectoryReview}
+            onChange={(checked) => setField("enableTrajectoryReview", checked)}
           />
         </div>
 
-        {form.enableGoalDirectedReview && (
+        {form.enableTrajectoryReview && (
           <div className="grid gap-4 md:grid-cols-2">
             <Field
               id={fieldId("review-step-interval")}

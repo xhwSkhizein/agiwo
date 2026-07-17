@@ -213,7 +213,7 @@ def build_events_message(events: tuple[PendingEvent, ...]) -> UserMessage:  # no
     text_body = "\n".join(lines)
     parts: list[ContentPart] = [ContentPart(type=ContentType.TEXT, text=text_body)]
     parts.extend(extra_parts)
-    return UserMessage(content=parts, context=channel_context)
+    return UserMessage.from_system(UserMessage(content=parts, context=channel_context))
 
 
 def _decode_user_hint_message(event: PendingEvent) -> UserMessage | None:
@@ -245,7 +245,13 @@ _FORK_NOTICE = _system_notice(
 )
 
 
-def build_fork_task_notice(task: UserInput) -> str:
+def build_fork_task_notice(task: UserInput) -> UserMessage:
     """Wrap a task with a system notice for forked child agents."""
-    task_text = UserMessage.serialize(task)
-    return f"{_FORK_NOTICE}\n\n{task_text}"
+    task_message = UserMessage.from_value(task)
+    notice_part = ContentPart(type=ContentType.TEXT, text=_FORK_NOTICE)
+    return UserMessage.from_system(
+        UserMessage(
+            content=[notice_part, *task_message.content],
+            context=task_message.context,
+        )
+    )

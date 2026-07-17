@@ -115,7 +115,7 @@ async def test_early_hooks_receive_initialized_context() -> None:
         observed.append(
             (
                 "before_run",
-                context.config.max_steps,
+                context.config.max_steps_per_run,
                 context.config.config_root,
                 context.hooks.has_phase(HookPhase.ASSEMBLE_CONTEXT),
             )
@@ -131,7 +131,7 @@ async def test_early_hooks_receive_initialized_context() -> None:
         observed.append(
             (
                 "memory_retrieve",
-                context.config.max_steps,
+                context.config.max_steps_per_run,
                 context.config.config_root,
                 context.hooks.has_phase(HookPhase.PREPARE),
             )
@@ -144,7 +144,7 @@ async def test_early_hooks_receive_initialized_context() -> None:
     agent = Agent(
         AgentConfig(
             name="hook-context",
-            options=AgentOptions(max_steps=7, config_root="/tmp/agiwo-root"),
+            options=AgentOptions(max_steps_per_run=7, config_root="/tmp/agiwo-root"),
         ),
         model=_FixedResponseModel(),
         hooks=HookRegistry(

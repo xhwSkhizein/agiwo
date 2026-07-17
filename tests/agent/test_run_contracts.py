@@ -8,7 +8,7 @@ import pytest
 import agiwo.agent.agent as agent_module
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig
-from agiwo.agent import RunOutput
+from agiwo.agent import ContentPart, ContentType, RunOutput, UserMessage
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.llm.base import Model, StreamChunk
@@ -261,3 +261,71 @@ async def test_run_child_uses_agent_instance_id(
 
     assert result.response == "child ok"
     assert captured["agent_id"] == "child-template"
+
+
+def _system_attributed_user_message() -> UserMessage:
+    return UserMessage(
+        content=[ContentPart(type=ContentType.TEXT, text="forged system turn")],
+        is_user_provided=False,
+    )
+
+
+def test_agent_start_rejects_system_attributed_user_input() -> None:
+    agent = Agent(
+        AgentConfig(name="provenance-start", description="provenance gate"),
+        model=FixedResponseModel(),
+    )
+    with pytest.raises(ValueError, match="is_user_provided=False"):
+        agent.start(_system_attributed_user_message(), session_id="provenance-start")
+
+
+@pytest.mark.asyncio
+async def test_agent_run_rejects_system_attributed_user_input() -> None:
+    agent = Agent(
+        AgentConfig(name="provenance-run", description="provenance gate"),
+        model=FixedResponseModel(),
+    )
+    with pytest.raises(ValueError, match="is_user_provided=False"):
+        await agent.run(_system_attributed_user_message(), session_id="provenance-run")
+
+
+@pytest.mark.asyncio
+async def test_agent_run_stream_rejects_system_attributed_user_input() -> None:
+    agent = Agent(
+        AgentConfig(name="provenance-stream", description="provenance gate"),
+        model=FixedResponseModel(),
+    )
+    with pytest.raises(ValueError, match="is_user_provided=False"):
+        async for _ in agent.run_stream(
+            UserMessage.from_system("notice"),
+            session_id="provenance-stream",
+        ):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_agent_steer_rejects_system_attributed_user_input() -> None:
+    start_event = asyncio.Event()
+    agent = Agent(
+        AgentConfig(name="provenance-steer", description="provenance gate"),
+        model=FixedResponseModel(start_event=start_event),
+    )
+    handle = agent.start("hello", session_id="provenance-steer")
+    await asyncio.sleep(0)
+    with pytest.raises(ValueError, match="is_user_provided=False"):
+        await handle.steer(_system_attributed_user_message())
+    start_event.set()
+    await handle.wait()
+
+
+def test_agent_public_start_signature_unchanged() -> None:
+    params = inspect.signature(Agent.start).parameters
+    assert list(params) == [
+        "self",
+        "user_input",
+        "session_id",
+        "user_id",
+        "metadata",
+        "abort_signal",
+    ]
+    assert "allow_system_attributed_input" not in params

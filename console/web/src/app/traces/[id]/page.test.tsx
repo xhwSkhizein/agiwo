@@ -72,9 +72,11 @@ describe("TraceDetailPage", () => {
           hook_advice: "narrow the search",
           aligned: false,
           experience: "switch plan",
-          step_back_applied: true,
-          rollback_range: null,
-          affected_count: 2,
+          tool_usefulness: [
+            { tool_call_id: "tc-a", tool_name: "bash", score: 1 },
+          ],
+          review_tool_call_id: "tc-review",
+          review_latency_ms: 12,
           started_at: "2026-04-25T12:00:00Z",
           resolved_at: "2026-04-25T12:00:01Z",
           raw_notice: "Trigger: step_interval",
@@ -101,16 +103,17 @@ describe("TraceDetailPage", () => {
       ],
       runtime_decisions: [
         {
-          kind: "step_back",
+          kind: "compaction",
           sequence: 9,
           run_id: "run-1",
           agent_id: "agent-1",
           created_at: "2026-04-25T12:00:01Z",
-          summary: "2 results condensed after checkpoint seq 4",
+          summary: "Context compacted from 1000 to 200 tokens",
           details: {
-            affected_count: 2,
-            checkpoint_seq: 4,
-            experience: "switch plan",
+            start_sequence: 1,
+            end_sequence: 8,
+            before_token_estimate: 1000,
+            after_token_estimate: 200,
           },
         },
       ],
@@ -143,7 +146,7 @@ describe("TraceDetailPage", () => {
     expect(screen.queryByRole("button", { name: "Mainline" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Debug" })).not.toBeInTheDocument();
     expect(screen.getByText("fix the bug")).toBeInTheDocument();
-    expect(screen.getAllByText("2 results condensed after checkpoint seq 4").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Context compacted from 1000 to 200 tokens").length).toBeGreaterThan(0);
     expect(screen.queryByText("Run Narrative")).not.toBeInTheDocument();
     expect(screen.queryByText("Span Waterfall (0 spans)")).not.toBeInTheDocument();
   });

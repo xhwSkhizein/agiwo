@@ -67,6 +67,7 @@ export interface UserMessage {
   __type: "user_message";
   content: ContentPartPayload[];
   context?: ChannelContextPayload | null;
+  is_user_provided?: boolean;
 }
 
 export interface ContentParts {
@@ -108,6 +109,10 @@ export interface RunMetricsPayload {
   token_cost?: number | null;
   steps_count?: number | null;
   tool_calls_count?: number | null;
+  max_steps_per_run?: number | null;
+  model_call_attempts_total?: number | null;
+  model_call_limit_trigger_ordinal?: number | null;
+  model_call_phase_stats?: Record<string, Record<string, number>> | null;
 }
 
 export interface StepMetricsPayload extends RunMetricsPayload {
@@ -198,11 +203,16 @@ export interface ReviewCheckpoint {
   confirmed_at: string;
 }
 
+export interface ToolUsefulnessScore {
+  tool_call_id: string;
+  tool_name: string | null;
+  score: number | null;
+}
+
 export interface ReviewOutcome {
   aligned: boolean | null;
   experience: string | null;
-  step_back_applied: boolean;
-  affected_count: number | null;
+  tool_usefulness: ToolUsefulnessScore[];
   trigger_reason: string | null;
   active_milestone: string | null;
   resolved_at: string | null;
@@ -229,9 +239,9 @@ export interface ReviewCycle {
   hook_advice: string | null;
   aligned: boolean | null;
   experience: string | null;
-  step_back_applied: boolean;
-  rollback_range: number[] | null;
-  affected_count: number | null;
+  tool_usefulness: ToolUsefulnessScore[];
+  review_tool_call_id: string | null;
+  review_latency_ms: number | null;
   started_at: string | null;
   resolved_at: string | null;
   raw_notice: string | null;
@@ -261,7 +271,7 @@ export interface SessionDetail {
 }
 
 export interface RuntimeDecisionEvent {
-  kind: "termination" | "compaction" | "step_back" | "rollback" | string;
+  kind: "termination" | "compaction" | "rollback" | string;
   sequence: number;
   run_id: string;
   agent_id: string;
@@ -345,12 +355,6 @@ export interface StepCompletedEventPayload extends StreamEventBase {
   step: StepResponse;
 }
 
-export interface ContextStepsHiddenEventPayload extends StreamEventBase {
-  type: "context_steps_hidden";
-  step_ids: string[];
-  reason: string;
-}
-
 export interface RunCompletedEventPayload extends StreamEventBase {
   type: "run_completed";
   response?: string | null;
@@ -380,7 +384,6 @@ export type AgentStreamEventPayload =
   | RunStartedEventPayload
   | StepDeltaEventPayload
   | StepCompletedEventPayload
-  | ContextStepsHiddenEventPayload
   | RunCompletedEventPayload
   | RunFailedEventPayload;
 
@@ -513,6 +516,11 @@ export interface TraceLlmCall {
   tool_schema_count: number;
   response_tool_call_count: number;
   output_preview: string | null;
+  logical_call_id?: string | null;
+  phase?: string | null;
+  attempt_no?: number | null;
+  call_ordinal?: number | null;
+  retry_reason?: string | null;
 }
 
 export interface SpanResponse {
@@ -592,7 +600,7 @@ export function getTrace(traceId: string) {
 
 export interface AgentOptionsPayload {
   config_root: string;
-  max_steps: number;
+  max_steps_per_run: number;
   run_timeout: number;
   max_input_tokens_per_call: number | null;
   max_run_cost: number | null;
@@ -602,7 +610,7 @@ export interface AgentOptionsPayload {
   stream_cleanup_timeout: number;
   compact_prompt: string;
   enable_context_rollback: boolean;
-  enable_goal_directed_review: boolean;
+  enable_trajectory_review: boolean;
   review_step_interval: number;
   review_on_error: boolean;
 }

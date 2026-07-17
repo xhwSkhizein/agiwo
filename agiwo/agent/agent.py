@@ -17,7 +17,9 @@ from agiwo.agent.definition import (
     resolve_child_definition,
 )
 from agiwo.agent.hooks import HookRegistration, HookRegistry
+from agiwo.agent.introspect.tool import ReviewTrajectoryTool
 from agiwo.agent.models.input import UserInput, UserMessage
+from agiwo.agent.plan import UpdatePlanTool
 from agiwo.agent.prompt import build_system_prompt
 from agiwo.agent.models.run import RunIdentity, RunOutput
 from agiwo.agent.run_loop import execute_run
@@ -123,12 +125,7 @@ class Agent:
 
         self._extra_tools: tuple[BaseTool, ...] = tuple(tools) if tools else ()
         self._system_tools: tuple[BaseTool, ...] = ()
-        tool_manager = get_global_tool_manager()
-        self._tools = tool_manager.get_tools(
-            allowed_tools=self._config.allowed_tools,
-            extra_tools=list(self._extra_tools) if self._extra_tools else None,
-            allowed_skills=self._config.allowed_skills,
-        )
+        self._rebuild_tools(system_tools=self._owned_system_tools())
 
         self._workspace = resolved_definition.workspace
         self._run_log_storage = create_run_log_storage(
@@ -198,18 +195,37 @@ class Agent:
         """System-level tools (e.g. scheduler runtime tools)."""
         return self._system_tools
 
-    def _inject_system_tools(self, system_tools: list[BaseTool]) -> None:
-        """Inject system-level tools and rebuild the resolved tool list.
+    def _owned_system_tools(self) -> list[BaseTool]:
+        """System tools owned by Agent itself (not Scheduler)."""
+        tools: list[BaseTool] = [UpdatePlanTool()]
+        if self._config.options.enable_trajectory_review:
+            tools.append(ReviewTrajectoryTool())
+        return tools
 
-        This is a scheduler-internal API used to inject runtime tools
-        (e.g. ``SpawnChildAgentTool``, ``ForkChildAgentTool``,
-        ``SleepAndWaitTool``) after construction. System tools bypass
-        ``allowed_tools`` filtering.
+    def _merge_system_tools(
+        self, injected: list[BaseTool] | None = None
+    ) -> list[BaseTool]:
+        by_name: dict[str, BaseTool] = {
+            tool.name: tool for tool in self._owned_system_tools()
+        }
+        for tool in injected or []:
+            if tool.name in by_name and tool.name in {
+                "update_plan",
+                "review_trajectory",
+            }:
+                continue
+            by_name[tool.name] = tool
+        # Keep agent-owned tools first for stable schema ordering.
+        owned_names = {tool.name for tool in self._owned_system_tools()}
+        ordered: list[BaseTool] = [
+            by_name[name] for name in sorted(owned_names) if name in by_name
+        ]
+        ordered.extend(
+            tool for name, tool in by_name.items() if name not in owned_names
+        )
+        return ordered
 
-        **Note**: This method is intended for scheduler use only. Do not call
-        this method directly in application code unless you are implementing
-        custom scheduler logic.
-        """
+    def _rebuild_tools(self, *, system_tools: list[BaseTool]) -> None:
         self._system_tools = tuple(system_tools)
         tool_manager = get_global_tool_manager()
         self._tools = tool_manager.get_tools(
@@ -218,6 +234,21 @@ class Agent:
             allowed_skills=self._config.allowed_skills,
             system_tools=system_tools,
         )
+
+    def _inject_system_tools(self, system_tools: list[BaseTool]) -> None:
+        """Inject system-level tools and rebuild the resolved tool list.
+
+        This is a scheduler-internal API used to inject runtime tools
+        (e.g. ``SpawnChildAgentTool``, ``ForkChildAgentTool``,
+        ``SleepAndWaitTool``) after construction. System tools bypass
+        ``allowed_tools`` filtering. Agent-owned tools such as
+        ``update_plan`` are always retained.
+
+        **Note**: This method is intended for scheduler use only. Do not call
+        this method directly in application code unless you are implementing
+        custom scheduler logic.
+        """
+        self._rebuild_tools(system_tools=self._merge_system_tools(system_tools))
 
     async def get_effective_system_prompt(self) -> str:
         return await self._build_system_prompt(self._config.system_prompt)
@@ -372,6 +403,34 @@ class Agent:
         metadata: dict | None = None,
         abort_signal: AbortSignal | None = None,
     ) -> AgentExecutionHandle:
+        """Start a root run from genuine user input.
+
+        Rejects ``UserMessage(is_user_provided=False)``. Scheduler-owned wakes
+        that inject system-attributed user-role turns (fork notices, mailbox
+        event messages) must call ``_start_runtime`` instead.
+        """
+        return self._start_runtime(
+            UserMessage.require_user_provided(user_input),
+            session_id=session_id,
+            user_id=user_id,
+            metadata=metadata,
+            abort_signal=abort_signal,
+        )
+
+    def _start_runtime(
+        self,
+        user_input: UserInput,
+        *,
+        session_id: str | None = None,
+        user_id: str | None = None,
+        metadata: dict | None = None,
+        abort_signal: AbortSignal | None = None,
+    ) -> AgentExecutionHandle:
+        """Start a root run without re-checking user-input provenance.
+
+        Used by the Scheduler after it has already validated external input, or
+        when injecting internal ``UserMessage.from_system()`` turns.
+        """
         self._ensure_open()
         resolved_session_id = session_id or str(uuid4())
         resolved_abort_signal = abort_signal or AbortSignal()

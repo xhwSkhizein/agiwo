@@ -3,16 +3,13 @@
 from typing import Any
 
 from agiwo.agent.introspect.models import (
-    ContentUpdate,
     IntrospectionCheckpoint,
     IntrospectionOutcome,
+    ToolUsefulnessEntry,
 )
-from agiwo.agent.introspect.repair import build_context_repair_plan
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.state_writer import RunStateWriter
-
-_HIDDEN_CONTEXT_REASON = "introspection_metadata"
 
 
 async def build_tool_step_lookup(
@@ -23,7 +20,6 @@ async def build_tool_step_lookup(
     steps = await context.session_runtime.run_log_storage.list_step_views(
         session_id=context.session_id,
         agent_id=context.agent_id,
-        include_hidden_from_context=True,
         limit=100_000,
     )
     for step in steps:
@@ -46,33 +42,7 @@ async def apply_introspection_outcome(
     writer: RunStateWriter,
     step_lookup: dict[str, dict[str, Any]],
 ) -> None:
-    previous_boundary_seq = context.ledger.introspection.last_boundary_seq
-    repair_plan = build_context_repair_plan(
-        context.ledger.messages,
-        outcome,
-        previous_boundary_seq=previous_boundary_seq,
-        step_lookup=step_lookup,
-    )
-    outcome.repair_plan = repair_plan
-
-    if outcome.hidden_step_ids:
-        await writer.record_context_steps_hidden(
-            step_ids=outcome.hidden_step_ids,
-            reason=_HIDDEN_CONTEXT_REASON,
-        )
-
-    if repair_plan is not None:
-        _apply_content_updates(context.ledger.messages, repair_plan.content_updates)
-        for update in repair_plan.content_updates:
-            await writer.record_step_condensed_content_updated(
-                step_id=update.step_id,
-                condensed_content=update.content,
-            )
-
-    _remove_review_tool_call(
-        context.ledger.messages,
-        review_tool_call_id=outcome.review_tool_call_id,
-    )
+    del step_lookup
 
     if outcome.aligned is True:
         context.ledger.introspection.latest_aligned_checkpoint = (
@@ -88,59 +58,30 @@ async def apply_introspection_outcome(
             review_step_id=outcome.review_step_id,
         )
 
+    context.ledger.introspection.latest_tool_usefulness = list(outcome.tool_usefulness)
+
     await writer.record_introspection_outcome_recorded(
         aligned=outcome.aligned,
-        mode=outcome.mode,
         experience=outcome.experience,
+        tool_usefulness=[
+            {
+                "tool_call_id": entry.tool_call_id,
+                "tool_name": entry.tool_name,
+                "score": entry.score,
+            }
+            for entry in outcome.tool_usefulness
+        ],
         active_milestone_id=outcome.active_milestone_id,
         review_tool_call_id=outcome.review_tool_call_id,
         review_step_id=outcome.review_step_id,
-        hidden_step_ids=outcome.hidden_step_ids,
-        notice_cleaned_step_ids=(
-            repair_plan.notice_cleaned_step_ids if repair_plan is not None else []
-        ),
-        condensed_step_ids=repair_plan.condensed_step_ids
-        if repair_plan is not None and outcome.mode == "step_back"
-        else [],
         boundary_seq=outcome.boundary_seq,
-        repair_start_seq=repair_plan.start_seq if repair_plan is not None else None,
-        repair_end_seq=repair_plan.end_seq if repair_plan is not None else None,
     )
-
-    if outcome.mode == "step_back" and repair_plan is not None:
-        repair_entries = await writer.record_context_repair_applied(
-            mode="step_back",
-            affected_count=repair_plan.affected_count,
-            start_seq=repair_plan.start_seq,
-            end_seq=repair_plan.end_seq,
-            experience=repair_plan.experience,
-        )
-        await context.session_runtime.project_run_log_entries(
-            repair_entries,
-            run_id=context.run_id,
-            agent_id=context.agent_id,
-            parent_run_id=context.parent_run_id,
-            depth=context.depth,
-        )
-        await context.hooks.after_step_back(outcome, context)
 
     context.ledger.introspection.pending_trigger = None
     context.ledger.introspection.notice_requested = False
     context.ledger.introspection.pending_milestone_switch = False
     context.ledger.introspection.review_count_since_boundary = 0
     context.ledger.introspection.last_boundary_seq = outcome.boundary_seq
-
-
-def _apply_content_updates(
-    messages: list[dict[str, Any]],
-    updates: list[ContentUpdate],
-) -> None:
-    for update in updates:
-        _replace_tool_message_content(
-            messages,
-            tool_call_id=update.tool_call_id,
-            content=update.content,
-        )
 
 
 def register_committed_tool_step(
@@ -155,71 +96,35 @@ def register_committed_tool_step(
     }
 
 
-def _replace_tool_message_content(
-    messages: list[dict[str, Any]],
-    *,
-    tool_call_id: str,
-    content: str,
-) -> None:
-    for message in messages:
-        if message.get("role") != "tool":
+def parse_tool_usefulness_output(
+    raw_entries: object,
+) -> list[ToolUsefulnessEntry]:
+    if not isinstance(raw_entries, list):
+        return []
+    entries: list[ToolUsefulnessEntry] = []
+    for item in raw_entries:
+        if not isinstance(item, dict):
             continue
-        if message.get("tool_call_id") != tool_call_id:
+        tool_call_id = item.get("tool_call_id")
+        if not isinstance(tool_call_id, str) or not tool_call_id:
             continue
-        message["content"] = content
-        break
-
-
-def _remove_review_tool_call(
-    messages: list[dict[str, Any]],
-    *,
-    review_tool_call_id: str | None,
-) -> None:
-    if not review_tool_call_id:
-        return
-
-    kept_messages: list[dict[str, Any]] = []
-    for message in messages:
-        if message.get("role") == "tool":
-            if message.get("tool_call_id") != review_tool_call_id:
-                kept_messages.append(message)
+        tool_name = item.get("tool_name")
+        score = item.get("score")
+        if score is not None and not isinstance(score, int):
             continue
-
-        if message.get("role") != "assistant":
-            kept_messages.append(message)
-            continue
-
-        tool_calls = message.get("tool_calls")
-        if not isinstance(tool_calls, list):
-            kept_messages.append(message)
-            continue
-
-        remaining_tool_calls = [
-            tool_call
-            for tool_call in tool_calls
-            if tool_call.get("id") != review_tool_call_id
-        ]
-        if remaining_tool_calls:
-            message["tool_calls"] = remaining_tool_calls
-        else:
-            message.pop("tool_calls", None)
-        content = message.get("content")
-        if remaining_tool_calls or _has_preservable_assistant_content(content):
-            kept_messages.append(message)
-
-    messages[:] = kept_messages
-
-
-def _has_preservable_assistant_content(content: object) -> bool:
-    if isinstance(content, str):
-        return bool(content.strip())
-    if isinstance(content, (list, dict)):
-        return len(content) > 0
-    return False
+        entries.append(
+            ToolUsefulnessEntry(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name if isinstance(tool_name, str) else None,
+                score=score,
+            )
+        )
+    return entries
 
 
 __all__ = [
     "apply_introspection_outcome",
     "build_tool_step_lookup",
+    "parse_tool_usefulness_output",
     "register_committed_tool_step",
 ]

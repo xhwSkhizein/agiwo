@@ -2,15 +2,14 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from agiwo.agent.introspect.apply import _remove_review_tool_call
 from agiwo.agent.introspect.models import Milestone
 import agiwo.agent.run_tool_batch as run_tool_batch_module
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.log import (
-    GoalMilestonesUpdated,
     IntrospectionCheckpointRecorded,
     IntrospectionOutcomeRecorded,
     IntrospectionTriggered,
+    RunPlanUpdated,
     build_committed_step_entry,
 )
 from agiwo.agent.models.run import RunLedger, TerminationReason
@@ -24,7 +23,6 @@ from agiwo.utils.abort_signal import AbortSignal
 class _FakeHooks:
     review_advice: str | None = None
     before_review_calls: list[dict[str, object]] = field(default_factory=list)
-    after_step_back_calls: list[object] = field(default_factory=list)
 
     async def after_tool_call(
         self,
@@ -54,12 +52,6 @@ class _FakeHooks:
         )
         return self.review_advice
 
-    async def after_step_back(
-        self, outcome: object, context: object | None = None
-    ) -> None:
-        del context
-        self.after_step_back_calls.append(outcome)
-
 
 @dataclass
 class _FakeContext:
@@ -84,7 +76,7 @@ class _FakeRuntime:
 def _review_tools_map() -> dict[str, object]:
     return {
         "review_trajectory": object(),
-        "declare_milestones": object(),
+        "update_plan": object(),
     }
 
 
@@ -122,13 +114,12 @@ async def test_execute_tool_batch_cycle_injects_hook_review_advice(
     session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
     hooks = _FakeHooks(review_advice="Focus on auth.py before broadening the search.")
     ledger = RunLedger()
-    ledger.goal.milestones = [
+    ledger.plan.milestones = [
         Milestone(id="locate", description="Locate the auth bug", status="active")
     ]
-    ledger.goal.active_milestone_id = "locate"
     context = _FakeContext(
         config=AgentOptions(
-            enable_goal_directed_review=True,
+            enable_trajectory_review=True,
             review_step_interval=1,
         ),
         ledger=ledger,
@@ -177,18 +168,18 @@ async def test_execute_tool_batch_cycle_injects_hook_review_advice(
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_batch_cycle_records_declared_milestone_fact(
+async def test_execute_tool_batch_cycle_records_run_plan_updated_fact(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_execute_tool_batch(*args, **kwargs):
         del args, kwargs
         return [
             ToolResult.success(
-                tool_name="declare_milestones",
-                tool_call_id="tc_declare",
-                content="Milestones declared",
+                tool_name="update_plan",
+                tool_call_id="tc_update",
+                content="Plan changes accepted",
                 output={
-                    "milestones": [
+                    "changes": [
                         {
                             "id": "locate",
                             "description": "Locate the auth bug",
@@ -206,7 +197,7 @@ async def test_execute_tool_batch_cycle_records_declared_milestone_fact(
     session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
     context = _FakeContext(
         config=AgentOptions(
-            enable_goal_directed_review=True,
+            enable_trajectory_review=True,
             review_step_interval=100,
         ),
         ledger=RunLedger(),
@@ -229,9 +220,9 @@ async def test_execute_tool_batch_cycle_records_declared_milestone_fact(
         runtime=runtime,
         tool_calls=[
             {
-                "id": "tc_declare",
+                "id": "tc_update",
                 "type": "function",
-                "function": {"name": "declare_milestones"},
+                "function": {"name": "update_plan"},
             }
         ],
         assistant_step_id="assistant-step",
@@ -240,14 +231,13 @@ async def test_execute_tool_batch_cycle_records_declared_milestone_fact(
     )
 
     entries = await storage.list_entries(session_id=context.session_id)
-    milestone_facts = [
-        entry for entry in entries if isinstance(entry, GoalMilestonesUpdated)
-    ]
-    assert len(milestone_facts) == 1
-    assert milestone_facts[0].source_tool_call_id == "tc_declare"
-    assert milestone_facts[0].source_step_id == committed_steps[0].id
-    assert milestone_facts[0].active_milestone_id == "locate"
-    assert [(m.id, m.status) for m in milestone_facts[0].milestones] == [
+    plan_facts = [entry for entry in entries if isinstance(entry, RunPlanUpdated)]
+    assert len(plan_facts) == 1
+    assert plan_facts[0].source_tool_call_id == "tc_update"
+    assert plan_facts[0].source_step_id == committed_steps[0].id
+    assert plan_facts[0].revision == 1
+    assert plan_facts[0].active_milestone_id == "locate"
+    assert [(m.id, m.status) for m in plan_facts[0].milestones] == [
         ("locate", "active")
     ]
 
@@ -275,13 +265,12 @@ async def test_execute_tool_batch_cycle_injects_review_without_hook_advice(
     session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
     hooks = _FakeHooks(review_advice=None)
     ledger = RunLedger()
-    ledger.goal.milestones = [
+    ledger.plan.milestones = [
         Milestone(id="locate", description="Locate the auth bug", status="active")
     ]
-    ledger.goal.active_milestone_id = "locate"
     context = _FakeContext(
         config=AgentOptions(
-            enable_goal_directed_review=True,
+            enable_trajectory_review=True,
             review_step_interval=1,
         ),
         ledger=ledger,
@@ -339,13 +328,12 @@ async def test_execute_tool_batch_cycle_injects_only_one_review_per_tool_batch(
     session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
     hooks = _FakeHooks(review_advice=None)
     ledger = RunLedger()
-    ledger.goal.milestones = [
+    ledger.plan.milestones = [
         Milestone(id="locate", description="Locate the auth bug", status="active")
     ]
-    ledger.goal.active_milestone_id = "locate"
     context = _FakeContext(
         config=AgentOptions(
-            enable_goal_directed_review=True,
+            enable_trajectory_review=True,
             review_step_interval=1,
         ),
         ledger=ledger,
@@ -383,7 +371,7 @@ async def test_execute_tool_batch_cycle_injects_only_one_review_per_tool_batch(
 
 
 @pytest.mark.asyncio
-async def test_aligned_review_cleans_prior_system_review_from_context_and_storage(
+async def test_aligned_review_keeps_messages_append_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     batches = [
@@ -400,7 +388,17 @@ async def test_aligned_review_cleans_prior_system_review_from_context_and_storag
                 tool_name="review_trajectory",
                 tool_call_id="tc_review",
                 content="Trajectory review: aligned=True.",
-                output={"aligned": True, "experience": ""},
+                output={
+                    "aligned": True,
+                    "experience": "",
+                    "tool_usefulness": [
+                        {
+                            "tool_call_id": "tc_search",
+                            "tool_name": "search",
+                            "score": 2,
+                        }
+                    ],
+                },
             )
         ],
     ]
@@ -417,13 +415,12 @@ async def test_aligned_review_cleans_prior_system_review_from_context_and_storag
     session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
     hooks = _FakeHooks(review_advice=None)
     ledger = RunLedger()
-    ledger.goal.milestones = [
+    ledger.plan.milestones = [
         Milestone(id="locate", description="Locate the auth bug", status="active")
     ]
-    ledger.goal.active_milestone_id = "locate"
     context = _FakeContext(
         config=AgentOptions(
-            enable_goal_directed_review=True,
+            enable_trajectory_review=True,
             review_step_interval=1,
         ),
         ledger=ledger,
@@ -431,9 +428,12 @@ async def test_aligned_review_cleans_prior_system_review_from_context_and_storag
         session_runtime=session_runtime,
     )
     runtime = _FakeRuntime(tools_map=_review_tools_map())
+    message_snapshots: list[list[dict[str, object]]] = []
 
     async def commit_step(step):
-        return await _commit_step_to_ledger_and_storage(context, step)
+        committed = await _commit_step_to_ledger_and_storage(context, step)
+        message_snapshots.append([dict(message) for message in context.ledger.messages])
+        return committed
 
     async def set_termination_reason(reason: TerminationReason, tool_name: str) -> None:
         del reason, tool_name
@@ -468,16 +468,21 @@ async def test_aligned_review_cleans_prior_system_review_from_context_and_storag
     search_message = next(
         msg for msg in context.ledger.messages if msg.get("tool_call_id") == "tc_search"
     )
-    assert search_message["content"] == "Found results"
+    assert search_message["content"].startswith("Found results")
+    assert "<system-review>" in search_message["content"]
+    assert any(
+        msg.get("tool_call_id") == "tc_review" for msg in context.ledger.messages
+    )
+    assert len(message_snapshots[0]) + 1 == len(context.ledger.messages)
 
     replayed_steps = await storage.list_step_views(
         session_id=context.session_id,
-        include_hidden_from_context=False,
     )
     search_step = next(
         step for step in replayed_steps if step.tool_call_id == "tc_search"
     )
-    assert search_step.to_message()["content"] == "Found results"
+    assert search_step.to_message()["content"].startswith("Found results")
+    assert "<system-review>" in search_step.to_message()["content"]
     entries = await storage.list_entries(session_id=context.session_id)
     checkpoints = [
         entry for entry in entries if isinstance(entry, IntrospectionCheckpointRecorded)
@@ -487,21 +492,16 @@ async def test_aligned_review_cleans_prior_system_review_from_context_and_storag
     ]
     assert len(checkpoints) == 1
     assert checkpoints[0].review_tool_call_id == "tc_review"
-    assert checkpoints[0].review_step_id
-    assert checkpoints[0].milestone_id == "locate"
     assert len(outcomes) == 1
     assert outcomes[0].aligned is True
-    assert outcomes[0].mode == "metadata_only"
     assert outcomes[0].review_tool_call_id == "tc_review"
-    assert outcomes[0].hidden_step_ids == [
-        "assistant-step-review",
-        checkpoints[0].review_step_id,
+    assert outcomes[0].tool_usefulness == [
+        {"tool_call_id": "tc_search", "tool_name": "search", "score": 2}
     ]
-    assert outcomes[0].notice_cleaned_step_ids == [search_step.id]
 
 
 @pytest.mark.asyncio
-async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
+async def test_misaligned_review_records_usefulness_without_rewriting_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_execute_tool_batch(*args, **kwargs):
@@ -517,7 +517,17 @@ async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
                 tool_name="review_trajectory",
                 tool_call_id="tc_review",
                 content="Trajectory review: aligned=False. narrow the search",
-                output={"aligned": False, "experience": "narrow the search"},
+                output={
+                    "aligned": False,
+                    "experience": "narrow the search",
+                    "tool_usefulness": [
+                        {
+                            "tool_call_id": "tc_search",
+                            "tool_name": "search",
+                            "score": 1,
+                        }
+                    ],
+                },
             ),
         ]
 
@@ -530,7 +540,7 @@ async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
     hooks = _FakeHooks()
     context = _FakeContext(
         config=AgentOptions(
-            enable_goal_directed_review=True,
+            enable_trajectory_review=True,
             review_step_interval=100,
         ),
         ledger=RunLedger(),
@@ -562,77 +572,68 @@ async def test_execute_tool_batch_cycle_calls_after_step_back_hook(
     )
 
     assert terminated is False
-    assert len(hooks.after_step_back_calls) == 1
-    outcome = hooks.after_step_back_calls[0]
-    assert outcome.mode == "step_back"
-    assert outcome.repair_plan is not None
-    assert outcome.repair_plan.affected_count == 1
-    assert outcome.experience == "narrow the search"
     tool_messages = [
         msg for msg in context.ledger.messages if msg.get("role") == "tool"
     ]
-    assert len(tool_messages) == 1
-    assert tool_messages[0]["tool_call_id"] == "tc_search"
-    assert tool_messages[0]["content"] == "[EXPERIENCE] narrow the search"
+    assert len(tool_messages) == 2
+    assert tool_messages[0]["content"] == "Verbose search output"
+    assert tool_messages[1]["tool_call_id"] == "tc_review"
     entries = await storage.list_entries(session_id=context.session_id)
     outcomes = [
         entry for entry in entries if isinstance(entry, IntrospectionOutcomeRecorded)
     ]
     assert len(outcomes) == 1
     assert outcomes[0].aligned is False
-    assert outcomes[0].mode == "step_back"
     assert outcomes[0].experience == "narrow the search"
-    assert outcomes[0].review_tool_call_id == "tc_review"
-    assert outcomes[0].condensed_step_ids
-    assert outcomes[0].notice_cleaned_step_ids == []
+    assert outcomes[0].tool_usefulness[0]["score"] == 1
 
 
-def test_remove_review_tool_call_omits_empty_tool_calls_key() -> None:
-    messages = [
-        {
-            "role": "assistant",
-            "content": "Need to review this path.",
-            "tool_calls": [
-                {
-                    "id": "tc_review",
-                    "type": "function",
-                    "function": {"name": "review_trajectory", "arguments": "{}"},
-                }
-            ],
-        }
-    ]
+@pytest.mark.asyncio
+async def test_review_disabled_skips_notice_and_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_execute_tool_batch(*args, **kwargs):
+        del args, kwargs
+        return [
+            ToolResult.success(
+                tool_name="search",
+                tool_call_id="tc_search",
+                content="Found results",
+                output={},
+            )
+        ]
 
-    _remove_review_tool_call(
-        messages,
-        review_tool_call_id="tc_review",
+    monkeypatch.setattr(
+        run_tool_batch_module, "execute_tool_batch", fake_execute_tool_batch
     )
 
-    assert len(messages) == 1
-    assert "tool_calls" not in messages[0]
+    storage = InMemoryRunLogStorage()
+    session_runtime = SessionRuntime(session_id="sess-1", run_log_storage=storage)
+    context = _FakeContext(
+        config=AgentOptions(enable_trajectory_review=False, review_step_interval=1),
+        ledger=RunLedger(),
+        hooks=_FakeHooks(),
+        session_runtime=session_runtime,
+    )
+    runtime = _FakeRuntime(tools_map={"update_plan": object()})
 
+    async def commit_step(step):
+        return await _commit_step_to_ledger_and_storage(context, step)
 
-def test_remove_review_tool_call_preserves_structured_assistant_content() -> None:
-    messages = [
-        {
-            "role": "assistant",
-            "content": [{"type": "text", "text": "Keep this structured content."}],
-            "tool_calls": [
-                {
-                    "id": "tc_review",
-                    "type": "function",
-                    "function": {"name": "review_trajectory", "arguments": "{}"},
-                }
-            ],
-        }
-    ]
+    async def set_termination_reason(reason: TerminationReason, tool_name: str) -> None:
+        del reason, tool_name
 
-    _remove_review_tool_call(
-        messages,
-        review_tool_call_id="tc_review",
+    await run_tool_batch_module.execute_tool_batch_cycle(
+        context=context,
+        runtime=runtime,
+        tool_calls=[
+            {"id": "tc_search", "type": "function", "function": {"name": "search"}}
+        ],
+        assistant_step_id="assistant-step",
+        set_termination_reason=set_termination_reason,
+        commit_step=commit_step,
     )
 
-    assert len(messages) == 1
-    assert messages[0]["content"] == [
-        {"type": "text", "text": "Keep this structured content."}
-    ]
-    assert "tool_calls" not in messages[0]
+    assert "<system-review>" not in context.ledger.messages[-1]["content"]
+    entries = await storage.list_entries(session_id=context.session_id)
+    assert not any(isinstance(entry, IntrospectionTriggered) for entry in entries)

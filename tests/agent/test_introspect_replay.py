@@ -1,19 +1,19 @@
 from agiwo.agent.introspect.models import Milestone
 from agiwo.agent.introspect.replay import build_introspect_state_from_entries
 from agiwo.agent.models.log import (
-    GoalMilestonesUpdated,
     IntrospectionCheckpointRecorded,
     IntrospectionOutcomeRecorded,
     IntrospectionTriggered,
+    RunPlanUpdated,
     ToolStepCommitted,
 )
 from agiwo.agent.models.step import MessageRole
 
 
-def test_introspect_replay_restores_goal_checkpoint_and_count() -> None:
+def test_introspect_replay_restores_plan_checkpoint_and_count() -> None:
     state = build_introspect_state_from_entries(
         [
-            GoalMilestonesUpdated(
+            RunPlanUpdated(
                 sequence=1,
                 session_id="sess",
                 run_id="run",
@@ -21,7 +21,7 @@ def test_introspect_replay_restores_goal_checkpoint_and_count() -> None:
                 milestones=[
                     Milestone(id="inspect", description="Inspect", status="active")
                 ],
-                active_milestone_id="inspect",
+                revision=1,
                 reason="declared",
             ),
             ToolStepCommitted(
@@ -70,8 +70,8 @@ def test_introspect_replay_restores_goal_checkpoint_and_count() -> None:
         ]
     )
 
-    assert [m.id for m in state.goal.milestones] == ["inspect"]
-    assert state.goal.active_milestone_id == "inspect"
+    assert [m.id for m in state.plan.milestones] == ["inspect"]
+    assert state.plan.active_milestone_id == "inspect"
     assert state.introspection.latest_aligned_checkpoint is not None
     assert state.introspection.latest_aligned_checkpoint.seq == 3
     assert state.introspection.last_boundary_seq == 3
@@ -120,8 +120,10 @@ def test_introspect_replay_tracks_pending_trigger_until_outcome() -> None:
                 run_id="run",
                 agent_id="agent",
                 aligned=True,
-                mode="metadata_only",
                 boundary_seq=3,
+                tool_usefulness=[
+                    {"tool_call_id": "tc-search", "tool_name": "search", "score": 2}
+                ],
             ),
         ]
     )
@@ -130,12 +132,13 @@ def test_introspect_replay_tracks_pending_trigger_until_outcome() -> None:
     assert state.introspection.notice_requested is False
     assert state.introspection.last_boundary_seq == 3
     assert state.introspection.review_count_since_boundary == 0
+    assert state.introspection.latest_tool_usefulness[0].tool_call_id == "tc-search"
 
 
 def test_introspect_replay_derives_pending_milestone_switch_until_triggered() -> None:
     state = build_introspect_state_from_entries(
         [
-            GoalMilestonesUpdated(
+            RunPlanUpdated(
                 sequence=1,
                 session_id="sess",
                 run_id="run",
@@ -144,10 +147,10 @@ def test_introspect_replay_derives_pending_milestone_switch_until_triggered() ->
                     Milestone(id="inspect", description="Inspect", status="active"),
                     Milestone(id="fix", description="Fix", status="pending"),
                 ],
-                active_milestone_id="inspect",
+                revision=1,
                 reason="declared",
             ),
-            GoalMilestonesUpdated(
+            RunPlanUpdated(
                 sequence=2,
                 session_id="sess",
                 run_id="run",
@@ -156,7 +159,7 @@ def test_introspect_replay_derives_pending_milestone_switch_until_triggered() ->
                     Milestone(id="inspect", description="Inspect", status="completed"),
                     Milestone(id="fix", description="Fix", status="active"),
                 ],
-                active_milestone_id="fix",
+                revision=2,
                 reason="activated",
             ),
         ]
@@ -167,7 +170,7 @@ def test_introspect_replay_derives_pending_milestone_switch_until_triggered() ->
 
     state = build_introspect_state_from_entries(
         [
-            GoalMilestonesUpdated(
+            RunPlanUpdated(
                 sequence=1,
                 session_id="sess",
                 run_id="run",
@@ -176,10 +179,10 @@ def test_introspect_replay_derives_pending_milestone_switch_until_triggered() ->
                     Milestone(id="inspect", description="Inspect", status="active"),
                     Milestone(id="fix", description="Fix", status="pending"),
                 ],
-                active_milestone_id="inspect",
+                revision=1,
                 reason="declared",
             ),
-            GoalMilestonesUpdated(
+            RunPlanUpdated(
                 sequence=2,
                 session_id="sess",
                 run_id="run",
@@ -188,7 +191,7 @@ def test_introspect_replay_derives_pending_milestone_switch_until_triggered() ->
                     Milestone(id="inspect", description="Inspect", status="completed"),
                     Milestone(id="fix", description="Fix", status="active"),
                 ],
-                active_milestone_id="fix",
+                revision=2,
                 reason="activated",
             ),
             IntrospectionTriggered(

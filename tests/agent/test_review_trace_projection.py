@@ -1,9 +1,9 @@
 from agiwo.agent.introspect.models import Milestone
 from agiwo.agent.models.log import (
-    GoalMilestonesUpdated,
     IntrospectionCheckpointRecorded,
     IntrospectionOutcomeRecorded,
     IntrospectionTriggered,
+    RunPlanUpdated,
     RunStarted,
 )
 from agiwo.agent.trace_writer import AgentTraceCollector
@@ -19,7 +19,7 @@ def test_introspection_run_log_facts_project_to_runtime_spans() -> None:
                 agent_id="agent-1",
                 user_input="inspect",
             ),
-            GoalMilestonesUpdated(
+            RunPlanUpdated(
                 sequence=2,
                 session_id="sess-1",
                 run_id="run-1",
@@ -27,7 +27,7 @@ def test_introspection_run_log_facts_project_to_runtime_spans() -> None:
                 milestones=[
                     Milestone(id="inspect", description="Inspect", status="active")
                 ],
-                active_milestone_id="inspect",
+                revision=1,
                 source_tool_call_id="tc-milestones",
                 source_step_id="step-milestones",
                 reason="declared",
@@ -60,12 +60,13 @@ def test_introspection_run_log_facts_project_to_runtime_spans() -> None:
                 run_id="run-1",
                 agent_id="agent-1",
                 aligned=True,
-                mode="metadata_only",
                 boundary_seq=42,
                 active_milestone_id="inspect",
                 review_tool_call_id="tc-review",
                 review_step_id="step-review",
-                hidden_step_ids=["step-review"],
+                tool_usefulness=[
+                    {"tool_call_id": "tc-search", "tool_name": "search", "score": 2}
+                ],
             ),
         ]
     )

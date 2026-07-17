@@ -11,8 +11,6 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
     CompactionFailed,
-    ContextRepairApplied,
-    GoalMilestonesUpdated,
     HookFailed,
     IntrospectionCheckpointRecorded,
     IntrospectionOutcomeRecorded,
@@ -22,9 +20,9 @@ from agiwo.agent.models.log import (
     RunFailed as RunFailedEntry,
     RunFinished,
     RunLogEntry,
+    RunPlanUpdated,
     RunRolledBack,
     RunStarted,
-    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
 )
@@ -65,6 +63,12 @@ def _build_assistant_span_from_entries(
         "response_tool_calls": completed.tool_calls,
         "finish_reason": completed.finish_reason,
         "status": "completed",
+        "logical_call_id": completed.logical_call_id,
+        "phase": completed.phase.value,
+        "attempt_no": completed.attempt_no,
+        "call_ordinal": completed.call_ordinal,
+        "retry_reason": completed.retry_reason,
+        "response_observed": completed.response_observed,
     }
     if m:
         llm_details["metrics"] = {
@@ -90,6 +94,11 @@ def _build_assistant_span_from_entries(
             "has_tool_calls": bool(completed.tool_calls),
             "sequence": completed.sequence,
             "agent_id": completed.agent_id,
+            "logical_call_id": completed.logical_call_id,
+            "phase": completed.phase.value,
+            "attempt_no": completed.attempt_no,
+            "call_ordinal": completed.call_ordinal,
+            "retry_reason": completed.retry_reason,
         },
         run_id=completed.run_id,
         start_time=start or completed.created_at,
@@ -230,14 +239,12 @@ def _build_runtime_span_from_entry(
     entry: (
         CompactionApplied
         | CompactionFailed
-        | ContextRepairApplied
-        | GoalMilestonesUpdated
+        | RunPlanUpdated
         | HookFailed
         | IntrospectionCheckpointRecorded
         | IntrospectionOutcomeRecorded
         | IntrospectionTriggered
         | RunRolledBack
-        | StepBackApplied
         | TerminationDecided
     ),
     run_span: Span | None,
@@ -276,27 +283,6 @@ def _build_runtime_span_from_entry(
                 "terminal": entry.terminal,
             }
         )
-    elif isinstance(entry, StepBackApplied):
-        name = "step_back"
-        attributes.update(
-            {
-                "affected_count": entry.affected_count,
-                "checkpoint_seq": entry.checkpoint_seq,
-                "experience": entry.experience,
-            }
-        )
-    elif isinstance(entry, ContextRepairApplied):
-        name = "step_back"
-        attributes.update(
-            {
-                "affected_count": entry.affected_count,
-                "checkpoint_seq": entry.start_seq - 1,
-                "start_sequence": entry.start_seq,
-                "end_sequence": entry.end_seq,
-                "experience": entry.experience,
-                "mode": entry.mode,
-            }
-        )
     elif isinstance(entry, RunRolledBack):
         name = "rollback"
         attributes.update(
@@ -327,12 +313,13 @@ def _build_runtime_span_from_entry(
                 "error": entry.error,
             }
         )
-    elif isinstance(entry, GoalMilestonesUpdated):
+    elif isinstance(entry, RunPlanUpdated):
         name = "review_milestones"
         attributes.update(
             {
                 "milestones": [asdict(milestone) for milestone in entry.milestones],
                 "active_milestone_id": entry.active_milestone_id,
+                "revision": entry.revision,
                 "source_tool_call_id": entry.source_tool_call_id,
                 "source_step_id": entry.source_step_id,
                 "reason": entry.reason,
@@ -367,17 +354,12 @@ def _build_runtime_span_from_entry(
         attributes.update(
             {
                 "aligned": entry.aligned,
-                "mode": entry.mode,
                 "boundary_seq": getattr(entry, "boundary_seq", None),
-                "repair_start_seq": getattr(entry, "repair_start_seq", None),
-                "repair_end_seq": getattr(entry, "repair_end_seq", None),
                 "experience": entry.experience,
                 "active_milestone_id": entry.active_milestone_id,
                 "review_tool_call_id": entry.review_tool_call_id,
                 "review_step_id": entry.review_step_id,
-                "hidden_step_ids": list(entry.hidden_step_ids),
-                "notice_cleaned_step_ids": list(entry.notice_cleaned_step_ids),
-                "condensed_step_ids": list(entry.condensed_step_ids),
+                "tool_usefulness": list(entry.tool_usefulness),
             }
         )
     span = Span(
@@ -402,14 +384,12 @@ def _append_runtime_entry_to_trace(
     entry: (
         CompactionApplied
         | CompactionFailed
-        | ContextRepairApplied
-        | GoalMilestonesUpdated
+        | RunPlanUpdated
         | HookFailed
         | IntrospectionCheckpointRecorded
         | IntrospectionOutcomeRecorded
         | IntrospectionTriggered
         | RunRolledBack
-        | StepBackApplied
         | TerminationDecided
     ),
     *,
@@ -615,19 +595,22 @@ def _apply_llm_entry_to_trace(
     preview_length: int,
 ) -> bool:
     if isinstance(entry, LLMCallStarted):
-        llm_started[entry.run_id] = entry
+        llm_started[f"{entry.logical_call_id}:{entry.attempt_no}"] = entry
         return True
     if isinstance(entry, LLMCallCompleted):
+        started = llm_started.pop(
+            f"{entry.logical_call_id}:{entry.attempt_no}",
+            llm_started.get(entry.run_id),
+        )
         trace.add_span(
             _build_assistant_span_from_entries(
                 trace.trace_id,
                 run_spans.get(entry.run_id),
-                llm_started.get(entry.run_id),
+                started,
                 entry,
                 preview_length,
             )
         )
-        llm_started.pop(entry.run_id, None)
         return True
     return False
 
@@ -675,14 +658,12 @@ def _apply_runtime_entry_to_trace(
         (
             CompactionApplied,
             CompactionFailed,
-            ContextRepairApplied,
-            GoalMilestonesUpdated,
+            RunPlanUpdated,
             HookFailed,
             IntrospectionCheckpointRecorded,
             IntrospectionOutcomeRecorded,
             IntrospectionTriggered,
             RunRolledBack,
-            StepBackApplied,
             TerminationDecided,
         ),
     ):

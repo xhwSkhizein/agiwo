@@ -5,7 +5,8 @@ from typing import NamedTuple
 
 from agiwo.agent.compaction import CompactResult, compact_if_needed
 from agiwo.agent.hooks import HookRegistration, HookRegistry
-from agiwo.agent.llm_caller import stream_assistant_step
+from agiwo.agent.llm_caller import ModelCallLimitExceeded, execute_model_call
+from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import RunMetrics, RunOutput, TerminationReason
@@ -121,6 +122,9 @@ class RunLoopOrchestrator:
 
     async def _start_run(self, user_input: UserInput) -> None:
         """Initialize and start the run."""
+        self.context.ledger.model_calls.configured_limit = (
+            self.runtime.config.max_steps_per_run
+        )
         entries = await self.writer.start_run(user_input)
         await self._project_entries(entries)
 
@@ -245,7 +249,15 @@ class RunLoopOrchestrator:
             return self.context.is_terminal
 
         self.context.ledger.steps.current += 1
-        step, llm_context = await self._run_assistant_turn()
+        try:
+            step, llm_context = await self._run_assistant_turn()
+        except ModelCallLimitExceeded:
+            await self._set_termination_reason(
+                TerminationReason.MAX_STEPS,
+                phase="pre_llm",
+                source="model_call_limit",
+            )
+            return True
         return await self._handle_assistant_turn_result(
             step=step,
             llm_context=llm_context,
@@ -337,22 +349,29 @@ class RunLoopOrchestrator:
                 messages=request_messages,
             )
             await self._project_entries(rebuilt_entries)
-        entries = await self.writer.record_llm_call_started(
-            messages=self.context.snapshot_messages(),
-            tools=self.context.copy_tool_schemas(),
-        )
-        await self._project_entries(entries)
 
-        step, llm_context = await stream_assistant_step(
-            self.runtime.model,
-            self.context,
-            self.runtime.abort_signal,
-        )
+        try:
+            call_result = await execute_model_call(
+                model=self.runtime.model,
+                state=self.context,
+                writer=self.writer,
+                phase=ModelCallPhase.ASSISTANT,
+                abort_signal=self.runtime.abort_signal,
+                project_entries=self._project_entries,
+                messages=self.context.snapshot_messages(),
+                tools=self.context.copy_tool_schemas(),
+                use_state_tools=False,
+            )
+        except ModelCallLimitExceeded as exc:
+            logger.warning(
+                "assistant_model_call_refused",
+                run_id=self.context.run_id,
+                reason=exc.reason,
+            )
+            raise
+        step = call_result.step
+        llm_context = call_result.llm_context
         await self._commit_step(step, llm=llm_context)
-        entries = await self.writer.record_llm_call_completed(
-            step=step, llm=llm_context
-        )
-        await self._project_entries(entries)
         await self.context.hooks.after_llm_call(step, self.context)
         return step, llm_context
 

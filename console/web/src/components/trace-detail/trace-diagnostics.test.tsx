@@ -29,13 +29,13 @@ function buildTrace(): TraceDetail {
     final_output: "done",
     runtime_decisions: [
       {
-        kind: "step_back",
+        kind: "compaction_failed",
         sequence: 6,
         run_id: "run-1",
         agent_id: "agent-1",
         created_at: "2026-04-27T10:00:11Z",
-        summary: "2 results condensed after checkpoint seq 4",
-        details: { affected_count: 2 },
+        summary: "compaction failed (attempt 1/2)",
+        details: { attempt: 1, max_attempts: 2 },
       },
     ],
     timeline_events: [],

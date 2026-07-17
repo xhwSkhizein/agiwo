@@ -116,14 +116,16 @@ async def _commit_step_for_test(
     return step
 
 
-def test_check_non_recoverable_limits_returns_max_steps_reason() -> None:
+def test_check_non_recoverable_limits_returns_max_steps_per_run_reason() -> None:
     limits_module = importlib.import_module("agiwo.agent.termination.limits")
     state = _make_context()
+    state.ledger.model_calls.configured_limit = 3
+    state.ledger.model_calls.total_attempts = 3
 
     reason = limits_module.check_non_recoverable_limits(
         state,
-        AgentOptions(max_steps=3),
-        current_step=3,
+        AgentOptions(max_steps_per_run=3),
+        current_step=0,
     )
 
     assert reason == TerminationReason.MAX_STEPS
@@ -156,7 +158,7 @@ async def test_run_records_termination_decision_entry() -> None:
         AgentConfig(
             name="termination-test",
             description="termination test",
-            options=AgentOptions(max_steps=0),
+            options=AgentOptions(max_steps_per_run=0),
         ),
         model=_FixedResponseModel(),
     )

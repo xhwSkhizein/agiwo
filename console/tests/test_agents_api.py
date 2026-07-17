@@ -79,7 +79,7 @@ async def test_update_agent_put_replaces_full_agent_config(client) -> None:
             name="tester",
             model_provider="openai-compatible",
             model_name="MiniMax-M2.5",
-            options={"max_steps": 10, "max_run_cost": 1.5},
+            options={"max_steps_per_run": 10, "max_run_cost": 1.5},
             model_params={
                 "base_url": "https://api.minimax.chat/v1",
                 "api_key_env_name": "MINIMAX_API_KEY",
@@ -97,7 +97,7 @@ async def test_update_agent_put_replaces_full_agent_config(client) -> None:
             "model_name": "MiniMax-M2.5",
             "system_prompt": "Use the new instructions",
             "allowed_tools": ["web_search"],
-            "options": {"max_steps": 5, "max_run_cost": None},
+            "options": {"max_steps_per_run": 5, "max_run_cost": None},
             "model_params": {
                 "base_url": "https://api.other.example/v1",
                 "api_key_env_name": "OTHER_API_KEY",
@@ -112,7 +112,7 @@ async def test_update_agent_put_replaces_full_agent_config(client) -> None:
     assert payload["description"] == "replacement"
     assert payload["system_prompt"] == "Use the new instructions"
     assert payload["allowed_tools"] == ["web_search"]
-    assert payload["options"]["max_steps"] == 5
+    assert payload["options"]["max_steps_per_run"] == 5
     assert payload["options"]["max_run_cost"] is None
     assert payload["model_params"]["base_url"] == "https://api.other.example/v1"
     assert payload["model_params"]["api_key_env_name"] == "OTHER_API_KEY"

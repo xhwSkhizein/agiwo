@@ -5,7 +5,6 @@ from typing import Any
 
 from agiwo.agent import (
     AgentStreamItem,
-    ContextStepsHiddenEvent,
     RunView,
     StepCompletedEvent,
     StepMetrics,
@@ -32,6 +31,7 @@ from server.models.session import (
     SessionMilestoneBoardRecord,
     SessionObservabilityRecord,
     SessionSummaryRecord,
+    ToolUsefulnessRecord,
     TraceLlmCallRecord,
     TraceMainlineEventRecord,
 )
@@ -65,6 +65,7 @@ from server.models.view import (
     TraceMainlineEventResponse,
     TraceTimelineEventResponse,
     TraceResponse,
+    ToolUsefulnessResponse,
     WakeConditionResponse,
 )
 from server.services.runtime.runtime_observability import (
@@ -139,6 +140,10 @@ def run_response_from_sdk(run: RunView) -> RunResponse:
             token_cost=metrics.token_cost,
             steps_count=metrics.steps_count,
             tool_calls_count=metrics.tool_calls_count,
+            max_steps_per_run=metrics.max_steps_per_run,
+            model_call_attempts_total=metrics.model_call_attempts_total,
+            model_call_limit_trigger_ordinal=metrics.model_call_limit_trigger_ordinal,
+            model_call_phase_stats=metrics.model_call_phase_stats,
         )
         if (metrics := run.metrics) is not None
         else None,
@@ -233,14 +238,26 @@ def review_checkpoint_response_from_record(
     )
 
 
+def _tool_usefulness_response_from_record(
+    record: ToolUsefulnessRecord,
+) -> ToolUsefulnessResponse:
+    return ToolUsefulnessResponse(
+        tool_call_id=record.tool_call_id,
+        tool_name=record.tool_name,
+        score=record.score,
+    )
+
+
 def review_outcome_response_from_record(
     record: ReviewOutcomeRecord,
 ) -> ReviewOutcomeResponse:
     return ReviewOutcomeResponse(
         aligned=record.aligned,
         experience=record.experience,
-        step_back_applied=record.step_back_applied,
-        affected_count=record.affected_count,
+        tool_usefulness=[
+            _tool_usefulness_response_from_record(item)
+            for item in record.tool_usefulness
+        ],
         trigger_reason=record.trigger_reason,
         active_milestone=record.active_milestone,
         resolved_at=record.resolved_at.isoformat() if record.resolved_at else None,
@@ -283,9 +300,12 @@ def review_cycle_response_from_record(
         hook_advice=record.hook_advice,
         aligned=record.aligned,
         experience=record.experience,
-        step_back_applied=record.step_back_applied,
-        rollback_range=list(record.rollback_range) if record.rollback_range else None,
-        affected_count=record.affected_count,
+        tool_usefulness=[
+            _tool_usefulness_response_from_record(item)
+            for item in record.tool_usefulness
+        ],
+        review_tool_call_id=record.review_tool_call_id,
+        review_latency_ms=record.review_latency_ms,
         started_at=record.started_at.isoformat() if record.started_at else None,
         resolved_at=record.resolved_at.isoformat() if record.resolved_at else None,
         raw_notice=record.raw_notice,
@@ -672,6 +692,11 @@ def trace_llm_call_response_from_record(
         tool_schema_count=record.tool_schema_count,
         response_tool_call_count=record.response_tool_call_count,
         output_preview=record.output_preview,
+        logical_call_id=record.logical_call_id,
+        phase=record.phase,
+        attempt_no=record.attempt_no,
+        call_ordinal=record.call_ordinal,
+        retry_reason=record.retry_reason,
     )
 
 
@@ -681,8 +706,6 @@ def stream_event_to_payload(event: AgentStreamItem) -> dict[str, Any]:
             "type": "step",
             "step": step_response_from_sdk(event.step).model_dump(),
         }
-    if isinstance(event, ContextStepsHiddenEvent):
-        return event.to_dict()
     return {"type": "unknown", "data": str(event)}
 
 

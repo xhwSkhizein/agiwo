@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agiwo.config.settings import settings
 from agiwo.skill.allowlist import (
@@ -59,8 +59,18 @@ class AgentOptions(BaseModel):
 
     model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_max_steps(cls, data: object) -> object:
+        if isinstance(data, dict) and "max_steps" in data:
+            raise ValueError(
+                "AgentOptions.max_steps was renamed to max_steps_per_run; "
+                "update the configuration and retry."
+            )
+        return data
+
     config_root: str = ""
-    max_steps: int = 50
+    max_steps_per_run: int = 50
     run_timeout: int = 600
     max_input_tokens_per_call: int | None = None
     max_run_cost: float | None = None
@@ -70,7 +80,7 @@ class AgentOptions(BaseModel):
     stream_cleanup_timeout: float = 300.0
     compact_prompt: str = ""
     enable_context_rollback: bool = True
-    enable_goal_directed_review: bool = True
+    enable_trajectory_review: bool = True
     review_step_interval: int = Field(default=8, ge=1)
     review_on_error: bool = True
     storage: AgentStorageOptions = Field(default_factory=AgentStorageOptions)

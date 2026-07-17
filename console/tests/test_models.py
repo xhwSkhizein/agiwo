@@ -412,6 +412,10 @@ class TestRunMetricsResponseFields:
         assert response.token_cost is None
         assert response.steps_count is None
         assert response.tool_calls_count is None
+        assert response.max_steps_per_run is None
+        assert response.model_call_attempts_total is None
+        assert response.model_call_limit_trigger_ordinal is None
+        assert response.model_call_phase_stats is None
 
     def test_fields_accept_values(self):
         """Verify fields accept correct value types."""
@@ -425,7 +429,17 @@ class TestRunMetricsResponseFields:
             token_cost=0.015,
             steps_count=5,
             tool_calls_count=3,
+            max_steps_per_run=50,
+            model_call_attempts_total=7,
+            model_call_limit_trigger_ordinal=6,
+            model_call_phase_stats={"assistant": {"attempts": 5, "failures": 1}},
         )
 
         assert response.duration_ms == 1234.5
         assert response.input_tokens == 100
+        assert response.max_steps_per_run == 50
+        assert response.model_call_attempts_total == 7
+        assert response.model_call_limit_trigger_ordinal == 6
+        assert response.model_call_phase_stats == {
+            "assistant": {"attempts": 5, "failures": 1}
+        }

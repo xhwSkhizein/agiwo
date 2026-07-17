@@ -1,18 +1,18 @@
-from agiwo.agent.introspect.models import GoalState, IntrospectionState, Milestone
+from agiwo.agent.introspect.models import IntrospectionState
 from agiwo.agent.introspect.trajectory import (
     maybe_build_introspection_notice,
     parse_introspection_outcome,
     strip_system_review_notices,
 )
+from agiwo.agent.models.plan import Milestone, RunPlan
 from agiwo.tool.base import ToolResult
 
 
 def test_step_interval_builds_notice() -> None:
-    goal = GoalState(
+    plan = RunPlan(
         milestones=[
             Milestone(id="inspect", description="Inspect auth", status="active")
         ],
-        active_milestone_id="inspect",
     )
     state = IntrospectionState()
     first = ToolResult.success(tool_name="search", tool_call_id="tc1", content="one")
@@ -20,12 +20,12 @@ def test_step_interval_builds_notice() -> None:
 
     assert (
         maybe_build_introspection_notice(
-            first, goal, state, step_interval=2, review_on_error=True
+            first, plan, state, step_interval=2, review_on_error=True
         )
         is None
     )
     notice = maybe_build_introspection_notice(
-        second, goal, state, step_interval=2, review_on_error=True
+        second, plan, state, step_interval=2, review_on_error=True
     )
 
     assert notice is not None
@@ -35,7 +35,7 @@ def test_step_interval_builds_notice() -> None:
 
 
 def test_review_trajectory_does_not_increment_counter() -> None:
-    goal = GoalState()
+    plan = RunPlan()
     state = IntrospectionState(review_count_since_boundary=5)
     result = ToolResult.success(
         tool_name="review_trajectory",
@@ -45,7 +45,7 @@ def test_review_trajectory_does_not_increment_counter() -> None:
     )
 
     notice = maybe_build_introspection_notice(
-        result, goal, state, step_interval=6, review_on_error=True
+        result, plan, state, step_interval=6, review_on_error=True
     )
 
     assert notice is None
@@ -53,9 +53,8 @@ def test_review_trajectory_does_not_increment_counter() -> None:
 
 
 def test_parse_misaligned_outcome_advances_boundary() -> None:
-    goal = GoalState(
+    plan = RunPlan(
         milestones=[Milestone(id="inspect", description="Inspect", status="active")],
-        active_milestone_id="inspect",
     )
     result = ToolResult.success(
         tool_name="review_trajectory",
@@ -66,7 +65,7 @@ def test_parse_misaligned_outcome_advances_boundary() -> None:
 
     outcome = parse_introspection_outcome(
         result,
-        goal,
+        plan,
         current_seq=12,
         assistant_step_id="step-call",
         tool_step_id="step-review",
@@ -74,9 +73,8 @@ def test_parse_misaligned_outcome_advances_boundary() -> None:
 
     assert outcome is not None
     assert outcome.aligned is False
-    assert outcome.mode == "step_back"
     assert outcome.boundary_seq == 12
-    assert outcome.hidden_step_ids == ["step-call", "step-review"]
+    assert outcome.experience == "JWT drifted"
 
 
 def test_strip_system_review_notices() -> None:

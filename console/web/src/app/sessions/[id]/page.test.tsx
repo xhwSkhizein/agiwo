@@ -90,8 +90,9 @@ describe("SessionDetailPage", () => {
         latest_review_outcome: {
           aligned: false,
           experience: "switch plan",
-          step_back_applied: true,
-          affected_count: 2,
+          tool_usefulness: [
+            { tool_call_id: "tc-a", tool_name: "bash", score: 1 },
+          ],
           trigger_reason: "step_interval",
           active_milestone: "Inspect auth flow",
           resolved_at: "2026-04-22T12:00:02Z",
@@ -110,9 +111,11 @@ describe("SessionDetailPage", () => {
           hook_advice: "narrow the search",
           aligned: false,
           experience: "switch plan",
-          step_back_applied: true,
-          rollback_range: null,
-          affected_count: 2,
+          tool_usefulness: [
+            { tool_call_id: "tc-a", tool_name: "bash", score: 1 },
+          ],
+          review_tool_call_id: "tc-review",
+          review_latency_ms: 12,
           started_at: "2026-04-22T12:00:01Z",
           resolved_at: "2026-04-22T12:00:02Z",
           raw_notice: "Trigger: step_interval",

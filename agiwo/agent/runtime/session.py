@@ -37,7 +37,6 @@ class SessionRuntime:
         self.abort_signal = abort_signal or AbortSignal()
         self._pending_steer_inputs: list[UserMessage] = []
         self._subscribers: set[asyncio.Queue[AgentStreamItem | object]] = set()
-        self._hidden_step_ids: set[str] = set()
         self._closed = False
 
     # ------------------------------------------------------------------
@@ -115,6 +114,7 @@ class SessionRuntime:
     async def enqueue_steer(self, user_input: UserInput) -> bool:
         if self._closed:
             return False
+        UserMessage.require_user_provided(user_input)
         message = UserMessage.from_value(user_input)
         if not message.has_content():
             return False
@@ -161,7 +161,6 @@ class SessionRuntime:
         for item in stream_items_from_entries(
             entries,
             run_contexts=run_contexts,
-            persisted_hidden_step_ids=self._hidden_step_ids,
         ):
             await self.publish(item)
 

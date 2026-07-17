@@ -6,29 +6,27 @@ from agiwo.agent.models.log import (
     AssistantStepCommitted,
     CompactionApplied,
     CompactionFailed,
-    ContextRepairApplied,
-    ContextStepsHidden,
     ContextAssembled,
-    GoalMilestonesUpdated,
     HookFailed,
     IntrospectionCheckpointRecorded,
     IntrospectionOutcomeRecorded,
     IntrospectionTriggered,
     LLMCallCompleted,
+    LLMCallFailed,
     LLMCallStarted,
     MessagesRebuilt,
     RunFailed,
     RunFinished,
+    RunPlanUpdated,
     RunStarted,
-    StepBackApplied,
-    StepCondensedContentUpdated,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
     build_committed_step_entry,
 )
 from agiwo.agent.models.input import UserInput
-from agiwo.agent.introspect.models import Milestone
+from agiwo.agent.models.model_call import ModelCallPhase
+from agiwo.agent.models.plan import Milestone
 from agiwo.agent.models.run import CompactMetadata, RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.runtime.context import RunContext
@@ -132,6 +130,11 @@ class RunStateWriter:
         *,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
+        logical_call_id: str,
+        phase: ModelCallPhase,
+        attempt_no: int,
+        call_ordinal: int,
+        retry_reason: str | None = None,
     ) -> list[object]:
         return await self.append_entries(
             [
@@ -140,6 +143,11 @@ class RunStateWriter:
                     sequence=await self._state.session_runtime.allocate_sequence(),
                     messages=messages,
                     tools=tools,
+                    logical_call_id=logical_call_id,
+                    phase=phase,
+                    attempt_no=attempt_no,
+                    call_ordinal=call_ordinal,
+                    retry_reason=retry_reason,
                 )
             ]
         )
@@ -149,6 +157,12 @@ class RunStateWriter:
         *,
         step: StepView,
         llm: LLMCallContext,
+        logical_call_id: str,
+        phase: ModelCallPhase,
+        attempt_no: int,
+        call_ordinal: int,
+        retry_reason: str | None = None,
+        response_observed: bool = True,
     ) -> list[object]:
         return await self.append_entries(
             [
@@ -157,6 +171,41 @@ class RunStateWriter:
                     sequence=await self._state.session_runtime.allocate_sequence(),
                     step=step,
                     llm=llm,
+                    logical_call_id=logical_call_id,
+                    phase=phase,
+                    attempt_no=attempt_no,
+                    call_ordinal=call_ordinal,
+                    retry_reason=retry_reason,
+                    response_observed=response_observed,
+                )
+            ]
+        )
+
+    async def record_llm_call_failed(
+        self,
+        *,
+        logical_call_id: str,
+        phase: ModelCallPhase,
+        attempt_no: int,
+        call_ordinal: int,
+        error: str,
+        retry_reason: str | None = None,
+        step: StepView | None = None,
+        response_observed: bool = False,
+    ) -> list[object]:
+        return await self.append_entries(
+            [
+                build_llm_call_failed_entry(
+                    self._state,
+                    sequence=await self._state.session_runtime.allocate_sequence(),
+                    logical_call_id=logical_call_id,
+                    phase=phase,
+                    attempt_no=attempt_no,
+                    call_ordinal=call_ordinal,
+                    retry_reason=retry_reason,
+                    error=error,
+                    step=step,
+                    response_observed=response_observed,
                 )
             ]
         )
@@ -232,59 +281,22 @@ class RunStateWriter:
     def next_compaction_failure_attempt(self) -> int:
         return self._state.ledger.compaction.failure_count + 1
 
-    async def record_step_back_applied(
-        self,
-        *,
-        affected_count: int,
-        checkpoint_seq: int,
-        experience: str,
-    ) -> list[object]:
-        """Record a step-back applied event to the run log."""
-        return await self.append_entries(
-            [
-                build_step_back_applied_entry(
-                    self._state,
-                    sequence=await self._state.session_runtime.allocate_sequence(),
-                    affected_count=affected_count,
-                    checkpoint_seq=checkpoint_seq,
-                    experience=experience,
-                )
-            ]
-        )
-
-    async def record_context_steps_hidden(
-        self,
-        *,
-        step_ids: list[str],
-        reason: str = "introspection_metadata",
-    ) -> list[object]:
-        return await self.append_entries(
-            [
-                build_context_steps_hidden_entry(
-                    self._state,
-                    sequence=await self._state.session_runtime.allocate_sequence(),
-                    step_ids=step_ids,
-                    reason=reason,
-                )
-            ]
-        )
-
-    async def record_goal_milestones_updated(
+    async def record_run_plan_updated(
         self,
         *,
         milestones: list[Milestone],
-        active_milestone_id: str | None,
+        revision: int,
         source_tool_call_id: str | None,
         source_step_id: str | None,
         reason: Literal["declared", "updated", "completed", "activated"],
     ) -> list[object]:
         return await self.append_entries(
             [
-                build_goal_milestones_updated_entry(
+                build_run_plan_updated_entry(
                     self._state,
                     sequence=await self._state.session_runtime.allocate_sequence(),
                     milestones=list(milestones),
-                    active_milestone_id=active_milestone_id,
+                    revision=revision,
                     source_tool_call_id=source_tool_call_id,
                     source_step_id=source_step_id,
                     reason=reason,
@@ -344,17 +356,12 @@ class RunStateWriter:
         self,
         *,
         aligned: bool | None,
-        mode: Literal["metadata_only", "step_back"],
         experience: str | None,
+        tool_usefulness: list[dict[str, object]],
         active_milestone_id: str | None,
         review_tool_call_id: str | None,
         review_step_id: str | None,
-        hidden_step_ids: list[str],
-        notice_cleaned_step_ids: list[str],
-        condensed_step_ids: list[str],
         boundary_seq: int,
-        repair_start_seq: int | None,
-        repair_end_seq: int | None,
     ) -> list[object]:
         return await self.append_entries(
             [
@@ -362,57 +369,12 @@ class RunStateWriter:
                     self._state,
                     sequence=await self._state.session_runtime.allocate_sequence(),
                     aligned=aligned,
-                    mode=mode,
                     experience=experience,
+                    tool_usefulness=list(tool_usefulness),
                     active_milestone_id=active_milestone_id,
                     review_tool_call_id=review_tool_call_id,
                     review_step_id=review_step_id,
-                    hidden_step_ids=list(hidden_step_ids),
-                    notice_cleaned_step_ids=list(notice_cleaned_step_ids),
-                    condensed_step_ids=list(condensed_step_ids),
                     boundary_seq=boundary_seq,
-                    repair_start_seq=repair_start_seq,
-                    repair_end_seq=repair_end_seq,
-                )
-            ]
-        )
-
-    async def record_context_repair_applied(
-        self,
-        *,
-        mode: Literal["step_back"],
-        affected_count: int,
-        start_seq: int,
-        end_seq: int,
-        experience: str,
-    ) -> list[object]:
-        return await self.append_entries(
-            [
-                build_context_repair_applied_entry(
-                    self._state,
-                    sequence=await self._state.session_runtime.allocate_sequence(),
-                    mode=mode,
-                    affected_count=affected_count,
-                    start_seq=start_seq,
-                    end_seq=end_seq,
-                    experience=experience,
-                )
-            ]
-        )
-
-    async def record_step_condensed_content_updated(
-        self,
-        *,
-        step_id: str,
-        condensed_content: str,
-    ) -> list[object]:
-        return await self.append_entries(
-            [
-                build_step_condensed_content_updated_entry(
-                    self._state,
-                    sequence=await self._state.session_runtime.allocate_sequence(),
-                    step_id=step_id,
-                    condensed_content=condensed_content,
                 )
             ]
         )
@@ -514,12 +476,22 @@ def build_llm_call_started_entry(
     sequence: int,
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None,
+    logical_call_id: str,
+    phase: ModelCallPhase,
+    attempt_no: int,
+    call_ordinal: int,
+    retry_reason: str | None = None,
 ) -> LLMCallStarted:
     return LLMCallStarted(
         sequence=sequence,
         session_id=state.session_id,
         run_id=state.run_id,
         agent_id=state.agent_id,
+        logical_call_id=logical_call_id,
+        phase=phase,
+        attempt_no=attempt_no,
+        call_ordinal=call_ordinal,
+        retry_reason=retry_reason,
         messages=messages,
         tools=tools,
     )
@@ -531,17 +503,61 @@ def build_llm_call_completed_entry(
     sequence: int,
     step: StepView,
     llm: LLMCallContext,
+    logical_call_id: str,
+    phase: ModelCallPhase,
+    attempt_no: int,
+    call_ordinal: int,
+    retry_reason: str | None = None,
+    response_observed: bool = True,
 ) -> LLMCallCompleted:
     return LLMCallCompleted(
         sequence=sequence,
         session_id=state.session_id,
         run_id=state.run_id,
         agent_id=state.agent_id,
+        logical_call_id=logical_call_id,
+        phase=phase,
+        attempt_no=attempt_no,
+        call_ordinal=call_ordinal,
+        retry_reason=retry_reason,
         content=step.content,
         reasoning_content=step.reasoning_content,
         tool_calls=step.tool_calls,
         finish_reason=llm.finish_reason,
         metrics=step.metrics,
+        response_observed=response_observed,
+    )
+
+
+def build_llm_call_failed_entry(
+    state: RunContext,
+    *,
+    sequence: int,
+    logical_call_id: str,
+    phase: ModelCallPhase,
+    attempt_no: int,
+    call_ordinal: int,
+    error: str,
+    retry_reason: str | None = None,
+    step: StepView | None = None,
+    response_observed: bool = False,
+) -> LLMCallFailed:
+    return LLMCallFailed(
+        sequence=sequence,
+        session_id=state.session_id,
+        run_id=state.run_id,
+        agent_id=state.agent_id,
+        logical_call_id=logical_call_id,
+        phase=phase,
+        attempt_no=attempt_no,
+        call_ordinal=call_ordinal,
+        retry_reason=retry_reason,
+        error=error,
+        content=step.content if step is not None else None,
+        reasoning_content=step.reasoning_content if step is not None else None,
+        tool_calls=step.tool_calls if step is not None else None,
+        metrics=step.metrics if step is not None else None,
+        response_observed=response_observed,
     )
 
 
@@ -637,77 +653,23 @@ def build_compaction_failed_entry(
     )
 
 
-def build_step_back_applied_entry(
-    state: RunContext,
-    *,
-    sequence: int,
-    affected_count: int,
-    checkpoint_seq: int,
-    experience: str,
-) -> StepBackApplied:
-    """Build a StepBackApplied log entry."""
-    return StepBackApplied(
-        session_id=state.session_id,
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        sequence=sequence,
-        affected_count=affected_count,
-        checkpoint_seq=checkpoint_seq,
-        experience=experience,
-    )
-
-
-def build_context_steps_hidden_entry(
-    state: RunContext,
-    *,
-    sequence: int,
-    step_ids: list[str],
-    reason: str,
-) -> ContextStepsHidden:
-    return ContextStepsHidden(
-        sequence=sequence,
-        session_id=state.session_id,
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        step_ids=list(step_ids),
-        reason=reason,
-    )
-
-
-def build_step_condensed_content_updated_entry(
-    state: RunContext,
-    *,
-    sequence: int,
-    step_id: str,
-    condensed_content: str,
-) -> StepCondensedContentUpdated:
-    return StepCondensedContentUpdated(
-        sequence=sequence,
-        session_id=state.session_id,
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        step_id=step_id,
-        condensed_content=condensed_content,
-    )
-
-
-def build_goal_milestones_updated_entry(
+def build_run_plan_updated_entry(
     state: RunContext,
     *,
     sequence: int,
     milestones: list[Milestone],
-    active_milestone_id: str | None,
+    revision: int,
     source_tool_call_id: str | None,
     source_step_id: str | None,
     reason: Literal["declared", "updated", "completed", "activated"],
-) -> GoalMilestonesUpdated:
-    return GoalMilestonesUpdated(
+) -> RunPlanUpdated:
+    return RunPlanUpdated(
         sequence=sequence,
         session_id=state.session_id,
         run_id=state.run_id,
         agent_id=state.agent_id,
         milestones=list(milestones),
-        active_milestone_id=active_milestone_id,
+        revision=revision,
         source_tool_call_id=source_tool_call_id,
         source_step_id=source_step_id,
         reason=reason,
@@ -765,17 +727,12 @@ def build_introspection_outcome_recorded_entry(
     *,
     sequence: int,
     aligned: bool | None,
-    mode: Literal["metadata_only", "step_back"],
     experience: str | None,
+    tool_usefulness: list[dict[str, object]],
     active_milestone_id: str | None,
     review_tool_call_id: str | None,
     review_step_id: str | None,
-    hidden_step_ids: list[str],
-    notice_cleaned_step_ids: list[str],
-    condensed_step_ids: list[str],
     boundary_seq: int,
-    repair_start_seq: int | None,
-    repair_end_seq: int | None,
 ) -> IntrospectionOutcomeRecorded:
     return IntrospectionOutcomeRecorded(
         sequence=sequence,
@@ -783,40 +740,12 @@ def build_introspection_outcome_recorded_entry(
         run_id=state.run_id,
         agent_id=state.agent_id,
         aligned=aligned,
-        mode=mode,
         experience=experience,
+        tool_usefulness=list(tool_usefulness),
         active_milestone_id=active_milestone_id,
         review_tool_call_id=review_tool_call_id,
         review_step_id=review_step_id,
-        hidden_step_ids=list(hidden_step_ids),
-        notice_cleaned_step_ids=list(notice_cleaned_step_ids),
-        condensed_step_ids=list(condensed_step_ids),
         boundary_seq=boundary_seq,
-        repair_start_seq=repair_start_seq,
-        repair_end_seq=repair_end_seq,
-    )
-
-
-def build_context_repair_applied_entry(
-    state: RunContext,
-    *,
-    sequence: int,
-    mode: Literal["step_back"],
-    affected_count: int,
-    start_seq: int,
-    end_seq: int,
-    experience: str,
-) -> ContextRepairApplied:
-    return ContextRepairApplied(
-        sequence=sequence,
-        session_id=state.session_id,
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        mode=mode,
-        affected_count=affected_count,
-        start_seq=start_seq,
-        end_seq=end_seq,
-        experience=experience,
     )
 
 
@@ -844,18 +773,14 @@ __all__ = [
     "build_compaction_applied_entry",
     "build_compaction_failed_entry",
     "build_context_assembled_entry",
-    "build_context_repair_applied_entry",
-    "build_context_steps_hidden_entry",
-    "build_goal_milestones_updated_entry",
     "build_hook_failed_entry",
     "build_introspection_checkpoint_recorded_entry",
     "build_introspection_outcome_recorded_entry",
     "build_introspection_triggered_entry",
     "build_llm_call_completed_entry",
+    "build_llm_call_failed_entry",
     "build_llm_call_started_entry",
     "build_messages_rebuilt_entry",
-    "build_step_back_applied_entry",
-    "build_step_condensed_content_updated_entry",
     "build_run_failed_entry",
     "build_run_finished_entry",
     "build_run_started_entry",

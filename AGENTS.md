@@ -24,7 +24,7 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `agiwo.agent.hooks`，nested-agent adapter 收口在 `nested/`，run/session runtime context、state helper 与 `RunStateWriter` 严格写路径收口在 `agiwo.agent.runtime`，termination logic 收口在 `termination/`，目标、轨迹自省与 context repair 收口在 `introspect/`，`storage/` 负责持久化。`run_loop.py` 使用 `RunLoopOrchestrator` 类封装运行循环逻辑，消除多层嵌套；`run_loop.py` 是唯一的单次 run execution owner，而 `agiwo.agent.runtime` 只承载 `RunContext` / `RunRuntime`、`SessionRuntime` 与 `RunStateWriter`，不得再暴露 execution-owner alias、commit-pipeline facade 或兼容壳。 |
+| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `agiwo.agent.hooks`，nested-agent adapter 收口在 `nested/`，run/session runtime context、state helper 与 `RunStateWriter` 严格写路径收口在 `agiwo.agent.runtime`，termination logic 收口在 `termination/`，`plan/` 拥有 RunPlan 规范化与 `update_plan` 系统工具，轨迹自省与 context repair 收口在 `introspect/`，`storage/` 负责持久化。`run_loop.py` 使用 `RunLoopOrchestrator` 类封装运行循环逻辑，消除多层嵌套；`run_loop.py` 是唯一的单次 run execution owner，而 `agiwo.agent.runtime` 只承载 `RunContext` / `RunRuntime`、`SessionRuntime` 与 `RunStateWriter`，不得再暴露 execution-owner alias、commit-pipeline facade 或兼容壳。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
 | `agiwo/scheduler/` | Agent 之上的编排层。`scheduler.py` 是 facade 与 loop lifecycle，`engine.py` 是唯一编排 owner，`runner.py` 负责单次 dispatch action 执行，`commands.py` 承载调度动作与 tool DTO，`runtime_state.py` 承载进程内 live state 与 tick helpers，`tool_control.py` 收口 child/sleep/cancel 的 tool-facing control，`runtime_tools.py` 是注入给 agent 的 scheduler runtime tools，`store/` 只负责持久化。`runner.py` 使用策略表驱动 output-handling 链，消除 chained responsibility。 |
@@ -137,13 +137,13 @@
 ### Context Optimization
 
 - Context Rollback 通过 `sleep_and_wait(no_progress=True)` 触发，删除空转轮次。
-- Tool-result introspection / context repair 由 `agiwo/agent/introspect/` 处理，`run_tool_batch.py` 是显式执行 owner 并调用 focused introspect functions；goal milestone、introspection trigger、checkpoint、outcome、context repair 必须写 first-class `RunLog` facts，并由 replay/trace/Console 视图消费 facts，而不是解析 tool 输出或 `<system-review>` 文本作为权威状态。
+- Tool-result introspection / context repair 由 `agiwo/agent/introspect/` 处理，`run_tool_batch.py` 是显式执行 owner 并调用 focused introspect functions；RunPlan、introspection trigger、checkpoint、outcome、context repair 必须写 first-class `RunLog` facts，并由 replay/trace/Console 视图消费 facts，而不是解析 tool 输出或 `<system-review>` 文本作为权威状态。`update_plan` 由 `agiwo.agent.plan` 拥有并由 Agent 自行装配。
 - `StepView.condensed_content` 记录精简内容，加载历史时优先。
 
 ### Storage & Observability
 
 - Agent 运行记录的 canonical persistence 是 `AgentOptions.storage.run_log_storage`；storage 层以 append-only `RunLog` entries 为真相源，并从中重建 `RunView` / `StepView` 查询结果。
-- `RunStateWriter` 是 runtime facts 的唯一写路径；异常终态必须落 `RunFailed`，`CompactionFailed`/`CompactionApplied`/`StepBackApplied`/`TerminationDecided` 等都必须成为 first-class `RunLog` facts。
+- `RunStateWriter` 是 runtime facts 的唯一写路径；异常终态必须落 `RunFailed`，`CompactionFailed`/`CompactionApplied`/`TerminationDecided` 等都必须成为 first-class `RunLog` facts。
 - `SessionRuntime` 统一负责 sequence 分配、run-log 追加、把同一批 committed entries 喂给 trace writer，并基于同批 entries 投影 replayable `AgentStreamItem`；`trace`/`stream` 是 `RunLog` 的 view builder，不得各自维护独立 runtime 真相。
 - `StepDeltaEvent` 是当前唯一允许保留的 live-only stream 例外；除它之外，所有可重放 stream 事件都应由 committed `RunLog` entries 投影产生。
 - Agent 运行记录通过 session runtime 统一提交；流式输出通过 `Agent.start()` 返回的 handle 暴露 `AgentStreamItem`。
