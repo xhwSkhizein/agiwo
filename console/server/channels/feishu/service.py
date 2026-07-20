@@ -9,6 +9,7 @@ batching, agent runtime, and scheduler message pipeline.
 import asyncio
 import shutil
 import tempfile
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ from agiwo.agent import (
     RunFailedEvent,
     UserMessage,
 )
+from agiwo.objective import ObjectiveService, ObjectiveStatus
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
@@ -50,16 +52,17 @@ from server.channels.feishu.message_parser import (
 )
 from server.channels.feishu.sender_resolver import FeishuSenderResolver
 from server.channels.feishu.dedup_store import create_feishu_dedup_store
-from server.services.session_store import create_session_store
 from server.channels.batch_manager import ChannelBatchManager
 from server.config import ConsoleConfig
 from server.models.session import (
     BatchContext,
     BatchPayload,
+    ChannelChatSessionStore,
     InboundMessage,
     Session,
 )
 from server.services.agent_registry import AgentRegistry
+from server.services.objective_gateway import SessionObjectiveGateway
 from server.services.runtime import (
     AgentRuntimeCache,
     SessionContextService,
@@ -76,6 +79,8 @@ class FeishuChannelService:
         config: ConsoleConfig,
         scheduler: Scheduler,
         agent_registry: AgentRegistry,
+        objective_service: ObjectiveService,
+        session_store: ChannelChatSessionStore,
     ) -> None:
         feishu = config.channels.feishu
 
@@ -83,10 +88,6 @@ class FeishuChannelService:
             app_id=feishu.app_id,
             app_secret=feishu.app_secret,
             api_base_url=feishu.api_base_url,
-        )
-        session_store = create_session_store(
-            db_path=config.sqlite_db_path,
-            use_persistent_store=config.storage.metadata_type == "sqlite",
         )
         dedup_store = create_feishu_dedup_store(
             db_path=config.sqlite_db_path,
@@ -126,6 +127,11 @@ class FeishuChannelService:
             session_store=session_store,
             timeout=feishu.scheduler_wait_timeout,
         )
+        gateway = SessionObjectiveGateway(
+            objective_service=objective_service,
+            session_store=session_store,
+            scheduler=scheduler,
+        )
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="feishu_attachments_"))
         attachment_resolver = FeishuAttachmentResolver(api=api, tmp_dir=tmp_dir)
@@ -149,10 +155,13 @@ class FeishuChannelService:
         self._tmp_dir = tmp_dir
         self._message_builder = message_builder
         self._delivery_service = delivery_service
+        self._wait_timeout = float(feishu.scheduler_wait_timeout)
 
         self._session_service = session_service
         self._agent_pool = agent_pool
         self._executor = executor
+        self._objective_service = objective_service
+        self._gateway = gateway
         self._session_mgr = ChannelBatchManager(
             on_batch_ready=self._on_batch_ready,
             debounce_ms=feishu.debounce_ms,
@@ -228,7 +237,8 @@ class FeishuChannelService:
             logger.warning(
                 "resource_close_failed", resource="FeishuConnection", exc_info=True
             )
-        await safe_close_all(self._api, self._session_store, self._dedup_store)
+        # Session store is owned by Console lifespan; Feishu must not close it.
+        await safe_close_all(self._api, self._dedup_store)
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def get_status(self) -> dict[str, Any]:
@@ -282,33 +292,54 @@ class FeishuChannelService:
             await self._deliver_reply(batch.context, failure_text)
 
     async def _execute_batch(self, batch: BatchPayload) -> None:
-        session, agent = await self._prepare_batch_runtime(batch)
-        dispatch = await self._executor.execute(agent, session, batch.user_message)
+        session, _agent = await self._prepare_batch_runtime(batch)
+        user_message = batch.user_message
+        if not user_message.is_user_provided:
+            user_message = UserMessage(
+                content=list(user_message.content),
+                context=user_message.context,
+                is_user_provided=True,
+            )
 
-        had_output = await self._consume_dispatch_stream(
-            batch,
-            session,
-            dispatch.stream,
+        idempotency_key = self._batch_idempotency_key(batch)
+        result = await self._gateway.handle_user_message(
+            session.id,
+            user_message,
+            idempotency_key=idempotency_key,
         )
-        if had_output:
-            return
-
+        reply_text = await self._wait_for_objective_reply(result.objective_id)
         if not await self._can_deliver_session(batch.context, session):
             return
+        await self._deliver_reply(batch.context, reply_text)
 
-        if dispatch.stream is None:
-            await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
-            return
+    def _batch_idempotency_key(self, batch: BatchPayload) -> str:
+        if batch.messages:
+            return f"feishu:{batch.messages[0].message_id}"
+        return f"feishu:{uuid.uuid4().hex}"
 
-        state = await self._executor.get_state(session.id)
-        if state is not None and state.result_summary:
-            await self._deliver_stream_text(
-                batch.context,
-                state.result_summary,
-                had_output=False,
-            )
-            return
-        await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
+    async def _wait_for_objective_reply(self, objective_id: str) -> str:
+        """Poll ObjectiveView until delivery, user-wait, or timeout."""
+        deadline = asyncio.get_running_loop().time() + self._wait_timeout
+        last_summary: str | None = None
+        while asyncio.get_running_loop().time() < deadline:
+            view = await self._objective_service.get_view(objective_id)
+            if view is None:
+                break
+            if view.delivery_report:
+                return view.delivery_report
+            if view.timeline:
+                last_summary = view.timeline[-1].summary
+            if view.status == ObjectiveStatus.WAITING_USER:
+                return last_summary or "需要你的补充信息才能继续。"
+            if view.status in {
+                ObjectiveStatus.USER_PAUSED,
+                ObjectiveStatus.BUDGET_PAUSED,
+            }:
+                return last_summary or f"任务已暂停（{view.status.value}）。"
+            if view.is_terminal:
+                return last_summary or "任务已结束。"
+            await asyncio.sleep(0.5)
+        return last_summary or "消息已收到，正在继续处理。"
 
     async def _prepare_batch_runtime(
         self, batch: BatchPayload

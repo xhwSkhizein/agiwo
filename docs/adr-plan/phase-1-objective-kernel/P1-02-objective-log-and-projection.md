@@ -1,6 +1,6 @@
 # P1-02：建立 ObjectiveLog 与投影
 
-状态：planned
+状态：done（2026-07-18）
 
 ## 目标
 

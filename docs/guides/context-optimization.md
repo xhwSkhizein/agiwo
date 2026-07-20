@@ -1,14 +1,14 @@
 # Context Optimization
 
-长时间运行的 agent（特别是 scheduler 编排场景）会面临上下文膨胀问题。SDK 提供两个独立的上下文优化机制：**Context Rollback**（空转回退）和 **Goal-Directed Review**（目标导向回顾与 context repair）。
+长时间运行的 agent（特别是 scheduler / Objective 编排场景）会面临上下文膨胀问题。SDK 提供两套语义层机制：**Context Rollback**（空转回退）和 **Trajectory Review**（轨迹回顾与 context repair）。它们与 compaction（token 窗口压缩）独立共存。
 
-两者与 compaction（上下文压缩）独立共存：compaction 在 token 窗口层面工作，rollback 和 introspection/context repair 在语义层面优化内容质量。
+计划数据只有一份：**RunPlan**，通过系统工具 `update_plan` 维护。不要再使用已删除的 `declare_milestones` / `GoalState` / `enable_goal_directed_review`。
 
 ## Context Rollback
 
 ### 问题
 
-在 scheduler 编排场景中，主 agent 被周期性唤醒（PERIODIC）检查子 agent 进展。如果子 agent 尚未完成，主 agent 只是确认"没有新结果"然后再次 sleep。每次空转都产生完整的 user(wake message) + assistant(response) steps，占据上下文窗口但不带来信息增量。
+在 scheduler 编排场景中，主 agent 被周期性唤醒（PERIODIC）检查子 agent 进展。如果子 agent 尚未完成，主 agent 只是确认“没有新结果”然后再次 sleep。每次空转都产生完整的 wake + assistant steps，占据上下文但不带来信息增量。
 
 ### 工作方式
 
@@ -24,7 +24,7 @@ sleep_and_wait(
 )
 ```
 
-系统收到 `no_progress` 后，不会物理删除 canonical `RunLog`。scheduler 会追加一条 `RunRolledBack` fact，默认 step replay 会隐藏该范围内的 steps，agent 回到 WAITING 状态。下次唤醒时上下文恢复到本轮之前，就像这轮空转从未发生过；若运维或调试需要查看原始轨迹，可以在读取 `RunLog` 时显式打开 `include_rolled_back=True`。
+系统收到 `no_progress` 后，不会物理删除 canonical `RunLog`。scheduler 会追加一条 `RunRolledBack` fact，默认 step replay 会隐藏该范围内的 steps；若运维或调试需要查看原始轨迹，读取 `RunLog` 时可显式打开 `include_rolled_back=True`。
 
 ### 配置
 
@@ -42,177 +42,72 @@ AgentOptions(
 
 ---
 
-## Goal-Directed Review
+## Trajectory Review
 
 ### 问题
 
-agent 在工作中可能偏离目标，产生大量与目标无关的 tool 调用和结果。传统的基于 token 计数的触发机制（"结果太大了，回顾一下"）不够精准——应该在语义层面检测目标偏离并执行回退。
-
-### 核心思路
-
-采用 **"系统在关键节点强制 agent 进行目标对齐检查"**。Agent 声明里程碑和阶段性目标，系统在检查点（非 review 工具次数、连续错误、里程碑切换）强制注入一次性 review 通知，agent 必须评估当前进展与目标的匹配度；若偏离，系统执行 KV-cache-safe 的 step-back（仅替换 tool result 内容，不删除/重排业务 message）。无删除消息规则的显式例外：在执行 KV-cache-safe 的 step-back 时，允许仅移除或替换与 `review_trajectory` 配对的临时 review 通知/元数据，但不得删除或重排其他对话 message 或历史记录（仅可替换 tool result 内容）。
+agent 在工作中可能偏离当前责任与计划，产生大量低价值 tool 调用。系统在检查点强制注入一次性 review 通知，要求调用 `review_trajectory`；若偏离，执行 KV-cache-safe 的 step-back（替换 tool result 内容，不删除/重排业务 message）。
 
 ### 工作方式
 
-#### 步骤 1：声明里程碑
+#### 步骤 1：维护 RunPlan
 
-Agent 在开始时调用 `declare_milestones` 声明目标拆解：
-
-```python
-declare_milestones(milestones=[
-    {"id": "understand", "description": "理解 session 管理代码结构"},
-    {"id": "diagnose", "description": "定位 session 泄漏根因"},
-    {"id": "fix", "description": "修复泄漏并验证"},
-])
-```
-
-系统记录这些里程碑到 `GoalState`，并自动将第一个里程碑设置为 active。Agent 可以在执行过程中再次调用 `declare_milestones`，通过 `status` 更新里程碑并切换 active milestone。
+Agent 使用 `update_plan` 声明或更新里程碑式计划项。权威事实是 `RunPlanUpdated`；Console milestone board 与 Objective 时间线都从 RunLog / ObjectiveLog 投影，不解析工具文本。
 
 #### 步骤 2：系统强制 Review
 
-以下条件触发系统注入 `<system-review>` 要求 agent 调用 `review_trajectory`：
+以下条件可触发系统注入 `<system-review>`，要求 agent 调用 `review_trajectory`：
 
-| 触发类型 | 条件 | 触发逻辑 |
-|---------|------|---------|
-| `STEP_INTERVAL` | 自上次 checkpoint/review 起 >= `review_step_interval` 个非 `review_trajectory` tool result | 常规检查点：评估是否聚焦目标 |
-| `CONSECUTIVE_ERRORS` | 连续 >= 2 个 tool call 返回 error | 检测无效尝试模式 |
-| `MILESTONE_SWITCH` | 里程碑状态变化（pending → active, active → completed） | 目标切换时的强制对齐 |
+| 触发类型 | 条件 |
+|---------|------|
+| `STEP_INTERVAL` | 自上次 checkpoint/review 起达到 `review_step_interval` |
+| `CONSECUTIVE_ERRORS` | 连续 tool error |
+| `MILESTONE_SWITCH` | RunPlan 里程碑状态变化 |
 
-计数规则是显式的 tool-result 计数，不再使用 run-log sequence 差值。`declare_milestones` 和 scheduler 控制类工具都会计数；`review_trajectory` 本身不计数，并在成功消费后把计数重置为 0。同一个 tool batch 中即使有多个并发 tool result，也只会把 `<system-review>` 注入到第一个触发结果；后续结果不会重复拼接通知。
+`review_trajectory` 本身不计入间隔计数；成功消费后重置。
 
 #### 步骤 3：Agent 回顾
-
-Agent 调用 `review_trajectory` 提供结构化回顾：
 
 ```python
 review_trajectory(
     aligned=False,
-    experience=(
-        "搜索了 session.py 和 manager.py，确认 session 生命周期由 SessionManager "
-        "统一管理；后续应聚焦 GC 延迟导致的 session 未释放问题。"
-    ),
+    experience="确认 session 生命周期由 SessionManager 管理；后续聚焦 GC 延迟。",
 )
 ```
 
-当 `aligned=false` 时，系统将 checkpoint 之后的低价值 tool result 替换为 `experience` 内容。Agent 的 tool_call 完整保留（意图轨迹），tool result 被精简为经验总结（KV-cache 安全）。
+当 `aligned=false` 时，系统将 checkpoint 之后的低价值 tool result 替换为 `experience`。Agent 的 tool_call 保留；tool result 被精简（KV-cache 安全）。
 
-Review 成功处理后，触发 review 的 tool result 中的 `<system-review>` 会从后续 prompt-visible content 中移除，但仍通过 append-only RunLog facts 保留可观测性。运行时写入以下事实作为权威状态源：
-
-- `GoalMilestonesUpdated`: 当前 milestone board
-- `IntrospectionTriggered`: 本次 review 触发原因、触发 tool step、计数
-- `IntrospectionCheckpointRecorded`: `aligned=true` 后确认的 checkpoint
-- `IntrospectionOutcomeRecorded`: review 结果、隐藏的 introspection metadata steps、清理/精简的 step ids
-- `ContextRepairApplied`: `aligned=false` 后发生的 context repair 运行时决策
-
-Persistent session 在下一轮启动时会从这些 facts 重建 `GoalState` 和 `IntrospectionState`，Console 的 milestone board / review cycles 也从这些 facts 投影出的 runtime spans 构建，不再解析 `declare_milestones`、`review_trajectory` 或 `<system-review>` 文本作为权威状态。
-
-#### 上下文效果
-
-Review 前：
-```text
-assistant: [tool_call: search_file(pattern="*.py")]
-tool:      [5000 tokens 的文件列表]
-assistant: [tool_call: search_db(query="random_table")]  ← 偏离目标
-tool:      [3000 tokens 的查询结果 + <system-review>请调用 review_trajectory]
-assistant: [tool_call: review_trajectory(aligned=false, experience="...")]
-tool:      [确认信息]
-```
-
-Step-back 后：
-```text
-assistant: [tool_call: search_file(pattern="*.py")]
-tool:      [5000 tokens 的文件列表]
-assistant: [tool_call: search_db(query="random_table")]  ← tool_call 保留
-tool:      [搜索了 random_table，与当前诊断目标无关，该表不包含 session 信息]  ← 替换为经验
-assistant: [tool_call: search_db(query="session_registry")]  ← 基于经验修正方向
-```
+权威 RunLog facts 包括（名称以源码为准）：`RunPlanUpdated`、introspection trigger/checkpoint/outcome、`ContextRepairApplied` 等。不要把 `<system-review>` 文本当作真相源。
 
 ### 配置
 
 ```python
 AgentOptions(
-    enable_goal_directed_review=True,   # 默认开启
-    review_step_interval=8,             # 每 N 个非 review tool result 触发常规 review
-    review_on_error=True,               # 连续错误时是否触发 review
+    enable_trajectory_review=True,  # 默认开启
+    review_step_interval=8,
+    review_on_error=True,
 )
 ```
 
-### KV Cache 安全性
-
-Step-back 仅修改 tool result 的 `content` 字段，不删除或重排任何业务 message。Agent tool_call 的意图链条完整保留。唯一例外是 `review_trajectory` 自身的 tool_call + tool_result 这对临时 review 元数据：它们在 step-back 或 metadata-only cleanup 后可以从后续 prompt-visible context 隐藏（仅此一对），避免额外占据上下文。这个例外与"不删除或重排其他对话 message"规则并列存在。这些约束确保 LLM 的 KV cache 不被破坏。
+评分是可选实验元数据，可供 compaction 参考，**不得**作为固定删除阈值。观测说明见 [docs/objective-observability.md](../objective-observability.md)。
 
 ### 约束
 
-- 仅 scheduler 场景生效（`declare_milestones` 和 `review_trajectory` 工具通过 scheduler 注入）
-- 里程碑由 agent 维护和拆解，用户仅提供顶层大目标
-- 系统决定 review 时机和 step-back 范围，agent 仅提供内容
+- `update_plan` / `review_trajectory` 由 Agent 作为系统工具装配（scheduler 场景同样可用）
+- 计划只有 RunPlan 一份；Objective 不维护第二套 todos
 - 与 compaction/rollback 独立共存
 
 ### 升级兼容性
 
-Goal-directed review 移除了旧的 tool-result rewrite 运行记录反序列化路径。升级到该版本前，如果本地 `.agiwo` 或 Console SQLite 数据库中仍有旧 session/run-log 数据，先清理旧的 `*.db` 文件或 `.agiwo` 状态目录；否则运行时会返回明确错误，提示清理旧数据库后重启。
+数据模型变更无 migration。升级前清理本地 `.agiwo` / SQLite；详见 [docs/guides/dev-data-cleanup.md](dev-data-cleanup.md)。
 
 ---
 
 ## 架构
 
-### introspect 包结构
-
 ```text
-agiwo/agent/introspect/
-├── __init__.py      # 公开导出纯数据模型
-├── models.py        # GoalState、IntrospectionState、IntrospectionOutcome 等数据模型
-├── goal.py          # declare_milestones 解析、校验和 GoalState 更新
-├── trajectory.py    # system-review 触发、通知拼接、review_trajectory 结果解析
-├── repair.py        # 纯 ContextRepairPlan 规划
-├── apply.py         # 应用 outcome、写 RunLog facts、更新 prompt-visible context
-├── replay.py        # 从 RunLog facts 重建 GoalState / IntrospectionState
+agiwo/agent/plan/         # RunPlan 规范化与 update_plan 系统工具
+agiwo/agent/introspect/   # trajectory review、context repair、replay
 ```
 
-`run_tool_batch.py` 是 tool batch 的执行 owner，并显式调用 focused introspect functions：
-
-```python
-for result in tool_results:
-    goal_update = handle_goal_tool_result(result, context.ledger.goal, current_seq=seq)
-    pending_outcome = (
-        parse_introspection_outcome(result, context.ledger.goal, current_seq=seq, ...)
-        or pending_outcome
-    )
-    notice = maybe_build_introspection_notice(
-        result,
-        context.ledger.goal,
-        context.ledger.introspection,
-        step_interval=context.config.review_step_interval,
-        review_on_error=context.config.review_on_error,
-    )
-
-    committed_step = await commit_step(tool_step)
-    register_committed_tool_step(
-        step_lookup,
-        tool_call_id=result.tool_call_id or "",
-        step=committed_step,
-    )
-    if goal_update is not None:
-        await writer.record_goal_milestones_updated(...)
-    if notice is not None:
-        await writer.record_introspection_triggered(...)
-
-if pending_outcome is not None:
-    full_lookup = await build_tool_step_lookup(context, step_lookup)
-    await apply_introspection_outcome(
-        context,
-        pending_outcome,
-        writer=writer,
-        step_lookup=full_lookup,
-    )
-```
-
-### 设计原则
-
-- **系统强制 review**：不依赖 agent 自我意识，系统在检查点注入 review 通知
-- **事实优先**：milestone、trigger、checkpoint、outcome 都写入 first-class RunLog facts；replay、trace、Console 视图从 facts 构建
-- **KV-cache 安全**：仅替换 tool result content，不删除/重排 message，不调用 rebuild_messages
-- **意图链条完整**：tool_call 永远保留，经验信息以 tool result 形式反馈给 LLM
-- **依赖方向**：`introspect/` 不依赖 `scheduler/`，`scheduler/runtime_tools.py` 提供 `DeclareMilestonesTool` 和 `ReviewTrajectoryTool`
-
-更详细的模块级说明见 [`agiwo/agent/introspect/README.md`](../../agiwo/agent/introspect/README.md)。
+`run_tool_batch.py` 是 tool batch 的执行 owner，并显式调用 focused introspect / plan apply 函数。RunPlan、introspection trigger、checkpoint、outcome、context repair 必须写 first-class `RunLog` facts，并由 replay/trace/Console 视图消费 facts。

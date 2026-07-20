@@ -1,6 +1,6 @@
 # P6-02：完成观测、指标与 trajectory review 评估
 
-状态：planned
+状态：done
 
 ## 目标
 

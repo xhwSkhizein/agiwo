@@ -26,6 +26,7 @@ from agiwo.scheduler.store.codec import (
 from agiwo.utils.logging import get_logger
 from agiwo.utils.storage_support.sqlite_runtime import (
     SQLiteConnectionRuntime,
+    exclusive_sqlite_access,
     execute_statements,
 )
 
@@ -211,46 +212,46 @@ class SQLiteAgentStateStorage(AgentStateStorage):
         conn = await self._get_conn()
         wake_values = self._wake_condition_values(state.wake_condition)
         last_run_values = self._last_run_result_values(state.last_run_result)
-        await conn.execute(
-            """
-            INSERT OR REPLACE INTO agent_states
-                (id, session_id, parent_id, status, task, pending_input, config_overrides,
-                 wake_type, wake_time_value, wake_time_unit, wake_wait_for, wake_wait_mode,
-                 wake_completed_ids, wakeup_at, wake_timeout_at, result_summary,
-                 last_run_id, last_run_termination_reason, last_run_summary, last_run_error,
-                 last_run_completed_at,
-                 signal_propagated, is_persistent, depth, wake_count, rollback_count,
-                 no_progress, agent_config_id, explain, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                state.id,
-                state.session_id,
-                state.parent_id,
-                state.status.value,
-                serialize_user_input_for_store(state.task),
+        async with exclusive_sqlite_access(self._db_path):
+            await conn.execute(
+                """
+                INSERT OR REPLACE INTO agent_states
+                    (id, session_id, parent_id, status, task, pending_input, config_overrides,
+                     wake_type, wake_time_value, wake_time_unit, wake_wait_for, wake_wait_mode,
+                     wake_completed_ids, wakeup_at, wake_timeout_at, result_summary,
+                     last_run_id, last_run_termination_reason, last_run_summary, last_run_error,
+                     last_run_completed_at,
+                     signal_propagated, is_persistent, depth, wake_count, rollback_count,
+                     no_progress, agent_config_id, explain, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
-                    serialize_user_input_for_store(state.pending_input)
-                    if state.pending_input is not None
-                    else None
+                    state.id,
+                    state.session_id,
+                    state.parent_id,
+                    state.status.value,
+                    serialize_user_input_for_store(state.task),
+                    (
+                        serialize_user_input_for_store(state.pending_input)
+                        if state.pending_input is not None
+                        else None
+                    ),
+                    json.dumps(thaw_value(state.config_overrides)),
+                    *wake_values,
+                    state.result_summary,
+                    *last_run_values,
+                    1 if state.signal_propagated else 0,
+                    1 if state.is_persistent else 0,
+                    state.depth,
+                    state.wake_count,
+                    state.rollback_count,
+                    1 if state.no_progress else 0,
+                    state.agent_config_id,
+                    state.explain,
+                    state.created_at.isoformat(),
+                    state.updated_at.isoformat(),
                 ),
-                json.dumps(thaw_value(state.config_overrides)),
-                *wake_values,
-                state.result_summary,
-                *last_run_values,
-                1 if state.signal_propagated else 0,
-                1 if state.is_persistent else 0,
-                state.depth,
-                state.wake_count,
-                state.rollback_count,
-                1 if state.no_progress else 0,
-                state.agent_config_id,
-                state.explain,
-                state.created_at.isoformat(),
-                state.updated_at.isoformat(),
-            ),
-        )
-        await conn.commit()
+            )
 
     def _last_run_result_values(self, last_run_result) -> list[object]:
         payload = serialize_scheduler_run_result_for_store(last_run_result)
@@ -319,25 +320,25 @@ class SQLiteAgentStateStorage(AgentStateStorage):
 
     async def save_event(self, event: PendingEvent) -> None:
         conn = await self._get_conn()
-        await conn.execute(
-            """
-            INSERT OR REPLACE INTO pending_events
-                (id, target_agent_id, session_id, event_type, payload_json,
-                 source_agent_id, created_at, urgent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event.id,
-                event.target_agent_id,
-                event.session_id,
-                event.event_type.value,
-                json.dumps(thaw_value(event.payload)),
-                event.source_agent_id,
-                event.created_at.isoformat(),
-                1 if event.urgent else 0,
-            ),
-        )
-        await conn.commit()
+        async with exclusive_sqlite_access(self._db_path):
+            await conn.execute(
+                """
+                INSERT OR REPLACE INTO pending_events
+                    (id, target_agent_id, session_id, event_type, payload_json,
+                     source_agent_id, created_at, urgent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event.id,
+                    event.target_agent_id,
+                    event.session_id,
+                    event.event_type.value,
+                    json.dumps(thaw_value(event.payload)),
+                    event.source_agent_id,
+                    event.created_at.isoformat(),
+                    1 if event.urgent else 0,
+                ),
+            )
 
     async def list_events(
         self,
@@ -371,11 +372,11 @@ class SQLiteAgentStateStorage(AgentStateStorage):
             return
         conn = await self._get_conn()
         placeholders = ",".join("?" * len(event_ids))
-        await conn.execute(
-            f"DELETE FROM pending_events WHERE id IN ({placeholders})",
-            event_ids,
-        )
-        await conn.commit()
+        async with exclusive_sqlite_access(self._db_path):
+            await conn.execute(
+                f"DELETE FROM pending_events WHERE id IN ({placeholders})",
+                event_ids,
+            )
 
     async def close(self) -> None:
         if self._conn is not None:

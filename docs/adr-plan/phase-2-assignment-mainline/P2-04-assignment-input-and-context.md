@@ -1,6 +1,6 @@
 # P2-04：装配 Assignment Input 与前缀安全上下文
 
-状态：planned
+状态：**done**（2026-07-18）
 
 ## 目标
 

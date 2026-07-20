@@ -1,0 +1,1772 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Agiwo Console — Session / Trace 重设计原型</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0c0d10;
+      --bg-elev: #12141a;
+      --bg-panel: #171a22;
+      --bg-hover: #1e2230;
+      --line: #2a3040;
+      --line-strong: #3a4258;
+      --ink: #e8eaf0;
+      --ink-muted: #9aa3b5;
+      --ink-faint: #6b7385;
+      --accent: #6ea8ff;
+      --ok: #3dba86;
+      --warn: #e0a54f;
+      --danger: #e06b6b;
+      --paused: #9b8cff;
+      --running: #5bb8e8;
+      --wait: #e0a54f;
+      --radius: 10px;
+      --font: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+      --mono: "IBM Plex Mono", ui-monospace, monospace;
+      --shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(110, 168, 255, 0.08), transparent 55%),
+        radial-gradient(900px 500px at 90% 0%, rgba(61, 186, 134, 0.05), transparent 50%),
+        var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+
+    button, input, select { font: inherit; color: inherit; }
+    button {
+      cursor: pointer;
+      border: 1px solid var(--line);
+      background: var(--bg-panel);
+      border-radius: 8px;
+      padding: 0.45rem 0.75rem;
+    }
+    button:hover { background: var(--bg-hover); border-color: var(--line-strong); }
+    button.primary {
+      background: color-mix(in oklab, var(--accent) 22%, var(--bg-panel));
+      border-color: color-mix(in oklab, var(--accent) 45%, var(--line));
+      color: #dceaff;
+    }
+    button.ghost { background: transparent; }
+    button.active {
+      background: color-mix(in oklab, var(--accent) 18%, var(--bg-panel));
+      border-color: color-mix(in oklab, var(--accent) 40%, var(--line));
+    }
+    .mono { font-family: var(--mono); font-size: 0.85em; }
+    .muted { color: var(--ink-muted); }
+    .faint { color: var(--ink-faint); }
+    .hidden { display: none !important; }
+
+    /* Shell */
+    .app {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      min-height: 100vh;
+    }
+    .nav {
+      border-right: 1px solid var(--line);
+      background: color-mix(in oklab, var(--bg-elev) 92%, black);
+      padding: 1.25rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+    .brand {
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      font-size: 1.05rem;
+    }
+    .brand span { color: var(--ink-faint); font-weight: 500; font-size: 0.75rem; display: block; margin-top: 0.2rem; }
+    .nav-links { display: flex; flex-direction: column; gap: 0.35rem; }
+    .nav-links button {
+      text-align: left;
+      border: none;
+      background: transparent;
+      padding: 0.55rem 0.7rem;
+      border-radius: 8px;
+      color: var(--ink-muted);
+    }
+    .nav-links button:hover { background: var(--bg-hover); color: var(--ink); }
+    .nav-links button.active { background: var(--bg-panel); color: var(--ink); border: 1px solid var(--line); }
+
+    .main { display: flex; flex-direction: column; min-width: 0; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.9rem 1.4rem;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in oklab, var(--bg-elev) 80%, transparent);
+      backdrop-filter: blur(8px);
+      position: sticky;
+      top: 0;
+      z-index: 5;
+    }
+    .topbar h1 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .crumb { color: var(--ink-faint); font-weight: 500; }
+    .crumb a { color: var(--ink-muted); text-decoration: none; }
+    .crumb a:hover { color: var(--accent); }
+    .content { padding: 1.25rem 1.4rem 5.5rem; }
+
+    /* Prototype banner */
+    .proto-banner {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1.1rem;
+      border: 1px dashed color-mix(in oklab, var(--accent) 40%, var(--line));
+      background: color-mix(in oklab, var(--accent) 8%, var(--bg-panel));
+      border-radius: var(--radius);
+      font-size: 0.9rem;
+    }
+    .proto-banner strong { color: #c9dbff; }
+
+    /* Status */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      border-radius: 999px;
+      padding: 0.15rem 0.55rem;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .badge::before {
+      content: "";
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .badge.ok { color: var(--ok); background: color-mix(in oklab, var(--ok) 12%, transparent); border-color: color-mix(in oklab, var(--ok) 30%, transparent); }
+    .badge.warn { color: var(--warn); background: color-mix(in oklab, var(--warn) 12%, transparent); border-color: color-mix(in oklab, var(--warn) 30%, transparent); }
+    .badge.danger { color: var(--danger); background: color-mix(in oklab, var(--danger) 12%, transparent); border-color: color-mix(in oklab, var(--danger) 30%, transparent); }
+    .badge.running { color: var(--running); background: color-mix(in oklab, var(--running) 12%, transparent); border-color: color-mix(in oklab, var(--running) 30%, transparent); }
+    .badge.paused { color: var(--paused); background: color-mix(in oklab, var(--paused) 12%, transparent); border-color: color-mix(in oklab, var(--paused) 30%, transparent); }
+    .badge.idle { color: var(--ink-muted); background: color-mix(in oklab, var(--ink-muted) 10%, transparent); border-color: var(--line); }
+
+    /* Sessions list */
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      align-items: center;
+    }
+    .filters select, .filters input {
+      background: var(--bg-panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.45rem 0.65rem;
+    }
+    .session-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--bg-elev);
+    }
+    .session-table th {
+      text-align: left;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--ink-faint);
+      padding: 0.7rem 0.9rem;
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--line);
+      font-weight: 600;
+    }
+    .session-table td {
+      padding: 0.85rem 0.9rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    .session-table tr:last-child td { border-bottom: none; }
+    .session-table tbody tr {
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+    .session-table tbody tr:hover { background: var(--bg-hover); }
+    .session-title {
+      font-weight: 600;
+      margin: 0 0 0.25rem;
+      max-width: 42ch;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .session-sub {
+      font-size: 0.85rem;
+      color: var(--ink-muted);
+      max-width: 48ch;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .metric-inline {
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
+      font-size: 0.85rem;
+    }
+    .budget-mini {
+      display: flex;
+      gap: 0.35rem;
+      margin-top: 0.35rem;
+    }
+    .budget-chip {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      color: var(--ink-muted);
+    }
+    .budget-chip.hot { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 40%, var(--line)); }
+
+    /* Session detail layout */
+    .detail-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 320px;
+      gap: 1rem;
+      align-items: start;
+    }
+    @media (max-width: 1100px) {
+      .app { grid-template-columns: 1fr; }
+      .nav { flex-direction: row; align-items: center; border-right: none; border-bottom: 1px solid var(--line); }
+      .nav-links { flex-direction: row; flex-wrap: wrap; }
+      .detail-grid { grid-template-columns: 1fr; }
+    }
+
+    .outcome-hero {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background:
+        linear-gradient(135deg, color-mix(in oklab, var(--ok) 10%, var(--bg-panel)), var(--bg-panel) 55%);
+      padding: 1.15rem 1.25rem 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: var(--shadow);
+    }
+    .outcome-hero.waiting {
+      background: linear-gradient(135deg, color-mix(in oklab, var(--wait) 12%, var(--bg-panel)), var(--bg-panel) 55%);
+    }
+    .outcome-hero.running {
+      background: linear-gradient(135deg, color-mix(in oklab, var(--running) 12%, var(--bg-panel)), var(--bg-panel) 55%);
+    }
+    .outcome-hero.paused {
+      background: linear-gradient(135deg, color-mix(in oklab, var(--paused) 12%, var(--bg-panel)), var(--bg-panel) 55%);
+    }
+    .outcome-hero.failed {
+      background: linear-gradient(135deg, color-mix(in oklab, var(--danger) 12%, var(--bg-panel)), var(--bg-panel) 55%);
+    }
+    .outcome-kicker {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--ink-faint);
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+    }
+    .outcome-title {
+      margin: 0 0 0.55rem;
+      font-size: 1.25rem;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+    .outcome-body {
+      color: var(--ink-muted);
+      font-size: 0.95rem;
+      max-width: 70ch;
+      white-space: pre-wrap;
+    }
+    .outcome-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.25rem;
+      margin-top: 0.9rem;
+      padding-top: 0.85rem;
+      border-top: 1px solid color-mix(in oklab, var(--line) 80%, transparent);
+      font-size: 0.82rem;
+      color: var(--ink-muted);
+    }
+    .meta-row b { color: var(--ink); font-weight: 550; }
+
+    /* Assignment tags (secondary context only) */
+    .context-strip {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.45rem 0.65rem;
+      margin: -0.35rem 0 1rem;
+      padding: 0.55rem 0.75rem;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--bg-elev);
+      font-size: 0.82rem;
+    }
+    .context-strip .label {
+      color: var(--ink-faint);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 650;
+    }
+    .assign-tags { display: inline-flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+    .assign-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      padding: 0.18rem 0.5rem;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--ink-muted);
+      font-size: 0.75rem;
+      font-weight: 550;
+      cursor: pointer;
+    }
+    .assign-tag .sep { color: var(--ink-faint); margin: 0 0.1rem; }
+    .assign-tag.done { color: color-mix(in oklab, var(--ok) 75%, var(--ink-muted)); }
+    .assign-tag.current {
+      color: #dceaff;
+      border-color: color-mix(in oklab, var(--accent) 50%, var(--line));
+      background: color-mix(in oklab, var(--accent) 16%, var(--bg));
+    }
+    .assign-tag.skipped { opacity: 0.55; text-decoration: line-through; text-decoration-color: var(--ink-faint); }
+    .assign-tag.running {
+      color: var(--running);
+      border-color: color-mix(in oklab, var(--running) 45%, var(--line));
+    }
+
+    /* Run list (primary navigation inside session) */
+    .run-layout {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      gap: 0.85rem;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .run-layout { grid-template-columns: 1fr; }
+    }
+    .run-item {
+      display: block;
+      width: 100%;
+      text-align: left;
+      border: 1px solid transparent;
+      background: transparent;
+      border-radius: 8px;
+      padding: 0.55rem 0.65rem;
+      margin-bottom: 0.3rem;
+    }
+    .run-item:hover { background: var(--bg-hover); border-color: var(--line); }
+    .run-item.selected {
+      background: color-mix(in oklab, var(--accent) 12%, var(--bg-panel));
+      border-color: color-mix(in oklab, var(--accent) 40%, var(--line));
+    }
+    .run-item .run-id { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-faint); }
+    .run-item .run-title { font-size: 0.88rem; font-weight: 600; margin: 0.15rem 0; }
+    .run-item .run-meta { font-size: 0.75rem; color: var(--ink-muted); }
+    .run-item.child { margin-left: 0.75rem; border-left: 2px solid color-mix(in oklab, var(--accent) 30%, var(--line)); }
+
+    /* Compact objective summary (not the main story) */
+    .tl-compact { display: flex; flex-direction: column; gap: 0.35rem; }
+    .tl-compact-item {
+      display: flex;
+      gap: 0.5rem;
+      align-items: flex-start;
+      font-size: 0.8rem;
+      color: var(--ink-muted);
+      line-height: 1.35;
+    }
+    .tl-compact-item::before {
+      content: "";
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      margin-top: 0.4rem;
+      flex-shrink: 0;
+      background: var(--ink-faint);
+    }
+    .tl-compact-item.wait::before { background: var(--wait); }
+    .tl-compact-item.ok::before { background: var(--ok); }
+    .tl-compact-item .kind {
+      font-family: var(--mono);
+      font-size: 0.68rem;
+      color: var(--ink-faint);
+      display: block;
+      margin-bottom: 0.1rem;
+    }
+    details.quiet > summary {
+      cursor: pointer;
+      list-style: none;
+      font-size: 0.8rem;
+      color: var(--ink-muted);
+      padding: 0.2rem 0;
+    }
+    details.quiet > summary::-webkit-details-marker { display: none; }
+    details.quiet > summary::before { content: "▸ "; color: var(--ink-faint); }
+    details.quiet[open] > summary::before { content: "▾ "; }
+
+    .outcome-hero.compact {
+      padding: 0.9rem 1.05rem 1rem;
+      margin-bottom: 0.75rem;
+      box-shadow: none;
+    }
+    .outcome-hero.compact .outcome-title { font-size: 1.05rem; margin-bottom: 0.35rem; }
+    .outcome-hero.compact .outcome-body {
+      font-size: 0.88rem;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .outcome-hero.compact .outcome-actions { margin-top: 0.7rem; }
+    .outcome-hero.compact .meta-row { margin-top: 0.65rem; padding-top: 0.65rem; }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: var(--bg-elev);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .panel-h {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      padding: 0.75rem 0.95rem;
+      border-bottom: 1px solid var(--line);
+      background: var(--bg-panel);
+    }
+    .panel-h h2 {
+      margin: 0;
+      font-size: 0.85rem;
+      font-weight: 650;
+    }
+    .panel-b { padding: 0.85rem 0.95rem; }
+    .seg {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .seg button {
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      padding: 0.35rem 0.65rem;
+      font-size: 0.8rem;
+      color: var(--ink-muted);
+    }
+    .seg button + button { border-left: 1px solid var(--line); }
+    .seg button.active { background: var(--bg-hover); color: var(--ink); }
+
+    /* Timeline */
+    .timeline { display: flex; flex-direction: column; gap: 0; }
+    .tl-item {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 0.7rem;
+      padding: 0.55rem 0;
+    }
+    .tl-rail {
+      position: relative;
+      display: flex;
+      justify-content: center;
+    }
+    .tl-rail::before {
+      content: "";
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 1px;
+      background: var(--line);
+    }
+    .tl-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--bg);
+      border: 2px solid var(--ink-faint);
+      margin-top: 0.35rem;
+      z-index: 1;
+      position: relative;
+    }
+    .tl-item.decision .tl-dot { border-color: var(--accent); }
+    .tl-item.delivery .tl-dot { border-color: var(--ok); background: color-mix(in oklab, var(--ok) 35%, var(--bg)); }
+    .tl-item.wait .tl-dot { border-color: var(--wait); }
+    .tl-item.fault .tl-dot { border-color: var(--danger); }
+    .tl-body { min-width: 0; }
+    .tl-top {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem 0.7rem;
+      align-items: baseline;
+      margin-bottom: 0.15rem;
+    }
+    .tl-kind {
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      color: var(--ink-faint);
+    }
+    .tl-summary { font-size: 0.9rem; }
+    .tl-refs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      margin-top: 0.35rem;
+    }
+    .chip-link {
+      font-family: var(--mono);
+      font-size: 0.7rem;
+      padding: 0.12rem 0.4rem;
+      border-radius: 5px;
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--accent);
+      cursor: pointer;
+    }
+    .chip-link:hover { border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); }
+
+    /* Run trajectory */
+    .step {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--bg);
+      margin-bottom: 0.55rem;
+      overflow: hidden;
+    }
+    .step[data-depth="1"] { margin-left: 1rem; border-left: 2px solid color-mix(in oklab, var(--accent) 35%, var(--line)); }
+    .step[data-depth="2"] { margin-left: 2rem; border-left: 2px solid color-mix(in oklab, var(--paused) 35%, var(--line)); }
+    .step-h {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6rem;
+      padding: 0.55rem 0.75rem;
+      cursor: pointer;
+    }
+    .step-h:hover { background: var(--bg-hover); }
+    .step-role {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--ink-faint);
+      min-width: 4.5rem;
+    }
+    .step-role.user { color: var(--accent); }
+    .step-role.assistant { color: #b7c4ff; }
+    .step-role.tool { color: #8fd6b8; }
+    .step-preview {
+      flex: 1;
+      min-width: 0;
+      font-size: 0.88rem;
+      color: var(--ink-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .step-b {
+      display: none;
+      padding: 0 0.75rem 0.75rem;
+      border-top: 1px solid var(--line);
+      font-size: 0.88rem;
+      color: var(--ink-muted);
+      white-space: pre-wrap;
+    }
+    .step.open .step-b { display: block; padding-top: 0.7rem; }
+    .tool-call {
+      margin-top: 0.45rem;
+      padding: 0.45rem 0.55rem;
+      border-radius: 7px;
+      background: var(--bg-panel);
+      border: 1px solid var(--line);
+      font-family: var(--mono);
+      font-size: 0.78rem;
+    }
+    .tool-call .name { color: #8fd6b8; font-weight: 550; }
+
+    /* Side rail */
+    .side-stack { display: flex; flex-direction: column; gap: 0.75rem; }
+    .budget-bars { display: flex; flex-direction: column; gap: 0.55rem; }
+    .budget-row { font-size: 0.8rem; }
+    .budget-row .label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 0.25rem;
+      color: var(--ink-muted);
+    }
+    .bar {
+      height: 6px;
+      border-radius: 999px;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }
+    .bar > i {
+      display: block;
+      height: 100%;
+      background: var(--accent);
+    }
+    .bar.hot > i { background: var(--warn); }
+    .bar.danger > i { background: var(--danger); }
+
+    .artifact {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.45rem 0;
+      border-bottom: 1px solid var(--line);
+      font-size: 0.85rem;
+    }
+    .artifact:last-child { border-bottom: none; }
+
+    /* Trace view: chart (left) + detail rail (right) */
+    .trace-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+      gap: 0.85rem;
+      align-items: stretch;
+      min-height: min(72vh, 720px);
+    }
+    @media (max-width: 960px) {
+      .trace-layout { grid-template-columns: 1fr; min-height: 0; }
+      .trace-detail-panel { max-height: 48vh; }
+    }
+    .trace-chart-panel,
+    .trace-detail-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .trace-chart-scroll {
+      overflow: auto;
+      flex: 1;
+      min-height: 0;
+      padding: 0.75rem 0.9rem 1rem;
+    }
+    .trace-detail-panel {
+      position: sticky;
+      top: 3.4rem;
+      max-height: calc(100vh - 5rem);
+    }
+    .trace-detail-body {
+      overflow: auto;
+      flex: 1;
+      min-height: 0;
+      padding: 0.85rem 0.95rem 1rem;
+    }
+    .flame-axis {
+      display: grid;
+      grid-template-columns: 148px 1fr 52px;
+      gap: 0.45rem;
+      font-size: 0.68rem;
+      color: var(--ink-faint);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.45rem;
+      padding: 0 0.15rem;
+      position: sticky;
+      top: 0;
+      background: var(--bg-elev);
+      z-index: 2;
+      padding-bottom: 0.35rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .flame-axis .ticks {
+      display: flex;
+      justify-content: space-between;
+      font-family: var(--mono);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .flame {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      margin-top: 0.45rem;
+    }
+    .flame-row {
+      display: grid;
+      grid-template-columns: 148px 1fr 52px;
+      gap: 0.45rem;
+      align-items: center;
+      font-size: 0.78rem;
+      padding: 0.2rem 0.15rem;
+      border-radius: 7px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: background 100ms ease, border-color 100ms ease;
+    }
+    .flame-row:hover { background: var(--bg-hover); }
+    .flame-row.selected {
+      background: color-mix(in oklab, var(--accent) 12%, transparent);
+      border-color: color-mix(in oklab, var(--accent) 40%, var(--line));
+    }
+    .flame-label {
+      color: var(--ink-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      padding-left: calc(var(--depth, 0) * 12px);
+    }
+    .flame-label .kind-dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      margin-right: 0.35rem;
+      vertical-align: middle;
+    }
+    .flame-label .kind-dot.agent { background: var(--accent); }
+    .flame-label .kind-dot.llm { background: #b7c4ff; }
+    .flame-label .kind-dot.tool { background: #8fd6b8; }
+    .flame-track {
+      height: 22px;
+      background: color-mix(in oklab, var(--bg) 80%, var(--bg-panel));
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      position: relative;
+      overflow: hidden;
+    }
+    .flame-bar {
+      position: absolute;
+      top: 2px; bottom: 2px;
+      border-radius: 3px;
+      opacity: 0.92;
+      min-width: 3px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+    }
+    .flame-bar.agent { background: color-mix(in oklab, var(--accent) 62%, #1a2030); }
+    .flame-bar.llm { background: color-mix(in oklab, #b7c4ff 70%, #1a2030); }
+    .flame-bar.tool { background: color-mix(in oklab, #8fd6b8 70%, #1a2030); }
+    .flame-row.selected .flame-bar {
+      outline: 1px solid color-mix(in oklab, var(--accent) 70%, white);
+      outline-offset: 1px;
+    }
+    .flame-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.72rem;
+      color: var(--ink-faint);
+    }
+    .flame-legend span::before {
+      content: "";
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 2px;
+      margin-right: 0.3rem;
+      vertical-align: middle;
+    }
+    .flame-legend .lg-agent::before { background: color-mix(in oklab, var(--accent) 70%, #223); }
+    .flame-legend .lg-llm::before { background: color-mix(in oklab, #b7c4ff 75%, #223); }
+    .flame-legend .lg-tool::before { background: color-mix(in oklab, #8fd6b8 75%, #223); }
+    .kv {
+      display: grid;
+      grid-template-columns: 108px 1fr;
+      gap: 0.4rem 0.65rem;
+      font-size: 0.85rem;
+    }
+    .kv dt { color: var(--ink-faint); }
+    .kv dd { margin: 0; color: var(--ink-muted); word-break: break-word; }
+    .detail-hint {
+      font-size: 0.75rem;
+      color: var(--ink-faint);
+      margin: 0 0 0.75rem;
+      line-height: 1.4;
+    }
+
+    .empty {
+      padding: 2rem 1rem;
+      text-align: center;
+      color: var(--ink-faint);
+      font-size: 0.9rem;
+    }
+
+    /* Design notes drawer */
+    .notes-fab {
+      position: fixed;
+      right: 1.1rem;
+      bottom: 1.1rem;
+      z-index: 20;
+      box-shadow: var(--shadow);
+    }
+    .notes {
+      position: fixed;
+      right: 1.1rem;
+      bottom: 3.8rem;
+      width: min(420px, calc(100vw - 2rem));
+      max-height: min(70vh, 560px);
+      overflow: auto;
+      z-index: 20;
+      border: 1px solid var(--line-strong);
+      background: var(--bg-panel);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      padding: 1rem 1.1rem;
+      font-size: 0.88rem;
+    }
+    .notes h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
+    .notes ol { margin: 0; padding-left: 1.15rem; color: var(--ink-muted); }
+    .notes li { margin: 0.4rem 0; }
+    .notes code {
+      font-family: var(--mono);
+      font-size: 0.8em;
+      background: var(--bg);
+      padding: 0.05rem 0.3rem;
+      border-radius: 4px;
+      border: 1px solid var(--line);
+    }
+
+    .scenario-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.4rem;
+      align-items: center;
+      margin-bottom: 1rem;
+      padding: 0.55rem 0.7rem;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: var(--bg-panel);
+      font-size: 0.82rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="nav">
+      <div class="brand">
+        Agiwo Console
+        <span>PROTOTYPE · inspection redesign</span>
+      </div>
+      <div class="nav-links">
+        <button type="button" data-nav="sessions" class="active">Sessions</button>
+        <button type="button" data-nav="session">Session detail</button>
+        <button type="button" data-nav="trace">Trace (drill-down)</button>
+        <button type="button" data-nav="compare">旧页 vs 新页</button>
+      </div>
+      <div class="faint" style="font-size:0.75rem; margin-top:auto; line-height:1.4;">
+        可点击的信息架构原型。<br />数据为虚构样例，结构对齐当前 Objective / Assignment / RunLog / Trace API。
+      </div>
+    </aside>
+
+    <div class="main">
+      <header class="topbar">
+        <h1 id="page-title">Sessions</h1>
+        <div class="seg" id="lens-seg" style="display:none">
+          <button type="button" class="active" data-lens="steps">Steps</button>
+          <button type="button" data-lens="debug">Debug</button>
+        </div>
+      </header>
+
+      <div class="content">
+        <!-- SESSIONS -->
+        <section id="view-sessions">
+          <div class="proto-banner">
+            <div>
+              <strong>Sessions 列表的第一问：现在卡在哪？</strong>
+              行的主信号是 Objective 状态（交付 / 等待用户 / 运行中 / 暂停 / 失败），不是模糊的 “last response” 摘要。
+              次信号才是用户意图、当前 assignment、预算压力。
+            </div>
+          </div>
+
+          <div class="filters">
+            <select aria-label="status filter">
+              <option>全部状态</option>
+              <option>WAITING_USER</option>
+              <option>RUNNING</option>
+              <option>COMPLETED</option>
+              <option>BUDGET_PAUSED</option>
+              <option>FAILED</option>
+            </select>
+            <input placeholder="搜索用户意图 / agent / session id" style="min-width:240px" />
+            <button type="button" class="ghost">含已归档</button>
+          </div>
+
+          <table class="session-table">
+            <thead>
+              <tr>
+                <th style="width:38%">工作项</th>
+                <th>Objective 状态</th>
+                <th>当前焦点</th>
+                <th>预算</th>
+                <th>更新</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr data-open-session="wait">
+                <td>
+                  <p class="session-title">调研竞品定价并给出建议区间</p>
+                  <div class="session-sub">用户：请对比 A/B/C 三家公开定价，给出我们 SaaS 的建议区间与理由。</div>
+                  <div class="mono faint" style="margin-top:0.3rem; font-size:0.72rem">sess_8f2a · research-agent</div>
+                </td>
+                <td><span class="badge wait">waiting user</span></td>
+                <td>
+                  <div class="metric-inline">
+                    <span>需要确认：是否接受 $29–$49 方案</span>
+                    <span class="faint">handoff → user · expects_reply</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="budget-mini">
+                    <span class="budget-chip">handoff 2/5</span>
+                    <span class="budget-chip">$0.41/$2</span>
+                  </div>
+                </td>
+                <td class="muted">12 分钟前</td>
+              </tr>
+              <tr data-open-session="done">
+                <td>
+                  <p class="session-title">整理本周周报草稿</p>
+                  <div class="session-sub">交付：已生成可粘贴的周报正文，并附带 2 个附件。</div>
+                  <div class="mono faint" style="margin-top:0.3rem; font-size:0.72rem">sess_1c90 · writer-agent</div>
+                </td>
+                <td><span class="badge ok">completed</span></td>
+                <td>
+                  <div class="metric-inline">
+                    <span>Delivered · verification accepted</span>
+                    <span class="faint">artifacts ×2</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="budget-mini">
+                    <span class="budget-chip">handoff 1/5</span>
+                    <span class="budget-chip">$0.12/$2</span>
+                  </div>
+                </td>
+                <td class="muted">昨天</td>
+              </tr>
+              <tr data-open-session="run">
+                <td>
+                  <p class="session-title">修复登录页 flake 测试</p>
+                  <div class="session-sub">正在跑 verification assignment；子 agent 正在复现失败用例。</div>
+                  <div class="mono faint" style="margin-top:0.3rem; font-size:0.72rem">sess_44be · debug-agent</div>
+                </td>
+                <td><span class="badge running">running</span></td>
+                <td>
+                  <div class="metric-inline">
+                    <span>Assignment: verification</span>
+                    <span class="faint">child run depth=1 · web_search ×3</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="budget-mini">
+                    <span class="budget-chip hot">handoff 4/5</span>
+                    <span class="budget-chip hot">$1.72/$2</span>
+                  </div>
+                </td>
+                <td class="muted">刚才</td>
+              </tr>
+              <tr data-open-session="pause">
+                <td>
+                  <p class="session-title">批量抓取公开文档并建索引</p>
+                  <div class="session-sub">LLM 成本触顶，已进入 BUDGET_PAUSED；可调整预算后 resume。</div>
+                  <div class="mono faint" style="margin-top:0.3rem; font-size:0.72rem">sess_90ee · indexer-agent</div>
+                </td>
+                <td><span class="badge paused">budget paused</span></td>
+                <td>
+                  <div class="metric-inline">
+                    <span>Drain completed · checkpoint saved</span>
+                    <span class="faint">resume from run_ckpt_19</span>
+                  </div>
+                </td>
+                <td>
+                  <div class="budget-mini">
+                    <span class="budget-chip hot">$2.00/$2</span>
+                    <span class="budget-chip">active 18m</span>
+                  </div>
+                </td>
+                <td class="muted">2 小时前</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- SESSION DETAIL -->
+        <section id="view-session" class="hidden">
+          <div class="proto-banner">
+            <div>
+              <strong>Session 详情的主舞台是 Agent Run + Steps。</strong>
+              Outcome 只占顶栏摘要；Assignment（intake / work / verification）收成标签；
+              Objective 时间线压成侧栏短摘要。日常巡检时间花在读 steps，不是读事实日志。
+            </div>
+          </div>
+
+          <div class="scenario-bar">
+            <span class="muted">切换样例状态：</span>
+            <button type="button" class="active" data-scenario="wait">WAITING_USER</button>
+            <button type="button" data-scenario="done">COMPLETED</button>
+            <button type="button" data-scenario="run">RUNNING</button>
+            <button type="button" data-scenario="pause">BUDGET_PAUSED</button>
+          </div>
+
+          <div id="outcome-hero" class="outcome-hero compact waiting">
+            <!-- filled by JS -->
+          </div>
+
+          <div class="context-strip">
+            <span class="label">Assignment</span>
+            <div class="assign-tags" id="assign-tags"></div>
+            <span class="faint" style="margin-left:auto">标签只作上下文，不占主阅读路径</span>
+          </div>
+
+          <div class="detail-grid">
+            <div class="panel" id="execution-panel">
+              <div class="panel-h">
+                <h2>Agent Runs &amp; Steps</h2>
+                <div style="display:flex; gap:0.4rem; align-items:center;">
+                  <button type="button" class="primary" data-open-trace>打开当前 Trace</button>
+                </div>
+              </div>
+              <div class="panel-b">
+                <div class="run-layout">
+                  <div>
+                    <div class="faint" style="font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:0.45rem; font-weight:650;">Runs</div>
+                    <div id="run-list"></div>
+                  </div>
+                  <div>
+                    <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem; flex-wrap:wrap; align-items:center;">
+                      <span class="badge ok" id="run-status-badge">completed</span>
+                      <span class="muted" style="font-size:0.82rem" id="run-status-meta">root · depth 0 · 6 steps · $0.28</span>
+                      <span class="mono faint" style="font-size:0.72rem; margin-left:auto" id="run-id-label">run_7c11</span>
+                    </div>
+                    <div class="seg" style="margin-bottom:0.75rem">
+                      <button type="button" class="active" data-step-filter="all">全部</button>
+                      <button type="button" data-step-filter="dialogue">对话</button>
+                      <button type="button" data-step-filter="tools">工具</button>
+                    </div>
+                    <div id="steps"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="side-stack">
+              <div class="panel">
+                <div class="panel-h"><h2>过程摘要</h2></div>
+                <div class="panel-b">
+                  <div class="tl-compact" id="timeline"></div>
+                  <details class="quiet" style="margin-top:0.65rem">
+                    <summary>更多 Objective facts</summary>
+                    <p class="faint" style="margin:0.45rem 0 0; font-size:0.78rem; line-height:1.45;">
+                      完整 sequence（ArtifactRegistered、BudgetUsage、ActiveWindow…）默认折叠。
+                      巡检不需要先读完事实流再找 steps。
+                    </p>
+                  </details>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="panel-h"><h2>预算</h2></div>
+                <div class="panel-b">
+                  <div class="budget-bars" id="budget-bars"></div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="panel-h"><h2>Artifacts</h2></div>
+                <div class="panel-b" id="artifacts"></div>
+              </div>
+              <div class="panel">
+                <div class="panel-h"><h2>关联</h2></div>
+                <div class="panel-b" style="display:flex; flex-direction:column; gap:0.45rem;">
+                  <button type="button" data-open-trace>Trace · 当前 run</button>
+                  <button type="button" class="ghost">Scheduler tree</button>
+                  <button type="button" class="ghost">Fork</button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- TRACE -->
+        <section id="view-trace" class="hidden">
+          <div class="proto-banner">
+            <div>
+              <strong>Trace = 可点击的时间条 + 右侧 span 详情。</strong>
+              层级嵌在时间条的缩进与条块位置里，不再单独放 Span 树。
+              深轨迹时左侧图表纵向滚动，右侧详情固定；按层披露摘要 → LLM → Tools → Raw（默认不展开 Raw）。
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; gap:1rem; align-items:center; margin-bottom:0.9rem; flex-wrap:wrap;">
+            <div>
+              <div class="crumb">
+                <a href="#" data-nav="session">Session sess_8f2a</a>
+                <span> / </span>
+                <span>run_7c11</span>
+                <span> / </span>
+                <span class="mono">trace_a91e</span>
+              </div>
+              <div style="margin-top:0.35rem; display:flex; gap:0.5rem; align-items:center;">
+                <span class="badge ok">completed</span>
+                <span class="muted" style="font-size:0.85rem">12.4s · max depth 2 · 3 LLM · 5 tools · $0.28</span>
+              </div>
+            </div>
+            <span class="faint" style="font-size:0.8rem">点击时间条上的 span → 右侧看详情</span>
+          </div>
+
+          <div class="trace-layout">
+            <div class="panel trace-chart-panel">
+              <div class="panel-h">
+                <h2>执行时间条</h2>
+                <span class="faint" style="font-size:0.75rem">depth 用缩进表示 · 点击选中</span>
+              </div>
+              <div class="trace-chart-scroll">
+                <div class="flame-axis">
+                  <div>Span</div>
+                  <div class="ticks"><span>0s</span><span>3s</span><span>6s</span><span>9s</span><span>12.4s</span></div>
+                  <div>Dur</div>
+                </div>
+                <div class="flame" id="flame"></div>
+                <div class="flame-legend">
+                  <span class="lg-agent">agent</span>
+                  <span class="lg-llm">llm_call</span>
+                  <span class="lg-tool">tool_call</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel trace-detail-panel">
+              <div class="panel-h" style="flex-wrap:wrap;">
+                <div style="min-width:0;">
+                  <h2 id="span-detail-title" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:240px;">agent.run</h2>
+                  <div class="mono faint" style="font-size:0.72rem; margin-top:0.15rem" id="span-detail-id">span_root</div>
+                </div>
+                <div class="seg" id="trace-layer-seg">
+                  <button type="button" class="active" data-trace-layer="summary">摘要</button>
+                  <button type="button" data-trace-layer="llm">LLM</button>
+                  <button type="button" data-trace-layer="tools">Tools</button>
+                  <button type="button" data-trace-layer="raw">Raw</button>
+                </div>
+              </div>
+              <div class="trace-detail-body">
+                <p class="detail-hint" id="span-detail-hint">叙事摘要：这个 span 在整次 run 里扮演什么角色。</p>
+                <div id="span-detail"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- COMPARE -->
+        <section id="view-compare" class="hidden">
+          <div class="proto-banner">
+            <div>
+              <strong>问题诊断（当前实现）→ 设计对策</strong>
+              不是换皮肤，而是换“人脑的默认阅读顺序”。
+            </div>
+          </div>
+          <div class="detail-grid">
+            <div class="panel">
+              <div class="panel-h"><h2>当前页面为什么难用</h2></div>
+              <div class="panel-b" style="color:var(--ink-muted); font-size:0.9rem;">
+                <ol>
+                  <li><b style="color:var(--ink)">三套平行叙事</b>：Objective 面板、Conversation events、Debug steps 并排堆叠，没有统一层级。</li>
+                  <li><b style="color:var(--ink)">扁平化丢失结构</b>：Trace spans 有 <code>parent_span_id</code>/<code>depth</code>，页面却按时间拍平成长链；Assignment 字段后端已有，前端未用。</li>
+                  <li><b style="color:var(--ink)">JSON 即详情</b>：Step/Trace 默认露出 Raw JSON，掩盖“用户该看什么”。</li>
+                  <li><b style="color:var(--ink)">交付与过程不分</b>：P5-04 要求 Delivered 后报告置顶、过程折叠；现状仍像日志浏览器。</li>
+                  <li><b style="color:var(--ink)">链接断裂</b>：timeline 的 <code>run_id</code> 链到 traces 过滤，但列表不认 <code>run_id</code>。</li>
+                </ol>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-h"><h2>新阅读顺序</h2></div>
+              <div class="panel-b" style="color:var(--ink-muted); font-size:0.9rem;">
+                <ol>
+                  <li><b style="color:var(--ink)">Outcome 顶栏（短）</b>：只回答要不要介入 / 交付是什么。</li>
+                  <li><b style="color:var(--ink)">Assignment 标签</b>：intake / work / verification 作上下文 chip，不占主栏。</li>
+                  <li><b style="color:var(--ink)">Runs + Steps 是主舞台</b>：左侧选 run，右侧读步骤与工具调用。</li>
+                  <li><b style="color:var(--ink)">Objective 时间线极简</b>：侧栏 3–4 句过程摘要，完整 facts 折叠。</li>
+                  <li><b style="color:var(--ink)">Trace</b>：可点时间条（无独立 Span 树）+ 右侧分层详情。</li>
+                </ol>
+                <p style="margin:1rem 0 0; font-size:0.82rem; color:var(--ink-faint);">
+                  数据契约已具备：<code>RunResponse</code> / <code>StepResponse</code>（含 <code>depth</code>/<code>parent_run_id</code>）、
+                  <code>assignments</code> 作标签、<code>timeline</code> 作侧栏摘要、<code>TraceDetail.spans</code> 作下钻。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel" style="margin-top:1rem;">
+            <div class="panel-h"><h2>建议的页面职责切分</h2></div>
+            <div class="panel-b">
+              <table class="session-table">
+                <thead>
+                  <tr>
+                    <th>表面</th>
+                    <th>回答的问题</th>
+                    <th>真相源</th>
+                    <th>默认深度</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><b>Sessions</b></td>
+                    <td>哪些会话需要我介入？进展如何？</td>
+                    <td>SessionSummary + 当前 Objective 状态摘要</td>
+                    <td>状态 + 一句焦点</td>
+                  </tr>
+                  <tr>
+                    <td><b>Session detail</b></td>
+                    <td>这次 run 里发生了什么？工具/子 agent 做了啥？</td>
+                    <td>RunLog → StepView（主）；ObjectiveView（辅）</td>
+                    <td>Runs 列表 + Steps；Outcome/标签/摘要靠边</td>
+                  </tr>
+                  <tr>
+                    <td><b>侧栏过程摘要</b></td>
+                    <td>交接/等待/交付发生过吗？</td>
+                    <td>Objective timeline（压缩）</td>
+                    <td>3–4 句；完整 facts 折叠</td>
+                  </tr>
+                  <tr>
+                    <td><b>Trace detail</b></td>
+                    <td>时间花在哪？某个 span 的 IO/成本是什么？</td>
+                    <td>Trace/Span（RunLog 投影）</td>
+                    <td>可点时间条 + 右侧分层详情</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <button type="button" class="notes-fab primary" id="toggle-notes">设计要点</button>
+  <aside class="notes hidden" id="notes">
+    <h3>检查这份方案时请盯住这些点</h3>
+    <ol>
+      <li>进入 Session 后，目光是否自然落在 <strong>Runs + Steps</strong>。</li>
+      <li>Assignment 是否只是一眼能扫过的标签，而不是又一组大卡片。</li>
+      <li>Objective 时间线是否足够短，不抢 steps 的阅读带宽。</li>
+      <li>切换 run / child run 时，steps 是否立刻成为答案。</li>
+      <li>Trace：点时间条后右侧详情是否清晰；深轨迹左侧滚动、右侧固定是否够用。</li>
+    </ol>
+  </aside>
+
+  <script>
+    const scenarios = {
+      wait: {
+        heroClass: "waiting",
+        kicker: "Needs your reply",
+        title: "建议定价区间已就绪，需要你确认取舍",
+        body: "我对比了 A/B/C 三家公开页面。若主打个人席位，建议标价 $29–$49/月；若强调团队协作，则把 $49 作为入口价更稳。\n\n请回复：采用哪一档，或告诉我必须守住的毛利底线。",
+        badge: '<span class="badge wait">waiting_user</span>',
+        actions: `
+          <button type="button" class="primary">回复并继续</button>
+          <button type="button">查看完整报告草稿</button>
+          <button type="button" class="ghost">暂停 Objective</button>
+        `,
+        meta: `
+          <span>Objective <b class="mono">obj_21af</b></span>
+          <span>Last decision <b>handoff → user</b> · expects_reply</span>
+          <span>Active assignment <b>work_02 · COMPLETED</b></span>
+        `,
+      },
+      done: {
+        heroClass: "ok",
+        kicker: "Delivered",
+        title: "周报草稿已交付",
+        body: "本周完成 3 项功能推进、修复 2 个回归；风险点是登录 flake 仍未关闭。正文可直接粘贴到飞书文档；附件含变更列表与未解决问题。",
+        badge: '<span class="badge ok">completed</span>',
+        actions: `
+          <button type="button" class="primary">复制交付报告</button>
+          <button type="button">下载 artifacts</button>
+          <button type="button" class="ghost">回到 steps</button>
+        `,
+        meta: `
+          <span>Delivery outcome <b class="mono">out_9aa1</b></span>
+          <span>Verification <b>accepted</b></span>
+          <span>Artifacts <b>2</b></span>
+        `,
+      },
+      run: {
+        heroClass: "running",
+        kicker: "In progress",
+        title: "正在验证修复是否消除 flake",
+        body: "Work assignment 已提交补丁说明；当前 verification assignment 由子 agent 复现失败用例。预算偏紧（handoff 4/5，$1.72/$2）。",
+        badge: '<span class="badge running">running</span>',
+        actions: `
+          <button type="button" class="primary">注入补充说明</button>
+          <button type="button">请求暂停（drain）</button>
+          <button type="button" class="ghost">打开当前 run</button>
+        `,
+        meta: `
+          <span>Active <b>verification_01 · RUNNING</b></span>
+          <span>Child run <b class="mono">run_c3e0</b> · depth 1</span>
+          <span>Scheduler root <b>RUNNING</b></span>
+        `,
+      },
+      pause: {
+        heroClass: "paused",
+        kicker: "Budget paused",
+        title: "LLM 成本触顶，执行已安全停下",
+        body: "Drain 已完成，checkpoint 已写入。提高 llm_cost_usd 限额或缩小抓取范围后，可从 checkpoint 恢复，不会重跑已完成的 intake。",
+        badge: '<span class="badge paused">budget_paused</span>',
+        actions: `
+          <button type="button" class="primary">调整预算并 Resume</button>
+          <button type="button">查看 checkpoint</button>
+          <button type="button" class="ghost">标记失败并结束</button>
+        `,
+        meta: `
+          <span>Checkpoint <b class="mono">ckpt_19</b></span>
+          <span>Drain <b>completed</b></span>
+          <span>Cost <b>$2.00 / $2.00</b></span>
+        `,
+      },
+    };
+
+    const assignments = [
+      { id: "intake_01", kind: "intake", status: "COMPLETED" },
+      { id: "work_02", kind: "work", status: "COMPLETED", current: true },
+      { id: "verify_01", kind: "verification", status: "SKIPPED" },
+    ];
+
+    const timeline = [
+      { cls: "ok", kind: "created", summary: "用户请求：调研竞品定价" },
+      { cls: "", kind: "work", summary: "work run 完成，产出对比建议" },
+      { cls: "wait", kind: "waiting", summary: "handoff → 用户确认档位" },
+    ];
+
+    const runs = [
+      {
+        id: "run_3a01",
+        title: "intake",
+        meta: "completed · 4 steps · $0.04",
+        status: "completed",
+        statusMeta: "root · depth 0 · 4 steps · $0.04",
+        child: false,
+        selected: false,
+        steps: [
+          { depth: 0, role: "user", preview: "对比 A/B/C 公开定价…", body: "请对比 A/B/C 三家公开定价，给出建议区间与理由。", kind: "dialogue" },
+          { depth: 0, role: "assistant", preview: "先确认范围：个人席位为主。", body: "我会按个人席位场景调研三家公开定价。", kind: "dialogue" },
+          { depth: 0, role: "assistant", preview: "intake 完成，转入 work。", body: "范围已确认，进入正式调研 assignment。", kind: "dialogue" },
+        ],
+      },
+      {
+        id: "run_7c11",
+        title: "work · research-agent",
+        meta: "completed · 6 steps · child×1",
+        status: "completed",
+        statusMeta: "root · depth 0 · 6 steps · 1 nested child · $0.28",
+        child: false,
+        selected: true,
+        steps: [
+          { depth: 0, role: "user", preview: "对比 A/B/C 公开定价，给出建议区间…", body: "请对比 A/B/C 三家公开定价，给出我们 SaaS 的建议区间与理由。优先个人席位场景。", kind: "dialogue" },
+          { depth: 0, role: "assistant", preview: "先抓取三家定价页，再汇总成对比表。", body: "计划：\n1. 读取三家公开定价页\n2. 抽取月付/年付与席位规则\n3. 给出建议区间", tools: ["web_search", "web_reader"], kind: "dialogue" },
+          { depth: 0, role: "tool", preview: "web_search → 8 results", body: "query: \"A pricing SaaS\"\nresults: 8 links (condensed)", kind: "tools" },
+          { depth: 0, role: "tool", preview: "web_reader → A/C pricing pages", body: "Extracted list prices and annual discounts for A and C.", kind: "tools" },
+          { depth: 1, role: "assistant", preview: "[child] 深入抽取 B 的席位计价规则", body: "子 agent 专注解析 B 的席位与超额费用条款。", tools: ["web_reader"], kind: "dialogue" },
+          { depth: 1, role: "tool", preview: "[child] web_reader → ok", body: "Extracted: seat tiers, annual discount 20%, overage $3/seat.", kind: "tools" },
+          { depth: 0, role: "assistant", preview: "形成建议：$29–$49，并向用户确认档位。", body: "综合三家后，建议个人档 $29–$49。需要你确认取舍后我再写最终对外文案。", kind: "dialogue" },
+        ],
+      },
+      {
+        id: "run_c3e0",
+        title: "child · extract_b",
+        meta: "completed · depth 1 · $0.09",
+        status: "completed",
+        statusMeta: "child · parent run_7c11 · depth 1 · 3 steps · $0.09",
+        child: true,
+        selected: false,
+        steps: [
+          { depth: 0, role: "user", preview: "抽取 B 的席位与超额条款", body: "从 B 定价页抽取 seat tiers / overage。", kind: "dialogue" },
+          { depth: 0, role: "tool", preview: "web_reader → ok", body: "Parsed pricing table HTML.", kind: "tools" },
+          { depth: 0, role: "assistant", preview: "seat $12–$28；overage $3", body: "B: seat tiers $12–$28, annual -20%, overage $3/seat.", kind: "dialogue" },
+        ],
+      },
+    ];
+
+    let stepFilter = "all";
+
+    // Single model: waterfall rows ARE the span navigation (no separate tree)
+    const spans = [
+      { id: "span_root", depth: 0, kind: "agent", label: "agent.run", name: "agent.run", left: 0, width: 100, dur: "12.4s", selected: true },
+      { id: "span_llm1", depth: 1, kind: "llm", label: "llm.assistant#1", name: "llm.assistant#1", left: 2, width: 17, dur: "2.1s" },
+      { id: "span_tool1", depth: 1, kind: "tool", label: "tool.web_search", name: "tool.web_search", left: 20, width: 11, dur: "1.4s" },
+      { id: "span_tool2", depth: 1, kind: "tool", label: "tool.web_reader", name: "tool.web_reader", left: 32, width: 22, dur: "2.8s" },
+      { id: "span_child", depth: 1, kind: "agent", label: "agent.child.extract_b", name: "agent.child.extract_b", left: 55, width: 32, dur: "4.0s" },
+      { id: "span_llm2", depth: 2, kind: "llm", label: "llm.assistant#2", name: "llm.assistant#2", left: 56, width: 13, dur: "1.6s" },
+      { id: "span_tool3", depth: 2, kind: "tool", label: "tool.web_reader", name: "tool.web_reader", left: 70, width: 15, dur: "1.9s" },
+      { id: "span_llm3", depth: 1, kind: "llm", label: "llm.finalization", name: "llm.finalization", left: 88, width: 9, dur: "1.1s" },
+      // Extra deep rows to show scroll behaviour for deep traces
+      { id: "span_d3a", depth: 3, kind: "tool", label: "tool.parse_table", name: "tool.parse_table", left: 72, width: 8, dur: "0.6s" },
+      { id: "span_d3b", depth: 3, kind: "llm", label: "llm.normalize", name: "llm.normalize", left: 80, width: 5, dur: "0.4s" },
+    ];
+
+    function $(sel, root = document) { return root.querySelector(sel); }
+    function $all(sel, root = document) { return [...root.querySelectorAll(sel)]; }
+
+    function showView(name) {
+      ["sessions", "session", "trace", "compare"].forEach((v) => {
+        const el = $(`#view-${v}`);
+        if (el) el.classList.toggle("hidden", v !== name);
+      });
+      $all("[data-nav]").forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-nav") === name);
+      });
+      const titles = {
+        sessions: "Sessions",
+        session: `<span class="crumb"><a href="#" data-nav="sessions">Sessions</a> /</span> sess_8f2a`,
+        trace: `<span class="crumb"><a href="#" data-nav="session">Session</a> / Trace</span>`,
+        compare: "旧页 vs 新页",
+      };
+      $("#page-title").innerHTML = titles[name];
+      $("#lens-seg").style.display = name === "session" ? "inline-flex" : "none";
+      // rebind crumb links
+      $all("#page-title [data-nav]").forEach((a) => {
+        a.addEventListener("click", (e) => {
+          e.preventDefault();
+          showView(a.getAttribute("data-nav"));
+        });
+      });
+    }
+
+    function renderOutcome(key) {
+      const s = scenarios[key];
+      const hero = $("#outcome-hero");
+      hero.className = `outcome-hero compact ${s.heroClass === "ok" ? "" : s.heroClass}`.trim();
+      if (key === "done") {
+        hero.classList.add("ok");
+        hero.style.background = "linear-gradient(135deg, color-mix(in oklab, var(--ok) 12%, var(--bg-panel)), var(--bg-panel) 55%)";
+      } else {
+        hero.style.background = "";
+      }
+      hero.innerHTML = `
+        <div class="outcome-kicker">${s.kicker}</div>
+        <div style="display:flex; gap:0.6rem; align-items:center; flex-wrap:wrap; margin-bottom:0.35rem;">
+          ${s.badge}
+          <span class="mono faint" style="font-size:0.75rem">obj_21af · session sess_8f2a</span>
+        </div>
+        <h2 class="outcome-title">${s.title}</h2>
+        <div class="outcome-body">${s.body}</div>
+        <div class="outcome-actions">${s.actions}</div>
+        <div class="meta-row">${s.meta}</div>
+      `;
+    }
+
+    function renderAssignments() {
+      $("#assign-tags").innerHTML = assignments.map((a, i) => {
+        const cls = a.status === "SKIPPED" ? "skipped" : a.status === "RUNNING" ? "running" : a.current ? "current" : "done";
+        const arrow = i < assignments.length - 1 ? '<span class="sep" aria-hidden="true">→</span>' : "";
+        return `<button type="button" class="assign-tag ${cls}" data-assign="${a.id}" data-kind="${a.kind}" title="${a.id}">${a.kind}</button>${arrow}`;
+      }).join("");
+      $all("[data-assign]").forEach((tag) => {
+        tag.addEventListener("click", () => {
+          const kind = tag.getAttribute("data-kind");
+          const run = runs.find((r) => r.title.startsWith(kind));
+          if (run) selectRun(run.id);
+        });
+      });
+    }
+
+    function renderTimeline() {
+      $("#timeline").innerHTML = timeline.map((t) => `
+        <div class="tl-compact-item ${t.cls}">
+          <div>
+            <span class="kind">${t.kind}</span>
+            ${t.summary}
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function selectRun(runId) {
+      runs.forEach((r) => { r.selected = r.id === runId; });
+      renderRuns();
+      renderSteps();
+      bindTraceButtons();
+    }
+
+    function renderRuns() {
+      $("#run-list").innerHTML = runs.map((r) => `
+        <button type="button" class="run-item ${r.child ? "child" : ""} ${r.selected ? "selected" : ""}" data-run="${r.id}">
+          <div class="run-id">${r.id}</div>
+          <div class="run-title">${r.title}</div>
+          <div class="run-meta">${r.meta}</div>
+        </button>
+      `).join("");
+      $all("[data-run]").forEach((btn) => {
+        btn.addEventListener("click", () => selectRun(btn.getAttribute("data-run")));
+      });
+      const selected = runs.find((r) => r.selected);
+      if (!selected) return;
+      $("#run-status-badge").textContent = selected.status;
+      $("#run-status-badge").className = `badge ${selected.status === "completed" ? "ok" : selected.status === "running" ? "running" : "idle"}`;
+      $("#run-status-meta").textContent = selected.statusMeta;
+      $("#run-id-label").textContent = selected.id;
+    }
+
+    function renderSteps() {
+      const selected = runs.find((r) => r.selected) || runs[0];
+      const list = selected.steps.filter((s) => stepFilter === "all" ? true : s.kind === stepFilter);
+      if (!list.length) {
+        $("#steps").innerHTML = `<div class="empty">当前筛选下没有 steps</div>`;
+        return;
+      }
+      $("#steps").innerHTML = list.map((s, idx) => `
+        <div class="step ${idx === list.length - 1 && stepFilter === "all" ? "open" : ""}" data-depth="${s.depth}" data-step="${idx}">
+          <div class="step-h">
+            <span class="step-role ${s.role}">${s.role}${s.depth ? ` · d${s.depth}` : ""}</span>
+            <span class="step-preview">${s.preview}</span>
+            <span class="faint" style="font-size:0.75rem">▸</span>
+          </div>
+          <div class="step-b">${s.body}${
+            s.tools ? s.tools.map((t) => `<div class="tool-call"><span class="name">${t}</span> · 详情见 Trace</div>`).join("") : ""
+          }</div>
+        </div>
+      `).join("");
+      $all(".step-h").forEach((h) => {
+        h.addEventListener("click", () => h.parentElement.classList.toggle("open"));
+      });
+    }
+
+    function renderBudget() {
+      const rows = [
+        { label: "Handoffs", used: 2, limit: 5, pct: 40 },
+        { label: "Verification", used: 0, limit: 3, pct: 0 },
+        { label: "LLM cost (USD)", used: 0.41, limit: 2, pct: 20.5 },
+        { label: "Active seconds", used: 420, limit: 3600, pct: 12 },
+      ];
+      $("#budget-bars").innerHTML = rows.map((r) => `
+        <div class="budget-row">
+          <div class="label"><span>${r.label}</span><span class="mono">${r.used}/${r.limit}</span></div>
+          <div class="bar ${r.pct > 80 ? "hot" : ""}"><i style="width:${r.pct}%"></i></div>
+        </div>
+      `).join("");
+      $("#artifacts").innerHTML = `
+        <div class="artifact"><span>pricing_compare.md</span><span class="mono faint">art_12</span></div>
+        <div class="artifact"><span>sources.json</span><span class="mono faint">art_13</span></div>
+        <p class="faint" style="margin:0.6rem 0 0; font-size:0.78rem;">交付报告正文来自 ObjectiveDelivered，不从最后一条 assistant message 推断。</p>
+      `;
+    }
+
+    function selectSpan(spanId) {
+      spans.forEach((s) => { s.selected = s.id === spanId; });
+      // Default back to summary when switching spans; keep raw collapsed
+      if (traceLayer === "raw") {
+        traceLayer = "summary";
+        $all("#trace-layer-seg [data-trace-layer]").forEach((b) => {
+          b.classList.toggle("active", b.getAttribute("data-trace-layer") === "summary");
+        });
+      }
+      renderFlame();
+      renderSpanDetail(spans.find((s) => s.selected));
+    }
+
+    function renderFlame() {
+      $("#flame").innerHTML = spans.map((s) => `
+        <div class="flame-row ${s.selected ? "selected" : ""}" data-span="${s.id}" style="--depth:${s.depth}" title="${s.name} · ${s.dur}">
+          <div class="flame-label"><span class="kind-dot ${s.kind}"></span>${s.label}</div>
+          <div class="flame-track">
+            <div class="flame-bar ${s.kind}" style="left:${s.left}%; width:${s.width}%"></div>
+          </div>
+          <div class="mono faint">${s.dur}</div>
+        </div>
+      `).join("");
+      $all("#flame [data-span]").forEach((row) => {
+        row.addEventListener("click", () => selectSpan(row.getAttribute("data-span")));
+      });
+    }
+
+    let traceLayer = "summary";
+    const layerHints = {
+      summary: "叙事摘要：这个 span 在整次 run 里扮演什么角色。",
+      llm: "LLM 调用层：phase / attempt / tokens / 输出预览。",
+      tools: "Tool IO 层：参数与结果预览（长文本 condensed）。",
+      raw: "Raw JSON：默认不打开；仅调试时查看完整 attributes。",
+    };
+
+    function renderSpanDetail(s) {
+      if (!s) return;
+      $("#span-detail-title").textContent = s.name;
+      $("#span-detail-id").textContent = `${s.id} · depth ${s.depth} · ${s.kind}`;
+      $("#span-detail-hint").textContent = layerHints[traceLayer];
+
+      const kindLabel = s.kind === "llm" ? "llm_call" : s.kind === "tool" ? "tool_call" : "agent";
+      const layers = {
+        summary: `
+          <dl class="kv">
+            <dt>Kind</dt><dd class="mono">${kindLabel}</dd>
+            <dt>Role</dt><dd>${
+              s.kind === "agent"
+                ? (s.depth === 0 ? "Root agent run（work assignment）" : "Nested child agent")
+                : s.kind === "llm"
+                  ? (s.name.includes("finalization") ? "Assignment finalization call" : "Assistant model turn")
+                  : "Tool execution span"
+            }</dd>
+            <dt>Window</dt><dd class="mono">${s.left}% → ${s.left + s.width}% of trace · ${s.dur}</dd>
+            <dt>Depth</dt><dd>${s.depth}（缩进已反映在左侧时间条）</dd>
+            <dt>Outcome</dt><dd>${
+              s.id === "span_root"
+                ? "Completed → DecisionAccepted (handoff to user)"
+                : s.kind === "tool"
+                  ? "success"
+                  : "completed"
+            }</dd>
+          </dl>
+        `,
+        llm: s.kind === "tool" ? `
+          <p class="faint" style="margin:0; font-size:0.85rem;">当前选中的是 tool span。切换到 Tools 层查看 IO，或点选一个 llm 条块。</p>
+        ` : `
+          <dl class="kv">
+            <dt>Phase</dt><dd class="mono">${s.name.includes("finalization") ? "assignment_finalization" : s.name.includes("normalize") ? "compaction" : "assistant"}</dd>
+            <dt>Attempt</dt><dd>1 · no retry</dd>
+            <dt>Tokens</dt><dd>in 4.2k · out 860 · cache 1.1k</dd>
+            <dt>Cost</dt><dd>$0.08</dd>
+            <dt>Preview</dt><dd>建议个人档 $29–$49…（截断；完整 messages 在 Raw）</dd>
+          </dl>
+        `,
+        tools: s.kind === "llm" ? `
+          <p class="faint" style="margin:0; font-size:0.85rem;">当前选中的是 llm span。切换到 LLM 层，或点选一个 tool 条块查看 IO。</p>
+        ` : s.kind === "agent" ? `
+          <p class="faint" style="margin:0; font-size:0.85rem;">Agent span 聚合了下属 tools。点选具体 tool 条块查看参数/结果。</p>
+          <dl class="kv" style="margin-top:0.75rem">
+            <dt>Child tools</dt><dd class="mono">web_search, web_reader ×2, parse_table</dd>
+          </dl>
+        ` : `
+          <dl class="kv">
+            <dt>Tool</dt><dd class="mono">${s.name.replace("tool.", "")}</dd>
+            <dt>Status</dt><dd>success</dd>
+            <dt>Args</dt><dd>url=https://example.com/pricing</dd>
+            <dt>Result</dt><dd>Extracted seat tiers…（长文本默认 condensed）</dd>
+          </dl>
+        `,
+        raw: `
+          <details class="quiet" ${traceLayer === "raw" ? "" : ""}>
+            <summary>展开完整 JSON（默认折叠）</summary>
+            <pre class="mono" style="margin:0.55rem 0 0; padding:0.75rem; background:var(--bg); border:1px solid var(--line); border-radius:8px; overflow:auto; max-height:40vh; font-size:0.72rem; color:var(--ink-muted);">{
+  "span_id": "${s.id}",
+  "parent_span_id": "${s.depth === 0 ? null : "…"}",
+  "depth": ${s.depth},
+  "kind": "${kindLabel}",
+  "name": "${s.name}",
+  "duration_ms": ${Math.round(parseFloat(s.dur) * 1000) || 0},
+  "attributes": { "…": "…" },
+  "llm_details": ${s.kind === "llm" ? '{ "…" : "…" }' : "null"},
+  "tool_details": ${s.kind === "tool" ? '{ "…" : "…" }' : "null"}
+}</pre>
+          </details>
+          <p class="faint" style="margin:0.65rem 0 0; font-size:0.78rem;">生产默认停留在摘要层；Raw 仅在需要核对 attributes 时展开。</p>
+        `,
+      };
+      $("#span-detail").innerHTML = layers[traceLayer];
+    }
+
+    function renderSpans() {
+      renderFlame();
+      renderSpanDetail(spans.find((s) => s.selected));
+    }
+
+    function bindTraceButtons() {
+      $all("[data-open-trace]").forEach((btn) => {
+        btn.addEventListener("click", () => showView("trace"));
+      });
+    }
+
+    // Nav
+    $all("[data-nav]").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        showView(btn.getAttribute("data-nav"));
+      });
+    });
+
+    $all("[data-open-session]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const key = row.getAttribute("data-open-session");
+        renderOutcome(key === "done" ? "done" : key === "run" ? "run" : key === "pause" ? "pause" : "wait");
+        $all("[data-scenario]").forEach((b) => b.classList.toggle("active", b.getAttribute("data-scenario") === (key === "done" ? "done" : key === "run" ? "run" : key === "pause" ? "pause" : "wait")));
+        showView("session");
+      });
+    });
+
+    $all("[data-scenario]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $all("[data-scenario]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        renderOutcome(btn.getAttribute("data-scenario"));
+      });
+    });
+
+    $all("[data-step-filter]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $all("[data-step-filter]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        stepFilter = btn.getAttribute("data-step-filter");
+        renderSteps();
+      });
+    });
+
+    $all("[data-trace-layer]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $all("[data-trace-layer]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        traceLayer = btn.getAttribute("data-trace-layer");
+        renderSpanDetail(spans.find((s) => s.selected));
+      });
+    });
+
+    $all("#lens-seg [data-lens]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        $all("#lens-seg [data-lens]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        const lens = btn.getAttribute("data-lens");
+        // Debug lens just opens the last step and keeps runs primary
+        if (lens === "debug") {
+          $all(".step").forEach((el) => el.classList.add("open"));
+        }
+      });
+    });
+
+    $("#toggle-notes").addEventListener("click", () => {
+      $("#notes").classList.toggle("hidden");
+    });
+
+    // init
+    renderOutcome("wait");
+    renderAssignments();
+    renderTimeline();
+    renderRuns();
+    renderSteps();
+    renderBudget();
+    renderSpans();
+    bindTraceButtons();
+  </script>
+</body>
+</html>

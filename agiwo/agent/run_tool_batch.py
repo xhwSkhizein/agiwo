@@ -47,6 +47,8 @@ async def execute_tool_batch_cycle(
         tools_map=runtime.tools_map,
         context=context,
         abort_signal=runtime.abort_signal,
+        writer=writer,
+        retry_coordinator=getattr(runtime, "retry_coordinator", None),
     )
     terminated = False
     introspection_enabled = _introspection_enabled(context, runtime)

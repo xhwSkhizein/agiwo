@@ -11,6 +11,7 @@ from agiwo.tool.context import ToolContext
 class AgentToolContext(ToolContext):
     parent_run_id: str
     session_runtime: SessionRuntime
+    objective_id: str | None = None
 
     @classmethod
     def from_run_context(
@@ -33,6 +34,7 @@ class AgentToolContext(ToolContext):
             tool_call_id=tool_call_id,
             parent_run_id=ctx.run_id,
             session_runtime=ctx.session_runtime,
+            objective_id=ctx.objective_id,
         )
 
 

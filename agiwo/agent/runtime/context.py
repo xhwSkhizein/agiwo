@@ -5,9 +5,12 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any
 
+from agiwo.agent.budget_gate import LlmBudgetGate
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import HookRegistry
 from agiwo.agent.models.run import RunIdentity, RunLedger
+from agiwo.agent.pause import PauseRequest
+from agiwo.agent.retry import RetryCoordinator
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.llm.base import Model
 from agiwo.tool.base import BaseTool
@@ -29,12 +32,21 @@ class RunRuntime:
     max_input_tokens_per_call: int
     max_context_window: int | None
     compact_prompt: str | None
+    retry_coordinator: RetryCoordinator | None = None
 
 
 class RunContext:
     """Facade for run identity, mutable ledger state, and IO dependencies."""
 
-    __slots__ = ("_identity", "ledger", "_session_runtime", "config", "hooks")
+    __slots__ = (
+        "_identity",
+        "ledger",
+        "_session_runtime",
+        "config",
+        "hooks",
+        "llm_budget_gate",
+        "pause_request",
+    )
 
     def __init__(
         self,
@@ -43,6 +55,7 @@ class RunContext:
         ledger: RunLedger | None = None,
         session_runtime: SessionRuntime,
         messages: list[dict[str, Any]] | None = None,
+        llm_budget_gate: LlmBudgetGate | None = None,
     ) -> None:
         self._identity = identity
         self.ledger = ledger or RunLedger(messages=list(messages or []))
@@ -52,6 +65,13 @@ class RunContext:
         # operate safely if they fire before execute_run has injected them.
         self.config = AgentOptions()
         self.hooks = HookRegistry()
+        self.llm_budget_gate = llm_budget_gate
+        self.pause_request: PauseRequest | None = None
+
+    def request_pause(self, reason: str) -> None:
+        """Request a cooperative recoverable pause at the next safe boundary."""
+        if self.pause_request is None:
+            self.pause_request = PauseRequest(reason=reason)
 
     @property
     def run_id(self) -> str:
@@ -76,6 +96,18 @@ class RunContext:
     @property
     def parent_run_id(self) -> str | None:
         return self._identity.parent_run_id
+
+    @property
+    def objective_id(self) -> str | None:
+        return self._identity.objective_id
+
+    @property
+    def run_tree_role(self):
+        return self._identity.run_tree_role
+
+    @property
+    def identity(self) -> RunIdentity:
+        return self._identity
 
     @property
     def timeout_at(self) -> float | None:

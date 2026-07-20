@@ -100,6 +100,19 @@ async def build_wait_result(
     if state is None or not is_terminal_wait_state(state):
         return None
     latest_run = await runtime_facts.get_latest_run_view(state)
+    if latest_run is not None and latest_run.status == RunStatus.PAUSED:
+        checkpoint_id = None
+        # Checkpoint id is on RunPaused; surface via metadata if available later.
+        return RunOutput(
+            session_id=latest_run.session_id,
+            run_id=latest_run.run_id,
+            response=latest_run.response,
+            metrics=latest_run.metrics,
+            termination_reason=None,
+            paused=True,
+            checkpoint_id=checkpoint_id,
+            metadata={"pause_reason": "recoverable_pause"},
+        )
     if latest_run is not None and latest_run.status == RunStatus.COMPLETED:
         return RunOutput(
             session_id=latest_run.session_id,
@@ -108,6 +121,7 @@ async def build_wait_result(
             metrics=latest_run.metrics,
             termination_reason=latest_run.termination_reason
             or TerminationReason.COMPLETED,
+            finalization=latest_run.finalization,
         )
     return build_wait_result_from_last_run(state)
 

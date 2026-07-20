@@ -1,6 +1,6 @@
 # P3-01：实现 ObjectiveBudget 账本与状态配额
 
-状态：planned
+状态：done
 
 ## 目标
 

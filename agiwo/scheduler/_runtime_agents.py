@@ -28,6 +28,9 @@ async def ensure_root_runtime_agent(
     cached_canonical = rt.canonical_agents.get(state_id)
     cached_runtime = rt.agents.get(state_id)
     if cached_canonical is canonical_agent and cached_runtime is not None:
+        # Objective dispatch may refresh the gate on the canonical agent
+        # between Assignments; keep the runtime clone in sync.
+        cached_runtime.llm_budget_gate = canonical_agent.llm_budget_gate
         return cached_runtime
 
     runtime_agent = Agent(
@@ -38,6 +41,7 @@ async def ensure_root_runtime_agent(
         hooks=canonical_agent.hooks,
     )
     runtime_agent._inject_system_tools(list(scheduling_tools))
+    runtime_agent.llm_budget_gate = canonical_agent.llm_budget_gate
 
     rt.agents[state_id] = runtime_agent
     rt.canonical_agents[state_id] = canonical_agent

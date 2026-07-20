@@ -1,6 +1,6 @@
 # P5-01：提供异步 Objective HTTP API
 
-状态：planned
+状态：done
 
 ## 目标
 

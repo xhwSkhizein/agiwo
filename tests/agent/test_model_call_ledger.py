@@ -95,9 +95,7 @@ def test_run_limit_policy_allows_one_finalization_over_limit() -> None:
     policy = RunLimitPolicy()
 
     summary = policy.check_before_attempt(ledger, ModelCallPhase.TERMINATION_SUMMARY)
-    assignment = policy.check_before_attempt(
-        ledger, ModelCallPhase.ASSIGNMENT_FINALIZATION
-    )
+    assignment = policy.check_before_attempt(ledger, ModelCallPhase.RUN_FINALIZATION)
     correction = policy.check_before_attempt(
         ledger, ModelCallPhase.FINALIZATION_CORRECTION
     )
@@ -112,7 +110,7 @@ def test_run_limit_policy_allows_each_finalization_phase_once() -> None:
     policy = RunLimitPolicy()
 
     for phase in (
-        ModelCallPhase.ASSIGNMENT_FINALIZATION,
+        ModelCallPhase.RUN_FINALIZATION,
         ModelCallPhase.FINALIZATION_CORRECTION,
     ):
         decision = policy.check_before_attempt(ledger, phase)
@@ -120,7 +118,7 @@ def test_run_limit_policy_allows_each_finalization_phase_once() -> None:
         ledger.mark_finalization_consumed(phase)
 
     for phase in (
-        ModelCallPhase.ASSIGNMENT_FINALIZATION,
+        ModelCallPhase.RUN_FINALIZATION,
         ModelCallPhase.FINALIZATION_CORRECTION,
     ):
         decision = policy.check_before_attempt(ledger, phase)
@@ -141,10 +139,6 @@ def test_run_limit_policy_exhausts_finalization_slot() -> None:
 async def test_execute_model_call_records_phase_and_identity() -> None:
     state = _make_context(limit=5)
     writer = RunStateWriter(state)
-    projected: list[object] = []
-
-    async def project(entries: list[object]) -> None:
-        projected.extend(entries)
 
     result = await execute_model_call(
         model=_FixedResponseModel("assistant reply"),
@@ -152,15 +146,13 @@ async def test_execute_model_call_records_phase_and_identity() -> None:
         writer=writer,
         phase=ModelCallPhase.ASSISTANT,
         abort_signal=None,
-        project_entries=project,
     )
 
     assert result.step.content == "assistant reply"
     assert state.ledger.model_calls.total_attempts == 1
-    started = next(entry for entry in projected if isinstance(entry, LLMCallStarted))
-    completed = next(
-        entry for entry in projected if isinstance(entry, LLMCallCompleted)
-    )
+    entries = await state.session_runtime.list_run_log_entries()
+    started = next(entry for entry in entries if isinstance(entry, LLMCallStarted))
+    completed = next(entry for entry in entries if isinstance(entry, LLMCallCompleted))
     assert started.phase is ModelCallPhase.ASSISTANT
     assert started.logical_call_id == completed.logical_call_id
     assert started.attempt_no == 1
@@ -174,10 +166,6 @@ async def test_provider_retry_keeps_logical_call_id_and_increments_attempt(
     monkeypatch.setattr("agiwo.agent.llm_caller.asyncio.sleep", _noop_sleep)
     state = _make_context(limit=5)
     writer = RunStateWriter(state)
-    projected: list[object] = []
-
-    async def project(entries: list[object]) -> None:
-        projected.extend(entries)
 
     await execute_model_call(
         model=_FixedResponseModel("after retry", fail_times=1),
@@ -185,11 +173,11 @@ async def test_provider_retry_keeps_logical_call_id_and_increments_attempt(
         writer=writer,
         phase=ModelCallPhase.ASSISTANT,
         abort_signal=None,
-        project_entries=project,
     )
 
-    failed = [entry for entry in projected if isinstance(entry, LLMCallFailed)]
-    completed = [entry for entry in projected if isinstance(entry, LLMCallCompleted)]
+    entries = await state.session_runtime.list_run_log_entries()
+    failed = [entry for entry in entries if isinstance(entry, LLMCallFailed)]
+    completed = [entry for entry in entries if isinstance(entry, LLMCallCompleted)]
     assert len(failed) == 1
     assert len(completed) == 1
     assert failed[0].logical_call_id == completed[0].logical_call_id
@@ -209,10 +197,6 @@ async def test_provider_retry_rechecks_work_limit_before_next_attempt(
     state = _make_context(limit=1)
     writer = RunStateWriter(state)
     model = _FixedResponseModel("should-not-complete", fail_times=2)
-    projected: list[object] = []
-
-    async def project(entries: list[object]) -> None:
-        projected.extend(entries)
 
     with pytest.raises(ModelCallLimitExceeded):
         await execute_model_call(
@@ -221,12 +205,12 @@ async def test_provider_retry_rechecks_work_limit_before_next_attempt(
             writer=writer,
             phase=ModelCallPhase.ASSISTANT,
             abort_signal=None,
-            project_entries=project,
         )
 
     assert model._calls == 1
     assert state.ledger.model_calls.total_attempts == 1
-    assert any(isinstance(entry, LLMCallFailed) for entry in projected)
+    entries = await state.session_runtime.list_run_log_entries()
+    assert any(isinstance(entry, LLMCallFailed) for entry in entries)
 
 
 @pytest.mark.asyncio
@@ -240,10 +224,6 @@ async def test_finalization_over_limit_retry_has_no_second_allowance(
     state.ledger.model_calls.limit_trigger_ordinal = 1
     writer = RunStateWriter(state)
     model = _FixedResponseModel("summary", fail_times=2)
-    projected: list[object] = []
-
-    async def project(entries: list[object]) -> None:
-        projected.extend(entries)
 
     with pytest.raises(ModelCallLimitExceeded):
         await execute_model_call(
@@ -252,7 +232,6 @@ async def test_finalization_over_limit_retry_has_no_second_allowance(
             writer=writer,
             phase=ModelCallPhase.TERMINATION_SUMMARY,
             abort_signal=None,
-            project_entries=project,
             messages=[{"role": "user", "content": "summarize"}],
         )
 
@@ -261,7 +240,8 @@ async def test_finalization_over_limit_retry_has_no_second_allowance(
     assert state.ledger.model_calls.is_finalization_consumed(
         ModelCallPhase.TERMINATION_SUMMARY
     )
-    assert any(isinstance(entry, LLMCallFailed) for entry in projected)
+    entries = await state.session_runtime.list_run_log_entries()
+    assert any(isinstance(entry, LLMCallFailed) for entry in entries)
 
 
 @pytest.mark.asyncio
@@ -271,10 +251,6 @@ async def test_termination_summary_allowed_over_work_limit() -> None:
     state.ledger.model_calls.limit_trigger_ordinal = 1
     state.ledger.termination_reason = TerminationReason.MAX_STEPS
     writer = RunStateWriter(state)
-    projected: list[object] = []
-
-    async def project(entries: list[object]) -> None:
-        projected.extend(entries)
 
     await execute_model_call(
         model=_FixedResponseModel("summary"),
@@ -282,13 +258,11 @@ async def test_termination_summary_allowed_over_work_limit() -> None:
         writer=writer,
         phase=ModelCallPhase.TERMINATION_SUMMARY,
         abort_signal=None,
-        project_entries=project,
         messages=[{"role": "user", "content": "summarize"}],
     )
 
-    completed = next(
-        entry for entry in projected if isinstance(entry, LLMCallCompleted)
-    )
+    entries = await state.session_runtime.list_run_log_entries()
+    completed = next(entry for entry in entries if isinstance(entry, LLMCallCompleted))
     assert completed.phase is ModelCallPhase.TERMINATION_SUMMARY
     assert state.ledger.model_calls.total_attempts == 2
     assert state.ledger.model_calls.limit_trigger_ordinal == 1
@@ -300,9 +274,6 @@ async def test_execute_model_call_raises_when_work_limit_exceeded() -> None:
     state.ledger.model_calls.total_attempts = 1
     writer = RunStateWriter(state)
 
-    async def project(entries: list[object]) -> None:
-        del entries
-
     with pytest.raises(ModelCallLimitExceeded):
         await execute_model_call(
             model=_FixedResponseModel(),
@@ -310,7 +281,6 @@ async def test_execute_model_call_raises_when_work_limit_exceeded() -> None:
             writer=writer,
             phase=ModelCallPhase.ASSISTANT,
             abort_signal=None,
-            project_entries=project,
         )
 
 

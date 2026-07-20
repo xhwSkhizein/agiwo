@@ -47,5 +47,8 @@ dev = [
     "pytest-asyncio>=0.23.0",
 ]
 
+[tool.uv]
+python-preference = "only-managed"
+
 [tool.uv.sources]
 agiwo = { path = "..", editable = true }

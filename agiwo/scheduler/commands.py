@@ -7,6 +7,7 @@ from types import MappingProxyType
 from typing import Literal
 
 from agiwo.agent import AgentStreamItem, UserInput
+from agiwo.agent.models.execution import RunExecutionRequest
 from agiwo.scheduler.models import (
     AgentState,
     PendingEvent,
@@ -33,6 +34,7 @@ class RouteStreamMode(str, Enum):
 class DispatchReason(str, Enum):
     ROOT_SUBMIT = "root_submit"
     ROOT_QUEUED_INPUT = "root_queued_input"
+    OBJECTIVE_ROOT = "objective_root"
     CHILD_PENDING = "child_pending"
     WAKE_READY = "wake_ready"
     WAKE_EVENTS = "wake_events"
@@ -45,6 +47,7 @@ class DispatchAction:
     reason: DispatchReason
     input_override: UserInput | None = None
     events: tuple[PendingEvent, ...] = ()
+    execution_request: RunExecutionRequest | None = None
 
 
 @dataclass(frozen=True, slots=True)

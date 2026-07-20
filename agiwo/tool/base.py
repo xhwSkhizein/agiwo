@@ -1,11 +1,20 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import time
+from enum import Enum
 from typing import Any, Literal
 
 from agiwo.config.termination import TerminationReason
 from agiwo.tool.context import RunContextLike, ToolContext
 from agiwo.utils.abort_signal import AbortSignal
+
+
+class ToolIdempotency(str, Enum):
+    """Whether the runtime may safely auto-retry the same tool attempt."""
+
+    GUARANTEED = "guaranteed"
+    CONDITIONAL = "conditional"
+    NOT_IDEMPOTENT = "not_idempotent"
 
 
 @dataclass
@@ -179,11 +188,20 @@ class BaseTool(ABC):
     timeout_seconds: int = 30
     concurrency_safe: bool = True
     is_stateless: bool = False  # Whether tool instance can be cached and reused
+    # Default: never auto-retry infrastructure-level tool attempts.
+    idempotency: ToolIdempotency = ToolIdempotency.NOT_IDEMPOTENT
+    # When True, runtime commits ExternalEffectMayHaveStarted before execute.
+    may_have_external_effect: bool = False
 
     @property
     @abstractmethod
     def name(self) -> str:
         """The tool name."""
+
+    def idempotency_key(self, parameters: dict[str, Any]) -> str | None:
+        """Stable key required when ``idempotency`` is CONDITIONAL."""
+        del parameters
+        return None
 
     @property
     @abstractmethod

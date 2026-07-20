@@ -1,6 +1,6 @@
 # P2-03：实现 Outbox dispatcher 与幂等派发
 
-状态：planned
+状态：**done**（2026-07-18）
 
 ## 目标
 

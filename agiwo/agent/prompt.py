@@ -317,6 +317,12 @@ async def build_system_prompt(
 
     documents = document_store.read(workspace)
     tool_names = {tool.name for tool in (tools or [])}
+    tools_xml = _render_tools(
+        tuple((tool.name, tool.get_short_description()) for tool in (tools or []))
+    )
+    # TOOLS.md duplicates the live tool catalog; keep it only when no tools
+    # are injected so the prompt stays useful without paying twice for tokens.
+    tools_document = "" if tools_xml else _render_tools_document(documents)
     sections = [
         _render_identity(documents),
         _render_soul(workspace, documents),
@@ -332,10 +338,8 @@ async def build_system_prompt(
             has_update_plan="update_plan" in tool_names,
             has_review_trajectory="review_trajectory" in tool_names,
         ),
-        _render_tools_document(documents),
-        _render_tools(
-            tuple((tool.name, tool.get_short_description()) for tool in (tools or []))
-        ),
+        tools_document,
+        tools_xml,
         f"---\n\n{skills_section}".strip() if skills_section else "",
         _render_user(documents),
     ]

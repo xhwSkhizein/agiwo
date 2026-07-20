@@ -170,6 +170,12 @@ class StepView:
             msg["tool_call_id"] = self.tool_call_id
         if self.name is not None:
             msg["name"] = self.name
+        if self.user_input is not None:
+            user_message = UserMessage.from_value(self.user_input)
+            if not user_message.is_user_provided:
+                msg["is_user_provided"] = False
+            if user_message.objective_input_id is not None:
+                msg["objective_input_id"] = user_message.objective_input_id
         return msg
 
     @classmethod

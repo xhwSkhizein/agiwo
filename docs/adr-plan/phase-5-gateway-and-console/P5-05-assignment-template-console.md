@@ -1,6 +1,6 @@
 # P5-05：实现 Assignment 模板管理界面
 
-状态：planned
+状态：done
 
 ## 目标
 

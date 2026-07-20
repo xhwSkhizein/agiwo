@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from agiwo.config.settings import settings as sdk_settings
+from agiwo.objective import default_assignment_templates
 from server.config import ConsoleConfig
 from server.services.agent_registry import AgentConfigRecord
 from server.services.agent_registry.store import create_agent_registry_store
@@ -25,6 +26,7 @@ def _make_record(
             "base_url": "https://api.example.com/v1",
             "api_key_env_name": "TEST_API_KEY",
         },
+        assignment_templates=default_assignment_templates(),
         created_at=updated_at - timedelta(minutes=1),
         updated_at=updated_at,
     )

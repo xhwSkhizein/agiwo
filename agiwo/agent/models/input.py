@@ -71,6 +71,7 @@ class UserMessage:
     content: list[ContentPart]
     context: ChannelContext | None = None
     is_user_provided: bool = True
+    objective_input_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -80,6 +81,8 @@ class UserMessage:
         }
         if not self.is_user_provided:
             payload["is_user_provided"] = False
+        if self.objective_input_id is not None:
+            payload["objective_input_id"] = self.objective_input_id
         return payload
 
     @classmethod
@@ -92,6 +95,7 @@ class UserMessage:
                 else None
             ),
             is_user_provided=data.get("is_user_provided", True),
+            objective_input_id=data.get("objective_input_id"),
         )
 
     @classmethod
@@ -103,13 +107,19 @@ class UserMessage:
         return value
 
     @classmethod
-    def from_system(cls, value: "UserInput") -> "UserMessage":
+    def from_system(
+        cls,
+        value: "UserInput",
+        *,
+        objective_input_id: str | None = None,
+    ) -> "UserMessage":
         """Build a system-generated user-role message (not from a real user)."""
         normalized = cls.from_value(value)
         return cls(
             content=normalized.content,
             context=normalized.context,
             is_user_provided=False,
+            objective_input_id=objective_input_id,
         )
 
     @classmethod

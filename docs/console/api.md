@@ -52,7 +52,7 @@ Create a new agent configuration.
   "allowed_tools": ["bash", "web_search"],
   "allowed_skills": ["brainstorming"],
   "options": {
-    "max_steps": 60,
+    "max_steps_per_run": 60,
     "run_timeout": 900
   },
   "model_params": {
@@ -102,7 +102,7 @@ Get session detail, including current base agent binding and latest summary fiel
 
 ### `POST /api/sessions/{session_id}/input`
 
-Send new user input into a session and receive SSE events.
+Send user input through `SessionObjectiveGateway` (create or continue an Objective). Optional header: `Idempotency-Key`.
 
 **Request:**
 ```json
@@ -111,22 +111,18 @@ Send new user input into a session and receive SSE events.
 }
 ```
 
-**Response:**
-
-SSE messages use the event type as the SSE `event` field, and `AgentStreamItem.to_dict()` as the JSON payload:
+**Response (SSE):**
 
 ```text
-event: run_started
-data: {"type":"run_started", ...}
+event: objective_ack
+data: {"type":"objective_ack","objective_id":"obj_...","status":"CREATED"}
 
-event: step_delta
-data: {"type":"step_delta","delta":{"content":"The first approach ..."}}
-
-event: run_completed
-data: {"type":"run_completed","response":"...","termination_reason":"completed"}
+event: objective_event
+id: 1
+data: {"type":"objective_event","sequence":1,"kind":"ObjectiveCreated","summary":"..."}
 ```
 
-If the session is already attached to a running root and no direct stream is available, the endpoint emits a `scheduler_ack` event instead.
+The stream briefly follows new Objective facts, then ends. For longer watches use `GET /api/objectives/{id}/events`. Debug-only Scheduler streaming remains on `/api/scheduler/*`.
 
 ### `POST /api/sessions/{session_id}/cancel`
 
@@ -134,7 +130,7 @@ Cancel the active scheduler root bound to the session.
 
 ### `POST /api/sessions/{session_id}/fork`
 
-Fork a session into a new session ID.
+Fork a session into a new session ID. Does not copy active Objectives or checkpoints. `context_summary` is injected once into the first Objective of the new session.
 
 **Request:**
 ```json
@@ -143,9 +139,13 @@ Fork a session into a new session ID.
 }
 ```
 
-### `DELETE /api/sessions/{session_id}`
+### `POST /api/sessions/{session_id}/archive`
 
-Delete a stored session.
+Archive a session (ordinary “delete”). Active Objectives are paused to `USER_PAUSED` before `archived_at` is set.
+
+### `POST /api/sessions/{session_id}/restore`
+
+Clear `archived_at`. Does **not** resume paused Objectives.
 
 ### `GET /api/sessions/{session_id}/summary`
 
@@ -154,6 +154,74 @@ Fetch the aggregated summary view for one session.
 ### `GET /api/sessions/{session_id}/steps`
 
 Fetch session steps. Supports `start_seq`, `end_seq`, `run_id`, `agent_id`, `limit`, and `order`.
+
+### `GET /api/sessions/{session_id}/objectives`
+
+List Objectives for a session (terminal and active).
+
+## Objectives
+
+Ordinary user work is modeled as Objectives inside a Session. Mutating endpoints require the `Idempotency-Key` header.
+
+### `POST /api/objectives`
+
+Create an Objective asynchronously. Returns immediately with `objective_id`.
+
+**Request:**
+```json
+{
+  "session_id": "session-123",
+  "message": "Draft the weekly status update",
+  "budget": {
+    "handoffs": 10,
+    "verification_attempts": 5,
+    "llm_cost_usd": 5.0,
+    "active_seconds": 3600
+  }
+}
+```
+
+### `GET /api/objectives/{objective_id}`
+
+Fetch the projected Objective view (status, budget, timeline, delivery).
+
+### `GET /api/objectives/{objective_id}/metrics`
+
+Objective-level aggregates (assignment counts, budget used/limit, elapsed time). Truth source is ObjectiveLog via `ObjectiveView`; not a second ledger.
+
+### `GET /api/objectives/{objective_id}/timeline`
+
+Paginated timeline nodes (`after_sequence`, `limit`).
+
+### `GET /api/objectives/{objective_id}/events`
+
+Replayable SSE of Objective facts. Supports `Last-Event-ID` / `after_sequence`. Content is always re-read from the store; wakeups are not the truth source.
+
+### `POST /api/objectives/{objective_id}/inputs`
+
+Submit additional user input (running inject, waiting reply, or deferred when paused).
+
+### `POST /api/objectives/{objective_id}/inputs/{input_id}/externalize`
+
+Authorize externalizing a capacity-exceeding input (summary + optional content hash).
+
+### `POST /api/objectives/{objective_id}/pause`
+
+Recoverable pause (`reason`, default `user_pause`). Not cancel.
+
+### `POST /api/objectives/{objective_id}/resume`
+
+Resume a paused Objective (`reason`, default `user_resume`).
+
+### `POST /api/objectives/{objective_id}/budget`
+
+Adjust budget limits (handoffs / verification / llm_cost_usd / active_seconds).
+
+### Assignment templates
+
+- `GET /api/agents/templates/defaults` — SDK default template set
+- `POST /api/agents/templates/preview` — render one template with fixed example context
+- Agent create/update bodies may include `assignment_templates: { intake, work, verification }`
 
 ## Scheduler
 

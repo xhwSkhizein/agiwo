@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
 
 const apiMocks = vi.hoisted(() => ({
@@ -20,7 +20,7 @@ vi.mock("@/lib/api", async () => {
 import TraceDetailPage from "./page";
 
 describe("TraceDetailPage", () => {
-  test("renders unified trace diagnostics without mainline debug split", async () => {
+  test("renders clickable timeline with right-hand span detail", async () => {
     apiMocks.getTrace.mockResolvedValue({
       trace_id: "trace-1",
       agent_id: "agent-1",
@@ -39,115 +39,112 @@ describe("TraceDetailPage", () => {
       total_cache_creation_tokens: 0,
       total_token_cost: 0.01,
       total_llm_calls: 1,
-      total_tool_calls: 2,
+      total_tool_calls: 1,
       input_query: "fix the bug",
       final_output: "done",
-      spans: [],
-      mainline_events: [
+      spans: [
         {
-          id: "evt-1",
-          kind: "review_checkpoint",
-          title: "Review Checkpoint",
-          summary: "triggered by step_interval after 8 steps",
+          span_id: "root-1",
+          trace_id: "trace-1",
+          parent_span_id: null,
+          kind: "agent",
+          name: "agent.run",
+          start_time: "2026-04-25T12:00:00Z",
+          end_time: "2026-04-25T12:00:02Z",
+          duration_ms: 2000,
           status: "ok",
-          sequence: 8,
-          timestamp: "2026-04-25T12:00:00Z",
+          error_message: null,
+          depth: 0,
+          attributes: {},
+          input_preview: "fix the bug",
+          output_preview: "done",
+          metrics: {},
+          llm_details: null,
+          tool_details: null,
           run_id: "run-1",
-          agent_id: "agent-1",
-          details: {
-            trigger_reason: "step_interval",
-            steps_since_last_review: 8,
-          },
+          step_id: null,
         },
-      ],
-      review_cycles: [
-        {
-          cycle_id: "run-1:8",
-          run_id: "run-1",
-          agent_id: "agent-1",
-          trigger_reason: "step_interval",
-          steps_since_last_review: 8,
-          active_milestone: "Fix auth",
-          active_milestone_id: null,
-          hook_advice: "narrow the search",
-          aligned: false,
-          experience: "switch plan",
-          tool_usefulness: [
-            { tool_call_id: "tc-a", tool_name: "bash", score: 1 },
-          ],
-          review_tool_call_id: "tc-review",
-          review_latency_ms: 12,
-          started_at: "2026-04-25T12:00:00Z",
-          resolved_at: "2026-04-25T12:00:01Z",
-          raw_notice: "Trigger: step_interval",
-        },
-      ],
-      llm_calls: [
         {
           span_id: "llm-1",
+          trace_id: "trace-1",
+          parent_span_id: "root-1",
+          kind: "llm_call",
+          name: "llm.assistant#1",
+          start_time: "2026-04-25T12:00:00.200Z",
+          end_time: "2026-04-25T12:00:01Z",
+          duration_ms: 800,
+          status: "ok",
+          error_message: null,
+          depth: 1,
+          attributes: {},
+          input_preview: null,
+          output_preview: "I will inspect auth",
+          metrics: { "tokens.input": 4, "tokens.output": 6, model: "test" },
+          llm_details: { phase: "assistant", attempt_no: 1, model: "test" },
+          tool_details: null,
           run_id: "run-1",
-          agent_id: "agent-1",
-          model: "gpt-5.4",
-          provider: "openai-response",
-          finish_reason: "tool_calls",
-          duration_ms: 900,
-          first_token_latency_ms: 321,
-          input_tokens: 100,
-          output_tokens: 20,
-          total_tokens: 120,
-          message_count: 6,
-          tool_schema_count: 2,
-          response_tool_call_count: 1,
-          output_preview: "Looking at JWT references",
+          step_id: null,
+        },
+        {
+          span_id: "tool-1",
+          trace_id: "trace-1",
+          parent_span_id: "root-1",
+          kind: "tool_call",
+          name: "tool.bash",
+          start_time: "2026-04-25T12:00:01Z",
+          end_time: "2026-04-25T12:00:01.500Z",
+          duration_ms: 500,
+          status: "ok",
+          error_message: null,
+          depth: 1,
+          attributes: {},
+          input_preview: null,
+          output_preview: "ok",
+          metrics: {},
+          llm_details: null,
+          tool_details: {
+            tool_name: "bash",
+            arguments: { command: "ls" },
+            result: "ok",
+          },
+          run_id: "run-1",
+          step_id: null,
         },
       ],
+      mainline_events: [],
+      review_cycles: [],
       runtime_decisions: [
         {
-          kind: "compaction",
-          sequence: 9,
-          run_id: "run-1",
-          agent_id: "agent-1",
+          kind: "compaction_failed",
+          summary: "compaction failed once",
+          sequence: 2,
           created_at: "2026-04-25T12:00:01Z",
-          summary: "Context compacted from 1000 to 200 tokens",
-          details: {
-            start_sequence: 1,
-            end_sequence: 8,
-            before_token_estimate: 1000,
-            after_token_estimate: 200,
-          },
-        },
-      ],
-      timeline_events: [
-        {
-          kind: "review_checkpoint",
-          timestamp: "2026-04-25T12:00:00Z",
-          sequence: 8,
           run_id: "run-1",
           agent_id: "agent-1",
-          span_id: "span-1",
-          step_id: "step-1",
-          title: "Review Checkpoint",
-          summary: "triggered by step_interval after 8 steps",
-          status: "ok",
-          details: {
-            trigger_reason: "step_interval",
-            steps_since_last_review: 8,
-          },
+          details: {},
         },
       ],
+      timeline_events: [],
+      llm_calls: [],
     });
 
     render(<TraceDetailPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Agent Execution Diagnostics")).toBeInTheDocument();
+      expect(screen.getByText("Execution timeline")).toBeInTheDocument();
     });
 
-    expect(screen.queryByRole("button", { name: "Mainline" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Debug" })).not.toBeInTheDocument();
-    expect(screen.getByText("fix the bug")).toBeInTheDocument();
-    expect(screen.getAllByText("Context compacted from 1000 to 200 tokens").length).toBeGreaterThan(0);
-    expect(screen.queryByText("Run Narrative")).not.toBeInTheDocument();
-    expect(screen.queryByText("Span Waterfall (0 spans)")).not.toBeInTheDocument();
+    expect(screen.getAllByText("fix the bug").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("agent.run").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /llm\.assistant#1/i })).toBeInTheDocument();
+    expect(screen.queryByText("Agent Execution Diagnostics")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /llm\.assistant#1/i }));
+    fireEvent.click(screen.getByRole("button", { name: "llm" }));
+    expect(await screen.findByText("assistant")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /tool\.bash/i }));
+    fireEvent.click(screen.getByRole("button", { name: "tools" }));
+    expect(await screen.findByText("bash")).toBeInTheDocument();
   });
 });

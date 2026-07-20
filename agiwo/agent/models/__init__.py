@@ -7,6 +7,7 @@ from agiwo.agent.models.config import (
     RunLogStorageConfig,
     TraceStorageConfig,
 )
+from agiwo.agent.models.finalization import RunFinalizationResult
 from agiwo.agent.models.input import (
     ChannelContext,
     ContentPart,
@@ -115,6 +116,7 @@ __all__ = [
     "MessageRole",
     "Milestone",
     "RunFailed",
+    "RunFinalizationResult",
     "RunFinished",
     "RunCompletedEvent",
     "RunFailedEvent",

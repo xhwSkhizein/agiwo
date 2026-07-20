@@ -1435,6 +1435,91 @@ def _detect_console_tool_catalog_text_errors(
     return errors
 
 
+def _detect_objective_boundary_text_errors(
+    path: Path, content: str
+) -> list[GuardError]:
+    """P6-03: keep Objective entrypoints and forbid retired Goal* names."""
+    errors: list[GuardError] = []
+    posix = path.as_posix()
+    if not (
+        posix.startswith("agiwo/")
+        or posix.startswith("console/server/")
+        or posix.startswith("tests/")
+        or posix.startswith("console/tests/")
+    ):
+        return errors
+
+    for pattern, label in (
+        (r"\bGoalState\b", "GoalState"),
+        (r"\bGoalUpdate\b", "GoalUpdate"),
+        (r"\bGoalMilestonesUpdated\b", "GoalMilestonesUpdated"),
+        (r"\bdeclare_milestones\b", "declare_milestones"),
+        (r"\benable_goal_directed_review\b", "enable_goal_directed_review"),
+    ):
+        line = _find_first_match_line(content, pattern)
+        if line is None:
+            continue
+        errors.append(
+            _make_error(
+                path,
+                line,
+                "AGW045",
+                (
+                    f"Retired domain name `{label}` must not reappear; use RunPlan / "
+                    "update_plan / enable_trajectory_review and Objective vocabulary."
+                ),
+            )
+        )
+
+    # Normal Session/channel paths must not call Scheduler.route_root_input.
+    # Debug scheduler router and SessionRuntimeService remain allowlisted.
+    allowed_route_root = {
+        Path("console/server/routers/scheduler.py"),
+        Path("console/server/services/runtime/session_runtime_service.py"),
+    }
+    if (
+        posix.startswith("console/server/")
+        and path not in allowed_route_root
+        and not posix.startswith("console/server/services/runtime/")
+    ):
+        line = _find_first_match_line(content, r"\broute_root_input\s*\(")
+        if line is not None:
+            errors.append(
+                _make_error(
+                    path,
+                    line,
+                    "AGW046",
+                    (
+                        "Ordinary Console Session/channel paths must enter via "
+                        "SessionObjectiveGateway / ObjectiveService; do not call "
+                        "Scheduler.route_root_input() outside the debug scheduler "
+                        "router or SessionRuntimeService."
+                    ),
+                )
+            )
+
+    if posix.startswith("console/server/") and not posix.startswith(
+        "console/server/services/storage_wiring.py"
+    ):
+        line = _find_first_match_line(content, r"from agiwo\.objective\.store\b")
+        if line is None:
+            line = _find_first_match_line(content, r"import agiwo\.objective\.store\b")
+        if line is not None:
+            errors.append(
+                _make_error(
+                    path,
+                    line,
+                    "AGW047",
+                    (
+                        "Console must not import ObjectiveStore backends; use "
+                        "ObjectiveService / public agiwo.objective exports and "
+                        "storage_wiring for construction only."
+                    ),
+                )
+            )
+    return errors
+
+
 def _detect_text_guard_errors(path: Path, content: str) -> list[GuardError]:
     errors = _detect_agent_v2_text_errors(path, content)
     errors.extend(_detect_agent_config_text_errors(path, content))
@@ -1444,6 +1529,7 @@ def _detect_text_guard_errors(path: Path, content: str) -> list[GuardError]:
     errors.extend(_detect_agent_runtime_text_errors(path, content))
     errors.extend(_detect_console_tool_catalog_text_errors(path, content))
     errors.extend(_detect_agent_lifecycle_stable_id_errors(path, content))
+    errors.extend(_detect_objective_boundary_text_errors(path, content))
     return errors
 
 

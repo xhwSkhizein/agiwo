@@ -1,6 +1,6 @@
 # P4-03：实现 non-retryable 与 outcome_unknown 分流
 
-状态：planned
+状态：done
 
 ## 目标
 

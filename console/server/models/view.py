@@ -30,6 +30,11 @@ def extract_content_parts(value: object) -> object:
     return value
 
 
+class AssignmentTemplatesInput(BaseModel):
+    work: str
+    verification: str
+
+
 class AgentConfigPayload(BaseModel):
     name: str
     description: str = ""
@@ -40,6 +45,7 @@ class AgentConfigPayload(BaseModel):
     allowed_skills: list[str] | None = None
     options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
+    assignment_templates: AssignmentTemplatesInput | None = None
 
     @field_validator("allowed_tools", mode="before")
     @classmethod
@@ -64,7 +70,11 @@ class AgentConfigPayload(BaseModel):
 
     @model_validator(mode="after")
     def _validate_model_connection(self) -> "AgentConfigPayload":
-        validate_provider_model_params(self.model_provider, self.model_params)
+        validate_provider_model_params(
+            self.model_provider,
+            self.model_params,
+            model_name=self.model_name,
+        )
         return self
 
 
@@ -80,6 +90,7 @@ class AgentConfigResponse(BaseModel):
     allowed_skills: list[str] | None = None
     options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
+    assignment_templates: AssignmentTemplatesInput | None = None
     created_at: str
     updated_at: str
 
@@ -303,6 +314,7 @@ class SessionSummaryResponse(BaseModel):
     root_state_status: str | None = None
     source_session_id: str | None = None
     fork_context_summary: str | None = None
+    archived_at: str | None = None
 
     @field_validator("last_user_input", mode="before")
     @classmethod
@@ -319,6 +331,7 @@ class SessionRecordResponse(BaseModel):
     updated_at: str
     source_session_id: str | None = None
     fork_context_summary: str | None = None
+    archived_at: str | None = None
 
 
 class ChatContextResponse(BaseModel):
@@ -589,6 +602,7 @@ __all__ = [
     "AgentConfigPayload",
     "AgentConfigResponse",
     "AgentProviderCapabilityResponse",
+    "AssignmentTemplatesInput",
     "AgentStateBase",
     "AgentStateListItem",
     "AgentStateResponse",

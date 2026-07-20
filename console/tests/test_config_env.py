@@ -519,6 +519,26 @@ def test_build_model_does_not_fallback_to_openai_credentials_for_compatible_prov
         build_model(config)
 
 
+def test_build_model_error_includes_agent_provider_and_model() -> None:
+    config = AgentConfigRecord(
+        id="agent-abc",
+        name="research-bot",
+        model_provider="openai-compatible",
+        model_name="MiniMax-M2.5",
+        model_params={"api_key_env_name": "MINIMAX_API_KEY"},
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        build_model(config)
+
+    message = str(exc_info.value)
+    assert "agent_id='agent-abc'" in message
+    assert "agent_name='research-bot'" in message
+    assert "provider='openai-compatible'" in message
+    assert "model='MiniMax-M2.5'" in message
+    assert "base_url" in message
+
+
 def test_agent_config_create_requires_explicit_connection_for_compatible_provider() -> (
     None
 ):

@@ -67,11 +67,31 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
 
 def build_model(config: AgentConfigRecord) -> Model:
     model_params = ModelParamsInput.model_validate(config.model_params or {})
-    return create_model_from_dict(
-        provider=config.model_provider,
-        model_name=config.model_name,
-        params=model_params.model_dump(exclude_none=True),
-    )
+    params = model_params.model_dump(exclude_none=True)
+    try:
+        return create_model_from_dict(
+            provider=config.model_provider,
+            model_name=config.model_name,
+            params=params,
+        )
+    except ValueError as exc:
+        logger.error(
+            "agent_model_build_failed",
+            agent_id=config.id,
+            agent_name=config.name,
+            model_provider=config.model_provider,
+            model_name=config.model_name,
+            model_params_keys=sorted(params.keys()),
+            has_base_url="base_url" in params,
+            api_key_env_name=params.get("api_key_env_name"),
+            error=str(exc),
+        )
+        raise ValueError(
+            "Failed to build model for "
+            f"agent_id={config.id!r} agent_name={config.name!r} "
+            f"provider={config.model_provider!r} model={config.model_name!r}: "
+            f"{exc}"
+        ) from exc
 
 
 async def materialize_agent(

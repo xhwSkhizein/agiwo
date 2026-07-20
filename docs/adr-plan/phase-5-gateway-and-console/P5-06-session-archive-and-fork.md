@@ -1,6 +1,6 @@
 # P5-06：实现 Session 归档、恢复与 Fork 语义
 
-状态：planned
+状态：done
 
 ## 目标
 

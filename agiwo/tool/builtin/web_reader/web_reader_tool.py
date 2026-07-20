@@ -4,7 +4,7 @@ import time
 from typing import Any
 
 from agiwo.llm import ModelSpec
-from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.base import BaseTool, ToolIdempotency, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.config import WebReaderApiConfig
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
@@ -32,6 +32,7 @@ class WebReaderTool(BaseTool):
 Options are mutually exclusive: search_query returns relevant content, summarize generates concise summary."""
     cacheable = True
     is_stateless = True
+    idempotency = ToolIdempotency.GUARANTEED
 
     def __init__(
         self,

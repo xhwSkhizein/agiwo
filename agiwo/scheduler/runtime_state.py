@@ -206,7 +206,11 @@ class ExecutionHandleLike(Protocol):
 
     async def steer(self, user_input: UserInput) -> bool: ...
 
+    async def inject_system_user_message(self, user_input: UserInput) -> bool: ...
+
     def cancel(self, reason: str | None = None) -> None: ...
+
+    def request_pause(self, reason: str) -> None: ...
 
 
 @dataclass
@@ -233,6 +237,25 @@ class RuntimeState:
     state_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
     nudge: asyncio.Event = field(default_factory=asyncio.Event)
     shutdown_requested: set[str] = field(default_factory=set)
+    # run_id -> (agent, session_id, checkpoint_id) after prepare_resume
+    prepared_resumes: dict[str, tuple[Agent, str, str]] = field(default_factory=dict)
+
+    def find_agent(self, agent_id: str) -> Agent | None:
+        """Resolve an agent by state_id key or by ``Agent.id``.
+
+        Lookup order: ``agents[key]``, ``canonical_agents[key]``, then a linear
+        scan of each registry matching ``candidate.id == agent_id``.
+        """
+        agent = self.agents.get(agent_id) or self.canonical_agents.get(agent_id)
+        if agent is not None:
+            return agent
+        for candidate in self.agents.values():
+            if candidate.id == agent_id:
+                return candidate
+        for candidate in self.canonical_agents.values():
+            if candidate.id == agent_id:
+                return candidate
+        return None
 
 
 __all__ = [

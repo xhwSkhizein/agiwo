@@ -1,6 +1,11 @@
 """Canonical public Agent SDK surface."""
 
 from agiwo.agent.agent import Agent, AgentExecutionHandle
+from agiwo.agent.budget_gate import (
+    LlmBudgetDenied,
+    LlmBudgetGate,
+    MissingBudgetGateError,
+)
 from agiwo.agent.models.config import (
     AgentConfig,
     AgentOptions,
@@ -47,6 +52,8 @@ from agiwo.agent.models.log import (
     ToolStepCommitted,
     UserStepCommitted,
 )
+from agiwo.agent.models.execution import RunTreeRole, RunExecutionRequest
+from agiwo.agent.models.finalization import RunFinalizationResult
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.run import (
     RunMetrics,
@@ -94,6 +101,7 @@ __all__ = [
     "AgentStorageOptions",
     "AgentStreamItem",
     "AgentStreamItemBase",
+    "RunTreeRole",
     "AssistantStepCommitted",
     "build_committed_step_entry",
     "ChannelContext",
@@ -111,6 +119,9 @@ __all__ = [
     "LLMCallContext",
     "LLMCallCompleted",
     "LLMCallStarted",
+    "LlmBudgetDenied",
+    "LlmBudgetGate",
+    "MissingBudgetGateError",
     "MemoryRecord",
     "MessagesRebuiltEvent",
     "MessagesRebuilt",
@@ -129,6 +140,8 @@ __all__ = [
     "RunLogEntryKind",
     "RunRolledBack",
     "RunRolledBackEvent",
+    "RunExecutionRequest",
+    "RunFinalizationResult",
     "RunMetrics",
     "RunOutput",
     "RunStarted",

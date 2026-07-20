@@ -64,6 +64,7 @@ class Session:
     updated_at: datetime
     source_session_id: str | None = None
     fork_context_summary: str | None = None
+    archived_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -109,6 +110,7 @@ class SessionSummaryRecord:
     root_state_status: str | None = None
     source_session_id: str | None = None
     fork_context_summary: str | None = None
+    archived_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -316,4 +318,7 @@ class ChannelChatSessionStore(Protocol):
     async def list_sessions_by_base_agent(
         self, base_agent_id: str
     ) -> list[Session]: ...
-    async def list_sessions(self) -> list[Session]: ...
+    async def list_sessions(
+        self, *, include_archived: bool = False
+    ) -> list[Session]: ...
+    async def list_archived_sessions(self) -> list[Session]: ...

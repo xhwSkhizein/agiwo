@@ -1,6 +1,6 @@
 # P5-02：提供可重放 Objective SSE
 
-状态：planned
+状态：done
 
 ## 目标
 

@@ -1,6 +1,6 @@
 # P3-05：实现 DRAINING 与可恢复中断屏障
 
-状态：planned
+状态：done
 
 ## 目标
 

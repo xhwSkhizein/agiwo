@@ -1,4 +1,8 @@
-"""Stream construction and routing extracted from Scheduler."""
+"""Route/stream assembly for scheduler root input paths.
+
+``stream.py`` remains the channel primitives layer; this module wires those
+primitives into ``route_with_stream`` / ``build_stream`` for engine callers.
+"""
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 

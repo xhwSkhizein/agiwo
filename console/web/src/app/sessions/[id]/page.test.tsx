@@ -5,6 +5,7 @@ const apiMocks = vi.hoisted(() => ({
   getSessionDetail: vi.fn(),
   getSessionSteps: vi.fn(),
   listRuns: vi.fn(),
+  listSessionObjectives: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -20,13 +21,72 @@ vi.mock("@/lib/api", async () => {
     getSessionDetail: apiMocks.getSessionDetail,
     getSessionSteps: apiMocks.getSessionSteps,
     listRuns: apiMocks.listRuns,
+    listSessionObjectives: apiMocks.listSessionObjectives,
   };
 });
 
 import SessionDetailPage from "./page";
 
 describe("SessionDetailPage", () => {
-  test("switches between mainline and debug session views", async () => {
+  test("shows runs and steps as the main stage with compact outcome", async () => {
+    apiMocks.listSessionObjectives.mockResolvedValue([
+      {
+        objective_id: "obj-1",
+        session_id: "sess-1",
+        status: "WAITING_USER",
+        is_terminal: false,
+        delivery_report: null,
+        delivery_outcome_id: null,
+        last_sequence: 3,
+        timeline: [
+          {
+            sequence: 1,
+            fact_id: "f1",
+            kind: "ObjectiveCreated",
+            occurred_at: "2026-04-22T12:00:00Z",
+            summary: "Created objective",
+            refs: {},
+          },
+          {
+            sequence: 3,
+            fact_id: "f3",
+            kind: "WaitingIntervalStarted",
+            occurred_at: "2026-04-22T12:01:00Z",
+            summary: "Waiting for user confirmation",
+            refs: {},
+          },
+        ],
+        root_runs: [
+          {
+            run_id: "run-1",
+            role: "work",
+            status: "COMPLETED",
+            run_ids: ["run-1"],
+            outcome_report: null,
+            decision_target: "agent",
+            created_at: null,
+            updated_at: null,
+          },
+          {
+            run_id: "run-2",
+            role: "verification",
+            status: "COMPLETED",
+            run_ids: ["run-2"],
+            outcome_report: "Need confirmation",
+            decision_target: "user",
+            created_at: null,
+            updated_at: null,
+          },
+        ],
+        artifacts: [],
+        budget: {
+          handoffs: { limit: 5, used: 2, remaining: 3 },
+          verification_attempts: { limit: 3, used: 0, remaining: 3 },
+          llm_cost_usd: { limit: 2, used: 0.4, remaining: 1.6 },
+          active_seconds: { limit: 3600, used: 120, remaining: 3480 },
+        },
+      },
+    ]);
     apiMocks.getSessionDetail.mockResolvedValue({
       summary: {
         session_id: "sess-1",
@@ -56,6 +116,7 @@ describe("SessionDetailPage", () => {
         root_state_status: "idle",
         source_session_id: null,
         fork_context_summary: null,
+        archived_at: null,
       },
       session: {
         id: "sess-1",
@@ -66,6 +127,7 @@ describe("SessionDetailPage", () => {
         updated_at: "2026-04-22T12:01:00Z",
         source_session_id: null,
         fork_context_summary: null,
+        archived_at: null,
       },
       chat_context: null,
       scheduler_state: null,
@@ -82,45 +144,11 @@ describe("SessionDetailPage", () => {
           },
         ],
         active_milestone_id: "inspect",
-        latest_checkpoint: {
-          seq: 8,
-          milestone_id: "inspect",
-          confirmed_at: "2026-04-22T12:00:01Z",
-        },
-        latest_review_outcome: {
-          aligned: false,
-          experience: "switch plan",
-          tool_usefulness: [
-            { tool_call_id: "tc-a", tool_name: "bash", score: 1 },
-          ],
-          trigger_reason: "step_interval",
-          active_milestone: "Inspect auth flow",
-          resolved_at: "2026-04-22T12:00:02Z",
-        },
+        latest_checkpoint: null,
+        latest_review_outcome: null,
         pending_review_reason: null,
       },
-      review_cycles: [
-        {
-          cycle_id: "run-1:8",
-          run_id: "run-1",
-          agent_id: "agent-1",
-          trigger_reason: "step_interval",
-          steps_since_last_review: 8,
-          active_milestone: "Inspect auth flow",
-          active_milestone_id: "inspect",
-          hook_advice: "narrow the search",
-          aligned: false,
-          experience: "switch plan",
-          tool_usefulness: [
-            { tool_call_id: "tc-a", tool_name: "bash", score: 1 },
-          ],
-          review_tool_call_id: "tc-review",
-          review_latency_ms: 12,
-          started_at: "2026-04-22T12:00:01Z",
-          resolved_at: "2026-04-22T12:00:02Z",
-          raw_notice: "Trigger: step_interval",
-        },
-      ],
+      review_cycles: [],
       conversation_events: [
         {
           id: "evt-1",
@@ -156,55 +184,84 @@ describe("SessionDetailPage", () => {
             final_output: "done",
           },
         ],
-        decision_events: [
-          {
-            kind: "termination",
-            sequence: 8,
-            run_id: "run-1",
-            agent_id: "agent-1",
-            created_at: "2026-04-22T12:00:01Z",
-            summary: "completed via finished",
-            details: {
-              reason: "completed",
-              source: "finished",
-            },
-          },
-        ],
+        decision_events: [],
       },
     });
     apiMocks.listRuns.mockResolvedValue({
-      items: [],
+      items: [
+        {
+          id: "run-1",
+          agent_id: "agent-1",
+          session_id: "sess-1",
+          user_id: null,
+          user_input: "hello",
+          status: "completed",
+          response_content: "done",
+          metrics: {
+            steps_count: 2,
+            tool_calls_count: 0,
+            duration_ms: 10,
+            token_cost: 0.01,
+          },
+          created_at: "2026-04-22T12:00:00Z",
+          updated_at: "2026-04-22T12:01:00Z",
+          parent_run_id: null,
+        },
+      ],
       limit: 50,
       offset: 0,
       has_more: false,
-      total: 0,
+      total: 1,
     });
     apiMocks.getSessionSteps.mockResolvedValue({
-      items: [],
+      items: [
+        {
+          id: "step-1",
+          session_id: "sess-1",
+          run_id: "run-1",
+          sequence: 1,
+          role: "user",
+          agent_id: "agent-1",
+          content: "hello",
+          content_for_user: "hello",
+          reasoning_content: null,
+          user_input: null,
+          tool_calls: null,
+          tool_call_id: null,
+          name: null,
+          metrics: null,
+          created_at: "2026-04-22T12:00:00Z",
+          parent_run_id: null,
+          depth: 0,
+        },
+      ],
       limit: 100,
       offset: 0,
       has_more: false,
-      total: 0,
+      total: 1,
     });
 
     render(<SessionDetailPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Milestone Board")).toBeInTheDocument();
+      expect(screen.getByText("Agent Runs & Steps")).toBeInTheDocument();
     });
 
-    expect(screen.getAllByText("Inspect auth flow").length).toBeGreaterThan(0);
+    expect(screen.getByText("WAITING_USER")).toBeInTheDocument();
+    expect(screen.getByText("Needs your reply")).toBeInTheDocument();
+    expect(screen.getByText("work")).toBeInTheDocument();
+    expect(screen.getByText("verification")).toBeInTheDocument();
+    expect(screen.getByText("Process summary")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Waiting for user confirmation").length,
+    ).toBeGreaterThan(0);
+    expect(apiMocks.listRuns).toHaveBeenCalled();
+    expect(apiMocks.getSessionSteps).toHaveBeenCalled();
+
+    // Milestone / conversation stay behind debug extras
+    expect(screen.queryByText("Milestone Board")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show debug extras" }));
+    expect(await screen.findByText("Milestone Board")).toBeInTheDocument();
     expect(screen.getByText("Conversation")).toBeInTheDocument();
-    expect(screen.queryByText("Observability")).not.toBeInTheDocument();
-    expect(apiMocks.listRuns).not.toHaveBeenCalled();
-    expect(apiMocks.getSessionSteps).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Debug" }));
-
-    expect(await screen.findByText("Observability")).toBeInTheDocument();
-    expect(screen.getByText("Trace Context")).toBeInTheDocument();
-    expect(screen.getByText("Runtime Decisions")).toBeInTheDocument();
-    expect(screen.getByText("completed via finished")).toBeInTheDocument();
-    expect(screen.getByText("hello")).toBeInTheDocument();
   });
 });

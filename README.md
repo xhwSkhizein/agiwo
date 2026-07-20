@@ -74,7 +74,18 @@ For development from source:
 ```bash
 git clone https://github.com/xhwSkhizein/agiwo.git
 cd agiwo
+uv run python scripts/setup_dev_env.py --install-hooks
+```
+
+This pins the repo to uv-managed Python (see `.python-version`) and rebuilds
+`.venv` plus `console/.venv`. Use it when conda or another PATH Python was
+picked accidentally and local interpreters fail to start.
+
+Manual equivalent:
+
+```bash
 uv sync
+(cd console && uv sync)
 uv run python scripts/install_git_hooks.py
 ```
 

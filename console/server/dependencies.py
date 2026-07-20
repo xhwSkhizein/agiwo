@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Request
 
 from agiwo.agent.storage.base import RunLogStorage
+from agiwo.objective import ObjectiveService, ObjectiveStore
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.scheduler.engine import Scheduler
 
@@ -21,6 +22,7 @@ from server.services.runtime import (
     SessionViewService,
 )
 from server.services.runtime_config import RuntimeConfigService
+from server.services.objective_gateway import SessionObjectiveGateway
 
 _RUNTIME_STATE_KEY = "console_runtime"
 
@@ -36,6 +38,9 @@ class ConsoleRuntime:
     session_store: SessionStore | None = None
     agent_runtime_cache: AgentRuntimeCache | None = None
     runtime_config_service: RuntimeConfigService | None = None
+    # P1: Objective kernel is held by Console but not yet the user entry path.
+    objective_store: ObjectiveStore | None = None
+    objective_service: ObjectiveService | None = None
 
 
 def bind_console_runtime(app: FastAPI, runtime: ConsoleRuntime) -> None:
@@ -95,6 +100,30 @@ def get_session_context_service(runtime: ConsoleRuntime) -> SessionContextServic
     )
 
 
+def get_objective_service(runtime: ConsoleRuntime) -> ObjectiveService:
+    if runtime.objective_service is not None:
+        return runtime.objective_service
+    if runtime.objective_store is None:
+        raise RuntimeError("ObjectiveService not initialized")
+    return ObjectiveService(runtime.objective_store)
+
+
+def get_objective_store(runtime: ConsoleRuntime) -> ObjectiveStore:
+    if runtime.objective_store is None:
+        raise RuntimeError("ObjectiveStore not initialized")
+    return runtime.objective_store
+
+
+def get_session_objective_gateway(runtime: ConsoleRuntime) -> SessionObjectiveGateway:
+    if runtime.session_store is None:
+        raise RuntimeError("Session store not available")
+    return SessionObjectiveGateway(
+        objective_service=get_objective_service(runtime),
+        session_store=runtime.session_store,
+        scheduler=runtime.scheduler,
+    )
+
+
 __all__ = [
     "ConsoleRuntime",
     "ConsoleRuntimeDep",
@@ -108,4 +137,7 @@ __all__ = [
     "get_trace_query_service",
     "get_session_context_service",
     "get_session_view_service",
+    "get_objective_service",
+    "get_objective_store",
+    "get_session_objective_gateway",
 ]

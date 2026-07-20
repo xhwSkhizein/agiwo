@@ -21,13 +21,18 @@ from agiwo.agent.introspect.tool import ReviewTrajectoryTool
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.plan import UpdatePlanTool
 from agiwo.agent.prompt import build_system_prompt
-from agiwo.agent.models.run import RunIdentity, RunOutput
+from agiwo.agent.models.execution import RunTreeRole, RunExecutionRequest
+from agiwo.agent.models.log import RunResumePrepared, RunStarted
+from agiwo.agent.models.run import RunIdentity, RunOutput, RunStatus
+from agiwo.agent.resume import build_resume_plan
 from agiwo.agent.run_loop import execute_run
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.models.stream import AgentStreamItem
+from agiwo.agent.runtime.state_ops import replace_messages
 from agiwo.agent.storage.base import RunLogStorage
 from agiwo.agent.storage.factory import create_run_log_storage
+from agiwo.agent.storage.serialization import build_run_view_from_entries
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
@@ -58,11 +63,13 @@ class AgentExecutionHandle:
         session_id: str,
         session_runtime: SessionRuntime,
         task: Task[RunOutput],
+        context: RunContext | None = None,
     ) -> None:
         self._run_id = run_id
         self._session_id = session_id
         self._session_runtime = session_runtime
         self._task = task
+        self._context = context
 
     @property
     def run_id(self) -> str:
@@ -81,8 +88,17 @@ class AgentExecutionHandle:
     async def steer(self, user_input: UserInput) -> bool:
         return await self._session_runtime.enqueue_steer(user_input)
 
+    async def inject_system_user_message(self, user_input: UserInput) -> bool:
+        """Inject a false-user system notice into the live run (not a user bubble)."""
+        return await self._session_runtime.enqueue_inject(user_input)
+
     def cancel(self, reason: str | None = None) -> None:
         self._session_runtime.abort_signal.abort(reason or "Cancelled by caller")
+
+    def request_pause(self, reason: str) -> None:
+        """Ask the live run to pause at the next safe boundary (not cancel)."""
+        if self._context is not None:
+            self._context.request_pause(reason)
 
 
 class Agent:
@@ -138,8 +154,17 @@ class Agent:
         self._closing = False
         self._closed = False
         self._close_lock = asyncio.Lock()
+        self._llm_budget_gate = None
 
     # --- Properties ---
+
+    @property
+    def llm_budget_gate(self):
+        return self._llm_budget_gate
+
+    @llm_budget_gate.setter
+    def llm_budget_gate(self, gate) -> None:
+        self._llm_budget_gate = gate
 
     @property
     def config(self) -> AgentConfig:
@@ -288,6 +313,7 @@ class Agent:
         parent_user_id: str | None,
         parent_timeout_at: float | None,
         parent_metadata: dict[str, Any],
+        parent_objective_id: str | None = None,
         instruction: str | None = None,
         system_prompt_override: str | None = None,
         child_allowed_tools: list[str] | None = None,
@@ -314,9 +340,14 @@ class Agent:
                 depth=parent_depth + 1,
                 parent_run_id=parent_run_id,
                 timeout_at=parent_timeout_at,
+                objective_id=parent_objective_id,
+                run_tree_role=(
+                    RunTreeRole.CHILD if parent_objective_id else RunTreeRole.NONE
+                ),
                 metadata=dict(parent_metadata),
             ),
             session_runtime=session_runtime,
+            llm_budget_gate=self._llm_budget_gate,
         )
         combined_metadata = dict(metadata_overrides or {})
         if metadata_updates:
@@ -425,11 +456,14 @@ class Agent:
         user_id: str | None = None,
         metadata: dict | None = None,
         abort_signal: AbortSignal | None = None,
+        execution_request: RunExecutionRequest | None = None,
     ) -> AgentExecutionHandle:
         """Start a root run without re-checking user-input provenance.
 
         Used by the Scheduler after it has already validated external input, or
         when injecting internal ``UserMessage.from_system()`` turns.
+        ``execution_request`` lets Objective-managed dispatch supply a
+        preallocated ``run_id`` and Assignment identity.
         """
         self._ensure_open()
         resolved_session_id = session_id or str(uuid4())
@@ -445,15 +479,19 @@ class Agent:
             trace_runtime=trace_runtime,
             abort_signal=resolved_abort_signal,
         )
+        request = execution_request or RunExecutionRequest(run_id=str(uuid4()))
         context = RunContext(
             identity=RunIdentity(
-                run_id=str(uuid4()),
+                run_id=request.run_id,
                 agent_id=self._id,
                 agent_name=self.name,
                 user_id=user_id,
+                objective_id=request.objective_id,
+                run_tree_role=request.run_tree_role,
                 metadata=dict(metadata or {}),
             ),
             session_runtime=session_runtime,
+            llm_budget_gate=self._llm_budget_gate,
         )
         task = asyncio.create_task(
             self._execute_root(
@@ -467,6 +505,7 @@ class Agent:
             session_id=context.session_id,
             session_runtime=session_runtime,
             task=task,
+            context=context,
         )
         self._register_execution(context.run_id, task, resolved_abort_signal)
         return handle
@@ -498,6 +537,97 @@ class Agent:
             )
         finally:
             await context.session_runtime.close()
+
+    async def prepare_resume(self, *, run_id: str, session_id: str) -> str:
+        """Validate a paused run and append RunResumePrepared. Returns checkpoint_id."""
+        entries = await self._run_log_storage.list_entries(
+            session_id=session_id, run_id=run_id, limit=100_000
+        )
+        view = build_run_view_from_entries(entries)
+        if view is None or view.status is not RunStatus.PAUSED:
+            raise ValueError(f"run {run_id!r} is not PAUSED")
+        plan = build_resume_plan(entries)
+        seq = await self._run_log_storage.allocate_sequence(session_id)
+        prepared = RunResumePrepared(
+            sequence=seq,
+            session_id=session_id,
+            run_id=run_id,
+            agent_id=self._id,
+            checkpoint_id=plan.checkpoint_id,
+        )
+        await self._run_log_storage.append_entries([prepared])
+        return plan.checkpoint_id
+
+    async def resume_paused_run(
+        self,
+        *,
+        run_id: str,
+        session_id: str,
+        abort_signal: AbortSignal | None = None,
+    ) -> RunOutput:
+        """Continue a PAUSED run with the same run_id (public API unchanged)."""
+        self._ensure_open()
+        entries = await self._run_log_storage.list_entries(
+            session_id=session_id, run_id=run_id, limit=100_000
+        )
+        plan = build_resume_plan(entries)
+        started_entry = next((e for e in entries if isinstance(e, RunStarted)), None)
+        if started_entry is None:
+            raise ValueError(f"run {run_id!r} missing RunStarted")
+
+        resolved_abort = abort_signal or AbortSignal()
+        session_runtime = SessionRuntime(
+            session_id=session_id,
+            run_log_storage=self._run_log_storage,
+            abort_signal=resolved_abort,
+        )
+        context = RunContext(
+            identity=RunIdentity(
+                run_id=run_id,
+                agent_id=self._id,
+                agent_name=self.name,
+                user_id=started_entry.user_id,
+                objective_id=started_entry.objective_id,
+                run_tree_role=(
+                    RunTreeRole(started_entry.run_tree_role)
+                    if started_entry.run_tree_role
+                    else RunTreeRole.NONE
+                ),
+            ),
+            session_runtime=session_runtime,
+            llm_budget_gate=self._llm_budget_gate,
+        )
+        replace_messages(context, plan.messages)
+        if plan.continue_user_message is not None:
+            msgs = context.snapshot_messages()
+            msgs.append(
+                {
+                    "role": "user",
+                    "content": plan.continue_user_message.extract_text(),
+                    "is_user_provided": False,
+                }
+            )
+            replace_messages(context, msgs)
+
+        system_prompt = await self.get_effective_system_prompt()
+        options = self._config.options.model_copy(deep=True)
+        try:
+            return await execute_run(
+                plan.continue_user_message,
+                context=context,
+                model=self._model,
+                system_prompt=system_prompt,
+                tools=list(self._tools),
+                hooks=self._hooks,
+                options=options,
+                abort_signal=resolved_abort,
+                root_path=options.get_effective_root_path(),
+                pending_tool_calls=plan.pending_tool_calls,
+                resume=True,
+                resume_checkpoint_id=plan.checkpoint_id,
+            )
+        finally:
+            await session_runtime.close()
 
     async def run(
         self,

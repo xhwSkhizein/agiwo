@@ -22,6 +22,7 @@ SELECT
     s.updated_at AS s_updated_at,
     s.source_session_id AS s_source_session_id,
     s.fork_context_summary AS s_fork_context_summary,
+    s.archived_at AS s_archived_at,
     c.scope_id AS c_scope_id,
     c.channel_instance_id AS c_channel_instance_id,
     c.chat_id AS c_chat_id,
@@ -52,6 +53,7 @@ def _row_to_chat_context(row: aiosqlite.Row) -> ChannelChatContext:
 
 
 def _row_to_session(row: aiosqlite.Row) -> Session:
+    archived_raw = row["archived_at"]
     return Session(
         id=row["id"],
         chat_context_scope_id=row["chat_context_scope_id"],
@@ -61,10 +63,12 @@ def _row_to_session(row: aiosqlite.Row) -> Session:
         updated_at=datetime.fromisoformat(row["updated_at"]),
         source_session_id=row["source_session_id"],
         fork_context_summary=row["fork_context_summary"],
+        archived_at=datetime.fromisoformat(archived_raw) if archived_raw else None,
     )
 
 
 def _joined_row_to_session_with_context(row: aiosqlite.Row) -> SessionWithContext:
+    archived_raw = row["s_archived_at"]
     return SessionWithContext(
         session=Session(
             id=row["s_id"],
@@ -75,6 +79,7 @@ def _joined_row_to_session_with_context(row: aiosqlite.Row) -> SessionWithContex
             updated_at=datetime.fromisoformat(row["s_updated_at"]),
             source_session_id=row["s_source_session_id"],
             fork_context_summary=row["s_fork_context_summary"],
+            archived_at=datetime.fromisoformat(archived_raw) if archived_raw else None,
         ),
         chat_context=ChannelChatContext(
             scope_id=row["c_scope_id"],
@@ -209,15 +214,17 @@ class SqliteSessionStore:
                 created_at,
                 updated_at,
                 source_session_id,
-                fork_context_summary
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                fork_context_summary,
+                archived_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 chat_context_scope_id = excluded.chat_context_scope_id,
                 base_agent_id = excluded.base_agent_id,
                 created_by = excluded.created_by,
                 updated_at = excluded.updated_at,
                 source_session_id = excluded.source_session_id,
-                fork_context_summary = excluded.fork_context_summary
+                fork_context_summary = excluded.fork_context_summary,
+                archived_at = excluded.archived_at
             """,
             (
                 session.id,
@@ -228,6 +235,7 @@ class SqliteSessionStore:
                 session.updated_at.isoformat(),
                 session.source_session_id,
                 session.fork_context_summary,
+                session.archived_at.isoformat() if session.archived_at else None,
             ),
         )
         await conn.commit()
@@ -286,12 +294,23 @@ class SqliteSessionStore:
             rows = await cursor.fetchall()
         return [_row_to_session(row) for row in rows]
 
-    async def list_sessions(self) -> list[Session]:
+    async def list_sessions(self, *, include_archived: bool = False) -> list[Session]:
+        conn = await self._require_conn()
+        query = "SELECT * FROM console_session"
+        if not include_archived:
+            query += " WHERE archived_at IS NULL"
+        query += " ORDER BY updated_at DESC"
+        async with conn.execute(query) as cursor:
+            rows = await cursor.fetchall()
+        return [_row_to_session(row) for row in rows]
+
+    async def list_archived_sessions(self) -> list[Session]:
         conn = await self._require_conn()
         async with conn.execute(
             """
             SELECT *
             FROM console_session
+            WHERE archived_at IS NOT NULL
             ORDER BY updated_at DESC
             """
         ) as cursor:
@@ -325,7 +344,8 @@ class SqliteSessionStore:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 source_session_id TEXT,
-                fork_context_summary TEXT
+                fork_context_summary TEXT,
+                archived_at TEXT
             )
             """
         )
@@ -356,6 +376,7 @@ class SqliteSessionStore:
                 "updated_at",
                 "source_session_id",
                 "fork_context_summary",
+                "archived_at",
             },
         )
         await conn.execute(

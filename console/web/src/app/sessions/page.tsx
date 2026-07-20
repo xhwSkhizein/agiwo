@@ -13,8 +13,18 @@ import { UserInputCompact } from "@/components/user-input-detail";
 import { PillBadge } from "@/components/pill-badge";
 import { MonoText } from "@/components/mono-text";
 import { cn } from "@/lib/utils";
-import { deleteSession, listSessions } from "@/lib/api";
-import type { SessionSummary } from "@/lib/api";
+import {
+  archiveSession,
+  listSessionObjectives,
+  listSessions,
+  type ObjectiveView,
+  type SessionSummary,
+} from "@/lib/api";
+import {
+  objectiveFocusText,
+  objectiveStatusVariant,
+  pickActiveObjective,
+} from "@/lib/objective-status";
 
 function formatRelativeTime(dateStr: string | null): string {
   if (!dateStr) return "";
@@ -28,8 +38,12 @@ function formatRelativeTime(dateStr: string | null): string {
   return `${days}d ago`;
 }
 
+type SessionRow = SessionSummary & {
+  objective: ObjectiveView | null;
+};
+
 export default function SessionsPage() {
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(25);
@@ -42,7 +56,20 @@ export default function SessionsPage() {
     setError(null);
     try {
       const nextSessions = await listSessions(pageSize, offset);
-      setSessions(nextSessions.items);
+      const enriched = await Promise.all(
+        nextSessions.items.map(async (session) => {
+          try {
+            const objectives = await listSessionObjectives(session.session_id);
+            return {
+              ...session,
+              objective: pickActiveObjective(objectives),
+            };
+          } catch {
+            return { ...session, objective: null };
+          }
+        }),
+      );
+      setSessions(enriched);
       setHasMore(nextSessions.has_more);
       setTotal(nextSessions.total);
     } catch (err) {
@@ -58,15 +85,15 @@ export default function SessionsPage() {
   const handleDelete = async (sessionId: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm("Delete this session?")) return;
+    if (!confirm("Archive this session? You can restore it later.")) return;
     try {
-      await deleteSession(sessionId);
+      await archiveSession(sessionId);
       setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
       if (total !== null) {
         setTotal((t) => (t !== null ? t - 1 : null));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete session");
+      setError(err instanceof Error ? err.message : "Failed to archive session");
     }
   };
 
@@ -75,12 +102,12 @@ export default function SessionsPage() {
   }, [loadSessions]);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6 p-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Sessions</h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Session history and recent activity
+          <p className="mt-1 text-sm text-zinc-400">
+            Status first — where work is stuck, waiting, or delivered
           </p>
         </div>
         <button
@@ -93,10 +120,10 @@ export default function SessionsPage() {
             "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm",
             "transition-all duration-150",
             "border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-white",
-            "disabled:opacity-50 disabled:cursor-not-allowed"
+            "disabled:cursor-not-allowed disabled:opacity-50",
           )}
         >
-          <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+          <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
           Refresh
         </button>
       </div>
@@ -108,58 +135,98 @@ export default function SessionsPage() {
       ) : sessions.length === 0 ? (
         <EmptyStateMessage>No sessions found</EmptyStateMessage>
       ) : (
-        <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 divide-y divide-zinc-800 overflow-hidden">
-          {sessions.map((s) => (
-            <div
-              key={s.session_id}
-              className={cn(
-                "grid gap-4 px-5 py-4 transition-colors duration-150 md:grid-cols-[1fr_auto]",
-                "hover:bg-zinc-800/50"
-              )}
-            >
-              <Link href={`/sessions/${s.session_id}`} className="min-w-0">
-                <div className="min-w-0">
-                  <div className="text-sm text-zinc-200">
-                    <UserInputCompact
-                      input={s.last_user_input}
-                      maxLength={160}
-                      showContextBadge={true}
-                      showMetadata={true}
-                      showAttachmentBadge={true}
-                    />
-                  </div>
-                  {s.last_response && (
-                    <p className="text-xs text-zinc-500 mt-2 truncate">
-                      {s.last_response}
-                    </p>
-                  )}
-                </div>
-              </Link>
-              <div className="flex shrink-0 items-start justify-between gap-3 md:justify-end">
-                <div className="space-y-1.5 text-left md:text-right">
-                  <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                    <PillBadge variant="default">{s.run_count} runs</PillBadge>
-                    <PillBadge variant="pending">{s.step_count} steps</PillBadge>
-                  </div>
-                  <MonoText truncate className="block max-w-[180px]">{s.agent_id || "unknown"}</MonoText>
-                  <p className="text-[11px] text-zinc-500">
-                    {formatRelativeTime(s.updated_at)}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={(e) => handleDelete(s.session_id, e)}
-                  className={cn(
-                    "rounded-md p-1.5 text-zinc-500 transition-colors duration-150",
-                    "hover:bg-red-900/20 hover:text-red-400"
-                  )}
-                  aria-label={`Delete session ${s.session_id.slice(0, 8)}`}
+        <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900/50">
+          <div className="hidden grid-cols-[minmax(0,1.4fr)_8rem_minmax(0,1fr)_7rem_5.5rem] gap-3 border-b border-zinc-800 px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 md:grid">
+            <span>Work item</span>
+            <span>Status</span>
+            <span>Focus</span>
+            <span>Budget / size</span>
+            <span>Updated</span>
+          </div>
+          <div className="divide-y divide-zinc-800">
+            {sessions.map((s) => {
+              const status = s.objective?.status || s.root_state_status || "idle";
+              const focus = s.objective
+                ? objectiveFocusText(s.objective)
+                : s.last_response || "No Objective yet";
+              const budget = s.objective?.budget;
+              return (
+                <div
+                  key={s.session_id}
+                  className="grid gap-3 px-5 py-4 transition-colors hover:bg-zinc-800/50 md:grid-cols-[minmax(0,1.4fr)_8rem_minmax(0,1fr)_7rem_5.5rem] md:items-start"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-          ))}
+                  <Link href={`/sessions/${s.session_id}`} className="min-w-0">
+                    <div className="text-sm text-zinc-200">
+                      <UserInputCompact
+                        input={s.last_user_input}
+                        maxLength={140}
+                        showContextBadge
+                        showMetadata
+                        showAttachmentBadge
+                      />
+                    </div>
+                    <MonoText className="mt-1.5 block text-[11px] text-zinc-500">
+                      {s.session_id.slice(0, 12)} · {s.agent_id || "unknown"}
+                    </MonoText>
+                  </Link>
+                  <div>
+                    <PillBadge
+                      variant={
+                        s.objective
+                          ? objectiveStatusVariant(status)
+                          : status === "running"
+                            ? "running"
+                            : "pending"
+                      }
+                      dot
+                    >
+                      {status}
+                    </PillBadge>
+                  </div>
+                  <Link
+                    href={`/sessions/${s.session_id}`}
+                    className="min-w-0 text-xs leading-5 text-zinc-400 line-clamp-2"
+                  >
+                    {focus}
+                  </Link>
+                  <div className="space-y-1 text-xs text-zinc-500">
+                    {budget ? (
+                      <>
+                        <div className="font-mono">
+                          h {budget.handoffs.used}/{budget.handoffs.limit}
+                        </div>
+                        <div className="font-mono">
+                          ${budget.llm_cost_usd.used.toFixed(2)}/
+                          {budget.llm_cost_usd.limit}
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        {s.run_count} runs · {s.step_count} steps
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-start justify-between gap-2 md:flex-col md:items-end">
+                    <p className="text-[11px] text-zinc-500">
+                      {formatRelativeTime(s.updated_at)}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={(e) => handleDelete(s.session_id, e)}
+                      className={cn(
+                        "rounded-md p-1.5 text-zinc-500 transition-colors duration-150",
+                        "hover:bg-red-900/20 hover:text-red-400",
+                      )}
+                      aria-label={`Archive session ${s.session_id.slice(0, 8)}`}
+                      title="Archive"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

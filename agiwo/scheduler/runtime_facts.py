@@ -1,6 +1,7 @@
 """Scheduler-facing helpers for replaying runtime facts from RunLog."""
 
 from agiwo.agent import RunView, RuntimeDecisionState, StepView
+from agiwo.agent.models.log import RunLogEntry, RunLogEntryKind
 from agiwo.scheduler.models import AgentState
 from agiwo.scheduler.runtime_state import RuntimeState
 
@@ -21,6 +22,34 @@ class SchedulerRuntimeFacts:
         return await agent.run_log_storage.get_latest_run_view(
             state.resolve_runtime_session_id()
         )
+
+    async def get_run_view(self, run_id: str) -> RunView | None:
+        """Locate a RunView by scanning runtime agents' RunLog storage."""
+        for agent in self._rt.agents.values():
+            view = await agent.run_log_storage.get_run_view(run_id)
+            if view is not None:
+                return view
+        return None
+
+    async def list_run_log_entries(
+        self,
+        run_id: str,
+        *,
+        kinds: list[RunLogEntryKind] | None = None,
+        limit: int = 10_000,
+    ) -> list[RunLogEntry]:
+        """List RunLog entries for a run from the runtime agent that owns it."""
+        for agent in self._rt.agents.values():
+            view = await agent.run_log_storage.get_run_view(run_id)
+            if view is None:
+                continue
+            return await agent.run_log_storage.list_entries(
+                session_id=view.session_id,
+                run_id=run_id,
+                kinds=kinds,
+                limit=limit,
+            )
+        return []
 
     async def list_step_views(
         self,

@@ -1,6 +1,6 @@
 # P3-03：实现 Objective 活动窗口
 
-状态：planned
+状态：done
 
 ## 目标
 

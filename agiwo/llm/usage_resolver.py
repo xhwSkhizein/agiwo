@@ -157,5 +157,63 @@ class ModelUsageEstimator:
             + (output_tokens * self._output_price)
         ) / 1_000_000.0
 
+    def price_snapshot(self) -> dict[str, float]:
+        return {
+            "input_price": self._input_price,
+            "output_price": self._output_price,
+            "cache_hit_price": self._cache_hit_price,
+        }
 
-__all__ = ["ModelUsageEstimator", "UsageEstimate", "TiktokenUsageEstimator"]
+    def compute_call_cost_ceiling(
+        self,
+        *,
+        request_tokens: int,
+        max_output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+    ) -> float:
+        """Upper bound for one attempt: paid request tokens + full max_output."""
+        return compute_call_cost_ceiling(
+            request_tokens=request_tokens,
+            max_output_tokens=max_output_tokens,
+            input_price=self._input_price,
+            output_price=self._output_price,
+            cache_hit_price=self._cache_hit_price,
+            cache_read_tokens=cache_read_tokens,
+            cache_creation_tokens=cache_creation_tokens,
+        )
+
+
+def compute_call_cost_ceiling(
+    *,
+    request_tokens: int,
+    max_output_tokens: int,
+    input_price: float,
+    output_price: float,
+    cache_hit_price: float = 0.0,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
+) -> float:
+    """Reproducible pre-call cost ceiling (USD) from tokens and price snapshot."""
+    request_tokens = max(0, int(request_tokens))
+    max_output_tokens = max(0, int(max_output_tokens))
+    cache_hit_tokens = max(0, int(cache_read_tokens))
+    cache_creation_tokens = max(0, int(cache_creation_tokens))
+    cache_miss_tokens = max(
+        request_tokens - cache_hit_tokens - cache_creation_tokens,
+        0,
+    )
+    paid_input_tokens = cache_creation_tokens + cache_miss_tokens
+    return (
+        (cache_hit_tokens * cache_hit_price)
+        + (paid_input_tokens * input_price)
+        + (max_output_tokens * output_price)
+    ) / 1_000_000.0
+
+
+__all__ = [
+    "ModelUsageEstimator",
+    "UsageEstimate",
+    "TiktokenUsageEstimator",
+    "compute_call_cost_ceiling",
+]

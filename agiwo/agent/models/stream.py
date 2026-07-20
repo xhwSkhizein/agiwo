@@ -176,6 +176,7 @@ class RunCompletedEvent(AgentStreamItemBase):
     response: str | None = None
     metrics: RunMetrics | None = None
     termination_reason: TerminationReason | None = None
+    finalization: dict[str, Any] | None = None
     type: Literal["run_completed"] = "run_completed"
 
     def to_dict(self) -> dict[str, Any]:
@@ -185,6 +186,7 @@ class RunCompletedEvent(AgentStreamItemBase):
         payload["termination_reason"] = (
             self.termination_reason.value if self.termination_reason else None
         )
+        payload["finalization"] = self.finalization
         return payload
 
 
@@ -334,6 +336,7 @@ def _stream_item_from_runtime_entry(
             response=entry.response,
             metrics=_run_metrics_from_dict(entry.metrics),
             termination_reason=entry.termination_reason,
+            finalization=entry.finalization,
         )
     elif isinstance(entry, RunFailed):
         item = RunFailedEvent(

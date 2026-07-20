@@ -68,42 +68,68 @@ class HookRegistration:
     critical: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class PhaseSpec:
+    """Full contract for one hook phase: capabilities, field allowlists, critical."""
+
+    allow_transform: bool = False
+    allow_decision_support: bool = False
+    allow_critical: bool = False
+    transform_fields: frozenset[str] = frozenset()
+    decision_support_fields: frozenset[str] = frozenset()
+
+
+_DEFAULT_PHASE_SPEC = PhaseSpec()
+
+PHASE_SPECS: dict[HookPhase, PhaseSpec] = {
+    HookPhase.PREPARE: PhaseSpec(
+        allow_transform=True,
+        allow_critical=True,
+        transform_fields=frozenset({"prelude_text"}),
+    ),
+    HookPhase.ASSEMBLE_CONTEXT: PhaseSpec(
+        allow_transform=True,
+        allow_critical=True,
+        transform_fields=frozenset({"memories", "context_additions"}),
+    ),
+    HookPhase.BEFORE_LLM: PhaseSpec(
+        allow_transform=True,
+        allow_decision_support=True,
+        allow_critical=True,
+        transform_fields=frozenset({"messages", "model_settings_override"}),
+        decision_support_fields=frozenset({"llm_advice"}),
+    ),
+    HookPhase.BEFORE_TOOL_CALL: PhaseSpec(
+        allow_transform=True,
+        allow_decision_support=True,
+        allow_critical=True,
+        transform_fields=frozenset({"parameters"}),
+        decision_support_fields=frozenset({"tool_advice"}),
+    ),
+    HookPhase.BEFORE_COMPACTION: PhaseSpec(
+        allow_decision_support=True,
+        decision_support_fields=frozenset({"compaction_advice"}),
+    ),
+    HookPhase.BEFORE_REVIEW: PhaseSpec(
+        allow_decision_support=True,
+        decision_support_fields=frozenset({"review_advice"}),
+    ),
+    HookPhase.BEFORE_TERMINATION: PhaseSpec(
+        allow_decision_support=True,
+        decision_support_fields=frozenset({"termination_advice"}),
+    ),
+}
+
+
+def phase_spec(phase: HookPhase) -> PhaseSpec:
+    """Return the contract for ``phase`` (observe-only default when unset)."""
+    return PHASE_SPECS.get(phase, _DEFAULT_PHASE_SPEC)
+
+
 @dataclass
 class HookRegistry:
     registrations: list[HookRegistration] = field(default_factory=list)
 
-    _TRANSFORM_PHASES = {
-        HookPhase.PREPARE,
-        HookPhase.ASSEMBLE_CONTEXT,
-        HookPhase.BEFORE_LLM,
-        HookPhase.BEFORE_TOOL_CALL,
-    }
-    _DECISION_SUPPORT_PHASES = {
-        HookPhase.BEFORE_LLM,
-        HookPhase.BEFORE_TOOL_CALL,
-        HookPhase.BEFORE_COMPACTION,
-        HookPhase.BEFORE_REVIEW,
-        HookPhase.BEFORE_TERMINATION,
-    }
-    _CRITICAL_PHASES = {
-        HookPhase.PREPARE,
-        HookPhase.ASSEMBLE_CONTEXT,
-        HookPhase.BEFORE_LLM,
-        HookPhase.BEFORE_TOOL_CALL,
-    }
-    _TRANSFORM_ALLOWLISTS = {
-        HookPhase.PREPARE: {"prelude_text"},
-        HookPhase.ASSEMBLE_CONTEXT: {"memories", "context_additions"},
-        HookPhase.BEFORE_LLM: {"messages", "model_settings_override"},
-        HookPhase.BEFORE_TOOL_CALL: {"parameters"},
-    }
-    _DECISION_SUPPORT_ALLOWLISTS = {
-        HookPhase.BEFORE_LLM: {"llm_advice"},
-        HookPhase.BEFORE_TOOL_CALL: {"tool_advice"},
-        HookPhase.BEFORE_COMPACTION: {"compaction_advice"},
-        HookPhase.BEFORE_REVIEW: {"review_advice"},
-        HookPhase.BEFORE_TERMINATION: {"termination_advice"},
-    }
     _GROUP_ORDER = {
         HookGroup.SYSTEM: 0,
         HookGroup.RUNTIME_ADAPTER: 1,
@@ -137,10 +163,11 @@ class HookRegistry:
         self.registrations.append(registration)
 
     def _validate_registration(self, registration: HookRegistration) -> None:
+        spec = phase_spec(registration.phase)
         allowed_capabilities = {HookCapability.OBSERVE_ONLY}
-        if registration.phase in self._TRANSFORM_PHASES:
+        if spec.allow_transform:
             allowed_capabilities.add(HookCapability.TRANSFORM)
-        if registration.phase in self._DECISION_SUPPORT_PHASES:
+        if spec.allow_decision_support:
             allowed_capabilities.add(HookCapability.DECISION_SUPPORT)
 
         if registration.capability not in allowed_capabilities:
@@ -148,7 +175,7 @@ class HookRegistry:
                 "Unsupported hook capability for "
                 f"{registration.phase.value}: {registration.handler_name}"
             )
-        if registration.critical and registration.phase not in self._CRITICAL_PHASES:
+        if registration.critical and not spec.allow_critical:
             raise ValueError(
                 "Critical hooks are allowed only in early phases: "
                 f"{registration.phase.value}: {registration.handler_name}"
@@ -164,10 +191,11 @@ class HookRegistry:
         if not isinstance(result, dict):
             return current
 
+        spec = phase_spec(phase)
         if capability is HookCapability.TRANSFORM:
-            allowed = self._TRANSFORM_ALLOWLISTS.get(phase, set())
+            allowed = spec.transform_fields
         elif capability is HookCapability.DECISION_SUPPORT:
-            allowed = self._DECISION_SUPPORT_ALLOWLISTS.get(phase, set())
+            allowed = spec.decision_support_fields
         else:
             return current
 
@@ -504,6 +532,18 @@ def _text_similarity(a: str, b: str) -> float:
     return len(intersection) / len(union)
 
 
+def _compact_memory_query(query: str, *, max_chars: int = 400) -> str:
+    """Shrink assignment-template blobs into an embedding-safe retrieval query."""
+    text = (query or "").strip()
+    if not text:
+        return ""
+    if "Current goal:" in text:
+        text = text.split("Current goal:", 1)[1].strip()
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip()
+    return text
+
+
 def filter_relevant_memories(
     messages: list[Mapping[str, object]],
     memories: list[MemoryRecord],
@@ -579,7 +619,7 @@ class DefaultMemoryHook:
     async def retrieve_memories(
         self, user_input: UserInput, context: MemoryHookContext
     ) -> list[MemoryRecord]:
-        query = UserMessage.from_value(user_input).extract_text()
+        query = _compact_memory_query(UserMessage.from_value(user_input).extract_text())
         if not query or len(query.strip()) < 3:
             return []
 
@@ -636,9 +676,12 @@ __all__ = [
     "HookRegistration",
     "HookRegistry",
     "MemoryHookContext",
+    "PHASE_SPECS",
     "PhaseHook",
+    "PhaseSpec",
     "decision_support",
     "filter_relevant_memories",
     "observe",
+    "phase_spec",
     "transform",
 ]

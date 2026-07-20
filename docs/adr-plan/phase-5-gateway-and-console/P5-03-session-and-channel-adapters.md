@@ -1,6 +1,6 @@
 # P5-03：接入 Session、Web 与渠道入口
 
-状态：planned
+状态：done
 
 ## 目标
 

@@ -60,6 +60,7 @@ class BashTool(BaseTool):
     name = "bash"
     cacheable: bool = False
     timeout_seconds: int = 30
+    may_have_external_effect: bool = True
 
     def __init__(self, config: BashToolConfig | None = None) -> None:
         if config is None:

@@ -1,6 +1,6 @@
 # P5-04：实现 Objective 时间线与最终交付视图
 
-状态：planned
+状态：done
 
 ## 目标
 

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import json
 from pathlib import Path
@@ -15,6 +13,7 @@ FALLBACK_RESPONSIBILITIES: dict[str, str] = {
     "agiwo/llm": "Model abstraction, provider adapters, configuration policy, and factory construction.",
     "agiwo/tool": "Tool contracts, builtin tools, execution context, process registry, and tool-side persistence.",
     "agiwo/scheduler": "Agent-level orchestration, runtime tools, lifecycle management, and scheduler state persistence.",
+    "agiwo/objective": "Cross-Assignment Objective lifecycle: commands, ObjectiveLog, budget, outbox dispatch, pause/resume, and recovery above the scheduler.",
     "agiwo/observability": "Trace and span storage, querying, and runtime trace adaptation.",
     "agiwo/embedding": "Embedding abstraction and provider-backed implementations.",
     "agiwo/skill": "Skill discovery, allowlisting, loading, and skill-to-tool bridging.",
@@ -46,6 +45,7 @@ LAYOUT_GROUPS: list[tuple[str, str, list[tuple[str, str]]]] = [
             ("agiwo/llm", "Model layer"),
             ("agiwo/tool", "Tool layer"),
             ("agiwo/scheduler", "Scheduler"),
+            ("agiwo/objective", "Objective"),
             ("agiwo/observability", "Observability"),
             ("agiwo/embedding", "Embedding"),
             ("agiwo/skill", "Skills"),
@@ -104,6 +104,15 @@ RUNTIME_SURFACE_SPECS: list[dict[str, object]] = [
         "import_path": "agiwo.scheduler",
         "role": "Public entry for orchestration, persistent roots, routing, waiting, and scheduler-backed agent coordination.",
         "source_paths": ["agiwo/scheduler", "agiwo/scheduler/engine.py"],
+    },
+    {
+        "import_path": "agiwo.objective",
+        "role": "Public entry for ObjectiveService commands, views, budgets, templates, and ObjectiveStore construction.",
+        "source_paths": [
+            "agiwo/objective",
+            "agiwo/objective/__init__.py",
+            "agiwo/objective/service.py",
+        ],
     },
     {
         "import_path": "agiwo.tool",

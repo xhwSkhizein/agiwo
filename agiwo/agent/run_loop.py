@@ -1,17 +1,33 @@
 """Single-run execution engine — the core run loop."""
 
 import asyncio
+from dataclasses import dataclass
 from typing import NamedTuple
 
+from agiwo.agent.budget_gate import LlmBudgetDenied
 from agiwo.agent.compaction import CompactResult, compact_if_needed
 from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.llm_caller import ModelCallLimitExceeded, execute_model_call
+from agiwo.agent.models.execution import RunTreeRole
+from agiwo.agent.models.finalization import (
+    FINALIZATION_CORRECTION_INSTRUCTION,
+    FINALIZATION_USER_INSTRUCTION,
+    RunFinalizationResult,
+    mechanical_agent_handoff_result,
+    parse_finalization_json,
+)
 from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import RunMetrics, RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.prompt import apply_steering_messages
+from agiwo.agent.retry import (
+    RetryCoordinator,
+    RetryPolicy,
+    RunBlockingFaultError,
+    finalization_for_blocking_fault,
+)
 from agiwo.agent.run_bootstrap import prepare_run_context
 from agiwo.agent.run_tool_batch import execute_tool_batch_cycle
 from agiwo.agent.runtime.context import RunContext, RunRuntime
@@ -39,6 +55,28 @@ class CompactionCycleResult(NamedTuple):
     should_continue: bool
 
 
+@dataclass(frozen=True, slots=True)
+class LoopCompleted:
+    """Normal loop termination; proceed to finalize."""
+
+
+@dataclass(frozen=True, slots=True)
+class LoopPaused:
+    """Recoverable pause after a committed checkpoint."""
+
+    reason: str
+    checkpoint_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class LoopFault:
+    """Blocking fault that must be finalized or failed at the run boundary."""
+
+    error: RunBlockingFaultError
+
+
+LoopExit = LoopCompleted | LoopPaused | LoopFault
+
 logger = get_logger(__name__)
 
 
@@ -53,15 +91,7 @@ class RunLoopOrchestrator:
         self.context = context
         self.runtime = runtime
         self.writer = RunStateWriter(context)
-
-    async def _project_entries(self, entries: list[object]) -> None:
-        await self.context.session_runtime.project_run_log_entries(
-            entries,
-            run_id=self.context.run_id,
-            agent_id=self.context.agent_id,
-            parent_run_id=self.context.parent_run_id,
-            depth=self.context.depth,
-        )
+        self._finalization: RunFinalizationResult | None = None
 
     async def _commit_step(
         self,
@@ -72,12 +102,11 @@ class RunLoopOrchestrator:
         track_state: bool = True,
     ) -> StepView:
         del llm
-        entries = await self.writer.commit_step(
+        await self.writer.commit_step(
             step,
             append_message=append_message,
             track_state=track_state,
         )
-        await self._project_entries(entries)
         await self.context.hooks.on_step(step, self.context)
         return step
 
@@ -86,57 +115,123 @@ class RunLoopOrchestrator:
         user_input: UserInput,
         system_prompt: str,
         pending_tool_calls: list[dict] | None = None,
+        *,
+        resume: bool = False,
+        resume_checkpoint_id: str | None = None,
     ) -> RunOutput:
         """Execute a single agent run with the orchestrator."""
         try:
-            # Start the run
-            await self._start_run(user_input)
+            if resume:
+                if resume_checkpoint_id is None:
+                    raise ValueError("resume requires resume_checkpoint_id")
+                await self.writer.record_resumed(checkpoint_id=resume_checkpoint_id)
+            else:
+                await self._start_run(user_input)
+                bootstrap = await prepare_run_context(
+                    context=self.context,
+                    runtime=self.runtime,
+                    user_input=user_input,
+                    system_prompt=system_prompt,
+                    writer=self.writer,
+                )
+                await self._commit_step(
+                    bootstrap.user_step,
+                    append_message=False,
+                    track_state=False,
+                )
+                self.runtime.compact_start_seq = bootstrap.compact_start_seq
 
-            # Prepare run context after the run has a persisted identity.
-            bootstrap = await prepare_run_context(
-                context=self.context,
-                runtime=self.runtime,
-                user_input=user_input,
-                system_prompt=system_prompt,
-                writer=self.writer,
-            )
-
-            # Commit user step
-            await self._commit_step(
-                bootstrap.user_step,
-                append_message=False,
-                track_state=False,
-            )
-
-            # Execute the main loop
-            self.runtime.compact_start_seq = bootstrap.compact_start_seq
-            await self._run_loop(pending_tool_calls=pending_tool_calls)
-
-            # Finalize and return result
-            return await self._finalize_run(
-                user_input,
-            )
+            exit_result = await self._run_loop(pending_tool_calls=pending_tool_calls)
+            return await self._dispatch_loop_exit(user_input, exit_result)
         except Exception as error:
             await self._fail_run(error)
             raise
+
+    async def _dispatch_loop_exit(
+        self,
+        user_input: UserInput,
+        exit_result: LoopExit,
+    ) -> RunOutput:
+        """Single dispatch point for loop outcomes."""
+        if isinstance(exit_result, LoopPaused):
+            return self._build_paused_output(
+                reason=exit_result.reason,
+                checkpoint_id=exit_result.checkpoint_id,
+            )
+        if isinstance(exit_result, LoopFault):
+            return await self._finalize_blocking_fault(user_input, exit_result.error)
+        return await self._finalize_run(user_input)
+
+    def _build_paused_output(self, *, reason: str, checkpoint_id: str) -> RunOutput:
+        return RunOutput(
+            response=self.context.ledger.response_content,
+            run_id=self.context.run_id,
+            session_id=self.context.session_id,
+            metrics=RunMetrics.from_ledger(
+                self.context.ledger,
+                elapsed_ms=self.context.elapsed * 1000,
+            ),
+            termination_reason=None,
+            metadata={
+                "run_start_seq": self.context.ledger.run_start_seq,
+                "pause_reason": reason,
+            },
+            paused=True,
+            checkpoint_id=checkpoint_id,
+        )
+
+    async def _finalize_blocking_fault(
+        self,
+        user_input: UserInput,
+        blocked: RunBlockingFaultError,
+    ) -> RunOutput:
+        """End ROOT assignment via mechanical Decision; fail non-root runs."""
+        del user_input
+        if self.context.run_tree_role is not RunTreeRole.ROOT:
+            await self._fail_run(blocked)
+            raise blocked
+        carry = [
+            {
+                "id": m.id,
+                "description": m.description,
+                "status": m.status
+                if isinstance(m.status, str)
+                else getattr(m.status, "value", str(m.status)),
+            }
+            for m in self.context.ledger.plan.milestones
+            if (
+                m.status
+                if isinstance(m.status, str)
+                else getattr(m.status, "value", str(m.status))
+            )
+            in {"pending", "active"}
+        ]
+        self._finalization = finalization_for_blocking_fault(
+            blocked,
+            carry_forward=carry,
+            plan_items=carry,
+        )
+        await self._set_termination_reason(
+            TerminationReason.COMPLETED,
+            phase="fault_boundary",
+            source=blocked.fault.disposition.value,
+        )
+        return await self._finalize_run("")
 
     async def _start_run(self, user_input: UserInput) -> None:
         """Initialize and start the run."""
         self.context.ledger.model_calls.configured_limit = (
             self.runtime.config.max_steps_per_run
         )
-        entries = await self.writer.start_run(user_input)
-        await self._project_entries(entries)
+        await self.writer.start_run(user_input)
 
     async def _complete_run(self, result: RunOutput) -> None:
         """Complete the run successfully."""
-        entries = await self.writer.finish_run(result)
-        await self._project_entries(entries)
+        await self.writer.finish_run(result)
 
     async def _fail_run(self, error: Exception) -> None:
         """Handle run failure."""
-        entries = await self.writer.fail_run(error)
-        await self._project_entries(entries)
+        await self.writer.fail_run(error)
 
     def _build_output(self) -> RunOutput:
         """Build the run output from the current state."""
@@ -150,6 +245,7 @@ class RunLoopOrchestrator:
             ),
             termination_reason=self.context.ledger.termination_reason,
             metadata={"run_start_seq": self.context.ledger.run_start_seq},
+            finalization=self._finalization,
         )
 
     async def _set_termination_reason(
@@ -161,15 +257,24 @@ class RunLoopOrchestrator:
     ) -> None:
         if self.context.ledger.termination_reason == reason:
             return
-        entries = await self.writer.record_termination_decided(
+        await self.writer.record_termination_decided(
             termination_reason=reason,
             phase=phase,
             source=source,
         )
-        await self._project_entries(entries)
 
     async def _finalize_run(self, user_input: UserInput) -> RunOutput:
         """Generate summary, build output, and complete the run."""
+        if (
+            self.context.run_tree_role is RunTreeRole.ROOT
+            and self.context.ledger.termination_reason is TerminationReason.MAX_STEPS
+            and self._finalization is None
+        ):
+            self._finalization = mechanical_agent_handoff_result(
+                self.context.ledger.response_content or "",
+                reason="max_steps_per_run_mechanical_handoff",
+                carry_forward=self._remaining_plan_items(),
+            )
         await maybe_generate_termination_summary(
             state=self.context,
             options=self.runtime.config,
@@ -178,6 +283,11 @@ class RunLoopOrchestrator:
             commit_step=self._commit_step,
         )
         result = self._build_output()
+        if self._finalization is not None:
+            # A termination summary is diagnostic only; it must not replace the
+            # ordinary report submitted to ObjectiveService.
+            result.response = self._finalization.report
+            self.context.ledger.response_content = self._finalization.report
         await self.context.hooks.after_run(result, self.context)
         if result.response is not None:
             await self.context.hooks.memory_write(user_input, result, self.context)
@@ -187,47 +297,95 @@ class RunLoopOrchestrator:
     async def _run_loop(
         self,
         pending_tool_calls: list[dict] | None,
-    ) -> None:
-        """Main run loop."""
+    ) -> LoopExit:
+        """Main run loop. Returns an explicit exit; does not use pause/fault exceptions."""
         try:
-            if pending_tool_calls:
-                terminated = await self._execute_tool_calls(
-                    tool_calls=pending_tool_calls,
-                    assistant_step_id=None,
-                )
-                if terminated:
-                    return
+            pending_exit = await self._run_pending_tools(pending_tool_calls)
+            if pending_exit is not None:
+                return pending_exit
 
             while not self.context.is_terminal:
-                should_stop = await self._run_loop_iteration()
-                if should_stop:
-                    return
+                exit_result = await self._run_loop_iteration()
+                if exit_result is not None:
+                    return exit_result
+            return LoopCompleted()
+        except RunBlockingFaultError as blocked:
+            return LoopFault(blocked)
+        except LlmBudgetDenied as denied:
+            self.context.request_pause(denied.reason or "llm_budget_denied")
+            return await self._commit_pause()
         except asyncio.CancelledError:
-            await self._set_termination_reason(
-                TerminationReason.CANCELLED,
-                phase="run_loop",
-                source="cancelled_error",
-            )
-            logger.info("agent_execution_cancelled", run_id=self.context.run_id)
+            return await self._exit_cancelled()
         except Exception:
-            await self._set_termination_reason(
-                TerminationReason.ERROR_WITH_CONTEXT
-                if self.context.ledger.steps.assistant > 0
-                else TerminationReason.ERROR,
-                phase="run_loop",
-                source="exception",
-            )
-            logger.error(
-                "agent_execution_failed",
-                run_id=self.context.run_id,
-                steps_completed=self.context.ledger.steps.total,
-                termination_reason=self.context.ledger.termination_reason,
-                exc_info=True,
-            )
+            await self._mark_loop_exception()
             raise
 
-    async def _run_loop_iteration(self) -> bool:
-        """Execute one iteration of the run loop. Returns True if the loop should stop."""
+    async def _run_pending_tools(
+        self,
+        pending_tool_calls: list[dict] | None,
+    ) -> LoopExit | None:
+        if not pending_tool_calls:
+            return None
+        paused = await self._maybe_pause("before_pending_tools")
+        if paused is not None:
+            return paused
+        terminated = await self._execute_tool_calls(
+            tool_calls=pending_tool_calls,
+            assistant_step_id=None,
+        )
+        if terminated:
+            return LoopCompleted()
+        return await self._maybe_pause("after_pending_tools")
+
+    async def _exit_cancelled(self) -> LoopCompleted:
+        await self._set_termination_reason(
+            TerminationReason.CANCELLED,
+            phase="run_loop",
+            source="cancelled_error",
+        )
+        logger.info("agent_execution_cancelled", run_id=self.context.run_id)
+        return LoopCompleted()
+
+    async def _mark_loop_exception(self) -> None:
+        await self._set_termination_reason(
+            TerminationReason.ERROR_WITH_CONTEXT
+            if self.context.ledger.steps.assistant > 0
+            else TerminationReason.ERROR,
+            phase="run_loop",
+            source="exception",
+        )
+        logger.error(
+            "agent_execution_failed",
+            run_id=self.context.run_id,
+            steps_completed=self.context.ledger.steps.total,
+            termination_reason=self.context.ledger.termination_reason,
+            exc_info=True,
+        )
+
+    async def _maybe_pause(self, boundary: str) -> LoopPaused | None:
+        del boundary
+        if self.context.pause_request is None:
+            return None
+        return await self._commit_pause()
+
+    async def _commit_pause(self) -> LoopPaused:
+        request = self.context.pause_request
+        reason = request.reason if request is not None else "pause"
+        self.context.pause_request = None
+        _, checkpoint_id = await self.writer.pause_at_checkpoint(reason=reason)
+        logger.info(
+            "agent_run_paused",
+            run_id=self.context.run_id,
+            reason=reason,
+            checkpoint_id=checkpoint_id,
+        )
+        return LoopPaused(reason=reason, checkpoint_id=checkpoint_id)
+
+    async def _run_loop_iteration(self) -> LoopExit | None:
+        """One iteration. None = continue; LoopExit = stop with that outcome."""
+        paused = await self._maybe_pause("pre_iteration")
+        if paused is not None:
+            return paused
         reason = check_non_recoverable_limits(
             self.context,
             self.runtime.config,
@@ -239,14 +397,14 @@ class RunLoopOrchestrator:
                 phase="pre_llm",
                 source="non_recoverable_limit",
             )
-            return True
+            return LoopCompleted()
 
         result = await self._run_compaction_cycle()
         compact_start_seq = result.compact_start_seq
         should_continue = result.should_continue
         self.runtime.compact_start_seq = compact_start_seq
         if should_continue or self.context.is_terminal:
-            return self.context.is_terminal
+            return LoopCompleted() if self.context.is_terminal else None
 
         self.context.ledger.steps.current += 1
         try:
@@ -257,7 +415,7 @@ class RunLoopOrchestrator:
                 phase="pre_llm",
                 source="model_call_limit",
             )
-            return True
+            return LoopCompleted()
         return await self._handle_assistant_turn_result(
             step=step,
             llm_context=llm_context,
@@ -279,13 +437,12 @@ class RunLoopOrchestrator:
             failure_count = self.writer.next_compaction_failure_attempt()
             err = result.error or ""
             terminal = failure_count >= 3
-            entries = await self.writer.record_compaction_failed(
+            await self.writer.record_compaction_failed(
                 error=err,
                 attempt=failure_count,
                 max_attempts=3,
                 terminal=terminal,
             )
-            await self._project_entries(entries)
             await self.context.hooks.compaction_failed(
                 self.context.run_id, err, failure_count, self.context
             )
@@ -331,11 +488,10 @@ class RunLoopOrchestrator:
         pending_steer = self.context.session_runtime.peek_pending_steer_inputs()
         if pending_steer:
             request_messages = apply_steering_messages(request_messages, pending_steer)
-            rebuilt_entries = await self.writer.rebuild_messages(
+            await self.writer.rebuild_messages(
                 reason="before_llm",
                 messages=request_messages,
             )
-            await self._project_entries(rebuilt_entries)
             self.context.session_runtime.ack_pending_steer_inputs(len(pending_steer))
         request_messages = self.context.snapshot_messages()
         modified = await self.context.hooks.before_llm_call(
@@ -344,11 +500,10 @@ class RunLoopOrchestrator:
         if modified is not None:
             request_messages = modified
         if request_messages != self.context.snapshot_messages():
-            rebuilt_entries = await self.writer.rebuild_messages(
+            await self.writer.rebuild_messages(
                 reason="before_llm",
                 messages=request_messages,
             )
-            await self._project_entries(rebuilt_entries)
 
         try:
             call_result = await execute_model_call(
@@ -357,10 +512,10 @@ class RunLoopOrchestrator:
                 writer=self.writer,
                 phase=ModelCallPhase.ASSISTANT,
                 abort_signal=self.runtime.abort_signal,
-                project_entries=self._project_entries,
                 messages=self.context.snapshot_messages(),
                 tools=self.context.copy_tool_schemas(),
                 use_state_tools=False,
+                retry_coordinator=self.runtime.retry_coordinator,
             )
         except ModelCallLimitExceeded as exc:
             logger.warning(
@@ -379,8 +534,11 @@ class RunLoopOrchestrator:
         self,
         step: StepView,
         llm_context: LLMCallContext,
-    ) -> bool:
-        """Handle the result of an assistant turn."""
+    ) -> LoopExit | None:
+        """Handle the result of an assistant turn.
+
+        Returns None to continue the loop, or a LoopExit to stop.
+        """
         reason = check_post_llm_limits(
             self.context,
             step,
@@ -394,19 +552,129 @@ class RunLoopOrchestrator:
                 phase="post_llm",
                 source="post_llm_limit",
             )
-            return True
+            return LoopCompleted()
 
         if not step.tool_calls:
+            paused = await self._maybe_pause("after_assistant_no_tools")
+            if paused is not None:
+                return paused
+            if self.context.run_tree_role is RunTreeRole.ROOT:
+                if self._has_unfinished_plan_items():
+                    await self._append_plan_guard_reminder()
+                    return None
+                self._finalization = await self._run_root_finalization(
+                    report=step.content if isinstance(step.content, str) else ""
+                )
             await self._set_termination_reason(
                 TerminationReason.COMPLETED,
                 phase="post_llm",
                 source="assistant_completed_without_tools",
             )
-            return True
+            return LoopCompleted()
 
-        return await self._execute_tool_calls(
+        terminated = await self._execute_tool_calls(
             tool_calls=step.tool_calls,
             assistant_step_id=step.id,
+        )
+        if terminated:
+            return LoopCompleted()
+        return await self._maybe_pause("after_tool_batch")
+
+    def _has_unfinished_plan_items(self) -> bool:
+        return any(
+            milestone.status in {"pending", "active"}
+            for milestone in self.context.ledger.plan.milestones
+        )
+
+    def _remaining_plan_items(self) -> list[dict[str, str]]:
+        return [
+            {
+                "id": milestone.id,
+                "description": milestone.description,
+                "status": milestone.status,
+            }
+            for milestone in self.context.ledger.plan.milestones
+            if milestone.status in {"pending", "active"}
+        ]
+
+    async def _append_plan_guard_reminder(self) -> None:
+        remaining = self._remaining_plan_items()
+        items = "\n".join(
+            f"- [{item['status']}] {item['id']}: {item['description']}"
+            for item in remaining
+        )
+        messages = self.context.snapshot_messages()
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "The run plan still has unfinished milestones. Continue the "
+                    "assignment and use update_plan to complete, abandon, or "
+                    "revise them before ending:\n"
+                    f"{items}"
+                ),
+                "is_user_provided": False,
+                "origin": "assignment_plan_guard",
+            }
+        )
+        await self.writer.rebuild_messages(
+            reason="assignment_plan_guard",
+            messages=messages,
+        )
+
+    async def _run_root_finalization(
+        self,
+        *,
+        report: str,
+    ) -> RunFinalizationResult:
+        messages = self.context.snapshot_messages()
+        messages.append(
+            _finalization_instruction_message(FINALIZATION_USER_INSTRUCTION)
+        )
+        first_error: str | None = None
+        first_response: str | None = None
+
+        for phase in (
+            ModelCallPhase.RUN_FINALIZATION,
+            ModelCallPhase.FINALIZATION_CORRECTION,
+        ):
+            request_messages = (
+                messages
+                if phase is ModelCallPhase.RUN_FINALIZATION
+                else _correction_messages(messages, first_response)
+            )
+            try:
+                call_result = await execute_model_call(
+                    model=self.runtime.model,
+                    state=self.context,
+                    writer=self.writer,
+                    phase=phase,
+                    abort_signal=self.runtime.abort_signal,
+                    messages=request_messages,
+                    tools=self.context.copy_tool_schemas(),
+                    use_state_tools=False,
+                    retry_coordinator=self.runtime.retry_coordinator,
+                )
+            except Exception as exc:  # noqa: BLE001 - finalization closes deterministically
+                first_error = f"{phase.value}: {exc}"
+                break
+
+            step = call_result.step
+            first_response = step.content if isinstance(step.content, str) else ""
+            if step.tool_calls:
+                first_error = f"{phase.value}: finalization returned tool calls"
+                continue
+            try:
+                result = parse_finalization_json(first_response, report=report)
+            except ValueError as exc:
+                first_error = str(exc)
+                continue
+            return result
+
+        return mechanical_agent_handoff_result(
+            report,
+            reason=first_error or "finalization_parse_failed",
+            carry_forward=self._remaining_plan_items(),
         )
 
     async def _execute_tool_calls(
@@ -437,8 +705,35 @@ class RunLoopOrchestrator:
         )
 
 
+def _finalization_instruction_message(instruction: str) -> dict[str, object]:
+    return {
+        "role": "user",
+        "content": instruction,
+        "is_user_provided": False,
+        "origin": "run_finalization",
+    }
+
+
+def _correction_messages(
+    messages: list[dict[str, object]],
+    previous_response: str | None,
+) -> list[dict[str, object]]:
+    corrected = list(messages)
+    corrected.append(
+        {
+            "role": "assistant",
+            "content": previous_response or "",
+            "origin": "run_finalization",
+        }
+    )
+    corrected.append(
+        _finalization_instruction_message(FINALIZATION_CORRECTION_INSTRUCTION)
+    )
+    return corrected
+
+
 async def execute_run(
-    user_input: UserInput,
+    user_input: UserInput | None,
     *,
     context: RunContext,
     system_prompt: str,
@@ -449,6 +744,8 @@ async def execute_run(
     pending_tool_calls: list[dict] | None = None,
     abort_signal: AbortSignal | None = None,
     root_path: str | None = None,
+    resume: bool = False,
+    resume_checkpoint_id: str | None = None,
 ) -> RunOutput:
     """Execute a single agent run — the core entry point."""
     options = options or AgentOptions()
@@ -462,6 +759,9 @@ async def execute_run(
         model,
     )
 
+    async def _retry_continue() -> bool:
+        return context.pause_request is None
+
     runtime = RunRuntime(
         session_runtime=context.session_runtime,
         config=options,
@@ -474,9 +774,27 @@ async def execute_run(
         max_input_tokens_per_call=max_input_tokens_per_call,
         max_context_window=max_context_window,
         compact_prompt=options.compact_prompt,
+        retry_coordinator=RetryCoordinator(
+            RetryPolicy(
+                max_attempts=options.max_provider_attempts,
+                min_backoff_seconds=options.retry_min_backoff_seconds,
+                max_backoff_seconds=options.retry_max_backoff_seconds,
+            ),
+            should_continue=_retry_continue,
+        ),
     )
 
     orchestrator = RunLoopOrchestrator(context, runtime)
+    if resume:
+        # Resume continues with already-loaded messages; user_input is unused.
+        return await orchestrator.execute_run(
+            user_input or "",
+            system_prompt,
+            pending_tool_calls,
+            resume=True,
+            resume_checkpoint_id=resume_checkpoint_id,
+        )
+    assert user_input is not None
     return await orchestrator.execute_run(
         user_input,
         system_prompt,
@@ -484,4 +802,11 @@ async def execute_run(
     )
 
 
-__all__ = ["execute_run", "RunLoopOrchestrator"]
+__all__ = [
+    "LoopCompleted",
+    "LoopExit",
+    "LoopFault",
+    "LoopPaused",
+    "RunLoopOrchestrator",
+    "execute_run",
+]

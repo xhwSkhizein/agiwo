@@ -7,10 +7,15 @@ produces Started/Completed/Failed facts with stable logical_call_id and phase.
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
+from agiwo.agent.budget_gate import (
+    LlmAttemptAdmitRequest,
+    LlmAttemptCostEvent,
+    LlmBudgetDenied,
+    MissingBudgetGateError,
+)
 from agiwo.agent.models.model_call import (
     FINALIZATION_PHASES,
     ModelCallPhase,
@@ -29,18 +34,18 @@ from agiwo.agent.termination.run_limit import RunLimitPolicy
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.llm.event_normalizer import normalize_usage_metrics
 from agiwo.llm.usage_resolver import ModelUsageEstimator, UsageEstimate
+from agiwo.agent.retry import (
+    IdempotencyKind,
+    RetryCoordinator,
+    RunBlockingFaultError,
+    map_provider_exception,
+)
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
-from agiwo.utils.retry import RETRYABLE_EXCEPTIONS, _is_retryable_error_with_types
 
 logger = get_logger(__name__)
 
 _CHUNK_TIMEOUT_SECONDS = 120
-_MAX_PROVIDER_ATTEMPTS = 3
-_RETRY_MIN_WAIT_SECONDS = 1.0
-_RETRY_MAX_WAIT_SECONDS = 10.0
-
-ProjectEntries = Callable[[list[object]], Awaitable[None]]
 
 
 class ModelCallLimitExceeded(Exception):
@@ -74,21 +79,23 @@ async def execute_model_call(
     writer: RunStateWriter,
     phase: ModelCallPhase,
     abort_signal: AbortSignal | None,
-    project_entries: ProjectEntries,
     messages: list[dict] | None = None,
     tools: list[dict] | None = None,
     use_state_tools: bool = True,
     name: str | None = None,
     logical_call_id: str | None = None,
     limit_policy: RunLimitPolicy | None = None,
+    retry_coordinator: RetryCoordinator | None = None,
 ) -> ModelCallResult:
     """Run a model call through the unified attempt boundary."""
     policy = limit_policy or RunLimitPolicy()
     call_id = logical_call_id or new_logical_call_id()
+    coordinator = retry_coordinator or RetryCoordinator()
 
     attempt_no = 1
-    last_error: Exception | None = None
-    while attempt_no <= _MAX_PROVIDER_ATTEMPTS:
+    last_fault = None
+    attempts: list = []
+    while True:
         # ADR P0-04: every real provider attempt — including retries — must
         # pass RunLimitPolicy against the current ledger count.
         decision = policy.check_before_attempt(state.ledger.model_calls, phase)
@@ -100,7 +107,11 @@ async def execute_model_call(
             # of the same phase do not get a second over-limit allowance.
             state.ledger.model_calls.mark_finalization_consumed(phase)
 
-        retry_reason = _retry_reason_for_attempt(attempt_no, last_error)
+        retry_reason = (
+            None
+            if last_fault is None
+            else f"provider_retry:{last_fault.provider_code or last_fault.disposition.value}"
+        )
         try:
             step, llm_context = await _stream_single_attempt(
                 model=model,
@@ -108,7 +119,6 @@ async def execute_model_call(
                 writer=writer,
                 phase=phase,
                 abort_signal=abort_signal,
-                project_entries=project_entries,
                 messages=messages,
                 tools=tools,
                 use_state_tools=use_state_tools,
@@ -118,13 +128,44 @@ async def execute_model_call(
                 retry_reason=retry_reason,
             )
             return ModelCallResult(step, llm_context, logical_call_id=call_id)
+        except (ModelCallLimitExceeded, LlmBudgetDenied, MissingBudgetGateError):
+            raise
+        except RunBlockingFaultError:
+            raise
         except Exception as exc:
-            last_error = exc
-            if attempt_no >= _MAX_PROVIDER_ATTEMPTS or not _is_provider_retryable(exc):
+            fault = map_provider_exception(
+                exc,
+                response_observed=False,
+                logical_call_id=call_id,
+                attempt_no=attempt_no,
+            )
+            attempts.append(fault)
+            last_fault = fault
+            if not coordinator.can_retry(
+                fault,
+                attempt_no=attempt_no,
+                idempotency=IdempotencyKind.GUARANTEED,
+            ):
+                coordinator.raise_boundary(
+                    fault,
+                    attempts=attempts,
+                    exhausted=attempt_no >= coordinator.policy.max_attempts
+                    and fault.disposition.value == "retryable",
+                )
+                raise
+            await coordinator.ensure_progress_allowed()
+            if state.pause_request is not None:
                 raise
             wait_seconds = min(
-                _RETRY_MAX_WAIT_SECONDS,
-                _RETRY_MIN_WAIT_SECONDS * (2 ** (attempt_no - 1)),
+                coordinator.policy.max_backoff_seconds,
+                coordinator.policy.min_backoff_seconds * (2 ** (attempt_no - 1)),
+            )
+            await writer.record_retry_backoff(
+                operation="llm",
+                attempt_no=attempt_no,
+                wait_seconds=wait_seconds,
+                reason=retry_reason or fault.disposition.value,
+                logical_call_id=call_id,
             )
             logger.warning(
                 "model_call_provider_retry",
@@ -133,39 +174,11 @@ async def execute_model_call(
                 phase=phase.value,
                 attempt_no=attempt_no,
                 retry_reason=retry_reason,
-                error=str(exc),
+                disposition=fault.disposition.value,
                 wait_seconds=wait_seconds,
             )
             attempt_no += 1
-            await asyncio.sleep(wait_seconds)
-
-    raise RuntimeError("unreachable model call retry loop")
-
-
-async def stream_assistant_step(
-    model: Model,
-    state: RunContext,
-    abort_signal: AbortSignal | None,
-    *,
-    messages: list[dict] | None = None,
-    tools: list[dict] | None = None,
-    use_state_tools: bool = True,
-    name: str | None = None,
-) -> tuple[StepView, LLMCallContext]:
-    """Backward-compatible streaming entry without ledger facts.
-
-    Prefer ``execute_model_call`` for all runtime paths.
-    """
-    step, llm_context = await _stream_assistant_step_inner(
-        model,
-        state,
-        abort_signal,
-        messages=messages,
-        tools=tools,
-        use_state_tools=use_state_tools,
-        name=name,
-    )
-    return step, llm_context
+            await coordinator.wait_before_retry(attempt_no - 1)
 
 
 async def _stream_single_attempt(
@@ -175,7 +188,6 @@ async def _stream_single_attempt(
     writer: RunStateWriter,
     phase: ModelCallPhase,
     abort_signal: AbortSignal | None,
-    project_entries: ProjectEntries,
     messages: list[dict] | None,
     tools: list[dict] | None,
     use_state_tools: bool,
@@ -185,13 +197,40 @@ async def _stream_single_attempt(
     retry_reason: str | None,
 ) -> tuple[StepView, LLMCallContext]:
     ledger = state.ledger.model_calls
-    call_ordinal = ledger.record_attempt_started(phase)
     resolved_messages = messages if messages is not None else state.snapshot_messages()
     resolved_tools = (
         state.copy_tool_schemas() if use_state_tools and tools is None else tools
     )
 
-    started_entries = await writer.record_llm_call_started(
+    metrics_resolver = ModelUsageEstimator(model)
+    request_estimate = metrics_resolver.estimate_request(
+        resolved_messages, resolved_tools
+    )
+    request_tokens = int(request_estimate.input_tokens or 0)
+    max_output_tokens = int(model.max_output_tokens or 0)
+    price_snapshot = metrics_resolver.price_snapshot()
+    call_cost_ceiling = metrics_resolver.compute_call_cost_ceiling(
+        request_tokens=request_tokens,
+        max_output_tokens=max_output_tokens,
+        cache_read_tokens=int(request_estimate.cache_read_tokens or 0),
+        cache_creation_tokens=int(request_estimate.cache_creation_tokens or 0),
+    )
+
+    await _admit_objective_llm_attempt(
+        state=state,
+        model=model,
+        phase=phase,
+        logical_call_id=logical_call_id,
+        attempt_no=attempt_no,
+        call_ordinal=ledger.next_ordinal(),
+        request_tokens=request_tokens,
+        max_output_tokens=max_output_tokens,
+        call_cost_ceiling=call_cost_ceiling,
+        price_snapshot=price_snapshot,
+    )
+
+    call_ordinal = ledger.record_attempt_started(phase)
+    await writer.record_llm_call_started(
         messages=resolved_messages,
         tools=resolved_tools,
         logical_call_id=logical_call_id,
@@ -199,8 +238,10 @@ async def _stream_single_attempt(
         attempt_no=attempt_no,
         call_ordinal=call_ordinal,
         retry_reason=retry_reason,
+        request_tokens=request_tokens,
+        call_cost_ceiling=call_cost_ceiling,
+        price_snapshot=price_snapshot,
     )
-    await project_entries(started_entries)
 
     try:
         step, llm_context = await _stream_assistant_step_inner(
@@ -213,7 +254,7 @@ async def _stream_single_attempt(
             name=name,
         )
     except Exception as exc:
-        failed_entries = await writer.record_llm_call_failed(
+        await writer.record_llm_call_failed(
             logical_call_id=logical_call_id,
             phase=phase,
             attempt_no=attempt_no,
@@ -221,12 +262,29 @@ async def _stream_single_attempt(
             retry_reason=retry_reason,
             error=str(exc),
             response_observed=False,
+            request_tokens=request_tokens,
+            call_cost_ceiling=call_cost_ceiling,
+            price_snapshot=price_snapshot,
         )
-        await project_entries(failed_entries)
         ledger.record_attempt_failed(phase)
+        await _record_objective_llm_cost(
+            state=state,
+            phase=phase,
+            logical_call_id=logical_call_id,
+            attempt_no=attempt_no,
+            call_ordinal=call_ordinal,
+            retry_reason=retry_reason,
+            request_tokens=request_tokens,
+            accepted_output_tokens=0,
+            call_cost_ceiling=call_cost_ceiling,
+            cost_usd=0.0,
+            response_observed=False,
+            source="no_response",
+            price_snapshot=price_snapshot,
+        )
         raise
 
-    completed_entries = await writer.record_llm_call_completed(
+    await writer.record_llm_call_completed(
         step=step,
         llm=llm_context,
         logical_call_id=logical_call_id,
@@ -235,10 +293,110 @@ async def _stream_single_attempt(
         call_ordinal=call_ordinal,
         retry_reason=retry_reason,
         response_observed=True,
+        request_tokens=request_tokens,
+        call_cost_ceiling=call_cost_ceiling,
+        price_snapshot=price_snapshot,
     )
-    await project_entries(completed_entries)
     ledger.record_attempt_completed(phase)
+    cost_usd = float(step.metrics.token_cost or 0.0) if step.metrics else 0.0
+    accepted_output = int(step.metrics.output_tokens or 0) if step.metrics else 0
+    usage_source = (
+        str(step.metrics.usage_source)
+        if step.metrics and step.metrics.usage_source
+        else "estimated"
+    )
+    await _record_objective_llm_cost(
+        state=state,
+        phase=phase,
+        logical_call_id=logical_call_id,
+        attempt_no=attempt_no,
+        call_ordinal=call_ordinal,
+        retry_reason=retry_reason,
+        request_tokens=request_tokens,
+        accepted_output_tokens=accepted_output,
+        call_cost_ceiling=call_cost_ceiling,
+        cost_usd=cost_usd,
+        response_observed=True,
+        source=usage_source,
+        price_snapshot=price_snapshot,
+    )
     return step, llm_context
+
+
+async def _admit_objective_llm_attempt(
+    *,
+    state: RunContext,
+    model: Model,
+    phase: ModelCallPhase,
+    logical_call_id: str,
+    attempt_no: int,
+    call_ordinal: int,
+    request_tokens: int,
+    max_output_tokens: int,
+    call_cost_ceiling: float,
+    price_snapshot: dict[str, float],
+) -> None:
+    del model  # prices already snapshotted by caller
+    if state.objective_id is None:
+        return
+    gate = state.llm_budget_gate
+    if gate is None:
+        raise MissingBudgetGateError(state.objective_id)
+    await gate.check_before_attempt(
+        LlmAttemptAdmitRequest(
+            objective_id=state.objective_id,
+            run_id=state.run_id,
+            logical_call_id=logical_call_id,
+            phase=phase.value,
+            attempt_no=attempt_no,
+            call_ordinal=call_ordinal,
+            request_tokens=request_tokens,
+            max_output_tokens=max_output_tokens,
+            call_cost_ceiling=call_cost_ceiling,
+            price_snapshot=price_snapshot,
+        )
+    )
+
+
+async def _record_objective_llm_cost(
+    *,
+    state: RunContext,
+    phase: ModelCallPhase,
+    logical_call_id: str,
+    attempt_no: int,
+    call_ordinal: int,
+    retry_reason: str | None,
+    request_tokens: int,
+    accepted_output_tokens: int,
+    call_cost_ceiling: float,
+    cost_usd: float,
+    response_observed: bool,
+    source: str,
+    price_snapshot: dict[str, float],
+) -> None:
+    if state.objective_id is None:
+        return
+    gate = state.llm_budget_gate
+    if gate is None:
+        raise MissingBudgetGateError(state.objective_id)
+    await gate.record_attempt_cost(
+        LlmAttemptCostEvent(
+            objective_id=state.objective_id,
+            run_id=state.run_id,
+            logical_call_id=logical_call_id,
+            phase=phase.value,
+            attempt_no=attempt_no,
+            call_ordinal=call_ordinal,
+            request_tokens=request_tokens,
+            accepted_output_tokens=accepted_output_tokens,
+            call_cost_ceiling=call_cost_ceiling,
+            cost_usd=cost_usd,
+            response_observed=response_observed,
+            source=source,
+            price_snapshot=price_snapshot,
+            retry_reason=retry_reason,
+        )
+    )
 
 
 async def _stream_assistant_step_inner(
@@ -340,21 +498,6 @@ async def _stream_assistant_step_inner(
     _resolve_step_metrics(step, metrics_resolver, request_estimate)
     llm_context.finish_reason = finish_reason
     return step, llm_context
-
-
-def _retry_reason_for_attempt(
-    attempt_no: int,
-    last_error: Exception | None,
-) -> str | None:
-    if attempt_no <= 1:
-        return None
-    if last_error is None:
-        return "provider_retry"
-    return f"provider_retry:{type(last_error).__name__}"
-
-
-def _is_provider_retryable(exc: BaseException) -> bool:
-    return _is_retryable_error_with_types(exc, RETRYABLE_EXCEPTIONS)
 
 
 def _accumulate_tool_calls(
@@ -503,8 +646,9 @@ def _check_abort(abort_signal: AbortSignal | None) -> None:
 
 
 __all__ = [
+    "LlmBudgetDenied",
+    "MissingBudgetGateError",
     "ModelCallLimitExceeded",
     "ModelCallResult",
     "execute_model_call",
-    "stream_assistant_step",
 ]

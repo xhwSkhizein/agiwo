@@ -11,6 +11,12 @@ from agiwo.scheduler.models import (
     TimeUnit,
 )
 from agiwo.scheduler.engine import Scheduler
+from agiwo.scheduler.execution import (
+    ExecutionDispatchResult,
+    ExecutionTreeNode,
+    SchedulerCapabilityUnavailable,
+    SchedulerExecutionRequest,
+)
 from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.store.base import AgentStateStorage
 
@@ -19,8 +25,12 @@ __all__ = [
     "AgentStateStatus",
     "AgentStateStorage",
     "AgentStateStorageConfig",
+    "ExecutionDispatchResult",
+    "ExecutionTreeNode",
     "Scheduler",
+    "SchedulerCapabilityUnavailable",
     "SchedulerConfig",
+    "SchedulerExecutionRequest",
     "SchedulerRuntimeFacts",
     "TaskGuard",
     "TaskLimits",

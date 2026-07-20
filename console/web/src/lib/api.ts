@@ -380,6 +380,28 @@ export interface SchedulerAckEventPayload {
   state_id?: string | null;
 }
 
+export interface ObjectiveAckEventPayload {
+  type: "objective_ack";
+  objective_id: string;
+  status?: string;
+}
+
+export interface ObjectiveStreamEventPayload {
+  type: "objective_event";
+  sequence: number;
+  fact_id: string;
+  kind: string;
+  occurred_at: string;
+  summary: string;
+  refs?: Record<string, string | number | boolean | null>;
+}
+
+export interface ObjectiveErrorEventPayload {
+  type: "objective_error";
+  code?: string;
+  message: string;
+}
+
 export type AgentStreamEventPayload =
   | RunStartedEventPayload
   | StepDeltaEventPayload
@@ -390,7 +412,10 @@ export type AgentStreamEventPayload =
 export type StreamEventPayload =
   | AgentStreamEventPayload
   | SchedulerFailedEventPayload
-  | SchedulerAckEventPayload;
+  | SchedulerAckEventPayload
+  | ObjectiveAckEventPayload
+  | ObjectiveStreamEventPayload
+  | ObjectiveErrorEventPayload;
 
 export function listSessions(limit = 20, offset = 0) {
   return fetchJSON<PageResponse<SessionSummary>>(
@@ -629,6 +654,11 @@ export interface ModelParamsPayload {
   output_price: number;
 }
 
+export interface AssignmentTemplates {
+  work: string;
+  verification: string;
+}
+
 export interface AgentConfig {
   id: string;
   name: string;
@@ -641,6 +671,7 @@ export interface AgentConfig {
   allowed_skills: string[] | null;
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
+  assignment_templates?: AssignmentTemplates | null;
   created_at: string;
   updated_at: string;
 }
@@ -655,6 +686,49 @@ export interface AgentConfigCreate {
   allowed_skills: string[] | null;
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
+  assignment_templates?: AssignmentTemplates | null;
+}
+
+export interface RootRunView {
+  run_id: string;
+  role: string;
+  status: string;
+  run_ids: string[];
+  outcome_report: string | null;
+  decision_target: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ObjectiveTimelineNode {
+  sequence: number;
+  fact_id: string;
+  kind: string;
+  occurred_at: string;
+  summary: string;
+  refs: Record<string, string | number | boolean | null>;
+}
+
+export interface ObjectiveView {
+  objective_id: string;
+  session_id: string;
+  status: string;
+  is_terminal: boolean;
+  delivery_report: string | null;
+  delivery_outcome_id: string | null;
+  last_sequence: number;
+  timeline: ObjectiveTimelineNode[];
+  root_runs?: RootRunView[];
+  artifacts: Array<{ artifact_id: string; path: string; summary: string }>;
+  budget: {
+    handoffs: { limit: number; used: number; remaining: number };
+    verification_attempts: { limit: number; used: number; remaining: number };
+    llm_cost_usd: { limit: number; used: number; remaining: number };
+    active_seconds: { limit: number; used: number; remaining: number };
+  };
+  context_capacity?: Record<string, unknown> | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface AvailableTool {
@@ -918,9 +992,38 @@ export function forkSession(sessionId: string, contextSummary: string) {
   });
 }
 
+export async function archiveSession(sessionId: string) {
+  return fetchJSON<{ ok: boolean; session_id: string; archived_at: string }>(
+    `/api/sessions/${sessionId}/archive`,
+    { method: "POST" },
+  );
+}
+
+/** @deprecated Use archiveSession — ordinary delete is archive (P5-06). */
 export async function deleteSession(sessionId: string) {
-  const res = await fetch(apiUrl(`/api/sessions/${sessionId}`), { method: "DELETE" });
-  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+  await archiveSession(sessionId);
+}
+
+export function listSessionObjectives(sessionId: string) {
+  return fetchJSON<ObjectiveView[]>(`/api/sessions/${sessionId}/objectives`);
+}
+
+export function getObjective(objectiveId: string) {
+  return fetchJSON<ObjectiveView>(`/api/objectives/${objectiveId}`);
+}
+
+export function previewAssignmentTemplate(
+  kind: "work" | "verification",
+  template: string,
+) {
+  return fetchJSON<{ rendered: string }>(`/api/agents/templates/preview`, {
+    method: "POST",
+    body: JSON.stringify({ kind, template }),
+  });
+}
+
+export function getDefaultAssignmentTemplates() {
+  return fetchJSON<AssignmentTemplates>(`/api/agents/templates/defaults`);
 }
 
 // ── Session Input Stream ───────────────────────────────────────────────

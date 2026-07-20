@@ -325,15 +325,6 @@ async def _compact(
     await commit_step(compact_user_step, append_message=True)
     snapshot_messages = state.snapshot_messages()
 
-    async def _project(entries: list[object]) -> None:
-        await state.session_runtime.project_run_log_entries(
-            entries,
-            run_id=state.run_id,
-            agent_id=state.agent_id,
-            parent_run_id=state.parent_run_id,
-            depth=state.depth,
-        )
-
     try:
         call_result = await execute_model_call(
             model=model,
@@ -341,7 +332,6 @@ async def _compact(
             writer=writer,
             phase=ModelCallPhase.COMPACTION,
             abort_signal=abort_signal,
-            project_entries=_project,
             messages=snapshot_messages,
             use_state_tools=False,
             name="compact",
@@ -399,18 +389,11 @@ async def _compact(
         compact_tokens=(step.metrics.total_tokens if step.metrics else 0),
     )
 
-    rebuilt_entries = await writer.rebuild_messages(
+    await writer.rebuild_messages(
         reason="compaction",
         messages=compacted_messages,
     )
-    applied_entries = await writer.record_compaction_applied(metadata)
-    await state.session_runtime.project_run_log_entries(
-        [*rebuilt_entries, *applied_entries],
-        run_id=state.run_id,
-        agent_id=state.agent_id,
-        parent_run_id=state.parent_run_id,
-        depth=state.depth,
-    )
+    await writer.record_compaction_applied(metadata)
 
     return metadata
 

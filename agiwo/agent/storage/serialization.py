@@ -12,6 +12,7 @@ from agiwo.agent.models.log import (
     CompactionApplied,
     CompactionFailed,
     ContextAssembled,
+    ExternalEffectMayHaveStarted,
     HookFailed,
     IntrospectionCheckpointRecorded,
     IntrospectionOutcomeRecorded,
@@ -20,11 +21,16 @@ from agiwo.agent.models.log import (
     LLMCallFailed,
     LLMCallStarted,
     MessagesRebuilt,
+    RunCheckpoint,
     RunFailed,
     RunFinished,
     RunLogEntry,
     RunLogEntryKind,
+    RunPaused,
     RunPlanUpdated,
+    RunResumePrepared,
+    RunResumed,
+    RetryBackoff,
     RunRolledBack,
     RunStarted,
     TerminationDecided,
@@ -41,6 +47,8 @@ from agiwo.agent.models.runtime_decision import (
     RuntimeDecisionState,
     TerminationDecisionView,
 )
+from agiwo.agent.models.execution import RunTreeRole
+from agiwo.agent.models.finalization import RunFinalizationResult
 from agiwo.agent.models.run import RunMetrics, RunStatus, RunView, TerminationReason
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 
@@ -65,6 +73,12 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.INTROSPECTION_TRIGGERED: IntrospectionTriggered,
     RunLogEntryKind.INTROSPECTION_CHECKPOINT_RECORDED: IntrospectionCheckpointRecorded,
     RunLogEntryKind.INTROSPECTION_OUTCOME_RECORDED: IntrospectionOutcomeRecorded,
+    RunLogEntryKind.RUN_CHECKPOINT: RunCheckpoint,
+    RunLogEntryKind.RUN_PAUSED: RunPaused,
+    RunLogEntryKind.RUN_RESUME_PREPARED: RunResumePrepared,
+    RunLogEntryKind.RUN_RESUMED: RunResumed,
+    RunLogEntryKind.EXTERNAL_EFFECT_MAY_HAVE_STARTED: ExternalEffectMayHaveStarted,
+    RunLogEntryKind.RETRY_BACKOFF: RetryBackoff,
 }
 
 
@@ -220,15 +234,29 @@ def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
     termination_reason = None
     metrics: RunMetrics | None = None
 
+    finalization = None
     if finished is not None:
         status = RunStatus.COMPLETED
         response = finished.response
         termination_reason = finished.termination_reason
         metrics = RunMetrics(**finished.metrics) if finished.metrics else None
         updated_at = finished.created_at
+        if finished.finalization is not None:
+            finalization = RunFinalizationResult.from_dict(finished.finalization)
     elif failed is not None:
         status = RunStatus.FAILED
         updated_at = failed.created_at
+    else:
+        # Latest pause/resume marker wins when the run has not finished.
+        for entry in reversed(entries):
+            if isinstance(entry, RunResumed):
+                status = RunStatus.RUNNING
+                updated_at = entry.created_at
+                break
+            if isinstance(entry, (RunPaused, RunResumePrepared)):
+                status = RunStatus.PAUSED
+                updated_at = entry.created_at
+                break
 
     if (
         response is None
@@ -237,6 +265,11 @@ def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
     ):
         response = last_assistant.content
 
+    role_raw = started.run_tree_role
+    try:
+        run_tree_role = RunTreeRole(role_raw) if role_raw else RunTreeRole.NONE
+    except ValueError:
+        run_tree_role = RunTreeRole.NONE
     return RunView(
         run_id=started.run_id,
         session_id=started.session_id,
@@ -250,6 +283,9 @@ def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
         created_at=started.created_at,
         updated_at=updated_at,
         parent_run_id=started.parent_run_id,
+        objective_id=started.objective_id,
+        run_tree_role=run_tree_role,
+        finalization=finalization,
     )
 
 

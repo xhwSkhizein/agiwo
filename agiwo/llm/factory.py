@@ -23,6 +23,9 @@ from agiwo.config.settings import (
     COMPATIBLE_MODEL_PROVIDERS,
     ModelProvider,
 )
+from agiwo.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class ModelSpec(BaseModel):
@@ -77,9 +80,17 @@ def _build_shared_params(config: ModelSpec) -> dict[str, Any]:
     }
 
 
-def _require_absolute_base_url(provider: str, base_url: str | None) -> str:
+def _require_absolute_base_url(
+    provider: str,
+    base_url: str | None,
+    *,
+    model_name: str | None = None,
+) -> str:
     if not isinstance(base_url, str) or not base_url.strip():
-        raise ValueError(f"{provider} models require an explicit base_url")
+        subject = f"{provider} model"
+        if model_name:
+            subject = f"{provider} model {model_name!r}"
+        raise ValueError(f"{subject} requires an explicit base_url")
     normalized = base_url.strip()
     validate_model_base_url(normalized)
     return normalized
@@ -92,14 +103,18 @@ def _build_model_for_provider(
     resolved_api_key: str | None,
     shared_params: dict[str, Any],
 ) -> Model:
-    validate_provider_model_params(provider, config)
+    validate_provider_model_params(provider, config, model_name=config.model_name)
     if provider in COMPATIBLE_MODEL_PROVIDERS and not resolved_api_key:
         raise ValueError(
-            f"{provider} api_key_env_name '{config.api_key_env_name}' is not set"
+            f"{provider} model {config.model_name!r}: "
+            f"environment variable {config.api_key_env_name!r} "
+            f"(api_key_env_name) is not set or empty"
         )
 
     if provider in COMPATIBLE_MODEL_PROVIDERS:
-        base_url = _require_absolute_base_url(provider, config.base_url)
+        base_url = _require_absolute_base_url(
+            provider, config.base_url, model_name=config.model_name
+        )
     else:
         base_url = config.base_url
 
@@ -154,14 +169,27 @@ def create_model(config: ModelSpec) -> Model:
     shared_params = _build_shared_params(config)
     provider_spec = PROVIDER_SPECS.get(provider)
     if provider_spec is None:
-        raise ValueError(f"Unknown model provider: {provider}")
-    return _build_model_for_provider(
-        provider=provider,
-        spec=provider_spec,
-        config=config,
-        resolved_api_key=resolved_api_key,
-        shared_params=shared_params,
-    )
+        raise ValueError(
+            f"Unknown model provider: {provider!r} (model_name={config.model_name!r})"
+        )
+    try:
+        return _build_model_for_provider(
+            provider=provider,
+            spec=provider_spec,
+            config=config,
+            resolved_api_key=resolved_api_key,
+            shared_params=shared_params,
+        )
+    except ValueError as exc:
+        logger.error(
+            "model_create_failed",
+            model_provider=provider,
+            model_name=config.model_name,
+            api_key_env_name=config.api_key_env_name,
+            has_base_url=bool(config.base_url),
+            error=str(exc),
+        )
+        raise
 
 
 MODEL_SPEC_FIELD_NAMES = set(ModelSpec.model_fields.keys())

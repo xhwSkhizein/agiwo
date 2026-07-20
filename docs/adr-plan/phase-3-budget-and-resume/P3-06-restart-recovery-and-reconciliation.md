@@ -1,6 +1,6 @@
 # P3-06：实现重启恢复与 Outbox 对账
 
-状态：planned
+状态：done
 
 ## 目标
 

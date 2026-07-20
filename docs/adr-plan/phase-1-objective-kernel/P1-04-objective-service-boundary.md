@@ -1,6 +1,6 @@
 # P1-04：建立 ObjectiveService 深模块边界
 
-状态：planned
+状态：done（2026-07-18）
 
 ## 目标
 

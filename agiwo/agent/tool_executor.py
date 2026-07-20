@@ -4,9 +4,17 @@ import asyncio
 import time
 from typing import Any
 
+from agiwo.agent.retry import (
+    ExecutionFault,
+    FaultDisposition,
+    IdempotencyKind,
+    RetryCoordinator,
+    may_auto_retry,
+)
 from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.llm.message_converter import parse_json_tool_args
-from agiwo.tool.base import BaseTool, ToolGateDecision, ToolResult
+from agiwo.tool.base import BaseTool, ToolGateDecision, ToolIdempotency, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
@@ -20,6 +28,8 @@ async def execute_tool_batch(
     tools_map: dict[str, BaseTool],
     context: RunContext,
     abort_signal: AbortSignal | None = None,
+    writer: RunStateWriter | None = None,
+    retry_coordinator: RetryCoordinator | None = None,
 ) -> list[ToolResult]:
     results: dict[int, ToolResult] = {}
     safe_indices: list[int] = []
@@ -41,6 +51,8 @@ async def execute_tool_batch(
                     tools_map=tools_map,
                     context=context,
                     abort_signal=abort_signal,
+                    writer=writer,
+                    retry_coordinator=retry_coordinator,
                 )
                 for index in safe_indices
             )
@@ -54,6 +66,8 @@ async def execute_tool_batch(
             tools_map=tools_map,
             context=context,
             abort_signal=abort_signal,
+            writer=writer,
+            retry_coordinator=retry_coordinator,
         )
 
     assert len(results) == len(tool_calls), "All tool calls must produce a result"
@@ -66,6 +80,8 @@ async def _execute_tool_call(
     tools_map: dict[str, BaseTool],
     context: RunContext,
     abort_signal: AbortSignal | None = None,
+    writer: RunStateWriter | None = None,
+    retry_coordinator: RetryCoordinator | None = None,
 ) -> ToolResult:
     start_time = time.time()
     prepared = await _prepare_tool_call(
@@ -86,6 +102,8 @@ async def _execute_tool_call(
         context=context,
         abort_signal=abort_signal,
         start_time=start_time,
+        writer=writer,
+        retry_coordinator=retry_coordinator,
     )
 
 
@@ -147,62 +165,106 @@ async def _execute_prepared_tool_call(
     context: RunContext,
     abort_signal: AbortSignal | None,
     start_time: float,
+    writer: RunStateWriter | None = None,
+    retry_coordinator: RetryCoordinator | None = None,
 ) -> ToolResult:
-    try:
-        tool_context = tool.build_context(context, tool_call_id=call_id)
-        gate_decision = await _gate_tool_call(tool, args, tool_context)
-        if gate_decision.action == "deny":
-            return ToolResult.denied(
+    tool_context = tool.build_context(context, tool_call_id=call_id)
+    gate_decision = await _gate_tool_call(tool, args, tool_context)
+    if gate_decision.action == "deny":
+        return ToolResult.denied(
+            tool_name=tool_name,
+            reason=gate_decision.reason,
+            tool_call_id=call_id,
+            input_args=args,
+            start_time=start_time,
+        )
+
+    idempotency = _to_idempotency_kind(tool.idempotency)
+    idem_key = tool.idempotency_key(args)
+    coordinator = retry_coordinator or RetryCoordinator()
+    attempt_no = 1
+    effect_marked = False
+
+    while True:
+        try:
+            if (
+                tool.may_have_external_effect
+                and writer is not None
+                and not effect_marked
+            ):
+                await writer.record_external_effect_may_have_started(
+                    tool_name=tool_name,
+                    tool_call_id=call_id,
+                    idempotency=idempotency.value,
+                    idempotency_key=idem_key,
+                )
+                effect_marked = True
+            logger.debug(
+                "executing_tool",
                 tool_name=tool_name,
-                reason=gate_decision.reason,
                 tool_call_id=call_id,
-                input_args=args,
+                attempt_no=attempt_no,
+            )
+            result = await tool.execute(
+                args, context=tool_context, abort_signal=abort_signal
+            )
+            result.tool_call_id = call_id or ""
+            return result
+        except asyncio.CancelledError:
+            logger.info("tool_execution_cancelled", tool_name=tool_name)
+            return ToolResult.failed(
+                tool_call_id=call_id,
+                tool_name=tool_name,
+                error="Tool execution was cancelled",
                 start_time=start_time,
             )
+        except Exception as error:  # noqa: BLE001 - runtime boundary
+            fault = ExecutionFault(
+                operation=f"tool:{tool_name}",
+                disposition=FaultDisposition.RETRYABLE,
+                run_blocking=False,
+                external_effect_may_have_started=effect_marked,
+                tool_code=type(error).__name__,
+                message=str(error),
+                attempt_no=attempt_no,
+            )
+            if effect_marked and not may_auto_retry(
+                fault, idempotency=idempotency, idempotency_key=idem_key
+            ):
+                # Marker without result and no idempotent retry → leave as ToolResult;
+                # blocking outcome_unknown is reserved for adapters that raise it.
+                return ToolResult.failed(
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                    error=f"Tool execution failed: {error}",
+                    start_time=start_time,
+                )
+            if not coordinator.can_retry(
+                fault,
+                attempt_no=attempt_no,
+                idempotency=idempotency,
+                idempotency_key=idem_key,
+            ):
+                logger.error(
+                    "tool_execution_exception",
+                    tool_name=tool_name,
+                    tool_call_id=call_id,
+                    error=str(error),
+                    exc_info=True,
+                )
+                return ToolResult.failed(
+                    tool_call_id=call_id,
+                    tool_name=tool_name,
+                    error=f"Tool execution failed: {error}",
+                    start_time=start_time,
+                )
+            await coordinator.ensure_progress_allowed()
+            attempt_no += 1
+            await coordinator.wait_before_retry(attempt_no - 1)
 
-        logger.debug(
-            "executing_tool",
-            tool_name=tool_name,
-            tool_call_id=call_id,
-        )
-        result = await tool.execute(
-            args, context=tool_context, abort_signal=abort_signal
-        )
-        result.tool_call_id = call_id or ""
-        logger.debug(
-            "tool_execution_completed",
-            tool_name=tool_name,
-            success=result.is_success,
-            duration=result.duration,
-            termination_reason=(
-                result.termination_reason.value
-                if result.termination_reason is not None
-                else None
-            ),
-        )
-        return result
-    except asyncio.CancelledError:
-        logger.info("tool_execution_cancelled", tool_name=tool_name)
-        return ToolResult.failed(
-            tool_call_id=call_id,
-            tool_name=tool_name,
-            error="Tool execution was cancelled",
-            start_time=start_time,
-        )
-    except Exception as error:  # noqa: BLE001 - runtime boundary
-        logger.error(
-            "tool_execution_exception",
-            tool_name=tool_name,
-            tool_call_id=call_id,
-            error=str(error),
-            exc_info=True,
-        )
-        return ToolResult.failed(
-            tool_call_id=call_id,
-            tool_name=tool_name,
-            error=f"Tool execution failed: {error}",
-            start_time=start_time,
-        )
+
+def _to_idempotency_kind(value: ToolIdempotency) -> IdempotencyKind:
+    return IdempotencyKind(value.value)
 
 
 async def _gate_tool_call(

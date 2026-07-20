@@ -38,6 +38,12 @@ class RunLogEntryKind(str, Enum):
     INTROSPECTION_TRIGGERED = "introspection_triggered"
     INTROSPECTION_CHECKPOINT_RECORDED = "introspection_checkpoint_recorded"
     INTROSPECTION_OUTCOME_RECORDED = "introspection_outcome_recorded"
+    RUN_CHECKPOINT = "run_checkpoint"
+    RUN_PAUSED = "run_paused"
+    RUN_RESUME_PREPARED = "run_resume_prepared"
+    RUN_RESUMED = "run_resumed"
+    EXTERNAL_EFFECT_MAY_HAVE_STARTED = "external_effect_may_have_started"
+    RETRY_BACKOFF = "retry_backoff"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -56,6 +62,8 @@ class RunStarted(RunLogEntry):
     user_id: str | None = None
     parent_run_id: str | None = None
     depth: int = 0
+    objective_id: str | None = None
+    run_tree_role: str | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_STARTED)
 
 
@@ -64,6 +72,7 @@ class RunFinished(RunLogEntry):
     response: str | None = None
     termination_reason: TerminationReason | None = None
     metrics: dict[str, Any] | None = None
+    finalization: dict[str, Any] | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_FINISHED)
 
 
@@ -71,6 +80,68 @@ class RunFinished(RunLogEntry):
 class RunFailed(RunLogEntry):
     error: str
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_FAILED)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunCheckpoint(RunLogEntry):
+    """Minimal resume cursor; messages are rebuilt from RunLog replay."""
+
+    checkpoint_id: str
+    last_committed_sequence: int
+    agent_config_hash: str | None = None
+    template_hash: str | None = None
+    reason: str | None = None
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_CHECKPOINT)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunPaused(RunLogEntry):
+    """Recoverable interrupt; must not pair with RunFinished/Failed/TerminationDecided."""
+
+    checkpoint_id: str
+    reason: str
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_PAUSED)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunResumePrepared(RunLogEntry):
+    """Runtime rebuilt and validated; still PAUSED until barrier release."""
+
+    checkpoint_id: str
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.RUN_RESUME_PREPARED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunResumed(RunLogEntry):
+    checkpoint_id: str
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_RESUMED)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExternalEffectMayHaveStarted(RunLogEntry):
+    """Marker committed before a tool adapter that may cause external side effects."""
+
+    tool_name: str
+    tool_call_id: str
+    idempotency: str
+    idempotency_key: str | None = None
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.EXTERNAL_EFFECT_MAY_HAVE_STARTED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RetryBackoff(RunLogEntry):
+    """Recorded wait before a safe automatic retry attempt."""
+
+    operation: str
+    attempt_no: int
+    wait_seconds: float
+    reason: str
+    logical_call_id: str | None = None
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RETRY_BACKOFF)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -104,6 +175,9 @@ class LLMCallStarted(RunLogEntry):
     retry_reason: str | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     tools: list[dict[str, Any]] | None = None
+    request_tokens: int | None = None
+    call_cost_ceiling: float | None = None
+    price_snapshot: dict[str, float] | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.LLM_CALL_STARTED)
 
 
@@ -120,6 +194,9 @@ class LLMCallCompleted(RunLogEntry):
     finish_reason: str | None = None
     metrics: StepMetrics | None = None
     response_observed: bool = True
+    request_tokens: int | None = None
+    call_cost_ceiling: float | None = None
+    price_snapshot: dict[str, float] | None = None
     kind: RunLogEntryKind = field(
         init=False, default=RunLogEntryKind.LLM_CALL_COMPLETED
     )
@@ -138,6 +215,9 @@ class LLMCallFailed(RunLogEntry):
     tool_calls: list[dict[str, Any]] | None = None
     metrics: StepMetrics | None = None
     response_observed: bool = False
+    request_tokens: int | None = None
+    call_cost_ceiling: float | None = None
+    price_snapshot: dict[str, float] | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.LLM_CALL_FAILED)
 
 
@@ -348,6 +428,12 @@ __all__ = [
     "LLMCallFailed",
     "LLMCallStarted",
     "MessagesRebuilt",
+    "RunCheckpoint",
+    "RunPaused",
+    "RunResumePrepared",
+    "RunResumed",
+    "ExternalEffectMayHaveStarted",
+    "RetryBackoff",
     "RunRolledBack",
     "RunFailed",
     "RunFinished",

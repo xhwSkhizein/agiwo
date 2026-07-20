@@ -182,6 +182,49 @@ export function useChatStream(
               continue;
             }
 
+            if (data.type === "objective_ack") {
+              const assistantId = ensureAssistantPlaceholder();
+              const statusText = data.status
+                ? `Objective ${data.objective_id} (${data.status})`
+                : `Objective ${data.objective_id}`;
+              currentAssistantText = statusText;
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === assistantId
+                    ? { ...message, text: statusText }
+                    : message,
+                ),
+              );
+              continue;
+            }
+
+            if (data.type === "objective_error") {
+              callbacksRef.current.onSchedulerFailed?.(data.message);
+              finishCurrentAssistant(false);
+              continue;
+            }
+
+            if (data.type === "objective_event") {
+              const assistantId = ensureAssistantPlaceholder();
+              const line = data.summary || data.kind;
+              if (data.kind === "ObjectiveDelivered") {
+                currentAssistantText = line;
+              } else {
+                currentAssistantText = currentAssistantText
+                  ? `${currentAssistantText}\n${line}`
+                  : line;
+              }
+              const textSnapshot = currentAssistantText;
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === assistantId
+                    ? { ...message, text: textSnapshot, isStreaming: true }
+                    : message,
+                ),
+              );
+              continue;
+            }
+
             const agentEvent = data as AgentStreamEventPayload;
             const eventAgentId =
               "agent_id" in data && typeof data.agent_id === "string"

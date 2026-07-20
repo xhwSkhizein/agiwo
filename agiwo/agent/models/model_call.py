@@ -12,7 +12,7 @@ class ModelCallPhase(str, Enum):
     ASSISTANT = "assistant"
     COMPACTION = "compaction"
     TERMINATION_SUMMARY = "termination_summary"
-    ASSIGNMENT_FINALIZATION = "assignment_finalization"
+    RUN_FINALIZATION = "run_finalization"
     FINALIZATION_CORRECTION = "finalization_correction"
 
 
@@ -23,7 +23,7 @@ WORK_PHASES: frozenset[ModelCallPhase] = frozenset(
 FINALIZATION_PHASES: frozenset[ModelCallPhase] = frozenset(
     {
         ModelCallPhase.TERMINATION_SUMMARY,
-        ModelCallPhase.ASSIGNMENT_FINALIZATION,
+        ModelCallPhase.RUN_FINALIZATION,
         ModelCallPhase.FINALIZATION_CORRECTION,
     }
 )

@@ -33,7 +33,11 @@ class _ValidatedAgentConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_model_connection(self) -> "_ValidatedAgentConfig":
-        validate_provider_model_params(self.model_provider, self.model_params)
+        validate_provider_model_params(
+            self.model_provider,
+            self.model_params,
+            model_name=self.model_name,
+        )
         return self
 
 

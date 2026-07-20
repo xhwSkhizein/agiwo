@@ -8,6 +8,8 @@ from enum import Enum
 from typing import Any
 
 from agiwo.agent.introspect.models import IntrospectionState
+from agiwo.agent.models.execution import RunTreeRole
+from agiwo.agent.models.finalization import RunFinalizationResult
 from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.model_call import ModelCallLedger
 from agiwo.agent.models.plan import RunPlan
@@ -29,13 +31,22 @@ def fields_to_dict(obj: object) -> dict[str, Any]:
 
 
 class RunStatus(str, Enum):
-    """Agent run status."""
+    """Agent run status (recoverable pause uses PAUSED; forced cancel maps to FAILED)."""
 
-    STARTING = "starting"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+
+
+RUN_TERMINAL_STATUSES: frozenset[RunStatus] = frozenset(
+    {
+        RunStatus.COMPLETED,
+        RunStatus.INTERRUPTED,
+        RunStatus.FAILED,
+    }
+)
 
 
 @dataclass
@@ -106,6 +117,8 @@ class RunIdentity:
     depth: int = 0
     parent_run_id: str | None = None
     timeout_at: float | None = None
+    objective_id: str | None = None
+    run_tree_role: RunTreeRole = RunTreeRole.NONE
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -188,6 +201,9 @@ class RunOutput:
     termination_reason: TerminationReason | None = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    finalization: RunFinalizationResult | None = None
+    paused: bool = False
+    checkpoint_id: str | None = None
 
 
 @dataclass
@@ -204,12 +220,17 @@ class RunView:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     parent_run_id: str | None = None
+    objective_id: str | None = None
+    run_tree_role: RunTreeRole = RunTreeRole.NONE
+    finalization: RunFinalizationResult | None = None
 
 
 __all__ = [
+    "RunTreeRole",
     "CompactMetadata",
     "CompactionState",
     "MemoryRecord",
+    "RUN_TERMINAL_STATUSES",
     "RunIdentity",
     "RunLedger",
     "RunMetrics",

@@ -121,6 +121,20 @@ class SessionRuntime:
         self._pending_steer_inputs.append(message)
         return True
 
+    async def enqueue_inject(self, user_input: UserInput) -> bool:
+        """Append a system-notice user message (is_user_provided=false) for running input."""
+        if self._closed:
+            return False
+        message = UserMessage.from_value(user_input)
+        if message.is_user_provided:
+            raise ValueError(
+                "enqueue_inject requires is_user_provided=False system notices"
+            )
+        if not message.has_content():
+            return False
+        self._pending_steer_inputs.append(message)
+        return True
+
     def peek_pending_steer_inputs(self) -> list[UserMessage]:
         return [UserMessage.from_value(item) for item in self._pending_steer_inputs]
 

@@ -7,6 +7,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
 
 from agiwo.llm.config_policy import sanitize_model_params_data
+from agiwo.objective import AssignmentTemplateSet
 from agiwo.skill.allowlist import normalize_allowed_skills
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.manager import get_global_tool_manager
@@ -27,6 +28,7 @@ class AgentConfigRecord(BaseModel):
         None  # Allowed builtin tool names (None = all defaults)
     )
     allowed_skills: list[str] | None = None
+    assignment_templates: AssignmentTemplateSet | dict[str, str] | None = None
     options: dict[str, Any] = Field(default_factory=dict)
     model_params: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
@@ -43,6 +45,16 @@ class AgentConfigRecord(BaseModel):
             normalized.get("model_params"),
             reject_plain_api_key=False,
         )
+        raw_templates = normalized.get("assignment_templates")
+        if raw_templates is not None:
+            if isinstance(raw_templates, AssignmentTemplateSet):
+                normalized["assignment_templates"] = raw_templates
+            elif isinstance(raw_templates, dict):
+                normalized["assignment_templates"] = AssignmentTemplateSet.from_dict(
+                    raw_templates
+                )
+            else:
+                raise ValueError("assignment_templates must be an object or null")
         normalized["allowed_skills"] = (
             get_global_skill_manager().validate_explicit_allowed_skills(
                 list(normalize_allowed_skills(normalized.get("allowed_skills")) or ())

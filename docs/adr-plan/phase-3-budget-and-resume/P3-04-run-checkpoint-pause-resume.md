@@ -1,6 +1,6 @@
 # P3-04：实现 Run checkpoint 与可恢复中断 resume
 
-状态：planned
+状态：done
 
 ## 目标
 

@@ -163,6 +163,7 @@ def session_record_response_from_runtime(session: Session) -> SessionRecordRespo
         updated_at=session.updated_at.isoformat(),
         source_session_id=session.source_session_id,
         fork_context_summary=session.fork_context_summary,
+        archived_at=session.archived_at.isoformat() if session.archived_at else None,
     )
 
 
@@ -201,6 +202,7 @@ def session_summary_response_from_record(
         root_state_status=summary.root_state_status,
         source_session_id=summary.source_session_id,
         fork_context_summary=summary.fork_context_summary,
+        archived_at=summary.archived_at.isoformat() if summary.archived_at else None,
     )
 
 

@@ -84,6 +84,7 @@ class RuntimeConfigService:
             validate_provider_model_params(
                 payload.default_agent.model_provider,
                 model_params,
+                model_name=payload.default_agent.model_name,
             )
 
             next_default_agent = DefaultAgentConfig(

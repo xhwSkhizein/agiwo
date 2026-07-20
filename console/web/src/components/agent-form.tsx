@@ -11,11 +11,14 @@ import {
   AgentConfig,
   AgentConfigCreate,
   AgentProviderCapability,
+  AssignmentTemplates,
   AvailableSkill,
   AvailableTool,
   getAgentCapabilities,
+  getDefaultAssignmentTemplates,
   listAvailableSkills,
   listAvailableTools,
+  previewAssignmentTemplate,
 } from "@/lib/api";
 
 type AgentFormProps = {
@@ -59,7 +62,11 @@ type AgentFormState = {
   inputPrice: number;
   outputPrice: number;
   selectedTools: string[];
+  /** true => persist allowed_tools=null (all default builtins). */
+  useDefaultTools: boolean;
   selectedSkills: string[];
+  templateWork: string;
+  templateVerification: string;
 };
 
 const DEFAULT_FORM_STATE: AgentFormState = {
@@ -94,7 +101,10 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   inputPrice: 0,
   outputPrice: 0,
   selectedTools: [],
+  useDefaultTools: true,
   selectedSkills: [],
+  templateWork: "",
+  templateVerification: "",
 };
 
 /**
@@ -153,7 +163,11 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     inputPrice: agent.model_params?.input_price ?? 0,
     outputPrice: agent.model_params?.output_price ?? 0,
     selectedTools: agent.allowed_tools ?? [],
+    // null means "all default builtins"; [] means explicitly no tools.
+    useDefaultTools: agent.allowed_tools === null || agent.allowed_tools === undefined,
     selectedSkills: agent.allowed_skills ?? [],
+    templateWork: agent.assignment_templates?.work ?? "",
+    templateVerification: agent.assignment_templates?.verification ?? "",
   };
 }
 
@@ -334,10 +348,34 @@ export function AgentForm({
   const [availableSkills, setAvailableSkills] = useState<AvailableSkill[]>([]);
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [templatePreview, setTemplatePreview] = useState<string | null>(null);
+  const [previewingKind, setPreviewingKind] = useState<
+    "work" | "verification" | null
+  >(null);
   const formId = useId();
 
   useEffect(() => {
     setForm(buildFormState(initialAgent));
+  }, [initialAgent]);
+
+  useEffect(() => {
+    if (initialAgent?.assignment_templates) {
+      return;
+    }
+    getDefaultAssignmentTemplates()
+      .then((templates: AssignmentTemplates) => {
+        setForm((prev) => {
+          if (prev.templateWork || prev.templateVerification) {
+            return prev;
+          }
+          return {
+            ...prev,
+            templateWork: templates.work,
+            templateVerification: templates.verification,
+          };
+        });
+      })
+      .catch(() => {});
   }, [initialAgent]);
 
   useEffect(() => {
@@ -391,12 +429,19 @@ export function AgentForm({
 
   const toggleTool = (toolName: string) => {
     setLocalError(null);
-    setForm((prev) => ({
-      ...prev,
-      selectedTools: prev.selectedTools.includes(toolName)
-        ? prev.selectedTools.filter((tool) => tool !== toolName)
-        : [...prev.selectedTools, toolName],
-    }));
+    setForm((prev) => {
+      const baseline = prev.useDefaultTools
+        ? builtinTools.map((tool) => tool.name)
+        : prev.selectedTools;
+      const selectedTools = baseline.includes(toolName)
+        ? baseline.filter((tool) => tool !== toolName)
+        : [...baseline, toolName];
+      return {
+        ...prev,
+        useDefaultTools: false,
+        selectedTools,
+      };
+    });
   };
 
   const toggleSkill = (skillName: string) => {
@@ -434,7 +479,7 @@ export function AgentForm({
       model_provider: form.modelProvider,
       model_name: form.modelName,
       system_prompt: form.systemPrompt,
-      allowed_tools: form.selectedTools,
+      allowed_tools: form.useDefaultTools ? null : form.selectedTools,
       allowed_skills: form.selectedSkills,
       options: {
         config_root: form.configRoot,
@@ -474,6 +519,13 @@ export function AgentForm({
         input_price: form.inputPrice,
         output_price: form.outputPrice,
       },
+      assignment_templates:
+        form.templateWork.trim() && form.templateVerification.trim()
+          ? {
+              work: form.templateWork,
+              verification: form.templateVerification,
+            }
+          : null,
     });
   };
 
@@ -503,7 +555,11 @@ export function AgentForm({
         </p>
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <PillBadge variant="default">{form.modelProvider}</PillBadge>
-          <PillBadge variant="info">{form.selectedTools.length} tools selected</PillBadge>
+          <PillBadge variant="info">
+            {form.useDefaultTools
+              ? "all default tools"
+              : `${form.selectedTools.length} tools selected`}
+          </PillBadge>
           {form.selectedSkills.length > 0 && (
             <PillBadge variant="success">{form.selectedSkills.length} skills</PillBadge>
           )}
@@ -625,6 +681,67 @@ export function AgentForm({
         </Field>
       </section>
 
+      <section className="space-y-5">
+        <div className="space-y-1">
+          <p className="ui-section-kicker">Assignment templates</p>
+          <p className="ui-section-copy">
+            Placeholders: {"{current_goal}"}, {"{objective_contributions}"},{" "}
+            {"{objective_budget}"}, {"{run_outcomes}"}, {"{run_role}"}.
+            Changes apply only to Assignments created after save; paused work keeps its
+            pinned snapshot.
+          </p>
+        </div>
+        {(
+          [
+            ["work", "templateWork", form.templateWork],
+            ["verification", "templateVerification", form.templateVerification],
+          ] as const
+        ).map(([kind, field, value]) => (
+          <Field
+            key={kind}
+            id={fieldId(`template-${kind}`)}
+            label={`${kind} template`}
+          >
+            <textarea
+              id={fieldId(`template-${kind}`)}
+              value={value}
+              onChange={(event) => setField(field, event.target.value)}
+              rows={8}
+              className="ui-input ui-textarea font-mono text-xs"
+            />
+            <button
+              type="button"
+              className="ui-button ui-button-ghost mt-2 text-xs"
+              disabled={previewingKind === kind}
+              onClick={async () => {
+                setPreviewingKind(kind);
+                setLocalError(null);
+                try {
+                  const result = await previewAssignmentTemplate(kind, value);
+                  setTemplatePreview(result.rendered);
+                } catch (err) {
+                  setLocalError(
+                    err instanceof Error ? err.message : "Template preview failed",
+                  );
+                } finally {
+                  setPreviewingKind(null);
+                }
+              }}
+            >
+              {previewingKind === kind ? "Previewing…" : `Preview ${kind}`}
+            </button>
+          </Field>
+        ))}
+        {templatePreview && (
+          <div className="rounded-lg border border-line bg-panel/50 p-3">
+            <p className="ui-section-kicker">Preview</p>
+            <pre className="mt-2 whitespace-pre-wrap font-mono text-xs text-ink">
+              {templatePreview}
+            </pre>
+          </div>
+        )}
+      </section>
+
       <DisclosureSection
         title="Compatibility endpoint"
         description="Only open this when the provider needs a custom base URL or custom API key environment variable."
@@ -672,11 +789,57 @@ export function AgentForm({
                 Start with only the capabilities this agent actually needs.
               </p>
             </div>
-            <PillBadge variant="default">{form.selectedTools.length} selected</PillBadge>
+            <PillBadge variant="default">
+              {form.useDefaultTools
+                ? "all defaults"
+                : `${form.selectedTools.length} selected`}
+            </PillBadge>
           </div>
         </div>
 
         <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className={`rounded-md border px-3 py-1.5 text-sm ${
+                form.useDefaultTools
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-foreground"
+              }`}
+              onClick={() =>
+                setForm((prev) => ({
+                  ...prev,
+                  useDefaultTools: true,
+                  selectedTools: [],
+                }))
+              }
+            >
+              All default tools
+            </button>
+            <button
+              type="button"
+              className={`rounded-md border px-3 py-1.5 text-sm ${
+                !form.useDefaultTools && form.selectedTools.length === 0
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-foreground"
+              }`}
+              onClick={() =>
+                setForm((prev) => ({
+                  ...prev,
+                  useDefaultTools: false,
+                  selectedTools: [],
+                }))
+              }
+            >
+              No tools
+            </button>
+          </div>
+          <p className="text-sm text-ink-faint">
+            {form.useDefaultTools
+              ? "Saving with all default builtins (allowed_tools=null). Toggle any tool below to switch to an explicit allowlist."
+              : "Saving an explicit allowlist. Empty means the agent has no functional tools."}
+          </p>
+
           <div className="space-y-2">
             <h3 className="text-sm font-medium text-foreground">Builtin tools</h3>
             <div className="flex flex-wrap gap-2">
@@ -687,7 +850,11 @@ export function AgentForm({
                   <ToolToggle
                     key={tool.name}
                     tool={tool}
-                    selected={form.selectedTools.includes(tool.name)}
+                    selected={
+                      form.useDefaultTools
+                        ? true
+                        : form.selectedTools.includes(tool.name)
+                    }
                     onToggle={() => toggleTool(tool.name)}
                   />
                 ))
@@ -707,7 +874,11 @@ export function AgentForm({
                   <ToolToggle
                     key={tool.name}
                     tool={tool}
-                    selected={form.selectedTools.includes(tool.name)}
+                    selected={
+                      form.useDefaultTools
+                        ? false
+                        : form.selectedTools.includes(tool.name)
+                    }
                     onToggle={() => toggleTool(tool.name)}
                   />
                 ))

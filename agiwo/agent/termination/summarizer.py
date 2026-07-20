@@ -50,15 +50,6 @@ async def maybe_generate_termination_summary(
     )
     await commit_step(summary_user_step, append_message=True)
 
-    async def _project(entries: list[object]) -> None:
-        await state.session_runtime.project_run_log_entries(
-            entries,
-            run_id=state.run_id,
-            agent_id=state.agent_id,
-            parent_run_id=state.parent_run_id,
-            depth=state.depth,
-        )
-
     try:
         call_result = await execute_model_call(
             model=model,
@@ -66,7 +57,6 @@ async def maybe_generate_termination_summary(
             writer=writer,
             phase=ModelCallPhase.TERMINATION_SUMMARY,
             abort_signal=abort_signal,
-            project_entries=_project,
             messages=state.snapshot_messages(),
             use_state_tools=False,
         )

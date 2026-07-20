@@ -9,11 +9,13 @@ from uuid import uuid4
 from agiwo.agent import (
     Agent,
     RunOutput,
+    RunStatus,
     UserInput,
     UserMessage,
 )
+from agiwo.agent.models.run import RUN_TERMINAL_STATUSES
 from agiwo.scheduler._runtime_agents import ensure_root_runtime_agent
-from agiwo.scheduler._stream import route_with_stream
+from agiwo.scheduler.route_stream import route_with_stream
 from agiwo.scheduler._tick import dispatch_action, tick as _tick
 from agiwo.scheduler._tree_ops import cancel_subtree, shutdown_subtree
 from agiwo.scheduler._wait import (
@@ -26,6 +28,11 @@ from agiwo.scheduler.commands import (
     DispatchReason,
     RouteResult,
     RouteStreamMode,
+)
+from agiwo.scheduler.execution import (
+    ExecutionDispatchResult,
+    ExecutionTreeNode,
+    SchedulerExecutionRequest,
 )
 from agiwo.scheduler.engine_context import EngineContext
 from agiwo.scheduler.guard import TaskGuard
@@ -567,6 +574,269 @@ class Scheduler:
 
         await self._ensure_root_runtime_agent(agent, state_id)
         return True
+
+    # -- Objective-facing mechanical facade (P2-02 contract) -------------------
+
+    async def dispatch_execution(
+        self,
+        agent: Agent,
+        request: SchedulerExecutionRequest,
+    ) -> ExecutionDispatchResult:
+        """Start or attach a root Run with a preallocated ``run_id``.
+
+        Deterministic for duplicate delivery:
+        - no RunStarted yet → start
+        - RUNNING with live handle → attach
+        - terminal → do not restart
+        """
+        run_id = request.execution.run_id
+        state_id = request.state_id
+        await self._ensure_root_runtime_agent(agent, state_id)
+
+        existing = await self._runtime_facts.get_run_view(run_id)
+        if existing is not None:
+            if existing.status in RUN_TERMINAL_STATUSES:
+                return ExecutionDispatchResult(
+                    state_id=state_id,
+                    run_id=run_id,
+                    attached=False,
+                    status=existing.status,
+                )
+            if existing.status == RunStatus.RUNNING:
+                handle = self._rt.execution_handles.get(state_id)
+                if handle is not None and handle.run_id == run_id:
+                    return ExecutionDispatchResult(
+                        state_id=state_id,
+                        run_id=run_id,
+                        attached=True,
+                        status=RunStatus.RUNNING,
+                    )
+                # RunLog says RUNNING but no handle — treat as attachable/no restart
+                return ExecutionDispatchResult(
+                    state_id=state_id,
+                    run_id=run_id,
+                    attached=True,
+                    status=RunStatus.RUNNING,
+                )
+
+        lock = self._rt.state_locks.setdefault(state_id, asyncio.Lock())
+        async with lock:
+            # Re-check after lock (another worker may have started).
+            existing = await self._runtime_facts.get_run_view(run_id)
+            if existing is not None:
+                return ExecutionDispatchResult(
+                    state_id=state_id,
+                    run_id=run_id,
+                    attached=True,
+                    status=existing.status,
+                )
+
+            state = await self._store.get_state(state_id)
+            # Persistent roots rest in IDLE between Assignments; only busy
+            # statuses block a new preallocated root Run.
+            busy = frozenset(
+                {
+                    AgentStateStatus.PENDING,
+                    AgentStateStatus.RUNNING,
+                    AgentStateStatus.WAITING,
+                    AgentStateStatus.QUEUED,
+                }
+            )
+            if state is not None and state.status in busy:
+                raise RuntimeError(
+                    f"Agent '{state_id}' is already active "
+                    f"(status={state.status.value}); cannot dispatch another root"
+                )
+
+            if state is None:
+                state = AgentState(
+                    id=state_id,
+                    session_id=request.session_id,
+                    status=AgentStateStatus.RUNNING,
+                    task=request.user_input,
+                    agent_config_id=request.agent_config_id,
+                    is_persistent=request.persistent,
+                    depth=0,
+                )
+            else:
+                state = state.with_updates(
+                    session_id=request.session_id,
+                    status=AgentStateStatus.RUNNING,
+                    task=request.user_input,
+                    agent_config_id=request.agent_config_id
+                    if request.agent_config_id is not None
+                    else state.agent_config_id,
+                    is_persistent=request.persistent,
+                    pending_input=None,
+                    wake_condition=None,
+                    last_run_result=None,
+                )
+            await self._save_state(state)
+            await dispatch_action(
+                self._ctx,
+                DispatchAction(
+                    state=state,
+                    reason=DispatchReason.OBJECTIVE_ROOT,
+                    input_override=request.user_input,
+                    execution_request=request.execution,
+                ),
+            )
+            self.nudge()
+            return ExecutionDispatchResult(
+                state_id=state_id,
+                run_id=run_id,
+                attached=False,
+                status=RunStatus.RUNNING,
+            )
+
+    async def get_run_view(self, run_id: str):
+        return await self._runtime_facts.get_run_view(run_id)
+
+    async def list_run_log_entries(
+        self, run_id: str, *, kinds=None, limit: int = 10_000
+    ):
+        return await self._runtime_facts.list_run_log_entries(
+            run_id, kinds=kinds, limit=limit
+        )
+
+    async def get_run_status(self, run_id: str) -> RunStatus | None:
+        view = await self.get_run_view(run_id)
+        return view.status if view is not None else None
+
+    async def list_execution_tree(
+        self,
+        *,
+        root_run_id: str,
+    ) -> list[ExecutionTreeNode]:
+        root = await self.get_run_view(root_run_id)
+        if root is None:
+            return []
+        nodes = [
+            ExecutionTreeNode(
+                run_id=root.run_id,
+                agent_id=root.agent_id,
+                status=root.status,
+                parent_run_id=root.parent_run_id,
+                run_tree_role=root.run_tree_role,
+                depth=0,
+            )
+        ]
+        # Children share the same session; scan runtime agents for descendants.
+        for agent in self._rt.agents.values():
+            views = await agent.run_log_storage.list_run_views(
+                session_id=root.session_id, limit=1000
+            )
+            for view in views:
+                if view.parent_run_id == root_run_id:
+                    if any(n.run_id == view.run_id for n in nodes):
+                        continue
+                    nodes.append(
+                        ExecutionTreeNode(
+                            run_id=view.run_id,
+                            agent_id=view.agent_id,
+                            status=view.status,
+                            parent_run_id=view.parent_run_id,
+                            run_tree_role=view.run_tree_role,
+                            depth=1 if view.parent_run_id == root_run_id else 0,
+                        )
+                    )
+        return nodes
+
+    async def request_recoverable_pause(
+        self,
+        run_ids: list[str],
+        reason: str,
+        *,
+        timeout: float = 120.0,
+    ) -> None:
+        """Cooperatively pause runs at the next safe boundary (not cancel)."""
+        targets = {rid for rid in run_ids if rid}
+        if not targets:
+            return
+        for handle in list(self._rt.execution_handles.values()):
+            if handle.run_id in targets:
+                handle.request_pause(reason)
+        deadline = time.monotonic() + timeout
+        pending = set(targets)
+        while pending and time.monotonic() < deadline:
+            done: set[str] = set()
+            for run_id in pending:
+                status = await self.get_run_status(run_id)
+                if status is None:
+                    done.add(run_id)
+                elif status is RunStatus.PAUSED:
+                    done.add(run_id)
+                elif status in RUN_TERMINAL_STATUSES:
+                    # Terminal without pause: treat as converged for barrier.
+                    done.add(run_id)
+            pending -= done
+            if pending:
+                await asyncio.sleep(0.05)
+        if pending:
+            raise TimeoutError(
+                f"recoverable pause timed out for run_ids={sorted(pending)}"
+            )
+
+    async def prepare_resume(self, run_ids: list[str]) -> None:
+        """Validate and park resume runtimes; status stays PAUSED until release."""
+        prepared: dict[str, tuple[Agent, str, str]] = {}
+        try:
+            for run_id in run_ids:
+                view = await self.get_run_view(run_id)
+                if view is None:
+                    raise ValueError(f"unknown run_id={run_id!r}")
+                if view.status is not RunStatus.PAUSED:
+                    raise ValueError(
+                        f"run {run_id!r} status={view.status.value} is not PAUSED"
+                    )
+                agent = self._rt.find_agent(view.agent_id)
+                if agent is None:
+                    raise ValueError(
+                        f"no scheduler agent available to resume run {run_id!r}"
+                    )
+                checkpoint_id = await agent.prepare_resume(
+                    run_id=run_id, session_id=view.session_id
+                )
+                prepared[run_id] = (agent, view.session_id, checkpoint_id)
+        except Exception:
+            self._rt.prepared_resumes.clear()
+            raise
+        self._rt.prepared_resumes.update(prepared)
+
+    async def release_resume_barrier(self) -> None:
+        """Release prepared resumes and continue each paused run."""
+        prepared = dict(self._rt.prepared_resumes)
+        self._rt.prepared_resumes.clear()
+        if not prepared:
+            return
+        tasks = [
+            agent.resume_paused_run(run_id=run_id, session_id=session_id)
+            for run_id, (agent, session_id, _checkpoint) in prepared.items()
+        ]
+        await asyncio.gather(*tasks)
+
+    async def inject_user_message(
+        self,
+        root_run_id: str,
+        message: UserInput,
+    ) -> None:
+        """Inject a system-notice user message into the live root Run context."""
+        view = await self.get_run_view(root_run_id)
+        if view is None:
+            raise ValueError(f"unknown run_id={root_run_id!r}")
+        handle = None
+        for candidate in list(self._rt.execution_handles.values()):
+            if candidate.run_id == root_run_id:
+                handle = candidate
+                break
+        if handle is None:
+            raise ValueError(
+                f"no live execution handle for run_id={root_run_id!r}; "
+                "cannot inject into an inactive Run"
+            )
+        ok = await handle.inject_system_user_message(message)
+        if not ok:
+            raise ValueError(f"inject rejected for run_id={root_run_id!r}")
 
     async def tick(self) -> None:
         await _tick(self._ctx)

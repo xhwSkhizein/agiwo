@@ -42,6 +42,9 @@ class AgentOptionsInput(BaseModel):
     enable_trajectory_review: bool = True
     review_step_interval: int = Field(default=8, ge=1)
     review_on_error: bool = True
+    max_provider_attempts: int = Field(default=3, ge=1)
+    retry_min_backoff_seconds: float = Field(default=1.0, ge=0.0)
+    retry_max_backoff_seconds: float = Field(default=10.0, ge=0.0)
 
     @model_validator(mode="before")
     @classmethod

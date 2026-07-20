@@ -3,8 +3,10 @@ from server.config import ConsoleConfig
 from server.services.storage_wiring import (
     build_agent_state_storage_config,
     build_citation_store_config,
+    build_objective_store_config,
     build_run_log_storage_config,
     build_trace_storage_config,
+    create_objective_store,
     create_run_log_storage,
     create_trace_storage,
 )
@@ -86,3 +88,18 @@ def test_citation_sqlite_config(monkeypatch) -> None:
     result = build_citation_store_config(config)
     assert result.storage_type == "sqlite"
     assert result.sqlite_db_path == "/tmp/test.db"
+
+
+def test_objective_store_follows_run_log_config(monkeypatch) -> None:
+    monkeypatch.setattr(sdk_settings, "sqlite_db_path", "/tmp/agiwo.db")
+    config = ConsoleConfig(storage={"run_log_type": "sqlite"})
+    obj_cfg = build_objective_store_config(config)
+    run_cfg = build_run_log_storage_config(config)
+    assert obj_cfg.storage_type == run_cfg.storage_type
+    assert obj_cfg.config == run_cfg.config
+
+
+def test_create_objective_store_memory() -> None:
+    config = ConsoleConfig(storage={"run_log_type": "memory"})
+    store = create_objective_store(config)
+    assert store is not None
