@@ -11,7 +11,7 @@ from agiwo.agent.models.execution import RunTreeRole
 from agiwo.agent.models.finalization import (
     RunFinalizationResult,
     completion_result,
-    mechanical_agent_handoff_result,
+    fault_result,
 )
 from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.config import AgentOptions
@@ -266,9 +266,9 @@ class RunLoopOrchestrator:
             and self.context.ledger.termination_reason is TerminationReason.MAX_STEPS
             and self._finalization is None
         ):
-            self._finalization = mechanical_agent_handoff_result(
+            self._finalization = fault_result(
                 self.context.ledger.response_content or "",
-                reason="max_steps_per_run_mechanical_handoff",
+                reason="max_steps_per_run",
                 carry_forward=self._remaining_plan_items(),
             )
         await maybe_generate_termination_summary(
@@ -603,16 +603,16 @@ class RunLoopOrchestrator:
                 "role": "user",
                 "content": (
                     "The run plan still has unfinished milestones. Continue the "
-                    "assignment and use update_plan to complete, abandon, or "
+                    "work and use update_plan to complete, abandon, or "
                     "revise them before ending:\n"
                     f"{items}"
                 ),
                 "is_user_provided": False,
-                "origin": "assignment_plan_guard",
+                "origin": "run_plan_guard",
             }
         )
         await self.writer.rebuild_messages(
-            reason="assignment_plan_guard",
+            reason="run_plan_guard",
             messages=messages,
         )
 

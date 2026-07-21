@@ -32,7 +32,7 @@ async def _always_continue() -> bool:
 
 
 class RetryCoordinator:
-    """Decide and pace safe automatic retries. Does not import Objective."""
+    """Decide and pace safe automatic retries."""
 
     def __init__(
         self,
@@ -76,7 +76,7 @@ class RetryCoordinator:
                     operation="retry_gate",
                     disposition=FaultDisposition.NON_RETRYABLE,
                     run_blocking=True,
-                    message="retry blocked by pause or objective progress gate",
+                    message="retry blocked by pause or progress gate",
                     provenance={"gate": "should_continue"},
                 )
             )

@@ -30,11 +30,6 @@ def extract_content_parts(value: object) -> object:
     return value
 
 
-class AssignmentTemplatesInput(BaseModel):
-    work: str
-    verification: str
-
-
 class AgentConfigPayload(BaseModel):
     name: str
     description: str = ""
@@ -45,7 +40,6 @@ class AgentConfigPayload(BaseModel):
     allowed_skills: list[str] | None = None
     options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
-    assignment_templates: AssignmentTemplatesInput | None = None
 
     @field_validator("allowed_tools", mode="before")
     @classmethod
@@ -90,7 +84,6 @@ class AgentConfigResponse(BaseModel):
     allowed_skills: list[str] | None = None
     options: AgentOptionsInput = Field(default_factory=AgentOptionsInput)
     model_params: ModelParamsInput = Field(default_factory=ModelParamsInput)
-    assignment_templates: AssignmentTemplatesInput | None = None
     created_at: str
     updated_at: str
 
@@ -604,7 +597,6 @@ __all__ = [
     "AgentConfigPayload",
     "AgentConfigResponse",
     "AgentProviderCapabilityResponse",
-    "AssignmentTemplatesInput",
     "AgentStateBase",
     "AgentStateListItem",
     "AgentStateResponse",

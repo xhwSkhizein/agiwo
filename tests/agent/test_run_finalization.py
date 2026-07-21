@@ -116,7 +116,7 @@ async def test_plan_milestones_still_guard_unfinished_root() -> None:
     assert result.finalization.decision == {"reason": "run_completed"}
     assert len(model.calls) == 4
     guard_call = model.calls[2]
-    assert guard_call[-1]["origin"] == "assignment_plan_guard"
+    assert guard_call[-1]["origin"] == "run_plan_guard"
 
 
 @pytest.mark.asyncio
@@ -153,5 +153,5 @@ async def test_root_max_steps_forces_fault_snapshot() -> None:
 
     assert result.finalization is not None
     assert result.finalization.decision == {
-        "reason": "max_steps_per_run_mechanical_handoff",
+        "reason": "max_steps_per_run",
     }

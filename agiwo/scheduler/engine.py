@@ -602,7 +602,7 @@ class Scheduler:
                 )
 
             state = await self._store.get_state(state_id)
-            # Persistent roots rest in IDLE between Assignments; only busy
+            # Persistent roots rest in IDLE between Session root Runs; only busy
             # statuses block a new preallocated root Run.
             busy = frozenset(
                 {

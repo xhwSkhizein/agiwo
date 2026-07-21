@@ -645,11 +645,6 @@ export interface ModelParamsPayload {
   output_price: number;
 }
 
-export interface AssignmentTemplates {
-  work: string;
-  verification: string;
-}
-
 export interface AgentConfig {
   id: string;
   name: string;
@@ -662,7 +657,6 @@ export interface AgentConfig {
   allowed_skills: string[] | null;
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
-  assignment_templates?: AssignmentTemplates | null;
   created_at: string;
   updated_at: string;
 }
@@ -677,7 +671,6 @@ export interface AgentConfigCreate {
   allowed_skills: string[] | null;
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
-  assignment_templates?: AssignmentTemplates | null;
 }
 
 export interface AvailableTool {
@@ -951,20 +944,6 @@ export async function archiveSession(sessionId: string) {
 /** @deprecated Use archiveSession — ordinary delete is archive (P5-06). */
 export async function deleteSession(sessionId: string) {
   await archiveSession(sessionId);
-}
-
-export function previewAssignmentTemplate(
-  kind: "work" | "verification",
-  template: string,
-) {
-  return fetchJSON<{ rendered: string }>(`/api/agents/templates/preview`, {
-    method: "POST",
-    body: JSON.stringify({ kind, template }),
-  });
-}
-
-export function getDefaultAssignmentTemplates() {
-  return fetchJSON<AssignmentTemplates>(`/api/agents/templates/defaults`);
 }
 
 // ── Session Input Stream ───────────────────────────────────────────────

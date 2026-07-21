@@ -23,7 +23,6 @@ from server.models.view import (
     AgentConfigResponse,
     AgentProviderCapabilityResponse,
     AgentOptionsInput,
-    AssignmentTemplatesInput,
     ModelParamsInput,
     PageResponse,
     SessionSummaryResponse,
@@ -50,28 +49,6 @@ async def list_available_tools(
     )
 
 
-def _templates_from_body(
-    body: AgentConfigPayload,
-) -> dict[str, str] | None:
-    if body.assignment_templates is None:
-        return None
-    return {
-        "work": body.assignment_templates.work,
-        "verification": body.assignment_templates.verification,
-    }
-
-
-def _templates_response(
-    templates: dict[str, str] | None,
-) -> AssignmentTemplatesInput | None:
-    if templates is None:
-        return None
-    return AssignmentTemplatesInput(
-        work=templates["work"],
-        verification=templates["verification"],
-    )
-
-
 def _body_to_record(body: AgentConfigPayload) -> AgentConfigRecord:
     return AgentConfigRecord(
         name=body.name,
@@ -85,7 +62,6 @@ def _body_to_record(body: AgentConfigPayload) -> AgentConfigRecord:
         ),
         options=body.options.model_dump(exclude_none=True),
         model_params=body.model_params.model_dump(exclude_none=True),
-        assignment_templates=_templates_from_body(body),
     )
 
 
@@ -106,7 +82,6 @@ def _record_to_response(
         allowed_skills=record.allowed_skills,
         options=AgentOptionsInput.model_validate(record.options or {}),
         model_params=ModelParamsInput.model_validate(record.model_params or {}),
-        assignment_templates=_templates_response(record.assignment_templates),
         created_at=serialize_optional_datetime(record.created_at) or "",
         updated_at=serialize_optional_datetime(record.updated_at) or "",
     )

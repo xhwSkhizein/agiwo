@@ -25,10 +25,6 @@ def _make_record(
             "base_url": "https://api.example.com/v1",
             "api_key_env_name": "TEST_API_KEY",
         },
-        assignment_templates={
-            "work": "work template",
-            "verification": "verification template",
-        },
         created_at=updated_at - timedelta(minutes=1),
         updated_at=updated_at,
     )

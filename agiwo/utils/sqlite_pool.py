@@ -5,7 +5,7 @@ Provides a singleton connection pool that manages SQLite connections by db_path.
 All storage implementations should use this pool instead of creating their own connections.
 
 Connections use autocommit (isolation_level=None). Multi-statement atomicity must
-use explicit BEGIN/COMMIT under the per-db write lock so RunLog / Objective /
+use explicit BEGIN/COMMIT under the per-db write lock so RunLog /
 Scheduler stores cannot nest transactions on the shared connection.
 """
 

@@ -35,7 +35,6 @@ Status 为 `superseded` 的 ADR、`trash/`、历史施工计划**不是**规格�
 | `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `agiwo.agent.hooks`，nested-agent adapter 收口在 `nested/`，run/session runtime context、state helper 与 `RunStateWriter` 严格写路径收口在 `agiwo.agent.runtime`，termination logic 收口在 `termination/`，可恢复中断收口在 `pause.py` / `resume.py`，结构化重试收口在 `retry/`，`plan/` 拥有 RunPlan 规范化与 `update_plan` 系统工具，轨迹自省与 context repair 收口在 `introspect/`，`storage/` 负责持久化。`run_loop.py` 是唯一的单次 run execution owner；`agiwo.agent.runtime` 只承载 context / session / writer，不得再暴露 execution-owner alias。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
-| `agiwo/objective/` | **已移出核心（ADR 0048）**。历史实现在 `trash/objective-core-2026-07-21/`；非 trash 树不得依赖本包。切换前清理开发库（无 migration）。 |
 | `agiwo/scheduler/` | Agent 之上的编排层：child 委派树与 waitset。`engine.py` 定义公开 `Scheduler` facade（lifecycle + 查询/派发 API），`_tick.py` 是编排 tick owner，`runner.py` 负责单次 dispatch；completion 在 `runner_completion.py`，`commands.py` 承载调度动作与 tool DTO，`runtime_state.py` 承载进程内 live state，`tool_control.py` / `runtime_tools.py` 收口 spawn/sleep/cancel，`store/` 只负责 AgentState 持久化。Session 路径用一条 root 启动面（`dispatch_execution` / `route_root_input` 收敛）；不拥有跨 Run 任务账本。 |
 | `agiwo/observability/` | Trace/Span 模型、查询接口与 trace storage 实现；agent runtime 的 Trace 投影层收口在 `agiwo/agent/trace_writer.py`，并以 committed `RunLog` facts 为输入构建 Trace view。 |
 | `agiwo/embedding/` | Embedding 抽象与 factory，包含本地/OpenAI 风格实现。 |
@@ -51,7 +50,7 @@ Status 为 `superseded` 的 ADR、`trash/`、历史施工计划**不是**规格�
 | --- | --- |
 | `console/server/` | FastAPI 控制面与 runtime 集成。 |
 | `console/server/routers/` | API/SSE 边界，只做 HTTP 路由与请求/响应装配。 |
-| `console/server/services/` | 应用服务层。`runtime/`（agent factory、runtime cache、session runtime / session service、scheduler tree view）、`tool_catalog/`、`agent_registry/`、`session_store/`、`session_gateway.py`（`SessionGateway`：唯一用户入口，Session 历史 + root Run）、`runtime_config.py`、`storage_wiring.py`、`metrics.py`。Objective 相关 gateway/SSE/serialization 已移出核心。 |
+| `console/server/services/` | 应用服务层。`runtime/`（agent factory、runtime cache、session runtime / session service、scheduler tree view）、`tool_catalog/`、`agent_registry/`、`session_store/`、`session_gateway.py`（`SessionGateway`：唯一用户入口，Session 历史 + root Run）、`runtime_config.py`、`storage_wiring.py`、`metrics.py`。 |
 | `console/server/models/` | Console 数据模型目录。`view.py` 只放 API/SSE 视图模型；`session.py`、`agent_config.py`、`runtime_config.py`、`metrics.py` 放共享运行时/配置/聚合模型。不要再新增 `schemas.py` 或平级 `domain/`。 |
 | `console/server/channels/` | 渠道适配层，负责批处理、消息解析、delivery，以及 Feishu 等渠道集成。 |
 | `console/web/` | Console 前端。 |
@@ -66,7 +65,7 @@ Status 为 `superseded` 的 ADR、`trash/`、历史施工计划**不是**规格�
 | `lint/` | import-linter contract 等机器护栏配置。 |
 | `docs/` | 设计文档与渠道说明，不是运行时源码真相。领域语言见根目录 `CONTEXT.md`；现行 ADR 阅读顺序见 `docs/adr/README.md`（以 **0048** 为首）。历史建成计划与作废 Objective 实现在 `trash/`，不要再当规格。 |
 | `templates/` | 运行时会消费的模板内容。 |
-| `trash/` | 删除文件的落点；优先 `mv` 到这里，不要直接 `rm`。 |
+| `trash/` | 删除文件的落点；优先 `mv` 到这里，不要直接 `rm`。含历史 Objective 实现（`trash/objective-core-*`），不是规格。 |
 
 ## Core Components
 

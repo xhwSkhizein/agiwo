@@ -89,7 +89,7 @@ class SqliteAgentRegistryStore:
                 system_prompt,
                 allowed_tools,
                 allowed_skills,
-                assignment_templates,
+                assignment_templates,  # retired ADR 0048 column; always NULL
                 options,
                 model_params,
                 created_at,
@@ -105,7 +105,7 @@ class SqliteAgentRegistryStore:
                 data["system_prompt"],
                 data["allowed_tools"],
                 data["allowed_skills"],
-                data["assignment_templates"],
+                None,
                 data["options"],
                 data["model_params"],
                 data["created_at"],
@@ -136,7 +136,7 @@ class SqliteAgentRegistryStore:
                 system_prompt TEXT DEFAULT '',
                 allowed_tools TEXT DEFAULT NULL,
                 allowed_skills TEXT DEFAULT NULL,
-                assignment_templates TEXT DEFAULT NULL,
+                assignment_templates TEXT DEFAULT NULL,  -- retired ADR 0048; unused
                 options TEXT DEFAULT '{}',
                 model_params TEXT DEFAULT '{}',
                 created_at TEXT NOT NULL,
@@ -162,11 +162,6 @@ class SqliteAgentRegistryStore:
             "system_prompt": record.system_prompt,
             "allowed_tools": json.dumps(record.allowed_tools),
             "allowed_skills": json.dumps(record.allowed_skills),
-            "assignment_templates": (
-                json.dumps(record.assignment_templates)
-                if isinstance(record.assignment_templates, dict)
-                else None
-            ),
             "options": json.dumps(record.options),
             "model_params": json.dumps(record.model_params),
             "created_at": record.created_at.isoformat(),
@@ -176,17 +171,11 @@ class SqliteAgentRegistryStore:
     def _deserialize_row(self, row: aiosqlite.Row) -> AgentConfigRecord:
         raw_allowed_tools = row["allowed_tools"]
         raw_allowed_skills = row["allowed_skills"]
-        raw_assignment_templates = row["assignment_templates"]
         allowed_tools = (
             json.loads(raw_allowed_tools) if raw_allowed_tools is not None else None
         )
         allowed_skills = (
             json.loads(raw_allowed_skills) if raw_allowed_skills is not None else None
-        )
-        assignment_templates = (
-            json.loads(raw_assignment_templates)
-            if raw_assignment_templates is not None
-            else None
         )
         return AgentConfigRecord.model_validate(
             {
@@ -198,7 +187,6 @@ class SqliteAgentRegistryStore:
                 "system_prompt": row["system_prompt"],
                 "allowed_tools": allowed_tools,
                 "allowed_skills": allowed_skills,
-                "assignment_templates": assignment_templates,
                 "options": json.loads(row["options"] or "{}"),
                 "model_params": json.loads(row["model_params"] or "{}"),
                 "created_at": row["created_at"],

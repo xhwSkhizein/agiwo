@@ -11,14 +11,11 @@ import {
   AgentConfig,
   AgentConfigCreate,
   AgentProviderCapability,
-  AssignmentTemplates,
   AvailableSkill,
   AvailableTool,
   getAgentCapabilities,
-  getDefaultAssignmentTemplates,
   listAvailableSkills,
   listAvailableTools,
-  previewAssignmentTemplate,
 } from "@/lib/api";
 
 type AgentFormProps = {
@@ -65,8 +62,6 @@ type AgentFormState = {
   /** true => persist allowed_tools=null (all default builtins). */
   useDefaultTools: boolean;
   selectedSkills: string[];
-  templateWork: string;
-  templateVerification: string;
 };
 
 const DEFAULT_FORM_STATE: AgentFormState = {
@@ -103,8 +98,6 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   selectedTools: [],
   useDefaultTools: true,
   selectedSkills: [],
-  templateWork: "",
-  templateVerification: "",
 };
 
 /**
@@ -166,8 +159,6 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     // null means "all default builtins"; [] means explicitly no tools.
     useDefaultTools: agent.allowed_tools === null || agent.allowed_tools === undefined,
     selectedSkills: agent.allowed_skills ?? [],
-    templateWork: agent.assignment_templates?.work ?? "",
-    templateVerification: agent.assignment_templates?.verification ?? "",
   };
 }
 
@@ -348,34 +339,10 @@ export function AgentForm({
   const [availableSkills, setAvailableSkills] = useState<AvailableSkill[]>([]);
   const [capabilities, setCapabilities] = useState<AgentCapabilities | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [templatePreview, setTemplatePreview] = useState<string | null>(null);
-  const [previewingKind, setPreviewingKind] = useState<
-    "work" | "verification" | null
-  >(null);
   const formId = useId();
 
   useEffect(() => {
     setForm(buildFormState(initialAgent));
-  }, [initialAgent]);
-
-  useEffect(() => {
-    if (initialAgent?.assignment_templates) {
-      return;
-    }
-    getDefaultAssignmentTemplates()
-      .then((templates: AssignmentTemplates) => {
-        setForm((prev) => {
-          if (prev.templateWork || prev.templateVerification) {
-            return prev;
-          }
-          return {
-            ...prev,
-            templateWork: templates.work,
-            templateVerification: templates.verification,
-          };
-        });
-      })
-      .catch(() => {});
   }, [initialAgent]);
 
   useEffect(() => {
@@ -519,13 +486,6 @@ export function AgentForm({
         input_price: form.inputPrice,
         output_price: form.outputPrice,
       },
-      assignment_templates:
-        form.templateWork.trim() && form.templateVerification.trim()
-          ? {
-              work: form.templateWork,
-              verification: form.templateVerification,
-            }
-          : null,
     });
   };
 
@@ -679,66 +639,6 @@ export function AgentForm({
             placeholder="You are a helpful operations assistant..."
           />
         </Field>
-      </section>
-
-      <section className="space-y-5">
-        <div className="space-y-1">
-          <p className="ui-section-kicker">Assignment templates</p>
-          <p className="ui-section-copy">
-            Placeholders: {"{current_goal}"}, {"{run_outcomes}"}, {"{run_role}"}.
-            Changes apply only to Assignments created after save; paused work keeps its
-            pinned snapshot.
-          </p>
-        </div>
-        {(
-          [
-            ["work", "templateWork", form.templateWork],
-            ["verification", "templateVerification", form.templateVerification],
-          ] as const
-        ).map(([kind, field, value]) => (
-          <Field
-            key={kind}
-            id={fieldId(`template-${kind}`)}
-            label={`${kind} template`}
-          >
-            <textarea
-              id={fieldId(`template-${kind}`)}
-              value={value}
-              onChange={(event) => setField(field, event.target.value)}
-              rows={8}
-              className="ui-input ui-textarea font-mono text-xs"
-            />
-            <button
-              type="button"
-              className="ui-button ui-button-ghost mt-2 text-xs"
-              disabled={previewingKind === kind}
-              onClick={async () => {
-                setPreviewingKind(kind);
-                setLocalError(null);
-                try {
-                  const result = await previewAssignmentTemplate(kind, value);
-                  setTemplatePreview(result.rendered);
-                } catch (err) {
-                  setLocalError(
-                    err instanceof Error ? err.message : "Template preview failed",
-                  );
-                } finally {
-                  setPreviewingKind(null);
-                }
-              }}
-            >
-              {previewingKind === kind ? "Previewing…" : `Preview ${kind}`}
-            </button>
-          </Field>
-        ))}
-        {templatePreview && (
-          <div className="rounded-lg border border-line bg-panel/50 p-3">
-            <p className="ui-section-kicker">Preview</p>
-            <pre className="mt-2 whitespace-pre-wrap font-mono text-xs text-ink">
-              {templatePreview}
-            </pre>
-          </div>
-        )}
       </section>
 
       <DisclosureSection

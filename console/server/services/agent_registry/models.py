@@ -27,8 +27,6 @@ class AgentConfigRecord(BaseModel):
         None  # Allowed builtin tool names (None = all defaults)
     )
     allowed_skills: list[str] | None = None
-    # Legacy optional blob; ADR 0048 no longer uses Objective run-role templates.
-    assignment_templates: dict[str, str] | None = None
     options: dict[str, Any] = Field(default_factory=dict)
     model_params: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
@@ -45,16 +43,6 @@ class AgentConfigRecord(BaseModel):
             normalized.get("model_params"),
             reject_plain_api_key=False,
         )
-        raw_templates = normalized.get("assignment_templates")
-        if raw_templates is not None:
-            if isinstance(raw_templates, dict):
-                normalized["assignment_templates"] = {
-                    str(k): str(v) for k, v in raw_templates.items()
-                }
-            elif hasattr(raw_templates, "to_dict"):
-                normalized["assignment_templates"] = dict(raw_templates.to_dict())
-            else:
-                raise ValueError("assignment_templates must be an object or null")
         normalized["allowed_skills"] = (
             get_global_skill_manager().validate_explicit_allowed_skills(
                 list(normalize_allowed_skills(normalized.get("allowed_skills")) or ())

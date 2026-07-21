@@ -1,19 +1,18 @@
-"""Objective-facing mechanical execution DTOs (objective-agnostic)."""
+"""Scheduler mechanical execution DTOs for Session root dispatch."""
 
 from dataclasses import dataclass
-from typing import Any
 
-from agiwo.agent import AgentStreamItem, RunOutput, RunStatus, UserInput
+from agiwo.agent import RunStatus
 from agiwo.agent.models.execution import RunTreeRole, RunExecutionRequest
+from agiwo.agent.models.input import UserInput
 
 
 @dataclass(frozen=True, slots=True)
 class SchedulerExecutionRequest:
     """Root dispatch request with preallocated Run identity.
 
-    Scheduler validates IDs/state and forwards into Agent; it does not import
-    Objective models or interpret Assignment kind. The live ``Agent`` instance
-    is passed separately to ``Scheduler.dispatch_execution``.
+    Scheduler validates IDs/state and forwards into Agent. The live ``Agent``
+    instance is passed separately to ``Scheduler.dispatch_execution``.
     """
 
     state_id: str
@@ -48,7 +47,7 @@ class ExecutionTreeNode:
 class SchedulerCapabilityUnavailable(Exception):
     """Facade method defined for later phases but not implemented yet."""
 
-    def __init__(self, method: str, reason: str = "not_implemented_in_p2") -> None:
+    def __init__(self, method: str, reason: str = "not_implemented") -> None:
         self.method = method
         self.reason = reason
         super().__init__(f"Scheduler.{method} is unavailable: {reason}")
@@ -59,10 +58,4 @@ __all__ = [
     "ExecutionTreeNode",
     "SchedulerCapabilityUnavailable",
     "SchedulerExecutionRequest",
-    "RunTreeRole",
-    "RunExecutionRequest",
-    "RunOutput",
-    "RunStatus",
-    "AgentStreamItem",
-    "Any",
 ]

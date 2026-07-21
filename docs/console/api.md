@@ -2,13 +2,12 @@
 
 Base URL: `http://localhost:8422`
 
+User-facing chat goes **Session → `SessionGateway` → root Run** (ADR 0048). There is no Objectives API, assignment templates, or Objective SSE.
+
 ## Health
 
 ### `GET /api/health`
 
-Health check endpoint.
-
-**Response:**
 ```json
 {"status": "ok", "service": "agiwo-console"}
 ```
@@ -17,29 +16,29 @@ Health check endpoint.
 
 ### `GET /api/overview`
 
-Dashboard aggregates for sessions, agents, traces, tokens, and scheduler status.
+Dashboard aggregates: sessions, agents, traces, tokens, scheduler status counts.
 
 ## Agents
 
 ### `GET /api/agents`
 
-List all configured agents.
+List saved agent configurations.
 
 ### `GET /api/agents/capabilities`
 
-List supported model providers plus capability hints such as whether `base_url` or `api_key_env_name` is required.
+Supported model providers and capability hints (`requires_base_url`, `requires_api_key_env_name` for compatible providers).
 
 ### `GET /api/agents/tools/available`
 
-List available functional tools that can be assigned to agents, including built-in tools and `agent:<id>` references.
+Functional tools assignable to agents (built-in + `agent:<id>`). Query: `exclude` — agent ID to omit from agent-as-tool references.
 
 ### `GET /api/agents/skills/available`
 
-List globally discovered skills.
+Globally discovered skills (`name`, `description`).
 
 ### `POST /api/agents`
 
-Create a new agent configuration.
+Create an agent configuration.
 
 **Request:**
 ```json
@@ -64,15 +63,15 @@ Create a new agent configuration.
 
 ### `GET /api/agents/{agent_id}`
 
-Get a specific agent configuration.
+Get one agent configuration.
 
 ### `PUT /api/agents/{agent_id}`
 
-Replace an existing agent configuration.
+Replace an agent configuration (same body shape as create).
 
 ### `DELETE /api/agents/{agent_id}`
 
-Delete an agent configuration.
+Delete an agent configuration (204).
 
 ### `GET /api/agents/{agent_id}/sessions`
 
@@ -80,7 +79,7 @@ List sessions whose base agent is `agent_id`.
 
 ### `POST /api/agents/{agent_id}/sessions`
 
-Create a standalone session for an agent.
+Create a standalone session for an agent (201).
 
 **Response:**
 ```json
@@ -92,17 +91,19 @@ Create a standalone session for an agent.
 
 ## Sessions
 
+Session ID doubles as the persistent scheduler root state ID.
+
 ### `GET /api/sessions`
 
-List sessions with lightweight summary fields.
+List sessions. Query: `limit`, `offset`, `include_archived` (default `false`).
 
 ### `GET /api/sessions/{session_id}`
 
-Get session detail, including current base agent binding and latest summary fields.
+Session detail (base agent binding, summary fields).
 
 ### `POST /api/sessions/{session_id}/input`
 
-Send user input through `SessionObjectiveGateway` (create or continue an Objective). Optional header: `Idempotency-Key`.
+Send user input via **`SessionGateway`**: append Session history, then start or inject a root Run. Optional header: `Idempotency-Key` (generated if omitted).
 
 **Request:**
 ```json
@@ -113,24 +114,36 @@ Send user input through `SessionObjectiveGateway` (create or continue an Objecti
 
 **Response (SSE):**
 
-```text
-event: objective_ack
-data: {"type":"objective_ack","objective_id":"obj_...","status":"CREATED"}
+Success — single `session_turn` event, then stream ends:
 
-event: objective_event
-id: 1
-data: {"type":"objective_event","sequence":1,"kind":"ObjectiveCreated","summary":"..."}
+```text
+event: session_turn
+data: {"kind":"session","session_id":"...","run_id":"...","status":"completed","response":"..."}
 ```
 
-The stream briefly follows new Objective facts, then ends. For longer watches use `GET /api/objectives/{id}/events`. Debug-only Scheduler streaming remains on `/api/scheduler/*`.
+Error:
+
+```text
+event: session_error
+data: {"message":"..."}
+```
+
+Feishu and Console web use the same gateway path.
 
 ### `POST /api/sessions/{session_id}/cancel`
 
-Cancel the active scheduler root bound to the session.
+Cancel the scheduler root bound to the session.
+
+**Request:**
+```json
+{
+  "reason": "Cancelled by operator"
+}
+```
 
 ### `POST /api/sessions/{session_id}/fork`
 
-Fork a session into a new session ID. Does not copy active Objectives or checkpoints. `context_summary` is injected once into the first Objective of the new session.
+Fork into a new session. `context_summary` is stored on the new session and consumed once on the first user input (injected as context, not as the user message).
 
 **Request:**
 ```json
@@ -139,152 +152,97 @@ Fork a session into a new session ID. Does not copy active Objectives or checkpo
 }
 ```
 
+**Response:**
+```json
+{
+  "session_id": "new-session-id",
+  "source_session_id": "original-session-id"
+}
+```
+
 ### `POST /api/sessions/{session_id}/archive`
 
-Archive a session (ordinary “delete”). Active Objectives are paused to `USER_PAUSED` before `archived_at` is set.
+Archive a session: cancel any active root run, wait up to 30s for drain, then set `archived_at`. Returns 409 if the root is still active after the timeout.
 
 ### `POST /api/sessions/{session_id}/restore`
 
-Clear `archived_at`. Does **not** resume paused Objectives.
+Clear `archived_at` (does not restart runs).
 
 ### `GET /api/sessions/{session_id}/summary`
 
-Fetch the aggregated summary view for one session.
+Aggregated summary metrics for one session.
 
 ### `GET /api/sessions/{session_id}/steps`
 
-Fetch session steps. Supports `start_seq`, `end_seq`, `run_id`, `agent_id`, `limit`, and `order`.
+Session steps. Query: `start_seq`, `end_seq`, `run_id`, `agent_id`, `limit` (max 5000), `order` (`asc`|`desc`).
 
-### `GET /api/sessions/{session_id}/objectives`
+## Runs
 
-List Objectives for a session (terminal and active).
+### `GET /api/runs`
 
-## Objectives
+List runs. Query: `user_id`, `session_id`, `limit`, `offset`.
 
-Ordinary user work is modeled as Objectives inside a Session. Mutating endpoints require the `Idempotency-Key` header.
+### `GET /api/runs/{run_id}`
 
-### `POST /api/objectives`
+Get one run by ID.
 
-Create an Objective asynchronously. Returns immediately with `objective_id`.
+## Scheduler
+
+Debug / operator surface. Ordinary user chat uses `/api/sessions/{id}/input`, not scheduler routes.
+
+### `GET /api/scheduler/states`
+
+List scheduler states. Query: `status`, `limit`, `offset`.
+
+### `GET /api/scheduler/states/{state_id}`
+
+Get one scheduler state.
+
+### `GET /api/scheduler/states/{state_id}/children`
+
+Direct child states.
+
+### `GET /api/scheduler/states/{state_id}/tree`
+
+Scheduler tree rooted at `state_id` (max 500 nodes).
+
+### `GET /api/scheduler/states/{state_id}/pending-events`
+
+Pending mailbox events for a state.
+
+### `GET /api/scheduler/stats`
+
+Aggregate counts: `pending`, `running`, `waiting`, `idle`, `queued`, `completed`, `failed`, `total`.
+
+### `POST /api/scheduler/states/create`
+
+Create and submit a persistent root from an agent config.
 
 **Request:**
 ```json
 {
-  "session_id": "session-123",
-  "message": "Draft the weekly status update",
-  "budget": {
-    "handoffs": 10,
-    "verification_attempts": 5,
-    "llm_cost_usd": 5.0,
-    "active_seconds": 3600
-  }
+  "agent_config_id": "agent-abc",
+  "initial_task": "Research topic X",
+  "session_id": null
 }
 ```
 
-### `GET /api/objectives/{objective_id}`
-
-Fetch the projected Objective view (status, budget, timeline, delivery).
-
-### `GET /api/objectives/{objective_id}/metrics`
-
-Objective-level aggregates (assignment counts, budget used/limit, elapsed time). Truth source is ObjectiveLog via `ObjectiveView`; not a second ledger.
-
-### `GET /api/objectives/{objective_id}/timeline`
-
-Paginated timeline nodes (`after_sequence`, `limit`).
-
-### `GET /api/objectives/{objective_id}/events`
-
-Replayable SSE of Objective facts. Supports `Last-Event-ID` / `after_sequence`. Content is always re-read from the store; wakeups are not the truth source.
-
-### `POST /api/objectives/{objective_id}/inputs`
-
-Submit additional user input (running inject, waiting reply, or deferred when paused).
-
-### `POST /api/objectives/{objective_id}/inputs/{input_id}/externalize`
-
-Authorize externalizing a capacity-exceeding input (summary + optional content hash).
-
-### `POST /api/objectives/{objective_id}/pause`
-
-Recoverable pause (`reason`, default `user_pause`). Not cancel.
-
-### `POST /api/objectives/{objective_id}/resume`
-
-Resume a paused Objective (`reason`, default `user_resume`).
-
-### `POST /api/objectives/{objective_id}/budget`
-
-Adjust budget limits (handoffs / verification / llm_cost_usd / active_seconds).
-
-### Assignment templates
-
-- `GET /api/agents/templates/defaults` — SDK default template set
-- `POST /api/agents/templates/preview` — render one template with fixed example context
-- Agent create/update bodies may include `assignment_templates: { intake, work, verification }`
-
-## Scheduler
-
-### `GET /api/scheduler/states`
-
-List scheduler states. Supports `status`, `limit`, and `offset`.
-
-**Response:**
-```json
-{
-  "items": [
-    {
-      "id": "agent-abc123",
-      "root_state_id": "agent-abc123",
-      "status": "running",
-      "task": "Research topic X",
-      "parent_id": null,
-      "agent_config_id": "config-1",
-      "is_persistent": true,
-      "depth": 0,
-      "wake_count": 1,
-      "created_at": "2026-03-17T10:00:00Z",
-      "updated_at": "2026-03-17T10:05:00Z"
-    }
-  ],
-  "limit": 50,
-  "offset": 0,
-  "has_more": false,
-  "total": null
-}
-```
-
-### `GET /api/scheduler/states/{state_id}`
-
-Get details for a specific scheduler state.
-
-### `GET /api/scheduler/states/{state_id}/children`
-
-List direct child states.
-
-### `GET /api/scheduler/states/{state_id}/tree`
-
-Get the scheduler tree rooted at `state_id`.
-
-### `GET /api/scheduler/states/{state_id}/pending-events`
-
-List pending mailbox/events for a state.
-
-### `GET /api/scheduler/stats`
-
-Get aggregate counts for `pending/running/waiting/idle/queued/completed/failed`.
-
-### `POST /api/scheduler/states/create`
-
-Create and submit a new persistent root from an existing agent config.
+`agent_config_id` is required. `session_id` defaults to a new UUID.
 
 ### `POST /api/scheduler/states/{state_id}/cancel`
 
-Cancel a running scheduler agent.
+Cancel a state and its descendants.
+
+**Request:**
+```json
+{
+  "reason": "Cancelled by operator"
+}
+```
 
 ### `POST /api/scheduler/states/{state_id}/steer`
 
-Send steering input to a scheduler state.
+Steer a root state (running inject or wake).
 
 **Request:**
 ```json
@@ -298,54 +256,37 @@ Send steering input to a scheduler state.
 
 Resume a persistent root with a new message.
 
-## Runs
-
-### `GET /api/runs`
-
-List runs with optional filtering.
-
-Supported query parameters:
-
-- `user_id`
-- `session_id`
-- `limit`
-- `offset`
-
-### `GET /api/runs/{run_id}`
-
-Get a single run by ID.
+**Request:**
+```json
+{
+  "message": "Continue with the next step"
+}
+```
 
 ## Traces
 
 ### `GET /api/traces`
 
-List execution traces.
-
-Supported query parameters:
-
-- `agent_id`
-- `session_id`
-- `user_id`
-- `status`
-- `limit`
-- `offset`
+List traces. Query: `agent_id`, `session_id`, `user_id`, `status`, `limit`, `offset`.
 
 ### `GET /api/traces/{trace_id}`
 
-Get detailed trace information including the full span tree.
+Trace detail including full span tree.
 
 ## Runtime Config
 
+Process-local overrides; restart reverts to environment config.
+
 ### `GET /api/config/runtime`
 
-Inspect the process-local runtime config snapshot used by the Console.
+Current runtime config snapshot.
 
 ### `PUT /api/config/runtime`
 
-Replace editable runtime config overrides for the current process.
+Replace editable runtime overrides for the current process.
 
 ## Feishu
 
 ### `GET /api/channels/feishu/status`
 
-Inspect Feishu long-connection status when the channel is enabled.
+Feishu long-connection status. Returns `{"enabled": false}` when the channel is not wired.

@@ -453,9 +453,9 @@ class Agent:
 
         Internal Scheduler contract: external Scheduler APIs already validated
         user input, and wake/fork paths may inject ``UserMessage.from_system()``.
-        ``execution_request`` lets Objective-managed dispatch supply a
-        preallocated ``run_id``. ``user_input`` may be ``None`` when Session
-        history already holds the user turn (ADR 0047).
+        ``execution_request`` lets Scheduler dispatch supply a preallocated
+        ``run_id``. ``user_input`` may be ``None`` when Session history already
+        holds the user message (ADR 0048).
         """
         self._ensure_open()
         resolved_session_id = session_id or str(uuid4())

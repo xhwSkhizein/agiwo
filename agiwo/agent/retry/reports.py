@@ -1,11 +1,10 @@
-"""System reports and mechanical finalization for run-blocking faults."""
+"""System reports and completion snapshots for run-blocking faults."""
 
 from typing import Any
 
 from agiwo.agent.models.finalization import (
     RunFinalizationResult,
-    mechanical_agent_handoff_result,
-    mechanical_user_boundary_result,
+    fault_result,
 )
 from agiwo.agent.retry.faults import (
     FaultDisposition,
@@ -75,18 +74,18 @@ def finalization_for_blocking_fault(
     if fault.disposition is FaultDisposition.RETRYABLE and (
         error.exhausted or len(error.attempts) > 1
     ):
-        return mechanical_agent_handoff_result(
+        return fault_result(
             report,
             reason="system_retry_exhausted",
             carry_forward=carry_forward,
         )
     if fault.disposition is FaultDisposition.OUTCOME_UNKNOWN:
-        return mechanical_user_boundary_result(
+        return fault_result(
             report,
             reason="system_outcome_unknown",
             carry_forward=carry_forward,
         )
-    return mechanical_user_boundary_result(
+    return fault_result(
         report,
         reason="system_non_retryable",
         carry_forward=carry_forward,

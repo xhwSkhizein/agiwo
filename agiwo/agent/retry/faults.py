@@ -50,7 +50,7 @@ class ExecutionFault:
 
 
 class RunBlockingFaultError(Exception):
-    """Fault that must end the current Run via a mechanical Objective boundary."""
+    """Fault that must end the current Run with a system report snapshot."""
 
     def __init__(
         self,
