@@ -23,7 +23,7 @@ class ResumePlan:
 
 
 def build_resume_plan(entries: list[RunLogEntry]) -> ResumePlan:
-    """Deterministic resume from committed facts (ADR 0033 message-tail rules)."""
+    """Deterministic resume from committed facts (message-tail rules)."""
     paused = next(
         (e for e in reversed(entries) if isinstance(e, RunPaused)),
         None,

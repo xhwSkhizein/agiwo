@@ -82,4 +82,4 @@ _Avoid_：把控制命令伪装成用户原文
 
 ## Retired language (do not use)
 
-下列概念已由 ADR 0048 作废，不得出现在核心公开 API、现行定义或新测试的领域断言中：Objective、ObjectiveService、ObjectiveLog、ObjectiveStatus、RootRunRequested、Outbox、Run Role、verification latch、HandoffDecision（作跨 Run 控制面）、ObjectiveBudget、DRAINING、Assignment、Turn（作聚合/API）、Session Gateway「升级为 Objective」。正文与旧 ADR 可留档于 `docs/adr/`（Status: superseded）或 `trash/`，但不是规格。
+下列概念已由 ADR 0048 作废，不得出现在核心公开 API、现行定义或新测试的领域断言中：Objective、ObjectiveService、ObjectiveLog、ObjectiveStatus、RootRunRequested、Outbox、Run Role、verification latch、HandoffDecision（作跨 Run 控制面）、ObjectiveBudget、DRAINING、Assignment、Turn（作聚合/API）、Session Gateway「升级为 Objective」。已被取代的 ADR 正文在 `trash/adr-superseded-by-0048-*`（及 git 历史），不是规格。

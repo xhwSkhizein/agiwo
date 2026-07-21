@@ -16,7 +16,7 @@
 2. [`docs/adr/README.md`](docs/adr/README.md) 现行阅读顺序中的 ADR（以 **0048** 为首）
 3. 源码
 
-Status 为 `superseded` 的 ADR、`trash/`、历史施工计划**不是**规格。作废词（Objective、Assignment、Turn 聚合、RootRunRequested 等）不得再指导实现或出现在新的公开 API / 领域测试断言中。切换破坏性：清理开发库，无 migration。
+已被 0048 取代的 ADR 已移出 `docs/adr/`（见 `trash/adr-superseded-by-0048-*` 与 git 历史）；`trash/`、历史施工计划**不是**规格。作废词（Objective、Assignment、Turn 聚合、RootRunRequested 等）不得再指导实现或出现在新的公开 API / 领域测试断言中。切换破坏性：清理开发库，无 migration。
 
 ## Logging
 

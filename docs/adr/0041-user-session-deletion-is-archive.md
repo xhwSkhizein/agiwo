@@ -4,7 +4,7 @@ Console 不再让普通用户物理删除 Session。用户界面的删除行为�
 
 ## Status
 
-accepted
+accepted（Session 归档语义仍有效；正文中的活动 Objective / DRAINING / Assignment 前提已由 ADR 0048 作废——有活动 root Run 时先可恢复暂停再归档，以源码为准）
 
 ## Considered Options
 

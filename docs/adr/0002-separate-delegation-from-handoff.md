@@ -4,7 +4,7 @@ Agiwo 将委派与接力建模为两种不同的协作关系。现有 `AgentStat
 
 ## Status
 
-accepted
+accepted（委派 / `parent_id` / waitset 仍有效；跨 root「接力账本」与 Objective/Assignment 表述已由 ADR 0048 作废——核心不再维护平行任务面）
 
 ## Considered Options
 
