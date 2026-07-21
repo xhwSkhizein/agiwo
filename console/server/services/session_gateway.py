@@ -63,7 +63,7 @@ class SessionGateway:
         await self._consume_fork_summary_if_needed(session_id, user_message)
 
         agent = await self._agent_runtime_cache.get_or_create_runtime_agent(session)
-        run_id, output = await self._session_runtime.execute_plain_turn(
+        run_id, output = await self._session_runtime.submit_user_message(
             agent,
             session,
             user_message,
@@ -114,11 +114,7 @@ class SessionGateway:
         )
 
 
-# Back-compat alias during rename window (callers should use SessionGateway).
-SessionObjectiveGateway = SessionGateway
-
 __all__ = [
     "SessionGateway",
-    "SessionObjectiveGateway",
     "SessionTurnResult",
 ]

@@ -1,7 +1,9 @@
-"""Agent-owned LLM budget admission protocol.
+"""Optional LLM budget admission protocol for a Run.
 
-Objective injects an implementation at dispatch time. Agent never imports
-``agiwo.objective``; with ``objective_id`` set, a missing gate fails closed.
+Callers may inject an ``LlmBudgetGate`` on the Agent. When a gate is present
+it is consulted before each provider attempt. The retired Objective plane used
+``objective_id`` on admit/cost events; those fields remain as opaque run-scope
+tags when a gate is wired.
 """
 
 from dataclasses import dataclass, field
@@ -9,7 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 
 
 class LlmBudgetDenied(Exception):
-    """Raised when Objective admission refuses a provider attempt."""
+    """Raised when budget admission refuses a provider attempt."""
 
     def __init__(
         self,
@@ -29,13 +31,13 @@ class LlmBudgetDenied(Exception):
 
 
 class MissingBudgetGateError(Exception):
-    """objective_id present but no LlmBudgetGate was injected."""
+    """A budget scope tag is set but no LlmBudgetGate was injected."""
 
-    def __init__(self, objective_id: str) -> None:
-        self.objective_id = objective_id
+    def __init__(self, scope_id: str) -> None:
+        self.objective_id = scope_id  # legacy attribute name for callers/tests
+        self.scope_id = scope_id
         super().__init__(
-            f"objective-managed run {objective_id!r} requires an LlmBudgetGate "
-            "(fail-closed)"
+            f"budget-scoped run {scope_id!r} requires an LlmBudgetGate (fail-closed)"
         )
 
 
@@ -81,7 +83,7 @@ class LlmBudgetGate(Protocol):
 
 
 class PermissiveLlmBudgetGate:
-    """No-op gate for tests that need objective_id without ObjectiveStore."""
+    """No-op gate for tests that inject a budget scope without a real ledger."""
 
     async def check_before_attempt(self, request: LlmAttemptAdmitRequest) -> None:
         del request

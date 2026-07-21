@@ -115,11 +115,6 @@ def get_session_gateway(runtime: ConsoleRuntime) -> SessionGateway:
     )
 
 
-def get_session_objective_gateway(runtime: ConsoleRuntime) -> SessionGateway:
-    """Temporary alias during SessionGateway rename (ADR 0048)."""
-    return get_session_gateway(runtime)
-
-
 __all__ = [
     "ConsoleRuntime",
     "ConsoleRuntimeDep",
@@ -134,5 +129,4 @@ __all__ = [
     "get_session_context_service",
     "get_session_view_service",
     "get_session_gateway",
-    "get_session_objective_gateway",
 ]

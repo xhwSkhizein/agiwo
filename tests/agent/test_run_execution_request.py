@@ -59,17 +59,20 @@ def test_run_status_enum_shape() -> None:
     }
 
 
-def test_run_execution_request_root_requires_objective_id_only() -> None:
-    RunExecutionRequest(
+def test_run_execution_request_accepts_root_without_objective_id() -> None:
+    req = RunExecutionRequest(
         run_id="r1",
+        run_tree_role=RunTreeRole.ROOT,
+    )
+    assert req.objective_id is None
+    assert req.run_tree_role is RunTreeRole.ROOT
+    # Optional legacy tag still accepted when set.
+    tagged = RunExecutionRequest(
+        run_id="r2",
         objective_id="obj1",
         run_tree_role=RunTreeRole.ROOT,
     )
-    with pytest.raises(ValueError, match="objective_id"):
-        RunExecutionRequest(
-            run_id="r1",
-            run_tree_role=RunTreeRole.ROOT,
-        )
+    assert tagged.objective_id == "obj1"
 
 
 @pytest.mark.asyncio

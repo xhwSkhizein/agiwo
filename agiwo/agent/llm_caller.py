@@ -226,7 +226,7 @@ async def _stream_single_attempt(
         call_cost_ceiling=call_cost_ceiling,
         price_snapshot=price_snapshot,
     )
-    await _admit_objective_llm_attempt(
+    await _admit_llm_budget_attempt(
         state=state,
         model=model,
         envelope=envelope,
@@ -267,7 +267,7 @@ async def _stream_single_attempt(
             response_observed=False,
         )
         ledger.record_attempt_failed(phase)
-        await _record_objective_llm_cost(
+        await _record_llm_budget_cost(
             state=state,
             envelope=envelope,
             accepted_output_tokens=0,
@@ -291,7 +291,7 @@ async def _stream_single_attempt(
         if step.metrics and step.metrics.usage_source
         else "estimated"
     )
-    await _record_objective_llm_cost(
+    await _record_llm_budget_cost(
         state=state,
         envelope=envelope,
         accepted_output_tokens=accepted_output,
@@ -302,7 +302,7 @@ async def _stream_single_attempt(
     return step, llm_context
 
 
-async def _admit_objective_llm_attempt(
+async def _admit_llm_budget_attempt(
     *,
     state: RunContext,
     model: Model,
@@ -331,7 +331,7 @@ async def _admit_objective_llm_attempt(
     )
 
 
-async def _record_objective_llm_cost(
+async def _record_llm_budget_cost(
     *,
     state: RunContext,
     envelope: LlmAttemptEnvelope,

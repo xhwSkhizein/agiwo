@@ -30,16 +30,15 @@ dispatch_execution(request: SchedulerExecutionRequest) -> None
   # request carries preallocated or generated run_id, agent, optional thin system notice
   # Session path sets user_input=None when history already holds the user text
 
-inject_user_message(agent_id | run_id, user_input) -> None   # RUNNING root only
+inject_user_message(run_id, user_input) -> None   # RUNNING root only
 steer(...) / cancel(...) / wait_for(...)
 list_execution_tree(root_run_id) -> depth-1 root + direct children
 get_run_view / get_run_status / list_run_log_entries   # read bridges over agent RunLog
+request_recoverable_pause / prepare_resume / release_resume_barrier  # Run-level PAUSED
 
 # Agent-facing system tools (unchanged responsibility)
 spawn_child_agent / fork_child_agent / sleep_and_wait(waitset|timer|...)
 ```
-
-Removed from core Scheduler surface (ADR 0048): Objective-only pause barrier APIs used solely for DRAINING/Objective resume (`request_recoverable_pause` / `prepare_resume` / `release_resume_barrier` as Objective control plane). Agent-level pause/resume may remain inside `agiwo.agent` if still needed for single-run recoverable interrupt.
 
 Invariants:
 

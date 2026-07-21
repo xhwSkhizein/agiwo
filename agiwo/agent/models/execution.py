@@ -1,7 +1,7 @@
-"""Internal execution request for Objective-managed and Scheduler-owned runs.
+"""Internal execution request for Scheduler-owned and Session root runs.
 
 Not a normal user API. Public ``Agent.start/run/run_stream`` keep generating
-their own run ids; Scheduler/Objective pass a validated request instead.
+their own run ids; Scheduler passes a validated request instead.
 """
 
 from dataclasses import dataclass
@@ -9,7 +9,7 @@ from enum import Enum
 
 
 class RunTreeRole(str, Enum):
-    """Role of this Run relative to an Objective-managed root/child tree."""
+    """Role of this Run relative to a Session root / child execution tree."""
 
     NONE = "none"
     ROOT = "root"
@@ -20,8 +20,9 @@ class RunTreeRole(str, Enum):
 class RunExecutionRequest:
     """Narrow internal request carrying preallocated Run identity.
 
-    Root next-action is derived mechanically inside the Agent package
-    (ADR 0047) — no finalization LLM.
+    Root next-action is derived mechanically inside the Agent package —
+    no finalization LLM. Optional ``objective_*`` fields are unused leftovers
+    from the retired Objective plane (ADR 0048); leave unset.
     """
 
     run_id: str
@@ -31,14 +32,11 @@ class RunExecutionRequest:
     config_revision: str | None = None
     resume: bool = False
     verification_required: bool = False
-    # Objective Run Role when this is an Objective-managed root.
     objective_run_role: str | None = None
 
     def __post_init__(self) -> None:
         if not self.run_id:
             raise ValueError("RunExecutionRequest.run_id is required")
-        if self.run_tree_role is RunTreeRole.ROOT and not self.objective_id:
-            raise ValueError("run_tree_role=root requires objective_id")
 
 
 __all__ = [

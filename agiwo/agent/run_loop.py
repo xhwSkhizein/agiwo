@@ -283,7 +283,7 @@ class RunLoopOrchestrator:
         result = self._build_output()
         if self._finalization is not None:
             # A termination summary is diagnostic only; it must not replace the
-            # ordinary report submitted to ObjectiveService.
+            # ordinary report; no cross-run control plane consumes it (ADR 0048).
             result.response = self._finalization.report
             self.context.ledger.response_content = self._finalization.report
         await self.context.hooks.after_run(result, self.context)

@@ -37,7 +37,7 @@ def _runtime(client: AsyncClient) -> ConsoleRuntime:
     return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
 
 
-async def _stub_execute_plain_turn(_self, _agent, session, _user_message):
+async def _stub_submit_user_message(_self, _agent, session, _user_message):
     return f"run_{session.id}", RunOutput(
         response="stub reply",
         session_id=session.id,
@@ -52,8 +52,8 @@ async def _stub_runtime_agent(_self, session):
 async def client(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
         SessionRuntimeService,
-        "execute_plain_turn",
-        _stub_execute_plain_turn,
+        "submit_user_message",
+        _stub_submit_user_message,
     )
     monkeypatch.setattr(
         AgentRuntimeCache,

@@ -55,7 +55,7 @@ class SessionRuntimeService:
         await self._touch_session(session)
         return result
 
-    async def execute_plain_turn(
+    async def submit_user_message(
         self,
         agent: Agent,
         session: Session,
@@ -63,7 +63,7 @@ class SessionRuntimeService:
     ) -> tuple[str, RunOutput]:
         """Session submit: history once, then inject RUNNING root or start a new one."""
         if not user_message.is_user_provided:
-            raise ValueError("execute_plain_turn requires is_user_provided=True")
+            raise ValueError("submit_user_message requires is_user_provided=True")
 
         await append_session_user_message_to_history(
             agent,

@@ -47,8 +47,7 @@ async def test_request_recoverable_pause_then_resume() -> None:
             user_input=UserMessage.from_system("work"),
             execution=RunExecutionRequest(
                 run_id="run_sched_pause",
-                objective_id="o1",
-                run_tree_role=RunTreeRole.ROOT,
+                run_tree_role=RunTreeRole.NONE,
             ),
             persistent=True,
         )
