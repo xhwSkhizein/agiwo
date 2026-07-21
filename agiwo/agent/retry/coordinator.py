@@ -60,11 +60,14 @@ class RetryCoordinator:
         )
 
     async def wait_before_retry(self, attempt_no: int) -> None:
-        wait = min(
+        await self._sleeper(self.backoff_seconds(attempt_no))
+
+    def backoff_seconds(self, attempt_no: int) -> float:
+        """Exponential backoff for the given 1-based attempt that just failed."""
+        return min(
             self.policy.max_backoff_seconds,
             self.policy.min_backoff_seconds * (2 ** max(0, attempt_no - 1)),
         )
-        await self._sleeper(wait)
 
     async def ensure_progress_allowed(self) -> None:
         if not await self._should_continue():

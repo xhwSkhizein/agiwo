@@ -9,21 +9,13 @@ import uuid
 from fastapi import APIRouter, Header, HTTPException, Query
 from sse_starlette.sse import EventSourceResponse
 
-from agiwo.objective import (
-    ObjectiveError,
-    ObjectiveService,
-    ObjectiveStatus,
-    ObjectiveStore,
-    PauseObjectiveRequest,
-)
+from agiwo.agent.models.input import UserMessage
 
 from server.dependencies import (
     ConsoleRuntimeDep,
-    get_objective_service,
-    get_objective_store,
     get_run_query_service,
     get_session_context_service,
-    get_session_objective_gateway,
+    get_session_gateway,
     get_session_view_service,
 )
 from server.response_serialization import (
@@ -32,12 +24,8 @@ from server.response_serialization import (
     session_summary_response_from_record,
     step_response_from_sdk,
 )
-from server.services.objective_event_stream import bounded, stream_objective_events
-from server.services.objective_gateway import SessionObjectiveGateway
-from server.services.objective_serialization import (
-    objective_ack_sse_message,
-    user_message_from_parts,
-)
+from server.channels.exceptions import BaseAgentNotFoundError
+from server.services.runtime.session_runtime_service import SessionRuntimeService
 from server.models.view import (
     CancelRequest,
     ChatRequest,
@@ -51,63 +39,38 @@ from server.models.view import (
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 _STEPS_MAX_LIMIT = 5000
-# Short live-follow window: clients reconnect via /objectives/{id}/events for
-# longer watches. Keeping this small also prevents chat tests from hanging.
-_SESSION_INPUT_STREAM_TIMEOUT_SECONDS = 5.0
-_SESSION_INPUT_WAIT_TIMEOUT_SECONDS = 1.0
-_ARCHIVE_PAUSE_TIMEOUT_SECONDS = 30.0
-
-
-def _objective_error_sse_message(exc: ObjectiveError) -> dict[str, str]:
-    payload = {"code": exc.code, "message": exc.message, **exc.details}
-    return {"event": "objective_error", "data": json.dumps(payload, default=str)}
-
-
-async def _existing_active_cursor(service: ObjectiveService, session_id: str) -> int:
-    """Last known sequence of the session's active Objective, if any.
-
-    Used so the SSE response only replays facts appended by *this* turn
-    instead of the Objective's entire history.
-    """
-    for view in await service.list_by_session(session_id):
-        if not view.is_terminal:
-            return view.last_sequence
-    return 0
+_ARCHIVE_DRAIN_TIMEOUT_SECONDS = 30.0
 
 
 async def _session_input_event_stream(
     *,
-    gateway: SessionObjectiveGateway,
-    service: ObjectiveService,
-    store: ObjectiveStore,
     session_id: str,
     body: ChatRequest,
     idempotency_key: str,
+    gateway,
 ) -> AsyncIterator[dict[str, str]]:
-    cursor = await _existing_active_cursor(service, session_id)
-    message = user_message_from_parts(body.message, None)
+    message = UserMessage.from_value(body.message)
     try:
         result = await gateway.handle_user_message(
             session_id,
             message,
             idempotency_key=idempotency_key,
         )
-    except ObjectiveError as exc:
-        yield _objective_error_sse_message(exc)
+    except (ValueError, BaseAgentNotFoundError) as exc:
+        yield {
+            "event": "session_error",
+            "data": json.dumps({"message": str(exc)}, default=str),
+        }
         return
 
-    yield objective_ack_sse_message(result.objective_id, status=result.status)
-
-    async for message_out in bounded(
-        stream_objective_events(
-            store,
-            result.objective_id,
-            cursor,
-            wait_timeout=_SESSION_INPUT_WAIT_TIMEOUT_SECONDS,
-        ),
-        timeout_seconds=_SESSION_INPUT_STREAM_TIMEOUT_SECONDS,
-    ):
-        yield message_out
+    payload = {
+        "kind": result.kind,
+        "session_id": result.session_id,
+        "run_id": result.run_id,
+        "status": result.status,
+        "response": result.response,
+    }
+    yield {"event": "session_turn", "data": json.dumps(payload, default=str)}
 
 
 @router.get("/runs", response_model=PageResponse[RunResponse])
@@ -187,16 +150,12 @@ async def send_session_input(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    gateway = get_session_objective_gateway(runtime)
-    service = get_objective_service(runtime)
-    store = get_objective_store(runtime)
+    gateway = get_session_gateway(runtime)
     key = idempotency_key or uuid.uuid4().hex
 
     return EventSourceResponse(
         _session_input_event_stream(
             gateway=gateway,
-            service=service,
-            store=store,
             session_id=session_id,
             body=body,
             idempotency_key=key,
@@ -256,57 +215,32 @@ async def archive_session_endpoint(
     session_id: str,
     runtime: ConsoleRuntimeDep,
 ) -> dict[str, object]:
-    """Archive a session: pause any active Objective, then hide it from listing.
-
-    Order is drain/pause first, then ``archived_at``. Never hide a still-running
-    Objective (P5-06).
-    """
+    """Archive a session: drain/cancel any active root run, then hide from listing."""
     if runtime.session_store is None:
         raise RuntimeError("Session store not available")
+    if runtime.scheduler is None:
+        raise RuntimeError("Scheduler not initialized")
     session = await runtime.session_store.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    service = get_objective_service(runtime)
-    active = None
-    for view in await service.list_by_session(session_id):
-        if not view.is_terminal:
-            active = view
-            break
-    if active is not None:
-        try:
-            await service.pause(
-                PauseObjectiveRequest(
-                    objective_id=active.objective_id,
-                    idempotency_key=f"archive:{session_id}:{uuid.uuid4().hex}",
-                    reason="user_archive",
-                )
-            )
-        except ObjectiveError as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": exc.code,
-                    "message": exc.message,
-                    **exc.details,
-                },
-            ) from exc
+    session_runtime = SessionRuntimeService(
+        scheduler=runtime.scheduler,
+        session_store=runtime.session_store,
+    )
+    await session_runtime.cancel_if_active(session, reason="user_archive")
 
-        deadline = asyncio.get_running_loop().time() + _ARCHIVE_PAUSE_TIMEOUT_SECONDS
-        while asyncio.get_running_loop().time() < deadline:
-            view = await service.get_view(active.objective_id)
-            if (
-                view is None
-                or view.is_terminal
-                or view.status == ObjectiveStatus.USER_PAUSED
-            ):
-                break
-            await asyncio.sleep(0.2)
-        else:
-            raise HTTPException(
-                status_code=409,
-                detail="archive drain incomplete; Objective not yet USER_PAUSED",
-            )
+    deadline = asyncio.get_running_loop().time() + _ARCHIVE_DRAIN_TIMEOUT_SECONDS
+    while asyncio.get_running_loop().time() < deadline:
+        state = await runtime.scheduler.get_state(session_id)
+        if state is None or not state.is_active():
+            break
+        await asyncio.sleep(0.2)
+    else:
+        raise HTTPException(
+            status_code=409,
+            detail="archive drain incomplete; root run still active",
+        )
 
     session.archived_at = datetime.now(timezone.utc)
     await runtime.session_store.upsert_session(session)
@@ -318,7 +252,7 @@ async def restore_session_endpoint(
     session_id: str,
     runtime: ConsoleRuntimeDep,
 ) -> dict[str, bool]:
-    """Clear a session's archived_at flag. Does not resume any paused Objective."""
+    """Clear a session's archived_at flag."""
     if runtime.session_store is None:
         raise RuntimeError("Session store not available")
     session = await runtime.session_store.get_session(session_id)

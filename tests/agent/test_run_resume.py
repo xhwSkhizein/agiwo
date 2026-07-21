@@ -174,7 +174,7 @@ async def test_cooperative_pause_same_run_id() -> None:
         id="agent-pause",
     )
     agent.llm_budget_gate = PermissiveLlmBudgetGate()
-    handle = agent._start_runtime(
+    handle = agent.start_prevalidated(
         UserMessage.from_system("sys"),
         session_id="sess-pause",
         execution_request=RunExecutionRequest(

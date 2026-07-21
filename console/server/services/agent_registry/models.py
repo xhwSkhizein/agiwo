@@ -7,7 +7,6 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, model_validator
 
 from agiwo.llm.config_policy import sanitize_model_params_data
-from agiwo.objective import AssignmentTemplateSet
 from agiwo.skill.allowlist import normalize_allowed_skills
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.manager import get_global_tool_manager
@@ -28,7 +27,8 @@ class AgentConfigRecord(BaseModel):
         None  # Allowed builtin tool names (None = all defaults)
     )
     allowed_skills: list[str] | None = None
-    assignment_templates: AssignmentTemplateSet | dict[str, str] | None = None
+    # Legacy optional blob; ADR 0048 no longer uses Objective run-role templates.
+    assignment_templates: dict[str, str] | None = None
     options: dict[str, Any] = Field(default_factory=dict)
     model_params: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.now)
@@ -47,12 +47,12 @@ class AgentConfigRecord(BaseModel):
         )
         raw_templates = normalized.get("assignment_templates")
         if raw_templates is not None:
-            if isinstance(raw_templates, AssignmentTemplateSet):
-                normalized["assignment_templates"] = raw_templates
-            elif isinstance(raw_templates, dict):
-                normalized["assignment_templates"] = AssignmentTemplateSet.from_dict(
-                    raw_templates
-                )
+            if isinstance(raw_templates, dict):
+                normalized["assignment_templates"] = {
+                    str(k): str(v) for k, v in raw_templates.items()
+                }
+            elif hasattr(raw_templates, "to_dict"):
+                normalized["assignment_templates"] = dict(raw_templates.to_dict())
             else:
                 raise ValueError("assignment_templates must be an object or null")
         normalized["allowed_skills"] = (
@@ -63,7 +63,6 @@ class AgentConfigRecord(BaseModel):
             )
         )
         if normalized.get("allowed_tools") is not None:
-            # Validate agent: references before parsing
             for name in normalized["allowed_tools"]:
                 if isinstance(name, str) and name.startswith("agent:"):
                     agent_ref = AgentToolReference.parse(name)

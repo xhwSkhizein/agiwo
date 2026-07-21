@@ -24,15 +24,12 @@ from server.config import ConsoleConfig
 from server.models.session import ChannelChatSessionStore
 from server.services.agent_registry import AgentRegistry, build_default_agent_record
 from server.services.runtime import AgentRuntimeCache
-from server.services.runtime.agent_factory import build_model
 from server.services.runtime_config import RuntimeConfigService
 from server.services.storage_wiring import (
     build_agent_state_storage_config,
-    create_objective_store,
     create_run_log_storage,
     create_trace_storage,
 )
-from agiwo.objective import ObjectiveService
 from server.routers import (
     sessions,
     traces,
@@ -41,7 +38,6 @@ from server.routers import (
     config,
     scheduler,
     feishu,
-    objectives,
 )
 from agiwo.utils.logging import get_logger
 
@@ -52,8 +48,6 @@ logger = get_logger("app")
 class LifespanResources:
     run_log_storage: object | None = None
     trace_storage: object | None = None
-    objective_store: object | None = None
-    objective_service: object | None = None
     agent_registry: AgentRegistry | None = None
     scheduler: Scheduler | None = None
     scheduler_started: bool = False
@@ -85,8 +79,8 @@ async def _build_feishu_channel_service(
     sched: Scheduler,
     agent_registry: AgentRegistry,
     *,
-    objective_service: ObjectiveService,
     session_store: ChannelChatSessionStore,
+    agent_runtime_cache: AgentRuntimeCache,
 ) -> FeishuChannelService | None:
     _validate_feishu_config(config)
     if not config.channels.feishu.enabled:
@@ -95,7 +89,6 @@ async def _build_feishu_channel_service(
         config.channels.feishu.default_agent_name
     )
     if base_agent is None:
-        # 使用 .env 中的默认 Agent（不持久化到 DB）
         base_agent = build_default_agent_record(config.default_agent)
         logger.info("using_default_agent_from_env", name=base_agent.name)
 
@@ -103,25 +96,14 @@ async def _build_feishu_channel_service(
         config=config,
         scheduler=sched,
         agent_registry=agent_registry,
-        objective_service=objective_service,
         session_store=session_store,
+        agent_runtime_cache=agent_runtime_cache,
     )
     await feishu_channel_service.initialize()
     return feishu_channel_service
 
 
 async def _close_runtime_resources(resources: LifespanResources) -> None:
-    if resources.objective_service is not None:
-        stop = getattr(resources.objective_service, "stop_dispatcher", None)
-        if stop is not None:
-            try:
-                await stop()
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "resource_close_failed",
-                    resource="ObjectiveService.dispatcher",
-                    exc_info=True,
-                )
     closables: list[object] = []
     if resources.feishu_channel_service is not None:
         closables.append(resources.feishu_channel_service)
@@ -135,8 +117,6 @@ async def _close_runtime_resources(resources: LifespanResources) -> None:
         closables.append(resources.run_log_storage)
     if resources.trace_storage is not None:
         closables.append(resources.trace_storage)
-    if resources.objective_store is not None:
-        closables.append(resources.objective_store)
     if resources.scheduler is not None and resources.scheduler_started:
         try:
             await resources.scheduler.stop()
@@ -153,11 +133,6 @@ async def _startup_console_runtime(
 ) -> None:
     resources.run_log_storage = create_run_log_storage(config)
     resources.trace_storage = create_trace_storage(config)
-    resources.objective_store = create_objective_store(config)
-    # SQLite store connects lazily; memory needs no connect.
-    connect = getattr(resources.objective_store, "connect", None)
-    if connect is not None:
-        await connect()
     resources.agent_registry = AgentRegistry(config)
     await resources.agent_registry.initialize()
 
@@ -183,44 +158,12 @@ async def _startup_console_runtime(
         session_store=resources.console_session_store,
     )
 
-    default_record = build_default_agent_record(config.default_agent)
-    templates = default_record.assignment_templates
-
-    complexity_model = None
-    try:
-        complexity_model = build_model(default_record)
-    except (ValueError, AttributeError):
-        logger.info(
-            "complexity_model_unavailable",
-            agent_name=getattr(default_record, "name", None),
-            model_provider=getattr(default_record, "model_provider", None),
-            model_name=getattr(default_record, "model_name", None),
-        )
-
-    session_store = resources.console_session_store
-    runtime_cache = resources.agent_runtime_cache
-
-    async def default_agent_provider(session_id: str):
-        session = await session_store.get_session(session_id)
-        if session is None:
-            return None
-        return await runtime_cache.get_or_create_runtime_agent(session)
-
-    resources.objective_service = ObjectiveService(
-        resources.objective_store,
-        scheduler=resources.scheduler,
-        default_agent_provider=default_agent_provider,
-        complexity_model=complexity_model,
-        templates=templates,
-    )
-    await resources.objective_service.start_dispatcher()
-
     resources.feishu_channel_service = await _build_feishu_channel_service(
         config,
         resources.scheduler,
         resources.agent_registry,
-        objective_service=resources.objective_service,
         session_store=resources.console_session_store,
+        agent_runtime_cache=resources.agent_runtime_cache,
     )
 
     bind_console_runtime(
@@ -229,9 +172,7 @@ async def _startup_console_runtime(
             config=config,
             run_log_storage=resources.run_log_storage,
             trace_storage=resources.trace_storage,
-            objective_store=resources.objective_store,
             agent_registry=resources.agent_registry,
-            objective_service=resources.objective_service,
             scheduler=resources.scheduler,
             feishu_channel_service=resources.feishu_channel_service,
             session_store=resources.console_session_store,
@@ -288,7 +229,6 @@ def create_app() -> FastAPI:
     app.include_router(config.router)
     app.include_router(scheduler.router)
     app.include_router(feishu.router)
-    app.include_router(objectives.router)
 
     @app.get("/api/health")
     async def health():

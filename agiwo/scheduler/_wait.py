@@ -4,8 +4,8 @@ import asyncio
 import time
 
 from agiwo.agent import RunOutput, RunStatus, TerminationReason
+from agiwo.agent.pause import PauseReason
 from agiwo.scheduler.models import AgentState, AgentStateStatus
-from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import RuntimeState
 from agiwo.scheduler.store.base import AgentStateStorage
 
@@ -14,7 +14,6 @@ async def wait_for_state_result(
     *,
     store: AgentStateStorage,
     rt: RuntimeState,
-    runtime_facts: SchedulerRuntimeFacts,
     state_id: str,
     timeout: float | None = None,
 ) -> RunOutput:
@@ -26,7 +25,7 @@ async def wait_for_state_result(
     try:
         while True:
             state = await store.get_state(state_id)
-            result = await build_wait_result(runtime_facts, state)
+            result = await build_wait_result(rt, state)
             if result is not None:
                 return result
 
@@ -94,12 +93,12 @@ async def wait_until_not_pending(
 
 
 async def build_wait_result(
-    runtime_facts: SchedulerRuntimeFacts,
+    rt: RuntimeState,
     state: AgentState | None,
 ) -> RunOutput | None:
     if state is None or not is_terminal_wait_state(state):
         return None
-    latest_run = await runtime_facts.get_latest_run_view(state)
+    latest_run = await rt.get_latest_run_view(state)
     if latest_run is not None and latest_run.status == RunStatus.PAUSED:
         checkpoint_id = None
         # Checkpoint id is on RunPaused; surface via metadata if available later.
@@ -111,7 +110,7 @@ async def build_wait_result(
             termination_reason=None,
             paused=True,
             checkpoint_id=checkpoint_id,
-            metadata={"pause_reason": "recoverable_pause"},
+            metadata={"pause_reason": PauseReason.RECOVERABLE_PAUSE},
         )
     if latest_run is not None and latest_run.status == RunStatus.COMPLETED:
         return RunOutput(

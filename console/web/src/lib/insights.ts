@@ -48,7 +48,7 @@ export function activeMilestoneFromBoard(
   );
 }
 
-export function latestObjective(trace: TraceDetail): string {
+export function latestMilestone(trace: TraceDetail): string {
   const latestCycle = trace.review_cycles[trace.review_cycles.length - 1];
   if (latestCycle?.active_milestone) {
     return latestCycle.active_milestone;

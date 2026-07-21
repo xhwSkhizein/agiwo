@@ -4,7 +4,7 @@ Objective Gateway 接收用户目标后持久化创建 Objective，并立即返�
 
 ## Status
 
-accepted
+accepted（「每条消息默认 create_objective」由 ADR-0047 取代；异步 Objective API 与幂等命令仍有效，但仅用于已升级/显式长任务路径）
 
 ## Considered Options
 

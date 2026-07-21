@@ -18,7 +18,7 @@ accepted
 - `ObjectiveService` 是 ObjectiveLog、ObjectiveStore、ObjectiveBudget、Session 活动 Objective 占用、Assignment 生命周期和 Objective command receipt 的唯一写入入口。
 - 只有 ObjectiveService 可以接受 Decision，并在同一 ObjectiveStore 事务中提交旧 Assignment Outcome、预算消费、下一 Assignment 和 DispatchRequested。
 - Scheduler 不接受或解释 Decision，不直接检查或结算 handoff/verification/LLM cost/active-time 配额，也不写 ObjectiveLog 或 outbox。
-- Scheduler 继续拥有 Run tree 与 AgentStateStorage；对 Objective 暴露的机械 facade（派发、树/run 查询、可恢复中断、注入等）在集成前一次性定义（见 adr-plan P2-02），后续只填实现、不平行扩面。`TaskGuard` 继续只保护 max depth、children、wake 等 Scheduler 本地限制，不扩展为 ObjectiveBudget owner。
+- Scheduler 继续拥有 Run tree 与 AgentStateStorage；对 Objective 暴露的机械 facade（派发、树/run 查询、可恢复中断、注入等）应保持窄且稳定，后续只填实现、不平行扩面。`TaskGuard` 继续只保护 max depth、children、wake 等 Scheduler 本地限制，不扩展为 ObjectiveBudget owner。
 - Objective 模块通过 Agent/Scheduler 已有 public hook 或窄门禁接口，在外部动作真正开始前回答 allow/deny。接口不把 ObjectiveView、Budget aggregate 或 Store 泄漏给下层，也不签发 ObjectiveActionLease。
 - LLM 路径在 BEFORE_LLM 中执行调用前成本检查（`used + call_cost_ceiling <= limit`）并确认 Objective 仍可推进；tool、child spawn 和 dispatch 在真正开始前确认可推进状态。失败则拒绝开始；成功不预留费用。
 - 进入 DRAINING 后，门禁拒绝新动作；已经开始的在途操作允许完成。barrier 由当时活动 Run / Assignment 收敛到 checkpoint 或 Outcome，不维护租约集合。

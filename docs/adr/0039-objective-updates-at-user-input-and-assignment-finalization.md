@@ -4,7 +4,9 @@ Objective 是 Session 中当前活动目标的全局语义模型，RunPlan 是�
 
 ## Status
 
-accepted
+superseded by ADR-0047
+
+> 默认路径无强制收尾修订；Objective 修订仅在已升级 Objective 且确有需要时产生。
 
 ## Considered Options
 

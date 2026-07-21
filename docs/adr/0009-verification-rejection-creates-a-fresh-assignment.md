@@ -4,7 +4,9 @@ Verifier 判断候选结果不可交付时，不重新打开原 Assignment 或�
 
 ## Status
 
-accepted
+superseded by ADR-0046
+
+> 验收不通过时创建新的 work root Run，不再创建 Assignment。
 
 ## Considered Options
 

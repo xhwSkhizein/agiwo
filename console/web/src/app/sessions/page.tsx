@@ -13,18 +13,7 @@ import { UserInputCompact } from "@/components/user-input-detail";
 import { PillBadge } from "@/components/pill-badge";
 import { MonoText } from "@/components/mono-text";
 import { cn } from "@/lib/utils";
-import {
-  archiveSession,
-  listSessionObjectives,
-  listSessions,
-  type ObjectiveView,
-  type SessionSummary,
-} from "@/lib/api";
-import {
-  objectiveFocusText,
-  objectiveStatusVariant,
-  pickActiveObjective,
-} from "@/lib/objective-status";
+import { archiveSession, listSessions, type SessionSummary } from "@/lib/api";
 
 function formatRelativeTime(dateStr: string | null): string {
   if (!dateStr) return "";
@@ -38,12 +27,24 @@ function formatRelativeTime(dateStr: string | null): string {
   return `${days}d ago`;
 }
 
-type SessionRow = SessionSummary & {
-  objective: ObjectiveView | null;
-};
+function sessionStatusVariant(
+  status: string,
+): "running" | "pending" | "success" | "error" | "default" {
+  const normalized = status.toLowerCase();
+  if (normalized === "running") {
+    return "running";
+  }
+  if (normalized === "completed" || normalized === "idle") {
+    return "success";
+  }
+  if (normalized === "failed" || normalized === "cancelled") {
+    return "error";
+  }
+  return "pending";
+}
 
 export default function SessionsPage() {
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState(25);
@@ -56,20 +57,7 @@ export default function SessionsPage() {
     setError(null);
     try {
       const nextSessions = await listSessions(pageSize, offset);
-      const enriched = await Promise.all(
-        nextSessions.items.map(async (session) => {
-          try {
-            const objectives = await listSessionObjectives(session.session_id);
-            return {
-              ...session,
-              objective: pickActiveObjective(objectives),
-            };
-          } catch {
-            return { ...session, objective: null };
-          }
-        }),
-      );
-      setSessions(enriched);
+      setSessions(nextSessions.items);
       setHasMore(nextSessions.has_more);
       setTotal(nextSessions.total);
     } catch (err) {
@@ -107,7 +95,7 @@ export default function SessionsPage() {
         <div>
           <h1 className="text-2xl font-semibold">Sessions</h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Status first — where work is stuck, waiting, or delivered
+            Recent session activity and run status
           </p>
         </div>
         <button
@@ -139,17 +127,14 @@ export default function SessionsPage() {
           <div className="hidden grid-cols-[minmax(0,1.4fr)_8rem_minmax(0,1fr)_7rem_5.5rem] gap-3 border-b border-zinc-800 px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 md:grid">
             <span>Work item</span>
             <span>Status</span>
-            <span>Focus</span>
-            <span>Budget / size</span>
+            <span>Last response</span>
+            <span>Size</span>
             <span>Updated</span>
           </div>
           <div className="divide-y divide-zinc-800">
             {sessions.map((s) => {
-              const status = s.objective?.status || s.root_state_status || "idle";
-              const focus = s.objective
-                ? objectiveFocusText(s.objective)
-                : s.last_response || "No Objective yet";
-              const budget = s.objective?.budget;
+              const status = s.root_state_status || "idle";
+              const focus = s.last_response || "No response yet";
               return (
                 <div
                   key={s.session_id}
@@ -170,16 +155,7 @@ export default function SessionsPage() {
                     </MonoText>
                   </Link>
                   <div>
-                    <PillBadge
-                      variant={
-                        s.objective
-                          ? objectiveStatusVariant(status)
-                          : status === "running"
-                            ? "running"
-                            : "pending"
-                      }
-                      dot
-                    >
+                    <PillBadge variant={sessionStatusVariant(status)} dot>
                       {status}
                     </PillBadge>
                   </div>
@@ -189,22 +165,8 @@ export default function SessionsPage() {
                   >
                     {focus}
                   </Link>
-                  <div className="space-y-1 text-xs text-zinc-500">
-                    {budget ? (
-                      <>
-                        <div className="font-mono">
-                          h {budget.handoffs.used}/{budget.handoffs.limit}
-                        </div>
-                        <div className="font-mono">
-                          ${budget.llm_cost_usd.used.toFixed(2)}/
-                          {budget.llm_cost_usd.limit}
-                        </div>
-                      </>
-                    ) : (
-                      <div>
-                        {s.run_count} runs · {s.step_count} steps
-                      </div>
-                    )}
+                  <div className="text-xs text-zinc-500">
+                    {s.run_count} runs · {s.step_count} steps
                   </div>
                   <div className="flex items-start justify-between gap-2 md:flex-col md:items-end">
                     <p className="text-[11px] text-zinc-500">

@@ -44,7 +44,6 @@ from agiwo.scheduler.models import (
     SchedulerConfig,
 )
 from agiwo.scheduler.runner import RunnerContext, SchedulerRunner
-from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import RuntimeState, list_all_states
 from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
@@ -82,12 +81,10 @@ class Scheduler:
             state_list_page_size=self._config.state_list_page_size,
         )
         self._rt = RuntimeState()
-        self._runtime_facts = SchedulerRuntimeFacts(self._rt)
         self._tool_control = SchedulerToolControl(
             store=self._store,
             guard=self._guard,
             rt=self._rt,
-            runtime_facts=self._runtime_facts,
             save_state=self._save_state,
             cancel_subtree=self._cancel_subtree,
             state_list_page_size=self._config.state_list_page_size,
@@ -104,7 +101,6 @@ class Scheduler:
             RunnerContext(
                 store=self._store,
                 rt=self._rt,
-                runtime_facts=self._runtime_facts,
                 notify_state_change=self._notify_state_change,
                 nudge=self.nudge,
                 semaphore=semaphore or asyncio.Semaphore(self._config.max_concurrent),
@@ -162,6 +158,7 @@ class Scheduler:
         self._rt.agents.clear()
         self._rt.canonical_agents.clear()
         self._rt.execution_handles.clear()
+        self._rt.prepared_resumes.clear()
         if remaining_agents:
             results = await asyncio.gather(
                 *[agent.close() for agent in remaining_agents],
@@ -303,33 +300,7 @@ class Scheduler:
         include_child_events: bool = True,
         stream_mode: RouteStreamMode = RouteStreamMode.RUN_END,
     ) -> RouteResult:
-        return await self._route_root_input_impl(
-            user_input,
-            agent=agent,
-            state_id=state_id,
-            session_id=session_id,
-            abort_signal=abort_signal,
-            persistent=persistent,
-            agent_config_id=agent_config_id,
-            timeout=timeout,
-            include_child_events=include_child_events,
-            close_on_root_run_end=stream_mode == RouteStreamMode.RUN_END,
-        )
-
-    async def _route_root_input_impl(
-        self,
-        user_input: UserInput,
-        *,
-        agent: Agent,
-        state_id: str | None = None,
-        session_id: str | None = None,
-        abort_signal: AbortSignal | None = None,
-        persistent: bool = True,
-        agent_config_id: str | None = None,
-        timeout: float | None = None,
-        include_child_events: bool = True,
-        close_on_root_run_end: bool,
-    ) -> RouteResult:
+        close_on_root_run_end = stream_mode == RouteStreamMode.RUN_END
         lookup_id = state_id or agent.id
         deadline = None if timeout is None else time.monotonic() + timeout
 
@@ -419,7 +390,6 @@ class Scheduler:
         return await wait_for_state_result(
             store=self._store,
             rt=self._rt,
-            runtime_facts=self._runtime_facts,
             state_id=state_id,
             timeout=timeout,
         )
@@ -575,7 +545,7 @@ class Scheduler:
         await self._ensure_root_runtime_agent(agent, state_id)
         return True
 
-    # -- Objective-facing mechanical facade (P2-02 contract) -------------------
+    # -- Session / root execution facade (ADR 0048) ---------------------------
 
     async def dispatch_execution(
         self,
@@ -593,7 +563,7 @@ class Scheduler:
         state_id = request.state_id
         await self._ensure_root_runtime_agent(agent, state_id)
 
-        existing = await self._runtime_facts.get_run_view(run_id)
+        existing = await self._rt.get_run_view(run_id)
         if existing is not None:
             if existing.status in RUN_TERMINAL_STATUSES:
                 return ExecutionDispatchResult(
@@ -622,7 +592,7 @@ class Scheduler:
         lock = self._rt.state_locks.setdefault(state_id, asyncio.Lock())
         async with lock:
             # Re-check after lock (another worker may have started).
-            existing = await self._runtime_facts.get_run_view(run_id)
+            existing = await self._rt.get_run_view(run_id)
             if existing is not None:
                 return ExecutionDispatchResult(
                     state_id=state_id,
@@ -653,7 +623,11 @@ class Scheduler:
                     id=state_id,
                     session_id=request.session_id,
                     status=AgentStateStatus.RUNNING,
-                    task=request.user_input,
+                    task=(
+                        request.user_input
+                        if request.user_input is not None
+                        else UserMessage.from_system("")
+                    ),
                     agent_config_id=request.agent_config_id,
                     is_persistent=request.persistent,
                     depth=0,
@@ -662,7 +636,11 @@ class Scheduler:
                 state = state.with_updates(
                     session_id=request.session_id,
                     status=AgentStateStatus.RUNNING,
-                    task=request.user_input,
+                    task=(
+                        request.user_input
+                        if request.user_input is not None
+                        else UserMessage.from_system("")
+                    ),
                     agent_config_id=request.agent_config_id
                     if request.agent_config_id is not None
                     else state.agent_config_id,
@@ -676,7 +654,7 @@ class Scheduler:
                 self._ctx,
                 DispatchAction(
                     state=state,
-                    reason=DispatchReason.OBJECTIVE_ROOT,
+                    reason=DispatchReason.SESSION_ROOT,
                     input_override=request.user_input,
                     execution_request=request.execution,
                 ),
@@ -690,14 +668,12 @@ class Scheduler:
             )
 
     async def get_run_view(self, run_id: str):
-        return await self._runtime_facts.get_run_view(run_id)
+        return await self._rt.get_run_view(run_id)
 
     async def list_run_log_entries(
         self, run_id: str, *, kinds=None, limit: int = 10_000
     ):
-        return await self._runtime_facts.list_run_log_entries(
-            run_id, kinds=kinds, limit=limit
-        )
+        return await self._rt.list_run_log_entries(run_id, kinds=kinds, limit=limit)
 
     async def get_run_status(self, run_id: str) -> RunStatus | None:
         view = await self.get_run_view(run_id)
@@ -705,9 +681,9 @@ class Scheduler:
 
     async def list_execution_tree(
         self,
-        *,
         root_run_id: str,
     ) -> list[ExecutionTreeNode]:
+        """List the root run and its direct children (depth-1 only)."""
         root = await self.get_run_view(root_run_id)
         if root is None:
             return []
@@ -721,25 +697,26 @@ class Scheduler:
                 depth=0,
             )
         ]
+        seen = {root.run_id}
         # Children share the same session; scan runtime agents for descendants.
         for agent in self._rt.agents.values():
             views = await agent.run_log_storage.list_run_views(
                 session_id=root.session_id, limit=1000
             )
             for view in views:
-                if view.parent_run_id == root_run_id:
-                    if any(n.run_id == view.run_id for n in nodes):
-                        continue
-                    nodes.append(
-                        ExecutionTreeNode(
-                            run_id=view.run_id,
-                            agent_id=view.agent_id,
-                            status=view.status,
-                            parent_run_id=view.parent_run_id,
-                            run_tree_role=view.run_tree_role,
-                            depth=1 if view.parent_run_id == root_run_id else 0,
-                        )
+                if view.parent_run_id != root_run_id or view.run_id in seen:
+                    continue
+                seen.add(view.run_id)
+                nodes.append(
+                    ExecutionTreeNode(
+                        run_id=view.run_id,
+                        agent_id=view.agent_id,
+                        status=view.status,
+                        parent_run_id=view.parent_run_id,
+                        run_tree_role=view.run_tree_role,
+                        depth=1,
                     )
+                )
         return nodes
 
     async def request_recoverable_pause(
@@ -824,11 +801,7 @@ class Scheduler:
         view = await self.get_run_view(root_run_id)
         if view is None:
             raise ValueError(f"unknown run_id={root_run_id!r}")
-        handle = None
-        for candidate in list(self._rt.execution_handles.values()):
-            if candidate.run_id == root_run_id:
-                handle = candidate
-                break
+        handle = self._rt.find_handle_by_run_id(root_run_id)
         if handle is None:
             raise ValueError(
                 f"no live execution handle for run_id={root_run_id!r}; "

@@ -4,7 +4,9 @@ Objective 中的入口、工作与验收 Assignment 都由同一个系统默认 
 
 ## Status
 
-accepted
+superseded by ADR-0046
+
+> 不再有 Assignment role 配置面；work/verification 共用 Session 默认 AgentConfig。
 
 ## Considered Options
 

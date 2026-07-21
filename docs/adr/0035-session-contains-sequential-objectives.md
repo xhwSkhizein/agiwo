@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted
+accepted（同一 Session 仍可顺序存在多个 Objective；但 Objective 按需升级，不是每条消息默认创建——见 ADR-0047）
 
 ## Considered Options
 
@@ -14,11 +14,10 @@ accepted
 
 ## Consequences
 
-- 用户面对的顶层交互对象仍是 Session；Objective 作为 Session 中可查看状态、进度、预算和结果的工作项呈现。
-- 一个 Session 可以关联任意数量的终态 Objective，但 `CREATED / RUNNING / DRAINING / WAITING_USER / BUDGET_PAUSED / USER_PAUSED` 状态的 Objective 合计最多一个。
-- “最多一个非终态 Objective”必须由 ObjectiveStore 的 Session 活动占用记录原子保证，不能只靠 Service 先查后写。SQLite 使用以 session_id 为唯一键的占用行，memory backend 按 session_id 加锁并维护同一索引；终态事务释放占用。该占用是可从 ObjectiveLog 重建的约束索引，不替代 ObjectiveLog 真相。
-- Session 中没有活动 Objective 时，新的用户 query 创建 Objective；存在活动 Objective 时，运行中自然语言输入注入该 Objective 的当前 root Run（ADR 0023）；WAITING_USER 下的回复按用户回复规则进入该 Objective。
-- 终态后的修改请求即使在用户看来是自然的对话延续，也创建新的 Objective；新 Objective 使用独立预算、Assignment、Run 和 ObjectiveLog，但可依据相关性使用同一 Session 中上一 Objective 的正式交付、Artifact 与对话历史。
+- 用户面对的顶层交互对象仍是 Session；默认路径是 Session 对话 Turn。Objective 仅在升级后作为可查看状态、进度、预算和结果的工作项呈现。
+- 一个 Session 可以关联任意数量的终态 Objective，但非终态 Objective 合计最多一个。
+- “最多一个非终态 Objective”必须由 ObjectiveStore 的 Session 活动占用记录原子保证（见既有约束）；无活动 Objective 时新消息默认不创建 Objective（ADR 0047）。
+- 终态后的新消息若仍无升级信号，继续作为普通 Turn；只有再次出现升级条件才创建下一个 Objective。
 - Objective 的 `COMPLETED / FAILED` facts 不会被恢复、删除或以追加事件抵消。只有 `BUDGET_PAUSED / USER_PAUSED` 等非终态状态能够恢复原 Assignment 和 Run。
 - 用户希望同时处理另一个独立目标时，应新建 Session。一个 Objective 同时最多有一个非终态 Assignment，但该 Assignment 内仍可以通过 Parallel、Pipeline 或其他委派方式并行执行多个 child Run。
 - 每个 Objective 保存一个不透明的 `session_id` 关联。`agiwo.objective` 不导入 Console 的 Session 模型；Console 或其他入口负责保证该引用存在。

@@ -30,7 +30,7 @@ from agiwo.agent.models.log import (
     TerminationDecided,
     build_committed_step_entry,
 )
-from agiwo.agent.models.model_call import ModelCallPhase
+from agiwo.agent.models.model_call import LlmAttemptEnvelope
 from agiwo.agent.models.plan import Milestone
 from agiwo.agent.models.run import CompactMetadata, RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
@@ -56,7 +56,7 @@ class RunStateWriter:
     def __init__(self, state: RunContext) -> None:
         self._state = state
 
-    async def emit(self, entry_cls: type[EntryT], **fields: Any) -> list[object]:
+    async def emit(self, entry_cls: type[EntryT], **fields: Any) -> list[RunLogEntry]:
         """Allocate sequence, fill run identity, append, and project."""
         entry = entry_cls(
             sequence=await self._state.session_runtime.allocate_sequence(),
@@ -67,7 +67,7 @@ class RunStateWriter:
         )
         return await self.append_entries([entry])
 
-    async def append_entries(self, entries: list[object]) -> list[object]:
+    async def append_entries(self, entries: list[RunLogEntry]) -> list[RunLogEntry]:
         typed_entries = list(entries)
         await self._state.session_runtime.append_run_log_entries(typed_entries)
         await self._state.session_runtime.project_run_log_entries(
@@ -79,7 +79,7 @@ class RunStateWriter:
         )
         return typed_entries
 
-    async def start_run(self, user_input: UserInput) -> list[object]:
+    async def start_run(self, user_input: UserInput | None) -> list[RunLogEntry]:
         return await self.emit(
             RunStarted,
             user_input=user_input,
@@ -90,7 +90,7 @@ class RunStateWriter:
             run_tree_role=self._state.run_tree_role.value,
         )
 
-    async def finish_run(self, result: RunOutput) -> list[object]:
+    async def finish_run(self, result: RunOutput) -> list[RunLogEntry]:
         return await self.emit(
             RunFinished,
             response=result.response,
@@ -103,7 +103,7 @@ class RunStateWriter:
             ),
         )
 
-    async def fail_run(self, error: Exception) -> list[object]:
+    async def fail_run(self, error: Exception) -> list[RunLogEntry]:
         return await self.emit(RunFailed, error=str(error))
 
     async def pause_at_checkpoint(
@@ -112,13 +112,13 @@ class RunStateWriter:
         reason: str,
         agent_config_hash: str | None = None,
         template_hash: str | None = None,
-    ) -> tuple[list[object], str]:
+    ) -> tuple[list[RunLogEntry], str]:
         """Atomically write RunCheckpoint + RunPaused (or remain RUNNING on failure)."""
         checkpoint_id = f"chk_{uuid4().hex}"
         checkpoint_seq = await self._state.session_runtime.allocate_sequence()
         pause_seq = await self._state.session_runtime.allocate_sequence()
         last_committed = max(0, checkpoint_seq - 1)
-        entries: list[object] = [
+        entries: list[RunLogEntry] = [
             RunCheckpoint(
                 sequence=checkpoint_seq,
                 session_id=self._state.session_id,
@@ -142,10 +142,10 @@ class RunStateWriter:
         await self.append_entries(entries)
         return entries, checkpoint_id
 
-    async def record_resume_prepared(self, *, checkpoint_id: str) -> list[object]:
+    async def record_resume_prepared(self, *, checkpoint_id: str) -> list[RunLogEntry]:
         return await self.emit(RunResumePrepared, checkpoint_id=checkpoint_id)
 
-    async def record_resumed(self, *, checkpoint_id: str) -> list[object]:
+    async def record_resumed(self, *, checkpoint_id: str) -> list[RunLogEntry]:
         return await self.emit(RunResumed, checkpoint_id=checkpoint_id)
 
     async def record_external_effect_may_have_started(
@@ -155,7 +155,7 @@ class RunStateWriter:
         tool_call_id: str,
         idempotency: str,
         idempotency_key: str | None = None,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         return await self.emit(
             ExternalEffectMayHaveStarted,
             tool_name=tool_name,
@@ -172,7 +172,7 @@ class RunStateWriter:
         wait_seconds: float,
         reason: str,
         logical_call_id: str | None = None,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         return await self.emit(
             RetryBackoff,
             operation=operation,
@@ -190,7 +190,7 @@ class RunStateWriter:
         run_start_seq: int,
         tool_schemas: list[dict[str, Any]] | None,
         latest_compaction: CompactMetadata | None,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         replace_messages(self._state, messages)
         self._state.ledger.run_start_seq = run_start_seq
         set_tool_schemas(self._state, tool_schemas)
@@ -206,7 +206,7 @@ class RunStateWriter:
         *,
         reason: str,
         messages: list[dict[str, Any]],
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         replace_messages(self._state, messages)
         return await self.emit(
             MessagesRebuilt,
@@ -219,27 +219,20 @@ class RunStateWriter:
         *,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
-        logical_call_id: str,
-        phase: ModelCallPhase,
-        attempt_no: int,
-        call_ordinal: int,
-        retry_reason: str | None = None,
-        request_tokens: int | None = None,
-        call_cost_ceiling: float | None = None,
-        price_snapshot: dict[str, float] | None = None,
-    ) -> list[object]:
+        envelope: LlmAttemptEnvelope,
+    ) -> list[RunLogEntry]:
         return await self.emit(
             LLMCallStarted,
-            logical_call_id=logical_call_id,
-            phase=phase,
-            attempt_no=attempt_no,
-            call_ordinal=call_ordinal,
-            retry_reason=retry_reason,
+            logical_call_id=envelope.logical_call_id,
+            phase=envelope.phase,
+            attempt_no=envelope.attempt_no,
+            call_ordinal=envelope.call_ordinal,
+            retry_reason=envelope.retry_reason,
             messages=messages,
             tools=tools,
-            request_tokens=request_tokens,
-            call_cost_ceiling=call_cost_ceiling,
-            price_snapshot=price_snapshot,
+            request_tokens=envelope.request_tokens,
+            call_cost_ceiling=envelope.call_cost_ceiling,
+            price_snapshot=envelope.price_snapshot,
         )
 
     async def record_llm_call_completed(
@@ -247,65 +240,51 @@ class RunStateWriter:
         *,
         step: StepView,
         llm: LLMCallContext,
-        logical_call_id: str,
-        phase: ModelCallPhase,
-        attempt_no: int,
-        call_ordinal: int,
-        retry_reason: str | None = None,
+        envelope: LlmAttemptEnvelope,
         response_observed: bool = True,
-        request_tokens: int | None = None,
-        call_cost_ceiling: float | None = None,
-        price_snapshot: dict[str, float] | None = None,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         return await self.emit(
             LLMCallCompleted,
-            logical_call_id=logical_call_id,
-            phase=phase,
-            attempt_no=attempt_no,
-            call_ordinal=call_ordinal,
-            retry_reason=retry_reason,
+            logical_call_id=envelope.logical_call_id,
+            phase=envelope.phase,
+            attempt_no=envelope.attempt_no,
+            call_ordinal=envelope.call_ordinal,
+            retry_reason=envelope.retry_reason,
             content=step.content,
             reasoning_content=step.reasoning_content,
             tool_calls=step.tool_calls,
             finish_reason=llm.finish_reason,
             metrics=step.metrics,
             response_observed=response_observed,
-            request_tokens=request_tokens,
-            call_cost_ceiling=call_cost_ceiling,
-            price_snapshot=price_snapshot,
+            request_tokens=envelope.request_tokens,
+            call_cost_ceiling=envelope.call_cost_ceiling,
+            price_snapshot=envelope.price_snapshot,
         )
 
     async def record_llm_call_failed(
         self,
         *,
-        logical_call_id: str,
-        phase: ModelCallPhase,
-        attempt_no: int,
-        call_ordinal: int,
+        envelope: LlmAttemptEnvelope,
         error: str,
-        retry_reason: str | None = None,
         step: StepView | None = None,
         response_observed: bool = False,
-        request_tokens: int | None = None,
-        call_cost_ceiling: float | None = None,
-        price_snapshot: dict[str, float] | None = None,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         return await self.emit(
             LLMCallFailed,
-            logical_call_id=logical_call_id,
-            phase=phase,
-            attempt_no=attempt_no,
-            call_ordinal=call_ordinal,
-            retry_reason=retry_reason,
+            logical_call_id=envelope.logical_call_id,
+            phase=envelope.phase,
+            attempt_no=envelope.attempt_no,
+            call_ordinal=envelope.call_ordinal,
+            retry_reason=envelope.retry_reason,
             error=error,
             content=step.content if step is not None else None,
             reasoning_content=step.reasoning_content if step is not None else None,
             tool_calls=step.tool_calls if step is not None else None,
             metrics=step.metrics if step is not None else None,
             response_observed=response_observed,
-            request_tokens=request_tokens,
-            call_cost_ceiling=call_cost_ceiling,
-            price_snapshot=price_snapshot,
+            request_tokens=envelope.request_tokens,
+            call_cost_ceiling=envelope.call_cost_ceiling,
+            price_snapshot=envelope.price_snapshot,
         )
 
     async def commit_step(
@@ -314,7 +293,7 @@ class RunStateWriter:
         *,
         append_message: bool = True,
         track_state: bool = True,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         if track_state:
             track_step_state(self._state, step, append_message=append_message)
         return await self.append_entries([build_committed_step_entry(step)])
@@ -325,7 +304,7 @@ class RunStateWriter:
         termination_reason: TerminationReason,
         phase: str,
         source: str,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         set_termination_reason(self._state, termination_reason)
         return await self.emit(
             TerminationDecided,
@@ -337,7 +316,7 @@ class RunStateWriter:
     async def record_compaction_applied(
         self,
         metadata: CompactMetadata,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         record_compaction_metadata(self._state, metadata)
         return await self.emit(
             CompactionApplied,
@@ -361,7 +340,7 @@ class RunStateWriter:
         attempt: int,
         max_attempts: int,
         terminal: bool,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         self._state.ledger.compaction.failure_count = attempt
         return await self.emit(
             CompactionFailed,
@@ -382,7 +361,7 @@ class RunStateWriter:
         source_tool_call_id: str | None,
         source_step_id: str | None,
         reason: Literal["declared", "updated", "completed", "activated"],
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         return await self.emit(
             RunPlanUpdated,
             milestones=list(milestones),
@@ -403,7 +382,7 @@ class RunStateWriter:
         trigger_tool_call_id: str | None,
         trigger_tool_step_id: str | None,
         notice_step_id: str | None,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         return await self.emit(
             IntrospectionTriggered,
             trigger_reason=trigger_reason,
@@ -421,7 +400,7 @@ class RunStateWriter:
         milestone_id: str | None,
         review_tool_call_id: str | None,
         review_step_id: str | None,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         return await self.emit(
             IntrospectionCheckpointRecorded,
             checkpoint_seq=checkpoint_seq,
@@ -440,7 +419,7 @@ class RunStateWriter:
         review_tool_call_id: str | None,
         review_step_id: str | None,
         boundary_seq: int,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         return await self.emit(
             IntrospectionOutcomeRecorded,
             aligned=aligned,
@@ -460,7 +439,7 @@ class RunStateWriter:
         critical: bool,
         error: str,
         traceback: str | None = None,
-    ) -> list[object]:
+    ) -> list[RunLogEntry]:
         return await self.emit(
             HookFailed,
             phase=phase,

@@ -119,6 +119,8 @@ class RunIdentity:
     timeout_at: float | None = None
     objective_id: str | None = None
     run_tree_role: RunTreeRole = RunTreeRole.NONE
+    verification_required: bool = False
+    objective_run_role: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

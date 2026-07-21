@@ -30,6 +30,9 @@ Welcome to the Agiwo documentation. Agiwo is a streaming-first AI agent SDK and 
 
 - **[Architecture Overview](./architecture/overview.md)** — high-level design and module boundaries
 - **[Memory System](./architecture/memory.md)** — hybrid retrieval with BM25 + vector search
+- **[ADRs](./adr/README.md)** — architecture decisions; start with **[0048](./adr/0048-session-run-waitset-minimal-core.md)** (Session + Run + Waitset)
+- **[Domain Language](../CONTEXT.md)** — glossary (Session / Run / RunLog / Scheduler)
+- **[Core interface sketch](./core-interface-sketch.md)** — ADR 0048 Session / Scheduler / Agent seams
 - **[Scheduler / Console Runtime Refactor Proposal](./architecture/scheduler-console-runtime-refactor.md)** — root/child runtime boundary and materialization refactor proposal
 
 ## API Reference

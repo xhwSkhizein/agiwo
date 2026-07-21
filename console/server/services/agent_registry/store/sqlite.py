@@ -6,7 +6,6 @@ from typing import Any
 
 import aiosqlite
 
-from agiwo.objective import AssignmentTemplateSet
 from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
 from server.services.agent_registry.models import AgentConfigRecord
 
@@ -164,8 +163,8 @@ class SqliteAgentRegistryStore:
             "allowed_tools": json.dumps(record.allowed_tools),
             "allowed_skills": json.dumps(record.allowed_skills),
             "assignment_templates": (
-                json.dumps(record.assignment_templates.to_dict())
-                if isinstance(record.assignment_templates, AssignmentTemplateSet)
+                json.dumps(record.assignment_templates)
+                if isinstance(record.assignment_templates, dict)
                 else None
             ),
             "options": json.dumps(record.options),

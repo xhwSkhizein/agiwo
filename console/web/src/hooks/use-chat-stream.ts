@@ -5,7 +5,6 @@ import { parseStreamEventPayload } from "@/lib/api";
 import type {
   AgentStreamEventPayload,
   RunCompletedEventPayload,
-  StreamEventPayload,
   StepResponse,
 } from "@/lib/api";
 import type { ChatMessage } from "@/lib/chat-types";
@@ -14,7 +13,7 @@ import { contentToText, genMessageId } from "@/lib/chat-types";
 export interface ChatStreamCallbacks {
   onSessionCaptured?: (sessionId: string) => void;
   onRootStateCaptured?: (stateId: string) => void;
-  onChildEvent?: (agentId: string, event: StreamEventPayload) => void;
+  onChildEvent?: (agentId: string, event: AgentStreamEventPayload) => void;
   onSchedulerFailed?: (error: string) => void;
   onRunCompleted?: (event: RunCompletedEventPayload) => void;
   onRunStarted?: (event: AgentStreamEventPayload) => void;
@@ -164,6 +163,30 @@ export function useChatStream(
             const data = parseStreamEventPayload(dataStr);
             if (!data) continue;
 
+            if ("kind" in data && data.kind === "session") {
+              callbacksRef.current.onSessionCaptured?.(data.session_id);
+              const assistantId = ensureAssistantPlaceholder();
+              const responseText = data.response ?? "";
+              currentAssistantText = responseText;
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === assistantId
+                    ? {
+                        ...message,
+                        text: responseText,
+                        isStreaming: false,
+                      }
+                    : message,
+                ),
+              );
+              currentAssistantId = null;
+              continue;
+            }
+
+            if (!("type" in data)) {
+              continue;
+            }
+
             if (data.type === "scheduler_failed") {
               callbacksRef.current.onSchedulerFailed?.(
                 "error" in data ? String(data.error) : "Unknown error",
@@ -182,46 +205,9 @@ export function useChatStream(
               continue;
             }
 
-            if (data.type === "objective_ack") {
-              const assistantId = ensureAssistantPlaceholder();
-              const statusText = data.status
-                ? `Objective ${data.objective_id} (${data.status})`
-                : `Objective ${data.objective_id}`;
-              currentAssistantText = statusText;
-              setMessages((prev) =>
-                prev.map((message) =>
-                  message.id === assistantId
-                    ? { ...message, text: statusText }
-                    : message,
-                ),
-              );
-              continue;
-            }
-
-            if (data.type === "objective_error") {
+            if (data.type === "session_error") {
               callbacksRef.current.onSchedulerFailed?.(data.message);
               finishCurrentAssistant(false);
-              continue;
-            }
-
-            if (data.type === "objective_event") {
-              const assistantId = ensureAssistantPlaceholder();
-              const line = data.summary || data.kind;
-              if (data.kind === "ObjectiveDelivered") {
-                currentAssistantText = line;
-              } else {
-                currentAssistantText = currentAssistantText
-                  ? `${currentAssistantText}\n${line}`
-                  : line;
-              }
-              const textSnapshot = currentAssistantText;
-              setMessages((prev) =>
-                prev.map((message) =>
-                  message.id === assistantId
-                    ? { ...message, text: textSnapshot, isStreaming: true }
-                    : message,
-                ),
-              );
               continue;
             }
 
@@ -248,7 +234,10 @@ export function useChatStream(
             const isChildEvent =
               rootStateId && eventAgentId && eventAgentId !== rootStateId;
             if (isChildEvent) {
-              callbacksRef.current.onChildEvent?.(eventAgentId, data);
+              callbacksRef.current.onChildEvent?.(
+                eventAgentId,
+                agentEvent,
+              );
               continue;
             }
 

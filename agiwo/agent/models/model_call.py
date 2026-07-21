@@ -12,8 +12,6 @@ class ModelCallPhase(str, Enum):
     ASSISTANT = "assistant"
     COMPACTION = "compaction"
     TERMINATION_SUMMARY = "termination_summary"
-    RUN_FINALIZATION = "run_finalization"
-    FINALIZATION_CORRECTION = "finalization_correction"
 
 
 WORK_PHASES: frozenset[ModelCallPhase] = frozenset(
@@ -21,11 +19,7 @@ WORK_PHASES: frozenset[ModelCallPhase] = frozenset(
 )
 
 FINALIZATION_PHASES: frozenset[ModelCallPhase] = frozenset(
-    {
-        ModelCallPhase.TERMINATION_SUMMARY,
-        ModelCallPhase.RUN_FINALIZATION,
-        ModelCallPhase.FINALIZATION_CORRECTION,
-    }
+    {ModelCallPhase.TERMINATION_SUMMARY}
 )
 
 
@@ -111,8 +105,23 @@ class ModelCallLedger:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class LlmAttemptEnvelope:
+    """Identity + cost ceiling for one provider attempt (shared across writer/gate)."""
+
+    logical_call_id: str
+    phase: ModelCallPhase
+    attempt_no: int
+    call_ordinal: int
+    retry_reason: str | None = None
+    request_tokens: int | None = None
+    call_cost_ceiling: float | None = None
+    price_snapshot: dict[str, float] | None = None
+
+
 __all__ = [
     "FINALIZATION_PHASES",
+    "LlmAttemptEnvelope",
     "ModelCallLedger",
     "ModelCallPhase",
     "ModelCallPhaseStats",

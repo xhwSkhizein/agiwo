@@ -4,7 +4,7 @@ ObjectiveService 接受 Decision 后，在同一个 ObjectiveStore 事务中追�
 
 ## Status
 
-accepted
+superseded by ADR-0047
 
 ## Considered Options
 

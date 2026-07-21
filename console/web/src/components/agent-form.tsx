@@ -685,8 +685,7 @@ export function AgentForm({
         <div className="space-y-1">
           <p className="ui-section-kicker">Assignment templates</p>
           <p className="ui-section-copy">
-            Placeholders: {"{current_goal}"}, {"{objective_contributions}"},{" "}
-            {"{objective_budget}"}, {"{run_outcomes}"}, {"{run_role}"}.
+            Placeholders: {"{current_goal}"}, {"{run_outcomes}"}, {"{run_role}"}.
             Changes apply only to Assignments created after save; paused work keeps its
             pinned snapshot.
           </p>

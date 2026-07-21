@@ -4,7 +4,7 @@ Objective 的活动 root Run 仍在执行时收到自然语言用户输入，Obj
 
 ## Status
 
-accepted
+accepted（注入同一 root Run 仍有效；勿再包一层复述用户原文的 system-notice——见 ADR-0047 / CONTEXT.md）
 
 ## Considered Options
 

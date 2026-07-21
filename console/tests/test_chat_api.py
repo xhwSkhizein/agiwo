@@ -1,16 +1,18 @@
-"""Integration tests for session-driven Objective chat APIs."""
+"""Integration tests for session-driven chat APIs."""
 
 from datetime import datetime, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from agiwo.agent.models.run import RunOutput
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
     AgentStateStorageConfig,
     SchedulerConfig,
 )
 
+from server.channels.exceptions import BaseAgentNotFoundError
 from server.app import create_app
 from server.services.session_store import InMemorySessionStore
 from server.config import ConsoleConfig
@@ -23,20 +25,41 @@ from server.dependencies import (
 from server.models.session import Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.runtime import AgentRuntimeCache
+from server.services.runtime.session_runtime_service import SessionRuntimeService
 from server.services.storage_wiring import (
-    create_objective_store,
     create_run_log_storage,
     create_trace_storage,
 )
-from tests.objective_test_support import build_test_objective_service
+from tests.test_agent_runtime_components import FakeAgent
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
     return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
 
 
+async def _stub_execute_plain_turn(_self, _agent, session, _user_message):
+    return f"run_{session.id}", RunOutput(
+        response="stub reply",
+        session_id=session.id,
+    )
+
+
+async def _stub_runtime_agent(_self, session):
+    return FakeAgent(session.id)
+
+
 @pytest.fixture
-async def client():
+async def client(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        SessionRuntimeService,
+        "execute_plain_turn",
+        _stub_execute_plain_turn,
+    )
+    monkeypatch.setattr(
+        AgentRuntimeCache,
+        "get_or_create_runtime_agent",
+        _stub_runtime_agent,
+    )
     app = create_app()
 
     config = ConsoleConfig(
@@ -48,7 +71,6 @@ async def client():
     )
     run_log_storage = create_run_log_storage(config)
     trace_storage = create_trace_storage(config)
-    objective_store = create_objective_store(config)
     registry = AgentRegistry(config)
     await registry.initialize()
 
@@ -67,10 +89,6 @@ async def client():
         console_config=config,
         session_store=session_store,
     )
-    test_agent, objective_service = build_test_objective_service(
-        objective_store,
-        scheduler,
-    )
 
     bind_console_runtime(
         app,
@@ -78,9 +96,7 @@ async def client():
             config=config,
             run_log_storage=run_log_storage,
             trace_storage=trace_storage,
-            objective_store=objective_store,
             agent_registry=registry,
-            objective_service=objective_service,
             scheduler=scheduler,
             session_store=session_store,
             agent_runtime_cache=agent_runtime_cache,
@@ -92,15 +108,11 @@ async def client():
         yield c
 
     clear_console_runtime(app)
-    await test_agent.close()
     await agent_runtime_cache.close()
     await scheduler.stop()
     await registry.close()
     await run_log_storage.close()
     await trace_storage.close()
-    close = getattr(objective_store, "close", None)
-    if close is not None:
-        await close()
     await session_store.close()
 
 
@@ -137,7 +149,7 @@ async def test_create_and_list_agent_sessions_are_base_agent_scoped(client) -> N
 
 
 @pytest.mark.asyncio
-async def test_session_input_streams_objective_ack_and_events(client) -> None:
+async def test_session_input_streams_plain_turn(client) -> None:
     runtime = _runtime(client)
     await runtime.agent_registry.create_agent(
         AgentConfigRecord(
@@ -160,17 +172,15 @@ async def test_session_input_streams_objective_ack_and_events(client) -> None:
         assert response.status_code == 200
         lines = [line async for line in response.aiter_lines()]
 
-    assert any(line == "event: objective_ack" for line in lines)
-    assert any(line == "event: objective_event" for line in lines)
-    assert any("objective_id" in line for line in lines if line.startswith("data:"))
-
-    # Normal user path must not touch Scheduler.route_root_input.
-    views = await runtime.objective_service.list_by_session(session_id)
-    assert len(views) == 1
+    assert any(line == "event: session_turn" for line in lines)
+    assert any("stub reply" in line for line in lines if line.startswith("data:"))
+    assert any(
+        '"kind": "session"' in line for line in lines if line.startswith("data:")
+    )
 
 
 @pytest.mark.asyncio
-async def test_session_input_continues_active_objective(client) -> None:
+async def test_session_input_continues_as_plain_turns(client) -> None:
     runtime = _runtime(client)
     await runtime.agent_registry.create_agent(
         AgentConfigRecord(
@@ -203,10 +213,8 @@ async def test_session_input_continues_active_objective(client) -> None:
         assert response.status_code == 200
         second_lines = [line async for line in response.aiter_lines()]
 
-    assert any(line == "event: objective_ack" for line in first_lines)
-    assert any(line == "event: objective_ack" for line in second_lines)
-    views = await runtime.objective_service.list_by_session(session_id)
-    assert len(views) == 1
+    assert any(line == "event: session_turn" for line in first_lines)
+    assert any(line == "event: session_turn" for line in second_lines)
 
 
 @pytest.mark.asyncio
@@ -221,8 +229,18 @@ async def test_session_input_returns_404_for_missing_session(client) -> None:
 @pytest.mark.asyncio
 async def test_session_input_accepts_session_even_if_base_agent_missing(
     client,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Gateway owns the turn; missing agent fails later at dispatch, not at accept."""
+
+    async def _raise_missing(_self, session):
+        raise BaseAgentNotFoundError(session.base_agent_id)
+
+    monkeypatch.setattr(
+        AgentRuntimeCache,
+        "get_or_create_runtime_agent",
+        _raise_missing,
+    )
     runtime = _runtime(client)
     assert runtime.session_store is not None
     await runtime.session_store.upsert_session(
@@ -230,7 +248,7 @@ async def test_session_input_accepts_session_even_if_base_agent_missing(
             id="session-1",
             chat_context_scope_id=None,
             base_agent_id="missing-agent",
-            created_by="TEST",
+            created_by="test",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
@@ -245,4 +263,4 @@ async def test_session_input_accepts_session_even_if_base_agent_missing(
     ) as response:
         assert response.status_code == 200
         lines = [line async for line in response.aiter_lines()]
-    assert any(line == "event: objective_ack" for line in lines)
+    assert any(line == "event: session_error" for line in lines)

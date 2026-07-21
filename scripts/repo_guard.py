@@ -1438,7 +1438,7 @@ def _detect_console_tool_catalog_text_errors(
 def _detect_objective_boundary_text_errors(
     path: Path, content: str
 ) -> list[GuardError]:
-    """P6-03: keep Objective entrypoints and forbid retired Goal* names."""
+    """ADR 0048: forbid Objective core revival and retired Goal* names."""
     errors: list[GuardError] = []
     posix = path.as_posix()
     if not (
@@ -1466,13 +1466,30 @@ def _detect_objective_boundary_text_errors(
                 "AGW045",
                 (
                     f"Retired domain name `{label}` must not reappear; use RunPlan / "
-                    "update_plan / enable_trajectory_review and Objective vocabulary."
+                    "update_plan / enable_trajectory_review (ADR 0048 vocabulary)."
                 ),
             )
         )
 
+    # Forbid importing removed Objective package outside trash.
+    if not posix.startswith("trash/"):
+        line = _find_first_match_line(content, r"from agiwo\.objective\b")
+        if line is None:
+            line = _find_first_match_line(content, r"import agiwo\.objective\b")
+        if line is not None:
+            errors.append(
+                _make_error(
+                    path,
+                    line,
+                    "AGW048",
+                    (
+                        "agiwo.objective is out of core (ADR 0048); do not import it. "
+                        "Use SessionGateway → Session → root Run."
+                    ),
+                )
+            )
+
     # Normal Session/channel paths must not call Scheduler.route_root_input.
-    # Debug scheduler router and SessionRuntimeService remain allowlisted.
     allowed_route_root = {
         Path("console/server/routers/scheduler.py"),
         Path("console/server/services/runtime/session_runtime_service.py"),
@@ -1491,29 +1508,31 @@ def _detect_objective_boundary_text_errors(
                     "AGW046",
                     (
                         "Ordinary Console Session/channel paths must enter via "
-                        "SessionObjectiveGateway / ObjectiveService; do not call "
-                        "Scheduler.route_root_input() outside the debug scheduler "
-                        "router or SessionRuntimeService."
+                        "SessionGateway; do not call Scheduler.route_root_input() "
+                        "outside the debug scheduler router or SessionRuntimeService."
                     ),
                 )
             )
 
-    if posix.startswith("console/server/") and not posix.startswith(
-        "console/server/services/storage_wiring.py"
-    ):
-        line = _find_first_match_line(content, r"from agiwo\.objective\.store\b")
-        if line is None:
-            line = _find_first_match_line(content, r"import agiwo\.objective\.store\b")
-        if line is not None:
+    # Forbid resurrecting Objective / Turn API symbols in non-trash code.
+    if not posix.startswith("trash/"):
+        for pattern, label in (
+            (r"\bupgrade_from_plain_run\b", "upgrade_from_plain_run"),
+            (r"\bsubmit_turn\b", "submit_turn"),
+            (r"\bTurnHandle\b", "TurnHandle"),
+            (r"\bcreate_objective_store\b", "create_objective_store"),
+        ):
+            line = _find_first_match_line(content, pattern)
+            if line is None:
+                continue
             errors.append(
                 _make_error(
                     path,
                     line,
-                    "AGW047",
+                    "AGW049",
                     (
-                        "Console must not import ObjectiveStore backends; use "
-                        "ObjectiveService / public agiwo.objective exports and "
-                        "storage_wiring for construction only."
+                        f"Retired symbol `{label}` must not reappear in core code "
+                        "(ADR 0048)."
                     ),
                 )
             )

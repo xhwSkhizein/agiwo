@@ -3,7 +3,6 @@
 from server.config import DefaultAgentConfig
 from server.models.agent_config import AgentOptionsInput, ModelParamsInput
 
-from agiwo.objective import default_assignment_templates
 from agiwo.skill.manager import get_global_skill_manager
 
 from server.services.agent_registry.models import AgentConfigRecord
@@ -25,7 +24,7 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
             list(template.allowed_tools) if template.allowed_tools is not None else None
         ),
         allowed_skills=allowed_skills,
-        assignment_templates=default_assignment_templates(),
+        assignment_templates=None,
         options=AgentOptionsInput().model_dump(exclude_none=True),
         model_params=ModelParamsInput.model_validate(
             template.model_params or {}

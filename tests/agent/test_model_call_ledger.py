@@ -90,39 +90,25 @@ def test_run_limit_policy_blocks_work_at_limit() -> None:
     assert decision.reason == "work_limit_exceeded"
 
 
-def test_run_limit_policy_allows_one_finalization_over_limit() -> None:
+def test_run_limit_policy_allows_termination_summary_over_limit() -> None:
     ledger = ModelCallLedger(configured_limit=1, total_attempts=1)
     policy = RunLimitPolicy()
 
     summary = policy.check_before_attempt(ledger, ModelCallPhase.TERMINATION_SUMMARY)
-    assignment = policy.check_before_attempt(ledger, ModelCallPhase.RUN_FINALIZATION)
-    correction = policy.check_before_attempt(
-        ledger, ModelCallPhase.FINALIZATION_CORRECTION
-    )
 
     assert summary.allowed is True
-    assert assignment.allowed is True
-    assert correction.allowed is True
 
 
-def test_run_limit_policy_allows_each_finalization_phase_once() -> None:
+def test_run_limit_policy_allows_termination_summary_once_over_limit() -> None:
     ledger = ModelCallLedger(configured_limit=1, total_attempts=1)
     policy = RunLimitPolicy()
 
-    for phase in (
-        ModelCallPhase.RUN_FINALIZATION,
-        ModelCallPhase.FINALIZATION_CORRECTION,
-    ):
-        decision = policy.check_before_attempt(ledger, phase)
-        assert decision.allowed is True
-        ledger.mark_finalization_consumed(phase)
+    decision = policy.check_before_attempt(ledger, ModelCallPhase.TERMINATION_SUMMARY)
+    assert decision.allowed is True
+    ledger.mark_finalization_consumed(ModelCallPhase.TERMINATION_SUMMARY)
 
-    for phase in (
-        ModelCallPhase.RUN_FINALIZATION,
-        ModelCallPhase.FINALIZATION_CORRECTION,
-    ):
-        decision = policy.check_before_attempt(ledger, phase)
-        assert decision.allowed is False
+    decision = policy.check_before_attempt(ledger, ModelCallPhase.TERMINATION_SUMMARY)
+    assert decision.allowed is False
 
 
 def test_run_limit_policy_exhausts_finalization_slot() -> None:

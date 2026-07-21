@@ -4,7 +4,9 @@
 
 ## Status
 
-accepted
+superseded by ADR-0046 / ADR-0047
+
+> 重试耗尽后机械产生 NextAction=continue_work 并派发新的 work root Run；不再创建 Assignment，也不再提交 HandoffDecision JSON。
 
 ## Considered Options
 

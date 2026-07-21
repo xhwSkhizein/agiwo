@@ -21,7 +21,6 @@ from agiwo.agent import (
     RunFailedEvent,
     UserMessage,
 )
-from agiwo.objective import ObjectiveService, ObjectiveStatus
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
@@ -62,7 +61,7 @@ from server.models.session import (
     Session,
 )
 from server.services.agent_registry import AgentRegistry
-from server.services.objective_gateway import SessionObjectiveGateway
+from server.services.session_gateway import SessionGateway
 from server.services.runtime import (
     AgentRuntimeCache,
     SessionContextService,
@@ -79,8 +78,8 @@ class FeishuChannelService:
         config: ConsoleConfig,
         scheduler: Scheduler,
         agent_registry: AgentRegistry,
-        objective_service: ObjectiveService,
         session_store: ChannelChatSessionStore,
+        agent_runtime_cache: AgentRuntimeCache,
     ) -> None:
         feishu = config.channels.feishu
 
@@ -116,21 +115,15 @@ class FeishuChannelService:
             agent_registry=agent_registry,
             default_agent_name=feishu.default_agent_name,
         )
-        agent_pool = AgentRuntimeCache(
-            scheduler=scheduler,
-            agent_registry=agent_registry,
-            console_config=config,
-            session_store=session_store,
-        )
         executor = SessionRuntimeService(
             scheduler=scheduler,
             session_store=session_store,
             timeout=feishu.scheduler_wait_timeout,
         )
-        gateway = SessionObjectiveGateway(
-            objective_service=objective_service,
+        gateway = SessionGateway(
             session_store=session_store,
-            scheduler=scheduler,
+            agent_runtime_cache=agent_runtime_cache,
+            session_runtime=executor,
         )
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="feishu_attachments_"))
@@ -155,12 +148,10 @@ class FeishuChannelService:
         self._tmp_dir = tmp_dir
         self._message_builder = message_builder
         self._delivery_service = delivery_service
-        self._wait_timeout = float(feishu.scheduler_wait_timeout)
 
         self._session_service = session_service
-        self._agent_pool = agent_pool
+        self._agent_pool = agent_runtime_cache
         self._executor = executor
-        self._objective_service = objective_service
         self._gateway = gateway
         self._session_mgr = ChannelBatchManager(
             on_batch_ready=self._on_batch_ready,
@@ -170,7 +161,7 @@ class FeishuChannelService:
 
         command_registry = build_feishu_command_registry(
             session_service=session_service,
-            agent_pool=agent_pool,
+            agent_pool=agent_runtime_cache,
             session_manager=self._session_mgr,
             scheduler=scheduler,
             agent_registry=agent_registry,
@@ -307,7 +298,7 @@ class FeishuChannelService:
             user_message,
             idempotency_key=idempotency_key,
         )
-        reply_text = await self._wait_for_objective_reply(result.objective_id)
+        reply_text = (result.response or "").strip() or "（无回复）"
         if not await self._can_deliver_session(batch.context, session):
             return
         await self._deliver_reply(batch.context, reply_text)
@@ -316,30 +307,6 @@ class FeishuChannelService:
         if batch.messages:
             return f"feishu:{batch.messages[0].message_id}"
         return f"feishu:{uuid.uuid4().hex}"
-
-    async def _wait_for_objective_reply(self, objective_id: str) -> str:
-        """Poll ObjectiveView until delivery, user-wait, or timeout."""
-        deadline = asyncio.get_running_loop().time() + self._wait_timeout
-        last_summary: str | None = None
-        while asyncio.get_running_loop().time() < deadline:
-            view = await self._objective_service.get_view(objective_id)
-            if view is None:
-                break
-            if view.delivery_report:
-                return view.delivery_report
-            if view.timeline:
-                last_summary = view.timeline[-1].summary
-            if view.status == ObjectiveStatus.WAITING_USER:
-                return last_summary or "需要你的补充信息才能继续。"
-            if view.status in {
-                ObjectiveStatus.USER_PAUSED,
-                ObjectiveStatus.BUDGET_PAUSED,
-            }:
-                return last_summary or f"任务已暂停（{view.status.value}）。"
-            if view.is_terminal:
-                return last_summary or "任务已结束。"
-            await asyncio.sleep(0.5)
-        return last_summary or "消息已收到，正在继续处理。"
 
     async def _prepare_batch_runtime(
         self, batch: BatchPayload

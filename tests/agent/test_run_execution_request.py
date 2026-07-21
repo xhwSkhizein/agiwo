@@ -73,7 +73,7 @@ def test_run_execution_request_root_requires_objective_id_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_runtime_uses_preallocated_run_id() -> None:
+async def test_start_prevalidated_uses_preallocated_run_id() -> None:
     agent = Agent(
         AgentConfig(name="t", description="t"),
         model=_FixedResponseModel(),
@@ -85,7 +85,7 @@ async def test_start_runtime_uses_preallocated_run_id() -> None:
         objective_id="obj1",
         run_tree_role=RunTreeRole.ROOT,
     )
-    handle = agent._start_runtime(
+    handle = agent.start_prevalidated(
         UserMessage.from_system("sys"),
         session_id="sess-1",
         execution_request=request,

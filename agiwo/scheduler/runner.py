@@ -38,7 +38,6 @@ from agiwo.scheduler.runner_completion import (
     RunnerCompletionHandler,
     build_last_run_result,
 )
-from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import ExecutionHandleLike, RuntimeState
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.codec import deserialize_child_agent_config_overrides
@@ -119,7 +118,6 @@ class RunnerContext:
 
     store: AgentStateStorage
     rt: RuntimeState
-    runtime_facts: SchedulerRuntimeFacts
     notify_state_change: Callable[[str], None]
     nudge: Callable[[], None]
     semaphore: asyncio.Semaphore
@@ -299,12 +297,13 @@ class SchedulerRunner:
         await self._fail_state(state.id, f"Agent '{state.id}' not found in scheduler")
         return None
 
-    async def _prepare_state_for_run(self, action: DispatchAction) -> UserInput:
+    async def _prepare_state_for_run(self, action: DispatchAction) -> UserInput | None:
         state = action.state
-        if action.reason in (
-            DispatchReason.ROOT_SUBMIT,
-            DispatchReason.OBJECTIVE_ROOT,
-        ):
+        if action.reason == DispatchReason.SESSION_ROOT:
+            # None means Session history already holds the user message (ADR 0048).
+            return action.input_override
+
+        if action.reason == DispatchReason.ROOT_SUBMIT:
             return (
                 action.input_override
                 if action.input_override is not None
@@ -377,13 +376,13 @@ class SchedulerRunner:
         action: DispatchAction,
         state: AgentState,
         agent: Agent,
-        user_input: UserInput,
+        user_input: UserInput | None,
         session_id: str,
         abort_signal: AbortSignal | None,
     ) -> RunOutput:
         # Bypass Agent.start provenance checks: external Scheduler APIs already
         # validated user input, and wake/fork paths may inject from_system().
-        handle = agent._start_runtime(
+        handle = agent.start_prevalidated(
             user_input,
             session_id=session_id,
             abort_signal=abort_signal,
@@ -672,7 +671,7 @@ class SchedulerRunner:
                 failed[child_id] = child.result_summary or "Unknown failure"
             elif child.status == AgentStateStatus.COMPLETED:
                 succeeded[child_id] = (
-                    await self._ctx.runtime_facts.get_result_summary(child)
+                    await self._ctx.rt.get_result_summary(child)
                 ) or "Completed"
             else:
                 failed[child_id] = f"Not finished: status={child.status.value}"
@@ -693,7 +692,7 @@ class SchedulerRunner:
 
     def _should_rollback_periodic_run(self, state: AgentState) -> bool:
         agent = self._ctx.rt.agents.get(state.id)
-        return agent is not None and agent.config.options.enable_context_rollback
+        return agent is not None and agent.options_snapshot.enable_context_rollback
 
     async def _rollback_run_steps(
         self,

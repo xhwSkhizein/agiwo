@@ -1,4 +1,4 @@
-"""Assignment-root plan guard and finalization tests."""
+"""Root-run plan guard and mechanical next-action tests (ADR 0047)."""
 
 import json
 from collections.abc import AsyncIterator
@@ -14,19 +14,6 @@ from agiwo.agent import (
 from agiwo.agent.budget_gate import PermissiveLlmBudgetGate
 from agiwo.agent.models.execution import RunTreeRole
 from agiwo.llm.base import Model, StreamChunk
-
-
-def _finalization_json(*, target: str = "verifier") -> str:
-    return json.dumps(
-        {
-            "decision": {"target": target},
-            "new_contributions": [],
-            "contribution_annotations": [],
-            "objective_update": None,
-            "artifact_refs": [],
-            "carry_forward": [],
-        }
-    )
 
 
 class _ScriptedModel(Model):
@@ -46,7 +33,13 @@ class _ScriptedModel(Model):
         yield StreamChunk(finish_reason="stop")
 
 
-async def _run_root(model: Model, *, max_steps_per_run: int = 50):
+async def _run_root(
+    model: Model,
+    *,
+    max_steps_per_run: int = 50,
+    verification_required: bool = False,
+    objective_run_role: str | None = "work",
+):
     agent = Agent(
         AgentConfig(
             name="assignment-finalization",
@@ -59,34 +52,62 @@ async def _run_root(model: Model, *, max_steps_per_run: int = 50):
         model=model,
     )
     agent.llm_budget_gate = PermissiveLlmBudgetGate()
-    handle = agent._start_runtime(
+    handle = agent.start_prevalidated(
         "complete the assignment",
         session_id="assignment-finalization-session",
         execution_request=RunExecutionRequest(
             run_id="assignment-run",
             objective_id="objective-1",
             run_tree_role=RunTreeRole.ROOT,
+            verification_required=verification_required,
+            objective_run_role=objective_run_role,
         ),
     )
     return await handle.wait()
 
 
 @pytest.mark.asyncio
-async def test_root_empty_plan_finalizes_with_valid_json() -> None:
-    model = _ScriptedModel(["ordinary report", _finalization_json()])
+async def test_simple_root_mechanical_delivery() -> None:
+    model = _ScriptedModel(["ordinary report"])
 
-    result = await _run_root(model)
+    result = await _run_root(model, verification_required=False)
 
     assert result.response == "ordinary report"
     assert result.finalization is not None
-    assert result.finalization.report == "ordinary report"
-    assert result.finalization.decision["target"] == "verifier"
-    assert len(model.calls) == 2
-    assert model.calls[-1][-1]["origin"] == "run_finalization"
+    assert result.finalization.decision["target"] == "user"
+    assert result.finalization.decision["expects_reply"] is False
+    assert len(model.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_root_pending_plan_gets_reminder_before_finalization() -> None:
+async def test_verification_required_mechanical_verifier_handoff() -> None:
+    model = _ScriptedModel(["ordinary report"])
+
+    result = await _run_root(model, verification_required=True)
+
+    assert result.finalization is not None
+    assert result.finalization.decision["target"] == "verifier"
+    assert len(model.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_verification_role_mechanical_delivery() -> None:
+    model = _ScriptedModel(["verified ok"])
+
+    result = await _run_root(
+        model,
+        verification_required=True,
+        objective_run_role="verification",
+    )
+
+    assert result.finalization is not None
+    assert result.finalization.decision["target"] == "user"
+    assert result.finalization.decision["expects_reply"] is False
+    assert len(model.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_plan_milestones_arm_verifier_handoff() -> None:
     update_plan_call = {
         "index": 0,
         "id": "plan-1",
@@ -121,17 +142,16 @@ async def test_root_pending_plan_gets_reminder_before_finalization() -> None:
                 },
             },
             "completed report",
-            _finalization_json(),
         ]
     )
 
-    result = await _run_root(model)
+    result = await _run_root(model, verification_required=False)
 
     assert result.finalization is not None
-    assert len(model.calls) == 5
+    assert result.finalization.decision["target"] == "verifier"
+    assert len(model.calls) == 4
     guard_call = model.calls[2]
     assert guard_call[-1]["origin"] == "assignment_plan_guard"
-    assert model.calls[4][-1]["origin"] == "run_finalization"
 
 
 @pytest.mark.asyncio
@@ -144,36 +164,20 @@ async def test_non_root_run_keeps_ordinary_completion_behavior() -> None:
         ),
         model=model,
     )
-
-    result = await agent.run("hello", session_id="ordinary-session")
+    agent.llm_budget_gate = PermissiveLlmBudgetGate()
+    handle = agent.start_prevalidated(
+        "hello",
+        session_id="ordinary-session",
+        execution_request=RunExecutionRequest(
+            run_id="ordinary-run",
+            run_tree_role=RunTreeRole.NONE,
+        ),
+    )
+    result = await handle.wait()
 
     assert result.response == "ordinary report"
     assert result.finalization is None
     assert len(model.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_invalid_finalization_json_is_corrected_once() -> None:
-    model = _ScriptedModel(["ordinary report", "not JSON", _finalization_json()])
-
-    result = await _run_root(model)
-
-    assert result.finalization is not None
-    assert result.finalization.mechanical_handoff is False
-    assert len(model.calls) == 3
-    assert model.calls[-1][-1]["origin"] == "run_finalization"
-
-
-@pytest.mark.asyncio
-async def test_two_invalid_finalizations_force_mechanical_handoff() -> None:
-    model = _ScriptedModel(["ordinary report", "not JSON", "also not JSON"])
-
-    result = await _run_root(model)
-
-    assert result.finalization is not None
-    assert result.finalization.mechanical_handoff is True
-    assert result.finalization.decision["target"] == "agent"
-    assert result.finalization.report == "ordinary report"
 
 
 @pytest.mark.asyncio
@@ -183,7 +187,6 @@ async def test_root_max_steps_forces_mechanical_agent_handoff() -> None:
     result = await _run_root(model, max_steps_per_run=0)
 
     assert result.finalization is not None
-    assert result.finalization.mechanical_handoff is True
     assert result.finalization.decision == {
         "target": "agent",
         "reason": "max_steps_per_run_mechanical_handoff",

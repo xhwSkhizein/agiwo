@@ -1,15 +1,12 @@
 """Phase-based hook registry for agent runtime extensibility."""
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 import traceback as traceback_lib
 from typing import Any, Protocol
 
-from agiwo.agent.models.input import UserInput, UserMessage
+from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import MemoryRecord
-from agiwo.config.settings import get_settings
-from agiwo.memory import WorkspaceMemoryService
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -129,6 +126,9 @@ def phase_spec(phase: HookPhase) -> PhaseSpec:
 @dataclass
 class HookRegistry:
     registrations: list[HookRegistration] = field(default_factory=list)
+    _phase_index: dict[HookPhase, list[HookRegistration]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     _GROUP_ORDER = {
         HookGroup.SYSTEM: 0,
@@ -139,21 +139,32 @@ class HookRegistry:
     def __post_init__(self) -> None:
         for registration in self.registrations:
             self._validate_registration(registration)
+        self._rebuild_phase_index()
+
+    def _rebuild_phase_index(self) -> None:
+        buckets: dict[HookPhase, list[tuple[int, HookRegistration]]] = {}
+        for index, item in enumerate(self.registrations):
+            buckets.setdefault(item.phase, []).append((index, item))
+        self._phase_index = {
+            phase: [
+                item
+                for _, item in sorted(
+                    pairs,
+                    key=lambda pair: (
+                        self._GROUP_ORDER[pair[1].group],
+                        pair[1].order,
+                        pair[0],
+                    ),
+                )
+            ]
+            for phase, pairs in buckets.items()
+        }
 
     def for_phase(self, phase: HookPhase) -> list[HookRegistration]:
-        indexed = list(enumerate(self.registrations))
-        matching = [(index, item) for index, item in indexed if item.phase == phase]
-        matching.sort(
-            key=lambda pair: (
-                self._GROUP_ORDER[pair[1].group],
-                pair[1].order,
-                pair[0],
-            )
-        )
-        return [item for _, item in matching]
+        return list(self._phase_index.get(phase, ()))
 
     def has_phase(self, phase: HookPhase) -> bool:
-        return bool(self.for_phase(phase))
+        return bool(self._phase_index.get(phase))
 
     def has_handler(self, handler_name: str) -> bool:
         return any(item.handler_name == handler_name for item in self.registrations)
@@ -161,6 +172,7 @@ class HookRegistry:
     def add(self, registration: HookRegistration) -> None:
         self._validate_registration(registration)
         self.registrations.append(registration)
+        self._rebuild_phase_index()
 
     def _validate_registration(self, registration: HookRegistration) -> None:
         spec = phase_spec(registration.phase)
@@ -516,157 +528,11 @@ def decision_support(
     )
 
 
-def _text_similarity(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    if a in b or b in a:
-        return 0.9
-
-    a_words = set(a.split())
-    b_words = set(b.split())
-    if not a_words or not b_words:
-        return 0.0
-
-    intersection = a_words & b_words
-    union = a_words | b_words
-    return len(intersection) / len(union)
-
-
-def _compact_memory_query(query: str, *, max_chars: int = 400) -> str:
-    """Shrink assignment-template blobs into an embedding-safe retrieval query."""
-    text = (query or "").strip()
-    if not text:
-        return ""
-    if "Current goal:" in text:
-        text = text.split("Current goal:", 1)[1].strip()
-    if len(text) > max_chars:
-        text = text[:max_chars].rstrip()
-    return text
-
-
-def filter_relevant_memories(
-    messages: list[Mapping[str, object]],
-    memories: list[MemoryRecord],
-) -> list[MemoryRecord]:
-    if not memories:
-        return []
-
-    min_relevance_score = 0.5
-    similarity_threshold = 0.8
-
-    existing_texts: list[str] = [
-        content
-        for message in messages[:-1]
-        if isinstance(content := message.get("content"), str)
-    ]
-
-    def _is_similar_to_history(content: str) -> bool:
-        content_lower = content.lower()
-        for text in existing_texts:
-            if _text_similarity(content_lower, text.lower()) > similarity_threshold:
-                return True
-        return False
-
-    filtered: list[MemoryRecord] = []
-    seen_contents: set[str] = set()
-
-    for memory in sorted(
-        [m for m in memories if m.relevance_score is not None],
-        key=lambda m: m.relevance_score or 0,
-        reverse=True,
-    ):
-        if memory.relevance_score < min_relevance_score:
-            continue
-
-        content_normalized = memory.content.strip()
-        if content_normalized in seen_contents:
-            continue
-        seen_contents.add(content_normalized)
-
-        if _is_similar_to_history(content_normalized):
-            continue
-
-        filtered.append(memory)
-
-    return filtered
-
-
-class DefaultMemoryHook:
-    """Default memory hook implementation using WorkspaceMemoryService."""
-
-    def __init__(
-        self,
-        *,
-        embedding_provider: str | None = None,
-        top_k: int | None = None,
-        root_path: str | None = None,
-    ) -> None:
-        self._top_k = top_k if top_k is not None else get_settings().memory_top_k
-        self._memory_service = WorkspaceMemoryService(
-            root_path=root_path,
-            embedding_provider=embedding_provider,
-        )
-
-    def _resolve_workspace(self, context: MemoryHookContext):
-        workspace = self._memory_service.resolve_workspace(
-            agent_name=getattr(context, "agent_name", None),
-            agent_id=getattr(context, "agent_id", None),
-        )
-        if workspace is None:
-            return None
-        return workspace.workspace
-
-    async def retrieve_memories(
-        self, user_input: UserInput, context: MemoryHookContext
-    ) -> list[MemoryRecord]:
-        query = _compact_memory_query(UserMessage.from_value(user_input).extract_text())
-        if not query or len(query.strip()) < 3:
-            return []
-
-        try:
-            workspace, results = await self._memory_service.search(
-                agent_name=context.agent_name,
-                agent_id=context.agent_id,
-                query=query,
-                top_k=self._top_k,
-            )
-        except Exception as error:  # noqa: BLE001 - memory retrieval boundary
-            logger.warning("memory_retrieve_error", error=str(error), query=query[:50])
-            return []
-
-        if workspace is None:
-            logger.debug("memory_retrieve_no_workspace", agent_id=context.agent_id)
-            return []
-
-        if not results:
-            return []
-
-        records: list[MemoryRecord] = []
-        for r in results:
-            content = f"[{r.path}:{r.start_line}-{r.end_line}] {r.text}"
-            records.append(
-                MemoryRecord(
-                    content=content,
-                    relevance_score=r.score,
-                    source=r.path,
-                    metadata={
-                        "chunk_id": r.chunk_id,
-                        "start_line": r.start_line,
-                        "end_line": r.end_line,
-                        "vector_score": r.vector_score,
-                        "bm25_score": r.bm25_score,
-                    },
-                )
-            )
-
-        logger.debug(
-            "memory_retrieved",
-            query=query[:50],
-            count=len(records),
-            agent_id=context.agent_id,
-        )
-        return records
-
+# Re-export memory defaults so existing ``from agiwo.agent.hooks import ...`` keeps working.
+from agiwo.memory.defaults import (  # noqa: E402
+    DefaultMemoryHook,
+    filter_relevant_memories,
+)
 
 __all__ = [
     "DefaultMemoryHook",

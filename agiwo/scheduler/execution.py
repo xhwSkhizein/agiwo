@@ -18,7 +18,7 @@ class SchedulerExecutionRequest:
 
     state_id: str
     session_id: str
-    user_input: UserInput
+    user_input: UserInput | None
     execution: RunExecutionRequest
     persistent: bool = True
     agent_config_id: str | None = None

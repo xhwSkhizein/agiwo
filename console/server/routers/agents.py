@@ -9,12 +9,6 @@ from agiwo.config.settings import (
     COMPATIBLE_MODEL_PROVIDERS,
     load_settings,
 )
-from agiwo.objective import (
-    AssignmentTemplateSet,
-    ValidationError as ObjectiveValidationError,
-    default_assignment_templates,
-    render_assignment_template,
-)
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.utils.serialization import serialize_optional_datetime
 from server.dependencies import (
@@ -23,11 +17,6 @@ from server.dependencies import (
     get_session_view_service,
 )
 from server.response_serialization import session_summary_response_from_record
-from server.models.objective import (
-    TemplatePreviewBody,
-    TemplatePreviewResponse,
-    TemplateSetResponse,
-)
 from server.models.view import (
     AgentCapabilitiesResponse,
     AgentConfigPayload,
@@ -43,14 +32,6 @@ from server.services.agent_registry import AgentConfigRecord
 from server.services.tool_catalog.tool_catalog import (
     list_available_tools as _list_available_tools,
 )
-
-_TEMPLATE_PREVIEW_CONTEXT = {
-    "current_goal": "Example goal: draft a weekly status update",
-    "objective_contributions": "- Research notes gathered\n- Outline drafted",
-    "objective_budget": "handoffs=3/10, verification=1/5, llm=$0.12/$5.00",
-    "run_outcomes": "(none yet)",
-    "run_role": "work",
-}
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -71,27 +52,23 @@ async def list_available_tools(
 
 def _templates_from_body(
     body: AgentConfigPayload,
-) -> AssignmentTemplateSet | None:
+) -> dict[str, str] | None:
     if body.assignment_templates is None:
         return None
-    return AssignmentTemplateSet(
-        work=body.assignment_templates.work,
-        verification=body.assignment_templates.verification,
-    )
+    return {
+        "work": body.assignment_templates.work,
+        "verification": body.assignment_templates.verification,
+    }
 
 
 def _templates_response(
-    templates: AssignmentTemplateSet | dict[str, str] | None,
+    templates: dict[str, str] | None,
 ) -> AssignmentTemplatesInput | None:
     if templates is None:
         return None
-    if isinstance(templates, AssignmentTemplateSet):
-        data = templates.to_dict()
-    else:
-        data = templates
     return AssignmentTemplatesInput(
-        work=data["work"],
-        verification=data["verification"],
+        work=templates["work"],
+        verification=templates["verification"],
     )
 
 
@@ -159,26 +136,6 @@ def _provider_default_model_name(provider: str) -> str | None:
     if attr_name is None:
         return None
     return getattr(settings, attr_name, None)
-
-
-@router.get("/templates/defaults", response_model=TemplateSetResponse)
-async def get_default_assignment_templates() -> TemplateSetResponse:
-    """Return the SDK default Assignment template set for form seeding."""
-    defaults = default_assignment_templates().to_dict()
-    return TemplateSetResponse(**defaults)
-
-
-@router.post("/templates/preview", response_model=TemplatePreviewResponse)
-async def preview_assignment_template(
-    body: TemplatePreviewBody,
-) -> TemplatePreviewResponse:
-    """Render one template with a fixed example ObjectiveView-shaped context."""
-    context = {**_TEMPLATE_PREVIEW_CONTEXT, "run_role": body.kind}
-    try:
-        rendered = render_assignment_template(body.template, context)
-    except ObjectiveValidationError as exc:
-        raise HTTPException(status_code=400, detail=exc.message) from exc
-    return TemplatePreviewResponse(rendered=rendered)
 
 
 @router.get("/skills/available")

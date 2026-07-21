@@ -4,7 +4,9 @@
 
 ## Status
 
-accepted
+superseded by ADR-0046
+
+> 接力创建的是新的 peer root Run，不再创建 Assignment；agent identity 复用见 ADR 0036（术语经 0046 覆盖）。
 
 ## Considered Options
 

@@ -4,7 +4,9 @@ AssignmentStatus 固定为 `CREATED`、`RUNNING`、`PAUSED`、`COMPLETED`、`INT
 
 ## Status
 
-accepted
+superseded by ADR-0046
+
+> AssignmentStatus 已删除；责任边界是 root Run + ObjectiveStatus。
 
 ## Considered Options
 

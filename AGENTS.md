@@ -10,6 +10,14 @@
 - 优先用本文件定位“应该去哪个目录/模块看”，不要把它当成逐文件索引。
 - 如果某条信息很难长期与源码同步，就应该提升抽象层级或直接删掉。
 
+## Truth Source Order (ADR 0048)
+
+1. [`CONTEXT.md`](CONTEXT.md) — 现行领域语言（Session / Run / RunLog / Scheduler / 委派）
+2. [`docs/adr/README.md`](docs/adr/README.md) 现行阅读顺序中的 ADR（以 **0048** 为首）
+3. 源码
+
+Status 为 `superseded` 的 ADR、`trash/`、历史施工计划**不是**规格。作废词（Objective、Assignment、Turn 聚合、RootRunRequested 等）不得再指导实现或出现在新的公开 API / 领域测试断言中。切换破坏性：清理开发库，无 migration。
+
 ## Logging
 
 统一日志格式：`logger.{level}("event_name", key=value, ...)`. 详见 [docs/logging-guidelines.md](docs/logging-guidelines.md).
@@ -24,16 +32,16 @@
 
 | Path | Responsibility |
 | --- | --- |
-| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `agiwo.agent.hooks`，nested-agent adapter 收口在 `nested/`，run/session runtime context、state helper 与 `RunStateWriter` 严格写路径收口在 `agiwo.agent.runtime`，termination logic 收口在 `termination/`，可恢复中断收口在 `pause.py` / `resume.py`，结构化重试收口在 `retry/`（`RetryCoordinator` + `ExecutionFault`；不导入 Objective），`plan/` 拥有 RunPlan 规范化与 `update_plan` 系统工具，轨迹自省与 context repair 收口在 `introspect/`，`storage/` 负责持久化。`run_loop.py` 是唯一的单次 run execution owner；`agiwo.agent.runtime` 只承载 context / session / writer，不得再暴露 execution-owner alias。 |
+| `agiwo/agent/` | Canonical agent runtime。public API 只从 `agiwo.agent` 暴露；顶层只保留稳定入口与核心 orchestrator（如 `agent.py`、`definition.py`、`run_loop.py`、`llm_caller.py`、`tool_executor.py`、`prompt.py`、`trace_writer.py`）。纯数据模型收口在 `models/`，hook contract 收口在 `agiwo.agent.hooks`，nested-agent adapter 收口在 `nested/`，run/session runtime context、state helper 与 `RunStateWriter` 严格写路径收口在 `agiwo.agent.runtime`，termination logic 收口在 `termination/`，可恢复中断收口在 `pause.py` / `resume.py`，结构化重试收口在 `retry/`，`plan/` 拥有 RunPlan 规范化与 `update_plan` 系统工具，轨迹自省与 context repair 收口在 `introspect/`，`storage/` 负责持久化。`run_loop.py` 是唯一的单次 run execution owner；`agiwo.agent.runtime` 只承载 context / session / writer，不得再暴露 execution-owner alias。 |
 | `agiwo/llm/` | Model 抽象、Provider 适配器、配置策略、消息/事件归一化，以及统一的 model factory。 |
 | `agiwo/tool/` | Tool 抽象、最小执行上下文、builtin tools、后台进程 registry（`process/`），以及工具侧存储（如 citation）。 |
-| `agiwo/objective/` | Scheduler 之上的 Objective 深模块。公开模型为 `Session → Objective → Run`（无 Assignment 聚合；见 ADR 0046）。public API 只从 `agiwo.objective` 暴露 `ObjectiveService` 与稳定命令/视图 DTO；领域模型、ObjectiveLog、投影、ObjectiveStore、Run Input 模板、outbox dispatcher、Run finalization、DRAINING/pause/resume、recovery 与运行中用户输入注入保持包内。唯一 owner：Decision / Run Outcome、ObjectiveBudget、`verification_required` Latch、Session slot、command receipt、ObjectiveLog 与 root Run 派发。对 Scheduler 只走窄 facade（dispatch/wait/inject/pause-resume/tree）。稳定依赖 `objective -> scheduler -> agent`。LLM 成本门禁经注入的 `LlmBudgetGate`。Console/渠道经 `SessionObjectiveGateway` → `ObjectiveService`。切换破坏性：含旧 `assignment_id` 的开发库须清理重建，无 migration。 |
-| `agiwo/scheduler/` | Agent 之上的编排层。`engine.py` 定义公开 `Scheduler` facade（lifecycle + 查询/派发 API），`_tick.py` 是编排 tick owner，`runner.py` 负责单次 dispatch；completion/output 分类在 `runner_completion.py`，`commands.py` 承载调度动作与 tool DTO，`runtime_state.py` 承载进程内 live state 与 tick helpers，`tool_control.py` 收口 child/sleep/cancel 的 tool-facing control，`runtime_tools.py` 是注入给 agent 的 scheduler runtime tools，`stream.py` 是 stream channel 基建，`route_stream.py` 装配 `route_with_stream`，`store/` 只负责持久化。Objective 机械 facade：`dispatch_execution` / `get_run_view` / `get_run_status` / `list_execution_tree` / `request_recoverable_pause` / `prepare_resume` / `release_resume_barrier` / `inject_user_message`。 |
+| `agiwo/objective/` | **已移出核心（ADR 0048）**。历史实现在 `trash/objective-core-2026-07-21/`；非 trash 树不得依赖本包。切换前清理开发库（无 migration）。 |
+| `agiwo/scheduler/` | Agent 之上的编排层：child 委派树与 waitset。`engine.py` 定义公开 `Scheduler` facade（lifecycle + 查询/派发 API），`_tick.py` 是编排 tick owner，`runner.py` 负责单次 dispatch；completion 在 `runner_completion.py`，`commands.py` 承载调度动作与 tool DTO，`runtime_state.py` 承载进程内 live state，`tool_control.py` / `runtime_tools.py` 收口 spawn/sleep/cancel，`store/` 只负责 AgentState 持久化。Session 路径用一条 root 启动面（`dispatch_execution` / `route_root_input` 收敛）；不拥有跨 Run 任务账本。 |
 | `agiwo/observability/` | Trace/Span 模型、查询接口与 trace storage 实现；agent runtime 的 Trace 投影层收口在 `agiwo/agent/trace_writer.py`，并以 committed `RunLog` facts 为输入构建 Trace view。 |
 | `agiwo/embedding/` | Embedding 抽象与 factory，包含本地/OpenAI 风格实现。 |
 | `agiwo/skill/` | Skill 的发现、路径规则（`config.py`）、加载、注册、异常定义，以及 `SkillTool` 桥接。 |
 | `agiwo/workspace/` | Agent workspace 路径语义、模板/bootstrap、工作区文档读取与变更 token。 |
-| `agiwo/memory/` | 共享 MEMORY 索引/切块/搜索能力，以及 `WorkspaceMemoryService`。 |
+| `agiwo/memory/` | 共享 MEMORY 索引/切块/搜索能力，以及 `WorkspaceMemoryService`；默认检索 hook（`DefaultMemoryHook` / `filter_relevant_memories`）收口在 `defaults.py`。 |
 | `agiwo/config/` | SDK 全局配置入口、Provider 枚举与共享设置。 |
 | `agiwo/utils/` | 跨模块运行时工具。`storage_support/` 负责共享 SQLite/Mongo runtime、schema/index 初始化等基础设施。 |
 
@@ -43,7 +51,7 @@
 | --- | --- |
 | `console/server/` | FastAPI 控制面与 runtime 集成。 |
 | `console/server/routers/` | API/SSE 边界，只做 HTTP 路由与请求/响应装配。 |
-| `console/server/services/` | 应用服务层。`runtime/`（agent factory、runtime cache、session runtime / session service、scheduler tree view）、`tool_catalog/`（tool reference / catalog / runtime builder）、`agent_registry/`（配置 CRUD + store 子包）、`session_store/`（Console 会话存储工厂与实现）、`objective_gateway.py` / `objective_event_stream.py` / `objective_serialization.py`（Objective 入口与 SSE）、`runtime_config.py`（运行时全局配置查看/覆盖）、`storage_wiring.py`（存储 config builders）、`metrics.py`。 |
+| `console/server/services/` | 应用服务层。`runtime/`（agent factory、runtime cache、session runtime / session service、scheduler tree view）、`tool_catalog/`、`agent_registry/`、`session_store/`、`session_gateway.py`（`SessionGateway`：唯一用户入口，Session 历史 + root Run）、`runtime_config.py`、`storage_wiring.py`、`metrics.py`。Objective 相关 gateway/SSE/serialization 已移出核心。 |
 | `console/server/models/` | Console 数据模型目录。`view.py` 只放 API/SSE 视图模型；`session.py`、`agent_config.py`、`runtime_config.py`、`metrics.py` 放共享运行时/配置/聚合模型。不要再新增 `schemas.py` 或平级 `domain/`。 |
 | `console/server/channels/` | 渠道适配层，负责批处理、消息解析、delivery，以及 Feishu 等渠道集成。 |
 | `console/web/` | Console 前端。 |
@@ -56,7 +64,7 @@
 | `tests/` | SDK 测试，按子系统分目录。 |
 | `scripts/` | 低噪音 lint 入口与 repo guard。 |
 | `lint/` | import-linter contract 等机器护栏配置。 |
-| `docs/` | 设计文档与渠道说明，不是运行时源码真相。 |
+| `docs/` | 设计文档与渠道说明，不是运行时源码真相。领域语言见根目录 `CONTEXT.md`；现行 ADR 阅读顺序见 `docs/adr/README.md`（以 **0048** 为首）。历史建成计划与作废 Objective 实现在 `trash/`，不要再当规格。 |
 | `templates/` | 运行时会消费的模板内容。 |
 | `trash/` | 删除文件的落点；优先 `mv` 到这里，不要直接 `rm`。 |
 
@@ -126,7 +134,7 @@
 - scheduler 状态现在显式区分 `WAITING`、`IDLE`、`QUEUED`；不要再把待命/排队语义塞回一个泛化 `SLEEPING`。
 - 当前唤醒路径包括 `WAITSET`、`TIMER`、`PERIODIC`、`PENDING_EVENTS`。
 - scheduler state storage 当前支持 memory/sqlite，由 `Scheduler` 自己创建和持有（无 mongodb 实现）。
-- RunLog 与 ObjectiveStore（MVP）仅支持 memory/sqlite；统一 storage 配置若指向未实现的 backend（含 mongodb）须 fail-closed，不得 silent 降级或暗示已支持。
+- RunLog（MVP）仅支持 memory/sqlite；统一 storage 配置若指向未实现的 backend（含 mongodb）须 fail-closed，不得 silent 降级或暗示已支持。
 - `Scheduler` 的外部流式协议直接复用 `AgentStreamItem`；不要在 SDK core 再维护第二套 live-output protocol。
 - `route_root_input` 对所有非 RUNNING 路径（submitted / enqueued / steered+WAITING / steered+QUEUED）都返回带 stream 的 `RouteResult`；只有 steered+RUNNING 不带 stream（原 stream subscriber 仍在消费）。下游不需要为 steered 场景单独维护 deferred reply 补丁。
 - **Root runtime 严格复用**：`_ensure_root_runtime_agent` 以"canonical Agent 身份"为键缓存 scheduler-managed runtime agent；`_submit` / `enqueue_input(agent=same)` 不再每次 clone，persistent 会话下 `run_log_storage` / `trace_storage` / workspace 贯穿所有轮次。只有 `rebind_agent` 或传入新 canonical agent 才会 close 旧 runtime 并重建。
@@ -170,7 +178,7 @@
 - 共享的 Console 数据模型统一放 `console/server/models/`。
 - `agiwo-console` 现在有两条稳定启动面：`serve`（宿主机模式）和 `container ...`（Docker 托管模式）。Docker 模式对外只暴露一个公开端口 `8422`，默认持久化根在容器内 `/data/root`，宿主机目录只有通过显式 `--mount <source>:<alias>` 才会映射到 `/mnt/host/<alias>`。
 - `Session.id` 直接作为 root persistent scheduler state id 使用。
-- Console web 与 Feishu channel 普通用户入口统一走 `SessionObjectiveGateway` → `ObjectiveService`；`Scheduler.route_root_input(...)` 仅保留给 SDK/debug scheduler API。
+- Console web 与 Feishu channel 普通用户入口统一走 `SessionGateway`：用户原文只写 Session 历史一次，经 Scheduler 启动或注入 root Run（ADR 0048）。runtime 未接线时 fail-closed。无 Objective 升级路径；无 Objectives API 主路径。`Scheduler.route_root_input(...)` 仍保留给 SDK/debug。
 - `build_agent` 必须传入稳定 `id`，使用 `id=id or config.id` 确保上下文延续。
 - Agent registry 收口到 `console/server/services/agent_registry/` 包。
 

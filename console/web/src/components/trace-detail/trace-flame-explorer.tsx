@@ -383,7 +383,7 @@ function SpanDetailBody({
         {result !== undefined ? (
           <div>
             <p className="mb-1 text-xs text-ink-faint">Result</p>
-            <StepContentPreview content={result} />
+            <StepContentPreview value={result} emptyLabel="No result content" />
           </div>
         ) : null}
       </div>

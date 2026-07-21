@@ -4,7 +4,9 @@ Objective 不引入独立的 Assignment todo 模型。现有 milestone 计划能
 
 ## Status
 
-accepted
+superseded by ADR-0046
+
+> 只保留 RunPlan；不存在 Assignment Plan 别名聚合。
 
 ## Considered Options
 

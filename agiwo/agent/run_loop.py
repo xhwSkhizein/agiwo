@@ -10,17 +10,16 @@ from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.llm_caller import ModelCallLimitExceeded, execute_model_call
 from agiwo.agent.models.execution import RunTreeRole
 from agiwo.agent.models.finalization import (
-    FINALIZATION_CORRECTION_INSTRUCTION,
-    FINALIZATION_USER_INSTRUCTION,
     RunFinalizationResult,
+    derive_mechanical_finalization,
     mechanical_agent_handoff_result,
-    parse_finalization_json,
 )
 from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import RunMetrics, RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
+from agiwo.agent.pause import PauseReason
 from agiwo.agent.prompt import apply_steering_messages
 from agiwo.agent.retry import (
     RetryCoordinator,
@@ -52,7 +51,7 @@ class CompactionCycleResult(NamedTuple):
     """Result of a compaction cycle."""
 
     compact_start_seq: int
-    should_continue: bool
+    skip_assistant_turn: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,11 +96,9 @@ class RunLoopOrchestrator:
         self,
         step: StepView,
         *,
-        llm: LLMCallContext | None = None,
         append_message: bool = True,
         track_state: bool = True,
     ) -> StepView:
-        del llm
         await self.writer.commit_step(
             step,
             append_message=append_message,
@@ -112,7 +109,7 @@ class RunLoopOrchestrator:
 
     async def execute_run(
         self,
-        user_input: UserInput,
+        user_input: UserInput | None,
         system_prompt: str,
         pending_tool_calls: list[dict] | None = None,
         *,
@@ -134,11 +131,12 @@ class RunLoopOrchestrator:
                     system_prompt=system_prompt,
                     writer=self.writer,
                 )
-                await self._commit_step(
-                    bootstrap.user_step,
-                    append_message=False,
-                    track_state=False,
-                )
+                if bootstrap.user_step is not None:
+                    await self._commit_step(
+                        bootstrap.user_step,
+                        append_message=False,
+                        track_state=False,
+                    )
                 self.runtime.compact_start_seq = bootstrap.compact_start_seq
 
             exit_result = await self._run_loop(pending_tool_calls=pending_tool_calls)
@@ -149,7 +147,7 @@ class RunLoopOrchestrator:
 
     async def _dispatch_loop_exit(
         self,
-        user_input: UserInput,
+        user_input: UserInput | None,
         exit_result: LoopExit,
     ) -> RunOutput:
         """Single dispatch point for loop outcomes."""
@@ -182,7 +180,7 @@ class RunLoopOrchestrator:
 
     async def _finalize_blocking_fault(
         self,
-        user_input: UserInput,
+        user_input: UserInput | None,
         blocked: RunBlockingFaultError,
     ) -> RunOutput:
         """End ROOT assignment via mechanical Decision; fail non-root runs."""
@@ -216,9 +214,9 @@ class RunLoopOrchestrator:
             phase="fault_boundary",
             source=blocked.fault.disposition.value,
         )
-        return await self._finalize_run("")
+        return await self._finalize_run(None)
 
-    async def _start_run(self, user_input: UserInput) -> None:
+    async def _start_run(self, user_input: UserInput | None) -> None:
         """Initialize and start the run."""
         self.context.ledger.model_calls.configured_limit = (
             self.runtime.config.max_steps_per_run
@@ -263,7 +261,7 @@ class RunLoopOrchestrator:
             source=source,
         )
 
-    async def _finalize_run(self, user_input: UserInput) -> RunOutput:
+    async def _finalize_run(self, user_input: UserInput | None) -> RunOutput:
         """Generate summary, build output, and complete the run."""
         if (
             self.context.run_tree_role is RunTreeRole.ROOT
@@ -289,7 +287,7 @@ class RunLoopOrchestrator:
             result.response = self._finalization.report
             self.context.ledger.response_content = self._finalization.report
         await self.context.hooks.after_run(result, self.context)
-        if result.response is not None:
+        if result.response is not None and user_input is not None:
             await self.context.hooks.memory_write(user_input, result, self.context)
         await self._complete_run(result)
         return result
@@ -312,7 +310,7 @@ class RunLoopOrchestrator:
         except RunBlockingFaultError as blocked:
             return LoopFault(blocked)
         except LlmBudgetDenied as denied:
-            self.context.request_pause(denied.reason or "llm_budget_denied")
+            self.context.request_pause(denied.reason or PauseReason.LLM_BUDGET_DENIED)
             return await self._commit_pause()
         except asyncio.CancelledError:
             return await self._exit_cancelled()
@@ -326,7 +324,7 @@ class RunLoopOrchestrator:
     ) -> LoopExit | None:
         if not pending_tool_calls:
             return None
-        paused = await self._maybe_pause("before_pending_tools")
+        paused = await self._maybe_pause()
         if paused is not None:
             return paused
         terminated = await self._execute_tool_calls(
@@ -335,7 +333,7 @@ class RunLoopOrchestrator:
         )
         if terminated:
             return LoopCompleted()
-        return await self._maybe_pause("after_pending_tools")
+        return await self._maybe_pause()
 
     async def _exit_cancelled(self) -> LoopCompleted:
         await self._set_termination_reason(
@@ -362,8 +360,7 @@ class RunLoopOrchestrator:
             exc_info=True,
         )
 
-    async def _maybe_pause(self, boundary: str) -> LoopPaused | None:
-        del boundary
+    async def _maybe_pause(self) -> LoopPaused | None:
         if self.context.pause_request is None:
             return None
         return await self._commit_pause()
@@ -383,7 +380,7 @@ class RunLoopOrchestrator:
 
     async def _run_loop_iteration(self) -> LoopExit | None:
         """One iteration. None = continue; LoopExit = stop with that outcome."""
-        paused = await self._maybe_pause("pre_iteration")
+        paused = await self._maybe_pause()
         if paused is not None:
             return paused
         reason = check_non_recoverable_limits(
@@ -401,9 +398,9 @@ class RunLoopOrchestrator:
 
         result = await self._run_compaction_cycle()
         compact_start_seq = result.compact_start_seq
-        should_continue = result.should_continue
+        skip_assistant_turn = result.skip_assistant_turn
         self.runtime.compact_start_seq = compact_start_seq
-        if should_continue or self.context.is_terminal:
+        if skip_assistant_turn or self.context.is_terminal:
             return LoopCompleted() if self.context.is_terminal else None
 
         self.context.ledger.steps.current += 1
@@ -526,7 +523,7 @@ class RunLoopOrchestrator:
             raise
         step = call_result.step
         llm_context = call_result.llm_context
-        await self._commit_step(step, llm=llm_context)
+        await self._commit_step(step)
         await self.context.hooks.after_llm_call(step, self.context)
         return step, llm_context
 
@@ -555,15 +552,33 @@ class RunLoopOrchestrator:
             return LoopCompleted()
 
         if not step.tool_calls:
-            paused = await self._maybe_pause("after_assistant_no_tools")
+            paused = await self._maybe_pause()
             if paused is not None:
                 return paused
             if self.context.run_tree_role is RunTreeRole.ROOT:
                 if self._has_unfinished_plan_items():
                     await self._append_plan_guard_reminder()
                     return None
-                self._finalization = await self._run_root_finalization(
-                    report=step.content if isinstance(step.content, str) else ""
+                report = step.content if isinstance(step.content, str) else ""
+                self._finalization = derive_mechanical_finalization(
+                    report=report,
+                    verification_required=(
+                        self.context.verification_required
+                        or bool(self.context.ledger.plan.milestones)
+                    ),
+                    objective_run_role=self.context.objective_run_role,
+                )
+            elif self.context.run_tree_role is RunTreeRole.NONE and (
+                self.context.verification_required
+                or bool(self.context.ledger.plan.milestones)
+            ):
+                # Plain Session turn that grew a plan → mechanical HandoffDecision
+                # so SessionGateway can upgrade into an Objective (ADR 0047).
+                report = step.content if isinstance(step.content, str) else ""
+                self._finalization = derive_mechanical_finalization(
+                    report=report,
+                    verification_required=True,
+                    objective_run_role=self.context.objective_run_role,
                 )
             await self._set_termination_reason(
                 TerminationReason.COMPLETED,
@@ -578,7 +593,7 @@ class RunLoopOrchestrator:
         )
         if terminated:
             return LoopCompleted()
-        return await self._maybe_pause("after_tool_batch")
+        return await self._maybe_pause()
 
     def _has_unfinished_plan_items(self) -> bool:
         return any(
@@ -622,61 +637,6 @@ class RunLoopOrchestrator:
             messages=messages,
         )
 
-    async def _run_root_finalization(
-        self,
-        *,
-        report: str,
-    ) -> RunFinalizationResult:
-        messages = self.context.snapshot_messages()
-        messages.append(
-            _finalization_instruction_message(FINALIZATION_USER_INSTRUCTION)
-        )
-        first_error: str | None = None
-        first_response: str | None = None
-
-        for phase in (
-            ModelCallPhase.RUN_FINALIZATION,
-            ModelCallPhase.FINALIZATION_CORRECTION,
-        ):
-            request_messages = (
-                messages
-                if phase is ModelCallPhase.RUN_FINALIZATION
-                else _correction_messages(messages, first_response)
-            )
-            try:
-                call_result = await execute_model_call(
-                    model=self.runtime.model,
-                    state=self.context,
-                    writer=self.writer,
-                    phase=phase,
-                    abort_signal=self.runtime.abort_signal,
-                    messages=request_messages,
-                    tools=self.context.copy_tool_schemas(),
-                    use_state_tools=False,
-                    retry_coordinator=self.runtime.retry_coordinator,
-                )
-            except Exception as exc:  # noqa: BLE001 - finalization closes deterministically
-                first_error = f"{phase.value}: {exc}"
-                break
-
-            step = call_result.step
-            first_response = step.content if isinstance(step.content, str) else ""
-            if step.tool_calls:
-                first_error = f"{phase.value}: finalization returned tool calls"
-                continue
-            try:
-                result = parse_finalization_json(first_response, report=report)
-            except ValueError as exc:
-                first_error = str(exc)
-                continue
-            return result
-
-        return mechanical_agent_handoff_result(
-            report,
-            reason=first_error or "finalization_parse_failed",
-            carry_forward=self._remaining_plan_items(),
-        )
-
     async def _execute_tool_calls(
         self,
         tool_calls: list[dict[str, object]],
@@ -703,33 +663,6 @@ class RunLoopOrchestrator:
             set_termination_reason=_set_tool_termination,
             commit_step=self._commit_step,
         )
-
-
-def _finalization_instruction_message(instruction: str) -> dict[str, object]:
-    return {
-        "role": "user",
-        "content": instruction,
-        "is_user_provided": False,
-        "origin": "run_finalization",
-    }
-
-
-def _correction_messages(
-    messages: list[dict[str, object]],
-    previous_response: str | None,
-) -> list[dict[str, object]]:
-    corrected = list(messages)
-    corrected.append(
-        {
-            "role": "assistant",
-            "content": previous_response or "",
-            "origin": "run_finalization",
-        }
-    )
-    corrected.append(
-        _finalization_instruction_message(FINALIZATION_CORRECTION_INSTRUCTION)
-    )
-    return corrected
 
 
 async def execute_run(
@@ -788,13 +721,12 @@ async def execute_run(
     if resume:
         # Resume continues with already-loaded messages; user_input is unused.
         return await orchestrator.execute_run(
-            user_input or "",
+            user_input,
             system_prompt,
             pending_tool_calls,
             resume=True,
             resume_checkpoint_id=resume_checkpoint_id,
         )
-    assert user_input is not None
     return await orchestrator.execute_run(
         user_input,
         system_prompt,

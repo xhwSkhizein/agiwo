@@ -4,7 +4,7 @@
 
 ## Status
 
-accepted
+accepted（术语：Assignment → Objective 管理的 root Run；identity 复用规则仍有效，见 ADR-0046）
 
 ## Considered Options
 

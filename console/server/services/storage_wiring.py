@@ -5,10 +5,6 @@ from agiwo.agent.storage.base import RunLogStorage
 from agiwo.agent.storage.factory import (
     create_run_log_storage as _create_run_log_storage,
 )
-from agiwo.objective import (
-    ObjectiveStore,
-    create_objective_store as _create_objective_store,
-)
 from agiwo.observability.base import BaseTraceStorage
 from agiwo.observability.factory import (
     create_trace_storage as _sdk_create_trace_storage,
@@ -70,15 +66,6 @@ def build_citation_store_config(console_config: ConsoleConfig) -> CitationStoreC
 
 def create_run_log_storage(config: ConsoleConfig) -> RunLogStorage:
     return _create_run_log_storage(build_run_log_storage_config(config))
-
-
-def build_objective_store_config(console_config: ConsoleConfig) -> RunLogStorageConfig:
-    """ObjectiveStore follows RunLog storage config (ADR 0040); no extra env vars."""
-    return build_run_log_storage_config(console_config)
-
-
-def create_objective_store(config: ConsoleConfig) -> ObjectiveStore:
-    return _create_objective_store(build_objective_store_config(config))
 
 
 def create_trace_storage(config: ConsoleConfig) -> BaseTraceStorage:

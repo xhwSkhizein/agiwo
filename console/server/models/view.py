@@ -518,7 +518,9 @@ class RunResponse(BaseModel):
     agent_id: str
     session_id: str
     user_id: str | None = None
-    user_input: UserInput
+    # ADR 0048 history-only root Runs start with user_input=None (text already
+    # in Session history / RunLog steps).
+    user_input: UserInput | None = None
     status: str
     response_content: str | None = None
     metrics: RunMetricsResponse | None = None

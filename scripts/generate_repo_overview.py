@@ -102,17 +102,8 @@ RUNTIME_SURFACE_SPECS: list[dict[str, object]] = [
     },
     {
         "import_path": "agiwo.scheduler",
-        "role": "Public entry for orchestration, persistent roots, routing, waiting, and scheduler-backed agent coordination.",
+        "role": "Public entry for orchestration, persistent roots, child waitset, routing, and scheduler-backed agent coordination.",
         "source_paths": ["agiwo/scheduler", "agiwo/scheduler/engine.py"],
-    },
-    {
-        "import_path": "agiwo.objective",
-        "role": "Public entry for ObjectiveService commands, views, budgets, templates, and ObjectiveStore construction.",
-        "source_paths": [
-            "agiwo/objective",
-            "agiwo/objective/__init__.py",
-            "agiwo/objective/service.py",
-        ],
     },
     {
         "import_path": "agiwo.tool",

@@ -6,7 +6,9 @@
 
 ## Status
 
-accepted
+superseded by ADR-0047
+
+> 强制系统收尾调用产出 Decision JSON 已废止；下一跳由 NextAction（规则或控制工具）表达。
 
 ## Considered Options
 

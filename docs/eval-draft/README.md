@@ -2,7 +2,7 @@
 
 状态：Draft
 
-> **与 Objective 重构无关：** `docs/adr-plan` 的本次 Objective 优化执行方案明确不包含、不依赖、不跟进本目录。实现 Objective 时请忽略此处内容；本草稿若继续推进，应作为独立计划，不得假设已与 adr-plan 对齐。
+> **与 Objective 重构无关：** 本目录是独立的 eval 草稿，不依赖、不跟进已归档的 `trash/adr-plan-historical-2026-07-21/`。现行 Session/Objective 规格见 [`CONTEXT.md`](../../CONTEXT.md) 与 [`docs/adr/README.md`](../adr/README.md)（ADR 0046 / 0047）。
 
 这组文档用于把 Agent benchmark evaluation 变成 Agiwo 的一等实验能力。它描述实现顺序、模块接缝、数据契约、测试门槛和后续外部 benchmark 适配方式；不等同于已经批准的最终设计，也不代表当前代码已经包含这些模块。
 

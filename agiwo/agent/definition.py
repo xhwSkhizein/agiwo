@@ -4,13 +4,13 @@ from dataclasses import dataclass
 
 from agiwo.agent.models.config import AgentConfig
 from agiwo.agent.hooks import (
-    DefaultMemoryHook,
     HookGroup,
     HookPhase,
     HookRegistration,
     HookRegistry,
     transform,
 )
+from agiwo.memory.defaults import DefaultMemoryHook
 from agiwo.agent.prompt import compose_child_system_prompt
 from agiwo.skill.allowlist import validate_expanded_allowed_skills
 from agiwo.skill.manager import get_global_skill_manager

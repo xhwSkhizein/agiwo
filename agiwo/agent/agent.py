@@ -171,6 +171,11 @@ class Agent:
         return copy.deepcopy(self._config)
 
     @property
+    def options_snapshot(self) -> AgentOptions:
+        """Zero-copy read of live options; do not mutate the returned object."""
+        return self._config.options
+
+    @property
     def id(self) -> str:
         return self._id
 
@@ -437,10 +442,10 @@ class Agent:
         """Start a root run from genuine user input.
 
         Rejects ``UserMessage(is_user_provided=False)``. Scheduler-owned wakes
-        that inject system-attributed user-role turns (fork notices, mailbox
-        event messages) must call ``_start_runtime`` instead.
+        that inject system-attributed user-role turns must call
+        ``start_prevalidated`` instead.
         """
-        return self._start_runtime(
+        return self.start_prevalidated(
             UserMessage.require_user_provided(user_input),
             session_id=session_id,
             user_id=user_id,
@@ -448,9 +453,9 @@ class Agent:
             abort_signal=abort_signal,
         )
 
-    def _start_runtime(
+    def start_prevalidated(
         self,
-        user_input: UserInput,
+        user_input: UserInput | None,
         *,
         session_id: str | None = None,
         user_id: str | None = None,
@@ -460,10 +465,11 @@ class Agent:
     ) -> AgentExecutionHandle:
         """Start a root run without re-checking user-input provenance.
 
-        Used by the Scheduler after it has already validated external input, or
-        when injecting internal ``UserMessage.from_system()`` turns.
+        Internal Scheduler contract: external Scheduler APIs already validated
+        user input, and wake/fork paths may inject ``UserMessage.from_system()``.
         ``execution_request`` lets Objective-managed dispatch supply a
-        preallocated ``run_id`` and Assignment identity.
+        preallocated ``run_id``. ``user_input`` may be ``None`` when Session
+        history already holds the user turn (ADR 0047).
         """
         self._ensure_open()
         resolved_session_id = session_id or str(uuid4())
@@ -488,6 +494,8 @@ class Agent:
                 user_id=user_id,
                 objective_id=request.objective_id,
                 run_tree_role=request.run_tree_role,
+                verification_required=request.verification_required,
+                objective_run_role=request.objective_run_role,
                 metadata=dict(metadata or {}),
             ),
             session_runtime=session_runtime,
@@ -512,7 +520,7 @@ class Agent:
 
     async def _execute_root(
         self,
-        user_input: UserInput,
+        user_input: UserInput | None,
         *,
         context: RunContext,
         abort_signal: AbortSignal,
@@ -701,16 +709,21 @@ class Agent:
         *,
         session_id: str,
         user_id: str | None,
-        user_input: UserInput,
+        user_input: UserInput | None,
     ) -> AgentTraceCollector | None:
         if self._trace_storage is None:
             return None
         collector = AgentTraceCollector(store=self._trace_storage)
+        input_query = (
+            UserMessage.from_value(user_input).extract_text()
+            if user_input is not None
+            else ""
+        )
         collector.start(
             agent_id=self._id,
             session_id=session_id,
             user_id=user_id,
-            input_query=UserMessage.from_value(user_input).extract_text(),
+            input_query=input_query,
         )
         return collector
 

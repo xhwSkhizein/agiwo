@@ -2,9 +2,9 @@
 
 import json
 from collections import OrderedDict
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from agiwo.agent.models.log import (
@@ -234,164 +234,203 @@ def _build_tool_span_from_entry(
     return span
 
 
+RuntimeSpanEntry = (
+    CompactionApplied
+    | CompactionFailed
+    | RunPlanUpdated
+    | HookFailed
+    | IntrospectionCheckpointRecorded
+    | IntrospectionOutcomeRecorded
+    | IntrospectionTriggered
+    | RunRolledBack
+    | TerminationDecided
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeSpanSpec:
+    name: str
+    status: SpanStatus = SpanStatus.OK
+    extract_error: Callable[[RuntimeSpanEntry], str | None] | None = None
+    extract_attributes: Callable[[RuntimeSpanEntry], dict[str, Any]] = lambda _entry: {}
+
+
+def _compaction_applied_attributes(entry: CompactionApplied) -> dict[str, Any]:
+    return {
+        "start_sequence": entry.start_sequence,
+        "end_sequence": entry.end_sequence,
+        "before_token_estimate": entry.before_token_estimate,
+        "after_token_estimate": entry.after_token_estimate,
+        "message_count": entry.message_count,
+        "transcript_path": entry.transcript_path,
+        "summary": entry.summary,
+    }
+
+
+def _compaction_failed_attributes(entry: CompactionFailed) -> dict[str, Any]:
+    return {
+        "error": entry.error,
+        "attempt": entry.attempt,
+        "max_attempts": entry.max_attempts,
+        "terminal": entry.terminal,
+    }
+
+
+def _run_rolled_back_attributes(entry: RunRolledBack) -> dict[str, Any]:
+    return {
+        "start_sequence": entry.start_sequence,
+        "end_sequence": entry.end_sequence,
+        "reason": entry.reason,
+    }
+
+
+def _termination_decided_attributes(entry: TerminationDecided) -> dict[str, Any]:
+    return {
+        "termination_reason": entry.termination_reason.value,
+        "phase": entry.phase,
+        "source": entry.source,
+    }
+
+
+def _hook_failed_attributes(entry: HookFailed) -> dict[str, Any]:
+    return {
+        "phase": entry.phase,
+        "handler_name": entry.handler_name,
+        "critical": entry.critical,
+        "error": entry.error,
+    }
+
+
+def _run_plan_updated_attributes(entry: RunPlanUpdated) -> dict[str, Any]:
+    return {
+        "milestones": [asdict(milestone) for milestone in entry.milestones],
+        "active_milestone_id": entry.active_milestone_id,
+        "revision": entry.revision,
+        "source_tool_call_id": entry.source_tool_call_id,
+        "source_step_id": entry.source_step_id,
+        "reason": entry.reason,
+    }
+
+
+def _introspection_triggered_attributes(
+    entry: IntrospectionTriggered,
+) -> dict[str, Any]:
+    review_count = entry.review_count_since_boundary
+    return {
+        "trigger_reason": entry.trigger_reason,
+        "active_milestone_id": entry.active_milestone_id,
+        "review_count_since_checkpoint": review_count,
+        "review_count_since_boundary": review_count,
+        "trigger_tool_call_id": entry.trigger_tool_call_id,
+        "trigger_tool_step_id": entry.trigger_tool_step_id,
+        "notice_step_id": entry.notice_step_id,
+    }
+
+
+def _introspection_checkpoint_attributes(
+    entry: IntrospectionCheckpointRecorded,
+) -> dict[str, Any]:
+    return {
+        "checkpoint_seq": entry.checkpoint_seq,
+        "milestone_id": entry.milestone_id,
+        "review_tool_call_id": entry.review_tool_call_id,
+        "review_step_id": entry.review_step_id,
+    }
+
+
+def _introspection_outcome_attributes(
+    entry: IntrospectionOutcomeRecorded,
+) -> dict[str, Any]:
+    return {
+        "aligned": entry.aligned,
+        "boundary_seq": getattr(entry, "boundary_seq", None),
+        "experience": entry.experience,
+        "active_milestone_id": entry.active_milestone_id,
+        "review_tool_call_id": entry.review_tool_call_id,
+        "review_step_id": entry.review_step_id,
+        "tool_usefulness": list(entry.tool_usefulness),
+    }
+
+
+_RUNTIME_SPAN_SPECS: dict[type[RunLogEntry], _RuntimeSpanSpec] = {
+    CompactionApplied: _RuntimeSpanSpec(
+        name="compaction",
+        extract_attributes=_compaction_applied_attributes,
+    ),
+    CompactionFailed: _RuntimeSpanSpec(
+        name="compaction_failed",
+        status=SpanStatus.ERROR,
+        extract_error=lambda entry: entry.error,
+        extract_attributes=_compaction_failed_attributes,
+    ),
+    RunRolledBack: _RuntimeSpanSpec(
+        name="rollback",
+        extract_attributes=_run_rolled_back_attributes,
+    ),
+    TerminationDecided: _RuntimeSpanSpec(
+        name="termination",
+        extract_attributes=_termination_decided_attributes,
+    ),
+    HookFailed: _RuntimeSpanSpec(
+        name="hook_failed",
+        status=SpanStatus.ERROR,
+        extract_error=lambda entry: entry.error,
+        extract_attributes=_hook_failed_attributes,
+    ),
+    RunPlanUpdated: _RuntimeSpanSpec(
+        name="review_milestones",
+        extract_attributes=_run_plan_updated_attributes,
+    ),
+    IntrospectionTriggered: _RuntimeSpanSpec(
+        name="review_trigger",
+        extract_attributes=_introspection_triggered_attributes,
+    ),
+    IntrospectionCheckpointRecorded: _RuntimeSpanSpec(
+        name="review_checkpoint",
+        extract_attributes=_introspection_checkpoint_attributes,
+    ),
+    IntrospectionOutcomeRecorded: _RuntimeSpanSpec(
+        name="review_outcome",
+        extract_attributes=_introspection_outcome_attributes,
+    ),
+}
+
+_RUNTIME_ENTRY_TYPES: tuple[type[RunLogEntry], ...] = tuple(_RUNTIME_SPAN_SPECS.keys())
+
+
 def _build_runtime_span_from_entry(
     trace_id: str,
-    entry: (
-        CompactionApplied
-        | CompactionFailed
-        | RunPlanUpdated
-        | HookFailed
-        | IntrospectionCheckpointRecorded
-        | IntrospectionOutcomeRecorded
-        | IntrospectionTriggered
-        | RunRolledBack
-        | TerminationDecided
-    ),
+    entry: RuntimeSpanEntry,
     run_span: Span | None,
 ) -> Span:
     parent_id = run_span.span_id if run_span else None
     parent_depth = run_span.depth if run_span else 0
+    spec = _RUNTIME_SPAN_SPECS[type(entry)]
     attributes: dict[str, Any] = {
         "sequence": entry.sequence,
         "agent_id": entry.agent_id,
     }
-    name = "runtime"
-    status = SpanStatus.OK
-    error_message: str | None = None
-    if isinstance(entry, CompactionApplied):
-        name = "compaction"
-        attributes.update(
-            {
-                "start_sequence": entry.start_sequence,
-                "end_sequence": entry.end_sequence,
-                "before_token_estimate": entry.before_token_estimate,
-                "after_token_estimate": entry.after_token_estimate,
-                "message_count": entry.message_count,
-                "transcript_path": entry.transcript_path,
-                "summary": entry.summary,
-            }
-        )
-    elif isinstance(entry, CompactionFailed):
-        name = "compaction_failed"
-        status = SpanStatus.ERROR
-        error_message = entry.error
-        attributes.update(
-            {
-                "error": entry.error,
-                "attempt": entry.attempt,
-                "max_attempts": entry.max_attempts,
-                "terminal": entry.terminal,
-            }
-        )
-    elif isinstance(entry, RunRolledBack):
-        name = "rollback"
-        attributes.update(
-            {
-                "start_sequence": entry.start_sequence,
-                "end_sequence": entry.end_sequence,
-                "reason": entry.reason,
-            }
-        )
-    elif isinstance(entry, TerminationDecided):
-        name = "termination"
-        attributes.update(
-            {
-                "termination_reason": entry.termination_reason.value,
-                "phase": entry.phase,
-                "source": entry.source,
-            }
-        )
-    elif isinstance(entry, HookFailed):
-        name = "hook_failed"
-        status = SpanStatus.ERROR
-        error_message = entry.error
-        attributes.update(
-            {
-                "phase": entry.phase,
-                "handler_name": entry.handler_name,
-                "critical": entry.critical,
-                "error": entry.error,
-            }
-        )
-    elif isinstance(entry, RunPlanUpdated):
-        name = "review_milestones"
-        attributes.update(
-            {
-                "milestones": [asdict(milestone) for milestone in entry.milestones],
-                "active_milestone_id": entry.active_milestone_id,
-                "revision": entry.revision,
-                "source_tool_call_id": entry.source_tool_call_id,
-                "source_step_id": entry.source_step_id,
-                "reason": entry.reason,
-            }
-        )
-    elif isinstance(entry, IntrospectionTriggered):
-        name = "review_trigger"
-        review_count = entry.review_count_since_boundary
-        attributes.update(
-            {
-                "trigger_reason": entry.trigger_reason,
-                "active_milestone_id": entry.active_milestone_id,
-                "review_count_since_checkpoint": review_count,
-                "review_count_since_boundary": review_count,
-                "trigger_tool_call_id": entry.trigger_tool_call_id,
-                "trigger_tool_step_id": entry.trigger_tool_step_id,
-                "notice_step_id": entry.notice_step_id,
-            }
-        )
-    elif isinstance(entry, IntrospectionCheckpointRecorded):
-        name = "review_checkpoint"
-        attributes.update(
-            {
-                "checkpoint_seq": entry.checkpoint_seq,
-                "milestone_id": entry.milestone_id,
-                "review_tool_call_id": entry.review_tool_call_id,
-                "review_step_id": entry.review_step_id,
-            }
-        )
-    elif isinstance(entry, IntrospectionOutcomeRecorded):
-        name = "review_outcome"
-        attributes.update(
-            {
-                "aligned": entry.aligned,
-                "boundary_seq": getattr(entry, "boundary_seq", None),
-                "experience": entry.experience,
-                "active_milestone_id": entry.active_milestone_id,
-                "review_tool_call_id": entry.review_tool_call_id,
-                "review_step_id": entry.review_step_id,
-                "tool_usefulness": list(entry.tool_usefulness),
-            }
-        )
-    span = Span(
+    attributes.update(spec.extract_attributes(entry))
+    error_message = spec.extract_error(entry) if spec.extract_error else None
+    return Span(
         trace_id=trace_id,
         parent_span_id=parent_id,
         kind=SpanKind.RUNTIME,
-        name=name,
+        name=spec.name,
         depth=parent_depth + 1,
         attributes=attributes,
         run_id=entry.run_id,
         start_time=entry.created_at,
         end_time=entry.created_at,
         duration_ms=0.0,
-        status=status,
+        status=spec.status,
         error_message=error_message,
     )
-    return span
 
 
 def _append_runtime_entry_to_trace(
     trace: Trace,
-    entry: (
-        CompactionApplied
-        | CompactionFailed
-        | RunPlanUpdated
-        | HookFailed
-        | IntrospectionCheckpointRecorded
-        | IntrospectionOutcomeRecorded
-        | IntrospectionTriggered
-        | RunRolledBack
-        | TerminationDecided
-    ),
+    entry: RuntimeSpanEntry,
     *,
     run_spans: dict[str, Span],
 ) -> None:
@@ -653,20 +692,7 @@ def _apply_runtime_entry_to_trace(
     *,
     run_spans: dict[str, Span],
 ) -> bool:
-    if not isinstance(
-        entry,
-        (
-            CompactionApplied,
-            CompactionFailed,
-            RunPlanUpdated,
-            HookFailed,
-            IntrospectionCheckpointRecorded,
-            IntrospectionOutcomeRecorded,
-            IntrospectionTriggered,
-            RunRolledBack,
-            TerminationDecided,
-        ),
-    ):
+    if not isinstance(entry, _RUNTIME_ENTRY_TYPES):
         return False
     _append_runtime_entry_to_trace(
         trace,

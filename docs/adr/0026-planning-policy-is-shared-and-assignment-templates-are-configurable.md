@@ -4,7 +4,9 @@
 
 ## Status
 
-accepted
+superseded by ADR-0046 / ADR-0047
+
+> Planning Policy 仍可存在于默认 system prompt；可配置 Assignment/Run 史诗模板与强制厚输入已废止。
 
 ## Considered Options
 

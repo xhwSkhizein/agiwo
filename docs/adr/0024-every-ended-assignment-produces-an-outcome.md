@@ -4,7 +4,9 @@ Assignment 只要进入终态，就必须产生唯一 AssignmentOutcome，无论
 
 ## Status
 
-accepted
+superseded by ADR-0046
+
+> Outcome 挂在 Objective 管理的 root Run 上；普通 Session Turn 不强制写 Objective Outcome。
 
 ## Considered Options
 

@@ -94,7 +94,6 @@ def test_retry_exhausted_finalization_targets_agent() -> None:
     )
     err = RunBlockingFaultError(fault, attempts=[fault, fault], exhausted=True)
     result = finalization_for_blocking_fault(err, carry_forward=[])
-    assert result.mechanical_handoff is True
     assert result.decision["target"] == "agent"
     assert "system_retry_exhausted" in result.report
 

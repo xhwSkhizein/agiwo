@@ -4,7 +4,9 @@
 
 ## Status
 
-accepted
+superseded by ADR-0046 / ADR-0047
+
+> 强制独立 intake/验收 Assignment 已废止；验收由 verification_required latch + verification Run 表达（0046），且默认对话不创建 Objective（0047）。
 
 ## Considered Options
 

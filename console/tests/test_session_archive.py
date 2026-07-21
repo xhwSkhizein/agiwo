@@ -1,15 +1,17 @@
-"""Session archive / restore tests (P5-06)."""
+"""Session archive / restore tests."""
 
 from datetime import datetime, timezone
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.objective import CommandResult, ObjectiveStatus
 from agiwo.scheduler.engine import Scheduler
-from agiwo.scheduler.models import AgentStateStorageConfig, SchedulerConfig
+from agiwo.scheduler.models import (
+    AgentState,
+    AgentStateStatus,
+    AgentStateStorageConfig,
+    SchedulerConfig,
+)
 
 from server.app import create_app
 from server.config import ConsoleConfig
@@ -24,11 +26,9 @@ from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.runtime import AgentRuntimeCache
 from server.services.session_store import InMemorySessionStore
 from server.services.storage_wiring import (
-    create_objective_store,
     create_run_log_storage,
     create_trace_storage,
 )
-from tests.objective_test_support import build_test_objective_service
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
@@ -47,7 +47,6 @@ async def client():
     )
     run_log_storage = create_run_log_storage(config)
     trace_storage = create_trace_storage(config)
-    objective_store = create_objective_store(config)
     registry = AgentRegistry(config)
     await registry.initialize()
     scheduler = Scheduler(
@@ -62,19 +61,13 @@ async def client():
         console_config=config,
         session_store=session_store,
     )
-    test_agent, objective_service = build_test_objective_service(
-        objective_store,
-        scheduler,
-    )
     bind_console_runtime(
         app,
         ConsoleRuntime(
             config=config,
             run_log_storage=run_log_storage,
             trace_storage=trace_storage,
-            objective_store=objective_store,
             agent_registry=registry,
-            objective_service=objective_service,
             scheduler=scheduler,
             session_store=session_store,
             agent_runtime_cache=agent_runtime_cache,
@@ -84,15 +77,11 @@ async def client():
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
     clear_console_runtime(app)
-    await test_agent.close()
     await agent_runtime_cache.close()
     await scheduler.stop()
     await registry.close()
     await run_log_storage.close()
     await trace_storage.close()
-    close = getattr(objective_store, "close", None)
-    if close is not None:
-        await close()
     await session_store.close()
 
 
@@ -145,10 +134,10 @@ async def test_archive_and_restore_idle_session(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_archive_pauses_active_objective_first(client, monkeypatch) -> None:
+async def test_archive_cancels_active_root_run_first(client) -> None:
     runtime = _runtime(client)
-    service = runtime.objective_service
-    assert service is not None
+    scheduler = runtime.scheduler
+    assert scheduler is not None
     await runtime.agent_registry.create_agent(
         AgentConfigRecord(
             id="agent-1",
@@ -168,44 +157,20 @@ async def test_archive_pauses_active_objective_first(client, monkeypatch) -> Non
             updated_at=now,
         )
     )
-    create = await client.post(
-        "/api/objectives",
-        headers={"Idempotency-Key": "arch-obj"},
-        json={
-            "session_id": "sess-active",
-            "message": "busy",
-            "budget": {
-                "handoffs": 5,
-                "verification_attempts": 3,
-                "llm_cost_usd": 2.0,
-                "active_seconds": 600,
-            },
-        },
-    )
-    objective_id = create.json()["objective_id"]
-
-    pause_mock = AsyncMock(
-        return_value=CommandResult(
-            objective_id=objective_id,
-            status=ObjectiveStatus.USER_PAUSED.value,
+    await scheduler._store.save_state(
+        AgentState(
+            id="sess-active",
+            session_id="sess-active",
+            status=AgentStateStatus.RUNNING,
+            task="busy",
         )
-    )
-    monkeypatch.setattr(service, "pause", pause_mock)
-    monkeypatch.setattr(
-        service,
-        "get_view",
-        AsyncMock(
-            return_value=SimpleNamespace(
-                objective_id=objective_id,
-                is_terminal=False,
-                status=ObjectiveStatus.USER_PAUSED,
-            )
-        ),
     )
 
     archive = await client.post("/api/sessions/sess-active/archive")
     assert archive.status_code == 200
-    pause_mock.assert_awaited_once()
+    state = await scheduler.get_state("sess-active")
+    assert state is not None
+    assert not state.is_active()
     session = await runtime.session_store.get_session("sess-active")
     assert session is not None
     assert session.archived_at is not None

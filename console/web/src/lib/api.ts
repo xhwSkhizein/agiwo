@@ -293,7 +293,8 @@ export interface RunResponse {
   agent_id: string;
   session_id: string;
   user_id: string | null;
-  user_input: UserInput;
+  /** Null for ADR 0048 history-only root Runs (user text lives in steps). */
+  user_input: UserInput | null;
   status: string;
   response_content: string | null;
   metrics: RunMetricsPayload | null;
@@ -380,25 +381,16 @@ export interface SchedulerAckEventPayload {
   state_id?: string | null;
 }
 
-export interface ObjectiveAckEventPayload {
-  type: "objective_ack";
-  objective_id: string;
-  status?: string;
+export interface SessionTurnEventPayload {
+  kind: "session";
+  session_id: string;
+  run_id: string | null;
+  status: string;
+  response: string | null;
 }
 
-export interface ObjectiveStreamEventPayload {
-  type: "objective_event";
-  sequence: number;
-  fact_id: string;
-  kind: string;
-  occurred_at: string;
-  summary: string;
-  refs?: Record<string, string | number | boolean | null>;
-}
-
-export interface ObjectiveErrorEventPayload {
-  type: "objective_error";
-  code?: string;
+export interface SessionErrorEventPayload {
+  type: "session_error";
   message: string;
 }
 
@@ -413,9 +405,8 @@ export type StreamEventPayload =
   | AgentStreamEventPayload
   | SchedulerFailedEventPayload
   | SchedulerAckEventPayload
-  | ObjectiveAckEventPayload
-  | ObjectiveStreamEventPayload
-  | ObjectiveErrorEventPayload;
+  | SessionTurnEventPayload
+  | SessionErrorEventPayload;
 
 export function listSessions(limit = 20, offset = 0) {
   return fetchJSON<PageResponse<SessionSummary>>(
@@ -687,48 +678,6 @@ export interface AgentConfigCreate {
   options: AgentOptionsPayload;
   model_params: ModelParamsPayload;
   assignment_templates?: AssignmentTemplates | null;
-}
-
-export interface RootRunView {
-  run_id: string;
-  role: string;
-  status: string;
-  run_ids: string[];
-  outcome_report: string | null;
-  decision_target: string | null;
-  created_at: string | null;
-  updated_at: string | null;
-}
-
-export interface ObjectiveTimelineNode {
-  sequence: number;
-  fact_id: string;
-  kind: string;
-  occurred_at: string;
-  summary: string;
-  refs: Record<string, string | number | boolean | null>;
-}
-
-export interface ObjectiveView {
-  objective_id: string;
-  session_id: string;
-  status: string;
-  is_terminal: boolean;
-  delivery_report: string | null;
-  delivery_outcome_id: string | null;
-  last_sequence: number;
-  timeline: ObjectiveTimelineNode[];
-  root_runs?: RootRunView[];
-  artifacts: Array<{ artifact_id: string; path: string; summary: string }>;
-  budget: {
-    handoffs: { limit: number; used: number; remaining: number };
-    verification_attempts: { limit: number; used: number; remaining: number };
-    llm_cost_usd: { limit: number; used: number; remaining: number };
-    active_seconds: { limit: number; used: number; remaining: number };
-  };
-  context_capacity?: Record<string, unknown> | null;
-  created_at?: string | null;
-  updated_at?: string | null;
 }
 
 export interface AvailableTool {
@@ -1004,14 +953,6 @@ export async function deleteSession(sessionId: string) {
   await archiveSession(sessionId);
 }
 
-export function listSessionObjectives(sessionId: string) {
-  return fetchJSON<ObjectiveView[]>(`/api/sessions/${sessionId}/objectives`);
-}
-
-export function getObjective(objectiveId: string) {
-  return fetchJSON<ObjectiveView>(`/api/objectives/${objectiveId}`);
-}
-
 export function previewAssignmentTemplate(
   kind: "work" | "verification",
   template: string,
@@ -1034,11 +975,35 @@ export function sessionInputStreamUrl(sessionId: string) {
 
 export function parseStreamEventPayload(data: string): StreamEventPayload | null {
   try {
-    const parsed = JSON.parse(data) as StreamEventPayload;
-    if (!parsed || typeof parsed !== "object" || typeof parsed.type !== "string") {
+    const parsed = JSON.parse(data) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") {
       return null;
     }
-    return parsed;
+    if (parsed.kind === "session") {
+      return {
+        kind: "session",
+        session_id: String(parsed.session_id ?? ""),
+        run_id:
+          parsed.run_id === null || parsed.run_id === undefined
+            ? null
+            : String(parsed.run_id),
+        status: String(parsed.status ?? "completed"),
+        response:
+          parsed.response === null || parsed.response === undefined
+            ? null
+            : String(parsed.response),
+      };
+    }
+    if (typeof parsed.type === "string") {
+      return parsed as unknown as StreamEventPayload;
+    }
+    if (typeof parsed.message === "string") {
+      return {
+        type: "session_error",
+        message: parsed.message,
+      };
+    }
+    return null;
   } catch {
     return null;
   }

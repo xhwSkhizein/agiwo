@@ -34,7 +34,9 @@ class RouteStreamMode(str, Enum):
 class DispatchReason(str, Enum):
     ROOT_SUBMIT = "root_submit"
     ROOT_QUEUED_INPUT = "root_queued_input"
-    OBJECTIVE_ROOT = "objective_root"
+    SESSION_ROOT = "session_root"
+    # Back-compat alias; prefer SESSION_ROOT (ADR 0048).
+    OBJECTIVE_ROOT = "session_root"
     CHILD_PENDING = "child_pending"
     WAKE_READY = "wake_ready"
     WAKE_EVENTS = "wake_events"

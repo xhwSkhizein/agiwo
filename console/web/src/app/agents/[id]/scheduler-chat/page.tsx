@@ -41,12 +41,12 @@ import type {
   AgentConfig,
   AgentStateDetail,
   AgentStateListItem,
+  AgentStreamEventPayload,
   ConversationEvent,
   PendingEventItem,
   ReviewCycle,
   RunCompletedEventPayload,
   SessionMilestoneBoard,
-  StreamEventPayload,
 } from "@/lib/api";
 import type { ChatMessage } from "@/lib/chat-types";
 import {
@@ -164,7 +164,7 @@ function ExecutionInsightPanel({
       <div className="rounded-lg border border-line bg-panel/80 p-3">
         <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-ink-faint">
           <Flag className="h-3.5 w-3.5" />
-          Current Objective
+          Current Milestone
         </div>
         {activeMilestone ? (
           <div className="space-y-2">
@@ -421,7 +421,7 @@ function SchedulerChatPageContent() {
   );
 
   const handleChildEvent = useCallback(
-    (childAgentId: string, data: StreamEventPayload) => {
+    (childAgentId: string, data: AgentStreamEventPayload) => {
       if (data.type === "step_delta" && "delta" in data && data.delta) {
         const delta = data.delta;
         if (delta.content) {

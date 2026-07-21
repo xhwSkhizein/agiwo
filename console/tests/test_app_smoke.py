@@ -80,10 +80,6 @@ async def test_lifespan_closes_session_store(
     scheduler = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
     agent_runtime_cache = SimpleNamespace(close=AsyncMock())
     skill_manager = SimpleNamespace(initialize=AsyncMock())
-    objective_service = SimpleNamespace(
-        start_dispatcher=AsyncMock(),
-        stop_dispatcher=AsyncMock(),
-    )
 
     async def fake_safe_close_all(*closables: object) -> None:
         for obj in closables:
@@ -96,10 +92,6 @@ async def test_lifespan_closes_session_store(
         app_module, "create_run_log_storage", lambda _cfg: run_log_storage
     )
     monkeypatch.setattr(app_module, "create_trace_storage", lambda _cfg: trace_storage)
-    objective_store = SimpleNamespace(close=AsyncMock(), connect=AsyncMock())
-    monkeypatch.setattr(
-        app_module, "create_objective_store", lambda _cfg: objective_store
-    )
     monkeypatch.setattr(app_module, "AgentRegistry", lambda _cfg: agent_registry)
     monkeypatch.setattr(
         app_module, "RuntimeConfigService", lambda _cfg: SimpleNamespace()
@@ -113,9 +105,6 @@ async def test_lifespan_closes_session_store(
         app_module,
         "AgentRuntimeCache",
         lambda **_kwargs: agent_runtime_cache,
-    )
-    monkeypatch.setattr(
-        app_module, "ObjectiveService", lambda *_args, **_kwargs: objective_service
     )
     monkeypatch.setattr(
         app_module, "bind_console_runtime", lambda *_args, **_kwargs: None
@@ -132,9 +121,6 @@ async def test_lifespan_closes_session_store(
     session_store.close.assert_awaited_once()
     run_log_storage.close.assert_awaited_once()
     trace_storage.close.assert_awaited_once()
-    objective_store.close.assert_awaited_once()
-    objective_service.start_dispatcher.assert_awaited_once()
-    objective_service.stop_dispatcher.assert_awaited_once()
     scheduler.stop.assert_awaited_once()
 
 
@@ -176,10 +162,6 @@ async def test_lifespan_closes_partial_startup_resources_on_error(
         app_module, "create_run_log_storage", lambda _cfg: run_log_storage
     )
     monkeypatch.setattr(app_module, "create_trace_storage", lambda _cfg: trace_storage)
-    objective_store = SimpleNamespace(close=AsyncMock(), connect=AsyncMock())
-    monkeypatch.setattr(
-        app_module, "create_objective_store", lambda _cfg: objective_store
-    )
     monkeypatch.setattr(app_module, "AgentRegistry", lambda _cfg: agent_registry)
     monkeypatch.setattr(
         app_module, "RuntimeConfigService", lambda _cfg: SimpleNamespace()
@@ -189,22 +171,10 @@ async def test_lifespan_closes_partial_startup_resources_on_error(
     monkeypatch.setattr(
         app_module, "create_session_store", lambda **_kwargs: session_store
     )
-    objective_service = SimpleNamespace(
-        start_dispatcher=AsyncMock(),
-        stop_dispatcher=AsyncMock(),
-    )
-    monkeypatch.setattr(
-        app_module, "ObjectiveService", lambda *_args, **_kwargs: objective_service
-    )
     monkeypatch.setattr(
         app_module,
         "AgentRuntimeCache",
         lambda **_kwargs: SimpleNamespace(close=AsyncMock()),
-    )
-    monkeypatch.setattr(
-        app_module,
-        "build_default_agent_record",
-        lambda _cfg: SimpleNamespace(assignment_templates=None, id="default", name="d"),
     )
     monkeypatch.setattr(app_module, "safe_close_all", fake_safe_close_all)
 
@@ -217,7 +187,4 @@ async def test_lifespan_closes_partial_startup_resources_on_error(
     agent_registry.close.assert_awaited_once()
     run_log_storage.close.assert_awaited_once()
     trace_storage.close.assert_awaited_once()
-    objective_store.close.assert_awaited_once()
-    objective_service.start_dispatcher.assert_awaited_once()
-    objective_service.stop_dispatcher.assert_awaited_once()
     scheduler.stop.assert_awaited_once()

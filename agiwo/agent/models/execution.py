@@ -20,8 +20,8 @@ class RunTreeRole(str, Enum):
 class RunExecutionRequest:
     """Narrow internal request carrying preallocated Run identity.
 
-    Does not carry FinalizationSpec — root finalization is triggered by
-    ``run_tree_role=root`` inside the Agent package (ADR 0006 / P2-05).
+    Root next-action is derived mechanically inside the Agent package
+    (ADR 0047) — no finalization LLM.
     """
 
     run_id: str
@@ -30,6 +30,9 @@ class RunExecutionRequest:
     template_hash: str | None = None
     config_revision: str | None = None
     resume: bool = False
+    verification_required: bool = False
+    # Objective Run Role when this is an Objective-managed root.
+    objective_run_role: str | None = None
 
     def __post_init__(self) -> None:
         if not self.run_id:

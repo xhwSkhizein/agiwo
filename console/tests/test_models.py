@@ -366,6 +366,22 @@ class TestRunResponseFromSdk:
         assert response.status == "running"
         assert response.metrics is None
 
+    def test_from_sdk_allows_null_user_input_for_history_only_root(self):
+        """ADR 0048: Session root Runs may start with user_input=None."""
+        run = RunView(
+            run_id="run-view-3",
+            agent_id="agent-1",
+            session_id="session-1",
+            status=RunStatus.COMPLETED,
+            last_user_input=None,
+            response="2",
+        )
+
+        response = run_response_from_sdk(run)
+
+        assert response.user_input is None
+        assert response.response_content == "2"
+
 
 class TestToolReferenceLazyLoading:
     """Test tool_reference lazy loads builtin tools."""

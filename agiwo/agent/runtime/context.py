@@ -106,6 +106,14 @@ class RunContext:
         return self._identity.run_tree_role
 
     @property
+    def verification_required(self) -> bool:
+        return self._identity.verification_required
+
+    @property
+    def objective_run_role(self) -> str | None:
+        return self._identity.objective_run_role
+
+    @property
     def identity(self) -> RunIdentity:
         return self._identity
 

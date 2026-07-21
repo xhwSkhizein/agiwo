@@ -18,6 +18,7 @@ from agiwo.agent.budget_gate import (
 )
 from agiwo.agent.models.model_call import (
     FINALIZATION_PHASES,
+    LlmAttemptEnvelope,
     ModelCallPhase,
     new_logical_call_id,
 )
@@ -156,10 +157,7 @@ async def execute_model_call(
             await coordinator.ensure_progress_allowed()
             if state.pause_request is not None:
                 raise
-            wait_seconds = min(
-                coordinator.policy.max_backoff_seconds,
-                coordinator.policy.min_backoff_seconds * (2 ** (attempt_no - 1)),
-            )
+            wait_seconds = coordinator.backoff_seconds(attempt_no)
             await writer.record_retry_backoff(
                 operation="llm",
                 attempt_no=attempt_no,
@@ -216,23 +214,27 @@ async def _stream_single_attempt(
         cache_creation_tokens=int(request_estimate.cache_creation_tokens or 0),
     )
 
-    await _admit_objective_llm_attempt(
-        state=state,
-        model=model,
-        phase=phase,
+    # call_ordinal reserved before admit so gate + RunLog share the same identity
+    pending_ordinal = ledger.next_ordinal()
+    envelope = LlmAttemptEnvelope(
         logical_call_id=logical_call_id,
+        phase=phase,
         attempt_no=attempt_no,
-        call_ordinal=ledger.next_ordinal(),
+        call_ordinal=pending_ordinal,
+        retry_reason=retry_reason,
         request_tokens=request_tokens,
-        max_output_tokens=max_output_tokens,
         call_cost_ceiling=call_cost_ceiling,
         price_snapshot=price_snapshot,
     )
+    await _admit_objective_llm_attempt(
+        state=state,
+        model=model,
+        envelope=envelope,
+        max_output_tokens=max_output_tokens,
+    )
 
     call_ordinal = ledger.record_attempt_started(phase)
-    await writer.record_llm_call_started(
-        messages=resolved_messages,
-        tools=resolved_tools,
+    envelope = LlmAttemptEnvelope(
         logical_call_id=logical_call_id,
         phase=phase,
         attempt_no=attempt_no,
@@ -241,6 +243,11 @@ async def _stream_single_attempt(
         request_tokens=request_tokens,
         call_cost_ceiling=call_cost_ceiling,
         price_snapshot=price_snapshot,
+    )
+    await writer.record_llm_call_started(
+        messages=resolved_messages,
+        tools=resolved_tools,
+        envelope=envelope,
     )
 
     try:
@@ -255,47 +262,26 @@ async def _stream_single_attempt(
         )
     except Exception as exc:
         await writer.record_llm_call_failed(
-            logical_call_id=logical_call_id,
-            phase=phase,
-            attempt_no=attempt_no,
-            call_ordinal=call_ordinal,
-            retry_reason=retry_reason,
+            envelope=envelope,
             error=str(exc),
             response_observed=False,
-            request_tokens=request_tokens,
-            call_cost_ceiling=call_cost_ceiling,
-            price_snapshot=price_snapshot,
         )
         ledger.record_attempt_failed(phase)
         await _record_objective_llm_cost(
             state=state,
-            phase=phase,
-            logical_call_id=logical_call_id,
-            attempt_no=attempt_no,
-            call_ordinal=call_ordinal,
-            retry_reason=retry_reason,
-            request_tokens=request_tokens,
+            envelope=envelope,
             accepted_output_tokens=0,
-            call_cost_ceiling=call_cost_ceiling,
             cost_usd=0.0,
             response_observed=False,
             source="no_response",
-            price_snapshot=price_snapshot,
         )
         raise
 
     await writer.record_llm_call_completed(
         step=step,
         llm=llm_context,
-        logical_call_id=logical_call_id,
-        phase=phase,
-        attempt_no=attempt_no,
-        call_ordinal=call_ordinal,
-        retry_reason=retry_reason,
+        envelope=envelope,
         response_observed=True,
-        request_tokens=request_tokens,
-        call_cost_ceiling=call_cost_ceiling,
-        price_snapshot=price_snapshot,
     )
     ledger.record_attempt_completed(phase)
     cost_usd = float(step.metrics.token_cost or 0.0) if step.metrics else 0.0
@@ -307,18 +293,11 @@ async def _stream_single_attempt(
     )
     await _record_objective_llm_cost(
         state=state,
-        phase=phase,
-        logical_call_id=logical_call_id,
-        attempt_no=attempt_no,
-        call_ordinal=call_ordinal,
-        retry_reason=retry_reason,
-        request_tokens=request_tokens,
+        envelope=envelope,
         accepted_output_tokens=accepted_output,
-        call_cost_ceiling=call_cost_ceiling,
         cost_usd=cost_usd,
         response_observed=True,
         source=usage_source,
-        price_snapshot=price_snapshot,
     )
     return step, llm_context
 
@@ -327,14 +306,8 @@ async def _admit_objective_llm_attempt(
     *,
     state: RunContext,
     model: Model,
-    phase: ModelCallPhase,
-    logical_call_id: str,
-    attempt_no: int,
-    call_ordinal: int,
-    request_tokens: int,
+    envelope: LlmAttemptEnvelope,
     max_output_tokens: int,
-    call_cost_ceiling: float,
-    price_snapshot: dict[str, float],
 ) -> None:
     del model  # prices already snapshotted by caller
     if state.objective_id is None:
@@ -346,14 +319,14 @@ async def _admit_objective_llm_attempt(
         LlmAttemptAdmitRequest(
             objective_id=state.objective_id,
             run_id=state.run_id,
-            logical_call_id=logical_call_id,
-            phase=phase.value,
-            attempt_no=attempt_no,
-            call_ordinal=call_ordinal,
-            request_tokens=request_tokens,
+            logical_call_id=envelope.logical_call_id,
+            phase=envelope.phase.value,
+            attempt_no=envelope.attempt_no,
+            call_ordinal=envelope.call_ordinal,
+            request_tokens=int(envelope.request_tokens or 0),
             max_output_tokens=max_output_tokens,
-            call_cost_ceiling=call_cost_ceiling,
-            price_snapshot=price_snapshot,
+            call_cost_ceiling=float(envelope.call_cost_ceiling or 0.0),
+            price_snapshot=dict(envelope.price_snapshot or {}),
         )
     )
 
@@ -361,18 +334,11 @@ async def _admit_objective_llm_attempt(
 async def _record_objective_llm_cost(
     *,
     state: RunContext,
-    phase: ModelCallPhase,
-    logical_call_id: str,
-    attempt_no: int,
-    call_ordinal: int,
-    retry_reason: str | None,
-    request_tokens: int,
+    envelope: LlmAttemptEnvelope,
     accepted_output_tokens: int,
-    call_cost_ceiling: float,
     cost_usd: float,
     response_observed: bool,
     source: str,
-    price_snapshot: dict[str, float],
 ) -> None:
     if state.objective_id is None:
         return
@@ -383,18 +349,18 @@ async def _record_objective_llm_cost(
         LlmAttemptCostEvent(
             objective_id=state.objective_id,
             run_id=state.run_id,
-            logical_call_id=logical_call_id,
-            phase=phase.value,
-            attempt_no=attempt_no,
-            call_ordinal=call_ordinal,
-            request_tokens=request_tokens,
+            logical_call_id=envelope.logical_call_id,
+            phase=envelope.phase.value,
+            attempt_no=envelope.attempt_no,
+            call_ordinal=envelope.call_ordinal,
+            request_tokens=int(envelope.request_tokens or 0),
             accepted_output_tokens=accepted_output_tokens,
-            call_cost_ceiling=call_cost_ceiling,
+            call_cost_ceiling=float(envelope.call_cost_ceiling or 0.0),
             cost_usd=cost_usd,
             response_observed=response_observed,
             source=source,
-            price_snapshot=price_snapshot,
-            retry_reason=retry_reason,
+            price_snapshot=dict(envelope.price_snapshot or {}),
+            retry_reason=envelope.retry_reason,
         )
     )
 

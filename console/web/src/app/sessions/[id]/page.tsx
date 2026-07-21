@@ -7,11 +7,8 @@ import { Workflow } from "lucide-react";
 import { BackHeader } from "@/components/back-header";
 import { MetricCard } from "@/components/metric-card";
 import { MonoText } from "@/components/mono-text";
-import { RootRunTags } from "@/components/session-detail/root-run-tags";
 import { ConversationEventList } from "@/components/session-detail/conversation-event-list";
 import { MilestoneBoard } from "@/components/session-detail/milestone-board";
-import { OutcomeHero } from "@/components/session-detail/outcome-hero";
-import { ProcessSummary } from "@/components/session-detail/process-summary";
 import { RunsStepsPanel } from "@/components/session-detail/runs-steps-panel";
 import { SessionObservabilityPanel } from "@/components/session-detail/session-observability-panel";
 import {
@@ -19,7 +16,6 @@ import {
   useSessionRunsPage,
   useSessionStepsFeed,
 } from "@/components/session-detail/use-session-detail-data";
-import { useSessionObjectives } from "@/components/session-detail/use-session-objectives";
 import {
   EmptyStateMessage,
   ErrorStateMessage,
@@ -47,7 +43,6 @@ export default function SessionDetailPage() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   const detailState = useSessionDetailResource(sessionId);
-  const objectivesState = useSessionObjectives(sessionId);
   const runsState = useSessionRunsPage(
     sessionId,
     runsPageSize,
@@ -56,21 +51,17 @@ export default function SessionDetailPage() {
   );
   const detail = detailState.detail;
   const runs = runsState.runs;
-  const activeObjective = objectivesState.active;
 
   const preferredRunId = useMemo(() => {
     if (runs.length === 0) {
       return null;
     }
-    const preferredRoot =
-      activeObjective?.root_runs?.find((item) => item.run_id)?.run_id ?? null;
     return (
-      (preferredRoot && runs.find((run) => run.id === preferredRoot)?.id) ||
       runs.find((run) => !run.parent_run_id)?.id ||
       runs[0]?.id ||
       null
     );
-  }, [activeObjective, runs]);
+  }, [runs]);
 
   const effectiveRunId =
     selectedRunId && runs.some((run) => run.id === selectedRunId)
@@ -80,57 +71,14 @@ export default function SessionDetailPage() {
   const stepsState = useSessionStepsFeed(sessionId, true, effectiveRunId);
 
   const loading =
-    detailState.loading ||
-    objectivesState.loading ||
-    (runsState.loading && runs.length === 0);
-  const error = detailState.error || objectivesState.error || runsState.error;
+    detailState.loading || (runsState.loading && runs.length === 0);
+  const error = detailState.error || runsState.error;
 
   const runTotals = normalizeRunMetricsSummary(detail?.summary.metrics);
   const schedulerResult = getSchedulerRunResultView(
     detail?.scheduler_state?.last_run_result,
     detail?.scheduler_state?.result_summary,
   );
-
-  const budgetCards = useMemo(() => {
-    if (!activeObjective) {
-      return null;
-    }
-    const budget = activeObjective.budget;
-    return (
-      <div className="grid gap-2 sm:grid-cols-2">
-        {(
-          [
-            ["Handoffs", budget.handoffs],
-            ["Verification", budget.verification_attempts],
-            ["LLM USD", budget.llm_cost_usd],
-            ["Active sec", budget.active_seconds],
-          ] as const
-        ).map(([label, dim]) => {
-          const pct =
-            dim.limit > 0 ? Math.min(100, (dim.used / dim.limit) * 100) : 0;
-          return (
-            <div key={label} className="space-y-1 text-xs">
-              <div className="flex justify-between text-ink-muted">
-                <span>{label}</span>
-                <span className="font-mono">
-                  {typeof dim.used === "number" && label.includes("USD")
-                    ? dim.used.toFixed(2)
-                    : dim.used}
-                  /{dim.limit}
-                </span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full border border-line bg-background">
-                <div
-                  className={`h-full ${pct > 80 ? "bg-amber-400" : "bg-accent/70"}`}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }, [activeObjective]);
 
   const updateExtras = (next: boolean) => {
     setShowExtras(next);
@@ -203,102 +151,48 @@ export default function SessionDetailPage() {
             </button>
           </div>
 
-          <OutcomeHero
-            objective={activeObjective}
-            sessionId={sessionId}
-            onRefresh={() => void objectivesState.reload()}
-          />
-
-          <RootRunTags
-            objective={activeObjective}
-            onSelectRunId={setSelectedRunId}
-          />
-
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-            <RunsStepsPanel
-              sessionId={sessionId}
-              runs={runs}
-              selectedRunId={effectiveRunId}
-              onSelectRunId={setSelectedRunId}
-              steps={stepsState.steps}
-              stepsLoading={stepsState.loading}
-              stepsError={stepsState.error}
-              hasMoreSteps={stepsState.hasMore}
-              loadingMoreSteps={stepsState.loadingMore}
-              onLoadEarlierSteps={() => void stepsState.loadEarlier()}
-              runsOffset={runsOffset}
-              runsPageSize={runsPageSize}
-              runsTotal={runsState.total}
-              runsHasMore={runsState.hasMore}
-              runsLoading={runsState.loading}
-              onRunsPageSizeChange={(size) => {
-                setRunsPageSize(size);
-                setRunsOffset(0);
-              }}
-              onRunsPrevious={() =>
-                setRunsOffset((current) => Math.max(0, current - runsPageSize))
-              }
-              onRunsNext={() => setRunsOffset((current) => current + runsPageSize)}
-            />
-
-            <aside className="space-y-3 lg:sticky lg:top-4 lg:self-start">
-              <ProcessSummary objective={activeObjective} />
-
-              <div className="rounded-xl border border-line bg-panel">
-                <div className="border-b border-line px-3 py-2 text-sm font-medium">
-                  Budget
-                </div>
-                <div className="px-3 py-3">
-                  {budgetCards ?? (
-                    <p className="text-xs text-ink-muted">No budget ledger.</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-line bg-panel">
-                <div className="border-b border-line px-3 py-2 text-sm font-medium">
-                  Artifacts
-                </div>
-                <div className="space-y-2 px-3 py-3 text-xs">
-                  {(activeObjective?.artifacts.length ?? 0) === 0 ? (
-                    <p className="text-ink-muted">No artifacts.</p>
-                  ) : (
-                    activeObjective!.artifacts.map((artifact) => (
-                      <div
-                        key={artifact.artifact_id}
-                        className="flex justify-between gap-2 border-b border-line pb-2 last:border-0 last:pb-0"
-                      >
-                        <span className="break-all text-ink-muted">
-                          {artifact.path}
-                        </span>
-                        <MonoText className="shrink-0 text-[10px] text-ink-faint">
-                          {artifact.artifact_id.slice(0, 8)}
-                        </MonoText>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-line bg-panel px-3 py-3">
-                <div className="mb-2 text-sm font-medium">Session metrics</div>
-                <div className="grid grid-cols-2 gap-2 text-xs text-ink-muted">
-                  <span>Cost {formatUsd(runTotals.token_cost)}</span>
-                  <span>Tokens {formatTokenCount(runTotals.total_tokens)}</span>
-                  <span>
-                    Runs {detail.summary.run_count} / Steps {runTotals.step_count}
-                  </span>
-                  <span>Status {detail.summary.root_state_status || "—"}</span>
-                </div>
-                <div className="mt-2 text-xs text-ink-faint">
-                  Agent{" "}
-                  <MonoText className="text-[11px]">
-                    {detail.summary.base_agent_id || "-"}
-                  </MonoText>
-                </div>
-              </div>
-            </aside>
+          <div className="rounded-xl border border-line bg-panel px-4 py-3">
+            <div className="grid grid-cols-2 gap-3 text-xs text-ink-muted sm:grid-cols-4">
+              <span>Cost {formatUsd(runTotals.token_cost)}</span>
+              <span>Tokens {formatTokenCount(runTotals.total_tokens)}</span>
+              <span>
+                Runs {detail.summary.run_count} / Steps {runTotals.step_count}
+              </span>
+              <span>Status {detail.summary.root_state_status || "—"}</span>
+            </div>
+            <div className="mt-2 text-xs text-ink-faint">
+              Agent{" "}
+              <MonoText className="text-[11px]">
+                {detail.summary.base_agent_id || "-"}
+              </MonoText>
+            </div>
           </div>
+
+          <RunsStepsPanel
+            sessionId={sessionId}
+            runs={runs}
+            selectedRunId={effectiveRunId}
+            onSelectRunId={setSelectedRunId}
+            steps={stepsState.steps}
+            stepsLoading={stepsState.loading}
+            stepsError={stepsState.error}
+            hasMoreSteps={stepsState.hasMore}
+            loadingMoreSteps={stepsState.loadingMore}
+            onLoadEarlierSteps={() => void stepsState.loadEarlier()}
+            runsOffset={runsOffset}
+            runsPageSize={runsPageSize}
+            runsTotal={runsState.total}
+            runsHasMore={runsState.hasMore}
+            runsLoading={runsState.loading}
+            onRunsPageSizeChange={(size) => {
+              setRunsPageSize(size);
+              setRunsOffset(0);
+            }}
+            onRunsPrevious={() =>
+              setRunsOffset((current) => Math.max(0, current - runsPageSize))
+            }
+            onRunsNext={() => setRunsOffset((current) => current + runsPageSize)}
+          />
 
           {schedulerResult && (
             <div className="space-y-2 rounded-lg border border-line bg-panel p-4">

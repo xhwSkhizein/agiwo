@@ -4,7 +4,9 @@ Console 对 `intake`、`work`、`verification` 模板的保存不是仅修改进
 
 ## Status
 
-accepted
+superseded by ADR-0046 / ADR-0047
+
+> 不再把 Assignment/Run 史诗模板作为 AgentConfig 一等持久字段来驱动默认路径。
 
 ## Considered Options
 

@@ -11,7 +11,7 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     distro = None
 
-from agiwo.agent.hooks import filter_relevant_memories
+from agiwo.memory.defaults import filter_relevant_memories
 from agiwo.agent.models.input import ChannelContext, UserMessage
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.step import StepView

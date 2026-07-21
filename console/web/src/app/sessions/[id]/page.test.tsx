@@ -5,7 +5,6 @@ const apiMocks = vi.hoisted(() => ({
   getSessionDetail: vi.fn(),
   getSessionSteps: vi.fn(),
   listRuns: vi.fn(),
-  listSessionObjectives: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -21,72 +20,13 @@ vi.mock("@/lib/api", async () => {
     getSessionDetail: apiMocks.getSessionDetail,
     getSessionSteps: apiMocks.getSessionSteps,
     listRuns: apiMocks.listRuns,
-    listSessionObjectives: apiMocks.listSessionObjectives,
   };
 });
 
 import SessionDetailPage from "./page";
 
 describe("SessionDetailPage", () => {
-  test("shows runs and steps as the main stage with compact outcome", async () => {
-    apiMocks.listSessionObjectives.mockResolvedValue([
-      {
-        objective_id: "obj-1",
-        session_id: "sess-1",
-        status: "WAITING_USER",
-        is_terminal: false,
-        delivery_report: null,
-        delivery_outcome_id: null,
-        last_sequence: 3,
-        timeline: [
-          {
-            sequence: 1,
-            fact_id: "f1",
-            kind: "ObjectiveCreated",
-            occurred_at: "2026-04-22T12:00:00Z",
-            summary: "Created objective",
-            refs: {},
-          },
-          {
-            sequence: 3,
-            fact_id: "f3",
-            kind: "WaitingIntervalStarted",
-            occurred_at: "2026-04-22T12:01:00Z",
-            summary: "Waiting for user confirmation",
-            refs: {},
-          },
-        ],
-        root_runs: [
-          {
-            run_id: "run-1",
-            role: "work",
-            status: "COMPLETED",
-            run_ids: ["run-1"],
-            outcome_report: null,
-            decision_target: "agent",
-            created_at: null,
-            updated_at: null,
-          },
-          {
-            run_id: "run-2",
-            role: "verification",
-            status: "COMPLETED",
-            run_ids: ["run-2"],
-            outcome_report: "Need confirmation",
-            decision_target: "user",
-            created_at: null,
-            updated_at: null,
-          },
-        ],
-        artifacts: [],
-        budget: {
-          handoffs: { limit: 5, used: 2, remaining: 3 },
-          verification_attempts: { limit: 3, used: 0, remaining: 3 },
-          llm_cost_usd: { limit: 2, used: 0.4, remaining: 1.6 },
-          active_seconds: { limit: 3600, used: 120, remaining: 3480 },
-        },
-      },
-    ]);
+  test("shows runs and steps as the main stage", async () => {
     apiMocks.getSessionDetail.mockResolvedValue({
       summary: {
         session_id: "sess-1",
@@ -247,18 +187,10 @@ describe("SessionDetailPage", () => {
       expect(screen.getByText("Agent Runs & Steps")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("WAITING_USER")).toBeInTheDocument();
-    expect(screen.getByText("Needs your reply")).toBeInTheDocument();
-    expect(screen.getByText("work")).toBeInTheDocument();
-    expect(screen.getByText("verification")).toBeInTheDocument();
-    expect(screen.getByText("Process summary")).toBeInTheDocument();
-    expect(
-      screen.getAllByText("Waiting for user confirmation").length,
-    ).toBeGreaterThan(0);
+    expect(screen.getByText("hello")).toBeInTheDocument();
     expect(apiMocks.listRuns).toHaveBeenCalled();
     expect(apiMocks.getSessionSteps).toHaveBeenCalled();
 
-    // Milestone / conversation stay behind debug extras
     expect(screen.queryByText("Milestone Board")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show debug extras" }));
     expect(await screen.findByText("Milestone Board")).toBeInTheDocument();
