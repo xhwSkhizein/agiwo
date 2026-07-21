@@ -5,7 +5,6 @@ import time
 from dataclasses import dataclass, replace
 from typing import Any
 
-from agiwo.agent.budget_gate import LlmBudgetGate
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import HookRegistry
 from agiwo.agent.models.run import RunIdentity, RunLedger
@@ -44,7 +43,6 @@ class RunContext:
         "_session_runtime",
         "config",
         "hooks",
-        "llm_budget_gate",
         "pause_request",
     )
 
@@ -55,7 +53,6 @@ class RunContext:
         ledger: RunLedger | None = None,
         session_runtime: SessionRuntime,
         messages: list[dict[str, Any]] | None = None,
-        llm_budget_gate: LlmBudgetGate | None = None,
     ) -> None:
         self._identity = identity
         self.ledger = ledger or RunLedger(messages=list(messages or []))
@@ -65,7 +62,6 @@ class RunContext:
         # operate safely if they fire before execute_run has injected them.
         self.config = AgentOptions()
         self.hooks = HookRegistry()
-        self.llm_budget_gate = llm_budget_gate
         self.pause_request: PauseRequest | None = None
 
     def request_pause(self, reason: str) -> None:
@@ -98,20 +94,8 @@ class RunContext:
         return self._identity.parent_run_id
 
     @property
-    def objective_id(self) -> str | None:
-        return self._identity.objective_id
-
-    @property
     def run_tree_role(self):
         return self._identity.run_tree_role
-
-    @property
-    def verification_required(self) -> bool:
-        return self._identity.verification_required
-
-    @property
-    def objective_run_role(self) -> str | None:
-        return self._identity.objective_run_role
 
     @property
     def identity(self) -> RunIdentity:

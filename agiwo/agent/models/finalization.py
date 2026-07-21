@@ -1,7 +1,7 @@
-"""Root-run mechanical finalization (ADR 0047).
+"""Run completion metadata (report-only; no cross-run routing).
 
-Outcome ``report`` is always the last ordinary assistant text from the work
-loop. Routing is derived mechanically — no finalization LLM call.
+ADR 0048: Session owns conversation. ``decision`` may carry a short reason
+tag for fault/report metadata but is not a handoff protocol.
 """
 
 from dataclasses import dataclass, field
@@ -10,10 +10,10 @@ from typing import Any
 
 @dataclass
 class RunFinalizationResult:
-    """Mechanically derived root-run finalization; ``report`` is work-loop text."""
+    """Work-loop completion snapshot attached to RunFinished when present."""
 
     report: str
-    decision: dict[str, Any]
+    decision: dict[str, Any] = field(default_factory=dict)
     new_contributions: list[dict[str, Any]] = field(default_factory=list)
     contribution_annotations: list[dict[str, Any]] = field(default_factory=list)
     objective_update: dict[str, Any] | None = None
@@ -47,97 +47,45 @@ class RunFinalizationResult:
         )
 
 
-def mechanical_agent_handoff_result(
+def completion_result(
     report: str,
     *,
-    reason: str,
-    carry_forward: list[dict[str, Any]] | None,
+    reason: str = "run_completed",
 ) -> RunFinalizationResult:
-    """Produce the system-owned fallback without inferring a model decision."""
+    """Mark a normal run completion with the last assistant report text."""
     return RunFinalizationResult(
         report=report,
-        decision={"target": "agent", "reason": reason},
-        carry_forward=list(carry_forward or []),
+        decision={"reason": reason},
         parse_error=reason,
     )
 
 
-def mechanical_user_delivery_result(
-    report: str,
-    *,
-    reason: str = "simple_path_mechanical_delivery",
-) -> RunFinalizationResult:
-    """Deliver to the user without a finalization LLM call (ADR 0047)."""
-    return RunFinalizationResult(
-        report=report,
-        decision={
-            "target": "user",
-            "expects_reply": False,
-            "reason": reason,
-        },
-        parse_error=reason,
-    )
-
-
-def mechanical_verifier_handoff_result(
-    report: str,
-    *,
-    reason: str = "verification_required_mechanical",
-) -> RunFinalizationResult:
-    """Hand off to a verification root Run (ADR 0047)."""
-    return RunFinalizationResult(
-        report=report,
-        decision={"target": "verifier", "reason": reason},
-        parse_error=reason,
-    )
-
-
-def derive_mechanical_finalization(
-    *,
-    report: str,
-    verification_required: bool,
-    objective_run_role: str | None,
-) -> RunFinalizationResult:
-    """Derive mechanical HandoffDecision without a finalization LLM (ADR 0047).
-
-    Rules:
-    - verification role → deliver
-    - work with verification_required (or plan latch) → verify
-    - otherwise → deliver
-    """
-    if objective_run_role == "verification":
-        return mechanical_user_delivery_result(
-            report, reason="verification_run_mechanical_delivery"
-        )
-    if verification_required:
-        return mechanical_verifier_handoff_result(report)
-    return mechanical_user_delivery_result(report)
-
-
-def mechanical_user_boundary_result(
+def fault_result(
     report: str,
     *,
     reason: str,
     carry_forward: list[dict[str, Any]] | None = None,
 ) -> RunFinalizationResult:
-    """System-owned handoff to the user (expects reply); does not consume handoffs."""
+    """Attach a system fault/report snapshot (no cross-run routing)."""
     return RunFinalizationResult(
         report=report,
-        decision={
-            "target": "user",
-            "expects_reply": True,
-            "reason": reason,
-        },
+        decision={"reason": reason},
         carry_forward=list(carry_forward or []),
         parse_error=reason,
     )
 
 
+# Names still imported by retry / run_loop.
+mechanical_user_delivery_result = completion_result
+mechanical_agent_handoff_result = fault_result
+mechanical_user_boundary_result = fault_result
+
+
 __all__ = [
     "RunFinalizationResult",
-    "derive_mechanical_finalization",
+    "completion_result",
+    "fault_result",
     "mechanical_agent_handoff_result",
     "mechanical_user_boundary_result",
     "mechanical_user_delivery_result",
-    "mechanical_verifier_handoff_result",
 ]

@@ -62,7 +62,6 @@ class RunStarted(RunLogEntry):
     user_id: str | None = None
     parent_run_id: str | None = None
     depth: int = 0
-    objective_id: str | None = None
     run_tree_role: str | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_STARTED)
 

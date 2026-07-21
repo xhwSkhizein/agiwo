@@ -67,7 +67,7 @@ def finalization_for_blocking_fault(
     carry_forward: list[dict[str, Any]] | None = None,
     plan_items: list[dict[str, Any]] | None = None,
 ) -> RunFinalizationResult:
-    """Map a blocking fault to mechanical agent handoff or user boundary."""
+    """Map a blocking fault to a report snapshot (no cross-run routing)."""
     report = build_fault_report(
         error, carry_forward=carry_forward, plan_items=plan_items
     )

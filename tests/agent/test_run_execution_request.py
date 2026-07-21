@@ -6,7 +6,6 @@ from collections.abc import AsyncIterator
 import pytest
 
 from agiwo.agent import Agent, RunTreeRole, RunExecutionRequest, RunStatus
-from agiwo.agent.budget_gate import PermissiveLlmBudgetGate
 from agiwo.agent.models.config import AgentConfig
 from agiwo.agent.models.input import ContentPart, ContentType, UserMessage
 from agiwo.agent.models.log import RunStarted
@@ -59,20 +58,12 @@ def test_run_status_enum_shape() -> None:
     }
 
 
-def test_run_execution_request_accepts_root_without_objective_id() -> None:
+def test_run_execution_request_accepts_root() -> None:
     req = RunExecutionRequest(
         run_id="r1",
         run_tree_role=RunTreeRole.ROOT,
     )
-    assert req.objective_id is None
     assert req.run_tree_role is RunTreeRole.ROOT
-    # Optional legacy tag still accepted when set.
-    tagged = RunExecutionRequest(
-        run_id="r2",
-        objective_id="obj1",
-        run_tree_role=RunTreeRole.ROOT,
-    )
-    assert tagged.objective_id == "obj1"
 
 
 @pytest.mark.asyncio
@@ -82,10 +73,8 @@ async def test_start_prevalidated_uses_preallocated_run_id() -> None:
         model=_FixedResponseModel(),
         id="agent-1",
     )
-    agent.llm_budget_gate = PermissiveLlmBudgetGate()
     request = RunExecutionRequest(
         run_id="run_fixed_1",
-        objective_id="obj1",
         run_tree_role=RunTreeRole.ROOT,
     )
     handle = agent.start_prevalidated(
@@ -98,7 +87,6 @@ async def test_start_prevalidated_uses_preallocated_run_id() -> None:
     assert result.run_id == "run_fixed_1"
     view = await agent.run_log_storage.get_run_view("run_fixed_1")
     assert view is not None
-    assert view.objective_id == "obj1"
     assert view.run_tree_role == RunTreeRole.ROOT
     await agent.close()
 
@@ -110,13 +98,11 @@ def test_run_started_round_trip_keeps_identity_fields() -> None:
         run_id="r",
         agent_id="a",
         user_input=_user(),
-        objective_id="o1",
         run_tree_role=RunTreeRole.ROOT.value,
     )
     stored = serialize_run_log_entry_for_storage(entry)
     restored = deserialize_run_log_entry_from_storage(stored)
     assert isinstance(restored, RunStarted)
-    assert restored.objective_id == "o1"
     assert restored.run_tree_role == "root"
     view = build_run_view_from_entries([restored])
     assert view is not None
@@ -136,14 +122,12 @@ async def test_scheduler_facade_stubs_and_dispatch() -> None:
             model=_FixedResponseModel(),
             id="root-1",
         )
-        agent.llm_budget_gate = PermissiveLlmBudgetGate()
         req = SchedulerExecutionRequest(
             state_id="root-1",
             session_id="sess-x",
             user_input=UserMessage.from_system("assignment input"),
             execution=RunExecutionRequest(
                 run_id="run_obj_1",
-                objective_id="o1",
                 run_tree_role=RunTreeRole.ROOT,
             ),
         )
@@ -165,7 +149,7 @@ async def test_scheduler_facade_stubs_and_dispatch() -> None:
         )
         view = await sched.get_run_view("run_obj_1")
         assert view is not None
-        assert view.objective_id == "o1"
+        assert view.run_tree_role == RunTreeRole.ROOT
         await agent.close()
     finally:
         await sched.stop()

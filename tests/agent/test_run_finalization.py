@@ -1,4 +1,4 @@
-"""Root-run plan guard and mechanical next-action tests (ADR 0047)."""
+"""Root-run plan guard and completion snapshot tests (ADR 0048)."""
 
 import json
 from collections.abc import AsyncIterator
@@ -11,7 +11,6 @@ from agiwo.agent import (
     AgentOptions,
     RunExecutionRequest,
 )
-from agiwo.agent.budget_gate import PermissiveLlmBudgetGate
 from agiwo.agent.models.execution import RunTreeRole
 from agiwo.llm.base import Model, StreamChunk
 
@@ -37,77 +36,43 @@ async def _run_root(
     model: Model,
     *,
     max_steps_per_run: int = 50,
-    verification_required: bool = False,
-    objective_run_role: str | None = "work",
 ):
     agent = Agent(
         AgentConfig(
-            name="assignment-finalization",
+            name="root-finalization",
             options=AgentOptions(
                 enable_termination_summary=False,
                 max_steps_per_run=max_steps_per_run,
             ),
         ),
-        id="assignment-finalization",
+        id="root-finalization",
         model=model,
     )
-    agent.llm_budget_gate = PermissiveLlmBudgetGate()
     handle = agent.start_prevalidated(
-        "complete the assignment",
-        session_id="assignment-finalization-session",
+        "complete the work",
+        session_id="root-finalization-session",
         execution_request=RunExecutionRequest(
-            run_id="assignment-run",
-            objective_id="objective-1",
+            run_id="root-run",
             run_tree_role=RunTreeRole.ROOT,
-            verification_required=verification_required,
-            objective_run_role=objective_run_role,
         ),
     )
     return await handle.wait()
 
 
 @pytest.mark.asyncio
-async def test_simple_root_mechanical_delivery() -> None:
+async def test_simple_root_completion_snapshot() -> None:
     model = _ScriptedModel(["ordinary report"])
 
-    result = await _run_root(model, verification_required=False)
+    result = await _run_root(model)
 
     assert result.response == "ordinary report"
     assert result.finalization is not None
-    assert result.finalization.decision["target"] == "user"
-    assert result.finalization.decision["expects_reply"] is False
+    assert result.finalization.decision == {"reason": "run_completed"}
     assert len(model.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_verification_required_mechanical_verifier_handoff() -> None:
-    model = _ScriptedModel(["ordinary report"])
-
-    result = await _run_root(model, verification_required=True)
-
-    assert result.finalization is not None
-    assert result.finalization.decision["target"] == "verifier"
-    assert len(model.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_verification_role_mechanical_delivery() -> None:
-    model = _ScriptedModel(["verified ok"])
-
-    result = await _run_root(
-        model,
-        verification_required=True,
-        objective_run_role="verification",
-    )
-
-    assert result.finalization is not None
-    assert result.finalization.decision["target"] == "user"
-    assert result.finalization.decision["expects_reply"] is False
-    assert len(model.calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_plan_milestones_arm_verifier_handoff() -> None:
+async def test_plan_milestones_still_guard_unfinished_root() -> None:
     update_plan_call = {
         "index": 0,
         "id": "plan-1",
@@ -145,17 +110,17 @@ async def test_plan_milestones_arm_verifier_handoff() -> None:
         ]
     )
 
-    result = await _run_root(model, verification_required=False)
+    result = await _run_root(model)
 
     assert result.finalization is not None
-    assert result.finalization.decision["target"] == "verifier"
+    assert result.finalization.decision == {"reason": "run_completed"}
     assert len(model.calls) == 4
     guard_call = model.calls[2]
     assert guard_call[-1]["origin"] == "assignment_plan_guard"
 
 
 @pytest.mark.asyncio
-async def test_non_root_run_keeps_ordinary_completion_behavior() -> None:
+async def test_session_none_run_also_keeps_completion_snapshot() -> None:
     model = _ScriptedModel(["ordinary report"])
     agent = Agent(
         AgentConfig(
@@ -164,7 +129,6 @@ async def test_non_root_run_keeps_ordinary_completion_behavior() -> None:
         ),
         model=model,
     )
-    agent.llm_budget_gate = PermissiveLlmBudgetGate()
     handle = agent.start_prevalidated(
         "hello",
         session_id="ordinary-session",
@@ -176,18 +140,18 @@ async def test_non_root_run_keeps_ordinary_completion_behavior() -> None:
     result = await handle.wait()
 
     assert result.response == "ordinary report"
-    assert result.finalization is None
+    assert result.finalization is not None
+    assert result.finalization.decision == {"reason": "run_completed"}
     assert len(model.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_root_max_steps_forces_mechanical_agent_handoff() -> None:
+async def test_root_max_steps_forces_fault_snapshot() -> None:
     model = _ScriptedModel([])
 
     result = await _run_root(model, max_steps_per_run=0)
 
     assert result.finalization is not None
     assert result.finalization.decision == {
-        "target": "agent",
         "reason": "max_steps_per_run_mechanical_handoff",
     }

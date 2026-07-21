@@ -6,7 +6,6 @@ from collections.abc import AsyncIterator
 import pytest
 
 from agiwo.agent import Agent, RunTreeRole, RunExecutionRequest, RunStatus
-from agiwo.agent.budget_gate import PermissiveLlmBudgetGate
 from agiwo.agent.models.config import AgentConfig
 from agiwo.agent.models.input import UserMessage
 from agiwo.llm.base import Model, StreamChunk
@@ -37,7 +36,6 @@ async def test_request_recoverable_pause_then_resume() -> None:
         model=model,
         id="root-pause",
     )
-    agent.llm_budget_gate = PermissiveLlmBudgetGate()
     sched = Scheduler()
     await sched.start()
     try:

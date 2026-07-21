@@ -6,7 +6,6 @@ from collections.abc import AsyncIterator
 import pytest
 
 from agiwo.agent import Agent, RunTreeRole, RunExecutionRequest, RunStatus
-from agiwo.agent.budget_gate import PermissiveLlmBudgetGate
 from agiwo.agent.models.config import AgentConfig
 from agiwo.agent.models.input import ContentPart, ContentType, UserMessage
 from agiwo.agent.models.log import (
@@ -173,13 +172,11 @@ async def test_cooperative_pause_same_run_id() -> None:
         model=model,
         id="agent-pause",
     )
-    agent.llm_budget_gate = PermissiveLlmBudgetGate()
     handle = agent.start_prevalidated(
         UserMessage.from_system("sys"),
         session_id="sess-pause",
         execution_request=RunExecutionRequest(
             run_id="run_pause_1",
-            objective_id="o1",
             run_tree_role=RunTreeRole.ROOT,
         ),
     )

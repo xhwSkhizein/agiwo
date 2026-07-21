@@ -154,17 +154,8 @@ class Agent:
         self._closing = False
         self._closed = False
         self._close_lock = asyncio.Lock()
-        self._llm_budget_gate = None
 
     # --- Properties ---
-
-    @property
-    def llm_budget_gate(self):
-        return self._llm_budget_gate
-
-    @llm_budget_gate.setter
-    def llm_budget_gate(self, gate) -> None:
-        self._llm_budget_gate = gate
 
     @property
     def config(self) -> AgentConfig:
@@ -318,7 +309,6 @@ class Agent:
         parent_user_id: str | None,
         parent_timeout_at: float | None,
         parent_metadata: dict[str, Any],
-        parent_objective_id: str | None = None,
         instruction: str | None = None,
         system_prompt_override: str | None = None,
         child_allowed_tools: list[str] | None = None,
@@ -345,14 +335,10 @@ class Agent:
                 depth=parent_depth + 1,
                 parent_run_id=parent_run_id,
                 timeout_at=parent_timeout_at,
-                objective_id=parent_objective_id,
-                run_tree_role=(
-                    RunTreeRole.CHILD if parent_objective_id else RunTreeRole.NONE
-                ),
+                run_tree_role=RunTreeRole.CHILD,
                 metadata=dict(parent_metadata),
             ),
             session_runtime=session_runtime,
-            llm_budget_gate=self._llm_budget_gate,
         )
         combined_metadata = dict(metadata_overrides or {})
         if metadata_updates:
@@ -492,14 +478,10 @@ class Agent:
                 agent_id=self._id,
                 agent_name=self.name,
                 user_id=user_id,
-                objective_id=request.objective_id,
                 run_tree_role=request.run_tree_role,
-                verification_required=request.verification_required,
-                objective_run_role=request.objective_run_role,
                 metadata=dict(metadata or {}),
             ),
             session_runtime=session_runtime,
-            llm_budget_gate=self._llm_budget_gate,
         )
         task = asyncio.create_task(
             self._execute_root(
@@ -595,7 +577,6 @@ class Agent:
                 agent_id=self._id,
                 agent_name=self.name,
                 user_id=started_entry.user_id,
-                objective_id=started_entry.objective_id,
                 run_tree_role=(
                     RunTreeRole(started_entry.run_tree_role)
                     if started_entry.run_tree_role
@@ -603,7 +584,6 @@ class Agent:
                 ),
             ),
             session_runtime=session_runtime,
-            llm_budget_gate=self._llm_budget_gate,
         )
         replace_messages(context, plan.messages)
         if plan.continue_user_message is not None:

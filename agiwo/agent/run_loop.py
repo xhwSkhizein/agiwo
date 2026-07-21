@@ -4,14 +4,13 @@ import asyncio
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from agiwo.agent.budget_gate import LlmBudgetDenied
 from agiwo.agent.compaction import CompactResult, compact_if_needed
 from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.llm_caller import ModelCallLimitExceeded, execute_model_call
 from agiwo.agent.models.execution import RunTreeRole
 from agiwo.agent.models.finalization import (
     RunFinalizationResult,
-    derive_mechanical_finalization,
+    completion_result,
     mechanical_agent_handoff_result,
 )
 from agiwo.agent.models.model_call import ModelCallPhase
@@ -19,7 +18,6 @@ from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import RunMetrics, RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
-from agiwo.agent.pause import PauseReason
 from agiwo.agent.prompt import apply_steering_messages
 from agiwo.agent.retry import (
     RetryCoordinator,
@@ -309,9 +307,6 @@ class RunLoopOrchestrator:
             return LoopCompleted()
         except RunBlockingFaultError as blocked:
             return LoopFault(blocked)
-        except LlmBudgetDenied as denied:
-            self.context.request_pause(denied.reason or PauseReason.LLM_BUDGET_DENIED)
-            return await self._commit_pause()
         except asyncio.CancelledError:
             return await self._exit_cancelled()
         except Exception:
@@ -555,31 +550,15 @@ class RunLoopOrchestrator:
             paused = await self._maybe_pause()
             if paused is not None:
                 return paused
-            if self.context.run_tree_role is RunTreeRole.ROOT:
-                if self._has_unfinished_plan_items():
-                    await self._append_plan_guard_reminder()
-                    return None
-                report = step.content if isinstance(step.content, str) else ""
-                self._finalization = derive_mechanical_finalization(
-                    report=report,
-                    verification_required=(
-                        self.context.verification_required
-                        or bool(self.context.ledger.plan.milestones)
-                    ),
-                    objective_run_role=self.context.objective_run_role,
-                )
-            elif self.context.run_tree_role is RunTreeRole.NONE and (
-                self.context.verification_required
-                or bool(self.context.ledger.plan.milestones)
+            if (
+                self.context.run_tree_role is RunTreeRole.ROOT
+                and self._has_unfinished_plan_items()
             ):
-                # Plain Session turn that grew a plan → mechanical HandoffDecision
-                # so SessionGateway can upgrade into an Objective (ADR 0047).
-                report = step.content if isinstance(step.content, str) else ""
-                self._finalization = derive_mechanical_finalization(
-                    report=report,
-                    verification_required=True,
-                    objective_run_role=self.context.objective_run_role,
-                )
+                await self._append_plan_guard_reminder()
+                return None
+            report = step.content if isinstance(step.content, str) else ""
+            if report:
+                self._finalization = completion_result(report)
             await self._set_termination_reason(
                 TerminationReason.COMPLETED,
                 phase="post_llm",

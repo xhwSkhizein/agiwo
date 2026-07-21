@@ -86,7 +86,6 @@ class RunStateWriter:
             user_id=self._state.user_id,
             parent_run_id=self._state.parent_run_id,
             depth=self._state.depth,
-            objective_id=self._state.objective_id,
             run_tree_role=self._state.run_tree_role.value,
         )
 

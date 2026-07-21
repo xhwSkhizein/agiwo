@@ -10,12 +10,6 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from agiwo.agent.budget_gate import (
-    LlmAttemptAdmitRequest,
-    LlmAttemptCostEvent,
-    LlmBudgetDenied,
-    MissingBudgetGateError,
-)
 from agiwo.agent.models.model_call import (
     FINALIZATION_PHASES,
     LlmAttemptEnvelope,
@@ -129,7 +123,7 @@ async def execute_model_call(
                 retry_reason=retry_reason,
             )
             return ModelCallResult(step, llm_context, logical_call_id=call_id)
-        except (ModelCallLimitExceeded, LlmBudgetDenied, MissingBudgetGateError):
+        except ModelCallLimitExceeded:
             raise
         except RunBlockingFaultError:
             raise
@@ -214,7 +208,7 @@ async def _stream_single_attempt(
         cache_creation_tokens=int(request_estimate.cache_creation_tokens or 0),
     )
 
-    # call_ordinal reserved before admit so gate + RunLog share the same identity
+    # call_ordinal reserved before record_attempt_started for stable envelope identity
     pending_ordinal = ledger.next_ordinal()
     envelope = LlmAttemptEnvelope(
         logical_call_id=logical_call_id,
@@ -225,12 +219,6 @@ async def _stream_single_attempt(
         request_tokens=request_tokens,
         call_cost_ceiling=call_cost_ceiling,
         price_snapshot=price_snapshot,
-    )
-    await _admit_llm_budget_attempt(
-        state=state,
-        model=model,
-        envelope=envelope,
-        max_output_tokens=max_output_tokens,
     )
 
     call_ordinal = ledger.record_attempt_started(phase)
@@ -267,14 +255,6 @@ async def _stream_single_attempt(
             response_observed=False,
         )
         ledger.record_attempt_failed(phase)
-        await _record_llm_budget_cost(
-            state=state,
-            envelope=envelope,
-            accepted_output_tokens=0,
-            cost_usd=0.0,
-            response_observed=False,
-            source="no_response",
-        )
         raise
 
     await writer.record_llm_call_completed(
@@ -284,85 +264,7 @@ async def _stream_single_attempt(
         response_observed=True,
     )
     ledger.record_attempt_completed(phase)
-    cost_usd = float(step.metrics.token_cost or 0.0) if step.metrics else 0.0
-    accepted_output = int(step.metrics.output_tokens or 0) if step.metrics else 0
-    usage_source = (
-        str(step.metrics.usage_source)
-        if step.metrics and step.metrics.usage_source
-        else "estimated"
-    )
-    await _record_llm_budget_cost(
-        state=state,
-        envelope=envelope,
-        accepted_output_tokens=accepted_output,
-        cost_usd=cost_usd,
-        response_observed=True,
-        source=usage_source,
-    )
     return step, llm_context
-
-
-async def _admit_llm_budget_attempt(
-    *,
-    state: RunContext,
-    model: Model,
-    envelope: LlmAttemptEnvelope,
-    max_output_tokens: int,
-) -> None:
-    del model  # prices already snapshotted by caller
-    if state.objective_id is None:
-        return
-    gate = state.llm_budget_gate
-    if gate is None:
-        raise MissingBudgetGateError(state.objective_id)
-    await gate.check_before_attempt(
-        LlmAttemptAdmitRequest(
-            objective_id=state.objective_id,
-            run_id=state.run_id,
-            logical_call_id=envelope.logical_call_id,
-            phase=envelope.phase.value,
-            attempt_no=envelope.attempt_no,
-            call_ordinal=envelope.call_ordinal,
-            request_tokens=int(envelope.request_tokens or 0),
-            max_output_tokens=max_output_tokens,
-            call_cost_ceiling=float(envelope.call_cost_ceiling or 0.0),
-            price_snapshot=dict(envelope.price_snapshot or {}),
-        )
-    )
-
-
-async def _record_llm_budget_cost(
-    *,
-    state: RunContext,
-    envelope: LlmAttemptEnvelope,
-    accepted_output_tokens: int,
-    cost_usd: float,
-    response_observed: bool,
-    source: str,
-) -> None:
-    if state.objective_id is None:
-        return
-    gate = state.llm_budget_gate
-    if gate is None:
-        raise MissingBudgetGateError(state.objective_id)
-    await gate.record_attempt_cost(
-        LlmAttemptCostEvent(
-            objective_id=state.objective_id,
-            run_id=state.run_id,
-            logical_call_id=envelope.logical_call_id,
-            phase=envelope.phase.value,
-            attempt_no=envelope.attempt_no,
-            call_ordinal=envelope.call_ordinal,
-            request_tokens=int(envelope.request_tokens or 0),
-            accepted_output_tokens=accepted_output_tokens,
-            call_cost_ceiling=float(envelope.call_cost_ceiling or 0.0),
-            cost_usd=cost_usd,
-            response_observed=response_observed,
-            source=source,
-            price_snapshot=dict(envelope.price_snapshot or {}),
-            retry_reason=envelope.retry_reason,
-        )
-    )
 
 
 async def _stream_assistant_step_inner(
@@ -612,8 +514,6 @@ def _check_abort(abort_signal: AbortSignal | None) -> None:
 
 
 __all__ = [
-    "LlmBudgetDenied",
-    "MissingBudgetGateError",
     "ModelCallLimitExceeded",
     "ModelCallResult",
     "execute_model_call",

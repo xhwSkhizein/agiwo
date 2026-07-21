@@ -1,11 +1,6 @@
 """Canonical public Agent SDK surface."""
 
 from agiwo.agent.agent import Agent, AgentExecutionHandle
-from agiwo.agent.budget_gate import (
-    LlmBudgetDenied,
-    LlmBudgetGate,
-    MissingBudgetGateError,
-)
 from agiwo.agent.models.config import (
     AgentConfig,
     AgentOptions,
@@ -119,9 +114,6 @@ __all__ = [
     "LLMCallContext",
     "LLMCallCompleted",
     "LLMCallStarted",
-    "LlmBudgetDenied",
-    "LlmBudgetGate",
-    "MissingBudgetGateError",
     "MemoryRecord",
     "MessagesRebuiltEvent",
     "MessagesRebuilt",

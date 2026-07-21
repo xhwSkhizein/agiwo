@@ -85,7 +85,7 @@ async def test_coordinator_backoff_and_gate(monkeypatch: pytest.MonkeyPatch) -> 
         await coord.ensure_progress_allowed()
 
 
-def test_retry_exhausted_finalization_targets_agent() -> None:
+def test_retry_exhausted_finalization_records_reason() -> None:
     fault = ExecutionFault(
         operation="llm",
         disposition=FaultDisposition.RETRYABLE,
@@ -94,11 +94,11 @@ def test_retry_exhausted_finalization_targets_agent() -> None:
     )
     err = RunBlockingFaultError(fault, attempts=[fault, fault], exhausted=True)
     result = finalization_for_blocking_fault(err, carry_forward=[])
-    assert result.decision["target"] == "agent"
+    assert result.decision["reason"] == "system_retry_exhausted"
     assert "system_retry_exhausted" in result.report
 
 
-def test_outcome_unknown_finalization_targets_user() -> None:
+def test_outcome_unknown_finalization_records_reason() -> None:
     fault = ExecutionFault(
         operation="tool:pay",
         disposition=FaultDisposition.OUTCOME_UNKNOWN,
@@ -107,6 +107,5 @@ def test_outcome_unknown_finalization_targets_user() -> None:
     )
     err = RunBlockingFaultError(fault, attempts=[fault], exhausted=False)
     result = finalization_for_blocking_fault(err)
-    assert result.decision["target"] == "user"
-    assert result.decision["expects_reply"] is True
+    assert result.decision["reason"] == "system_outcome_unknown"
     assert "system_outcome_unknown" in result.report

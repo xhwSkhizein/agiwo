@@ -147,7 +147,6 @@ class AgentTool(BaseTool):
                 parent_user_id=context.user_id,
                 parent_timeout_at=context.timeout_at,
                 parent_metadata=context.metadata,
-                parent_objective_id=context.objective_id,
                 metadata_updates={"_call_stack": call_stack},
                 abort_signal=abort_signal,
             )

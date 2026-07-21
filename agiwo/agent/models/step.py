@@ -174,8 +174,6 @@ class StepView:
             user_message = UserMessage.from_value(self.user_input)
             if not user_message.is_user_provided:
                 msg["is_user_provided"] = False
-            if user_message.objective_input_id is not None:
-                msg["objective_input_id"] = user_message.objective_input_id
         return msg
 
     @classmethod

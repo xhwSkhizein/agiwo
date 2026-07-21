@@ -117,10 +117,7 @@ class RunIdentity:
     depth: int = 0
     parent_run_id: str | None = None
     timeout_at: float | None = None
-    objective_id: str | None = None
     run_tree_role: RunTreeRole = RunTreeRole.NONE
-    verification_required: bool = False
-    objective_run_role: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -222,7 +219,6 @@ class RunView:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     parent_run_id: str | None = None
-    objective_id: str | None = None
     run_tree_role: RunTreeRole = RunTreeRole.NONE
     finalization: RunFinalizationResult | None = None
 

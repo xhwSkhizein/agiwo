@@ -283,7 +283,6 @@ def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
         created_at=started.created_at,
         updated_at=updated_at,
         parent_run_id=started.parent_run_id,
-        objective_id=started.objective_id,
         run_tree_role=run_tree_role,
         finalization=finalization,
     )
