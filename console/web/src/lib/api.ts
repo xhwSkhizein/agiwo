@@ -1,4 +1,5 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL?.replace(/\/+$/, "") ?? "";
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
 
 function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
@@ -17,13 +18,38 @@ export class ApiError extends Error {
 }
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(apiUrl(path), {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
+  const controller = new AbortController();
+  const callerSignal = init?.signal;
+  let timedOut = false;
+  const abortFromCaller = () => controller.abort();
+  if (callerSignal?.aborted) {
+    abortFromCaller();
+  } else {
+    callerSignal?.addEventListener("abort", abortFromCaller);
+  }
+  const timeout = globalThis.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, DEFAULT_FETCH_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(path), {
+      ...init,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        ...init?.headers,
+      },
+    });
+  } catch (err) {
+    if (timedOut && err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Request timed out after ${DEFAULT_FETCH_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  } finally {
+    callerSignal?.removeEventListener("abort", abortFromCaller);
+    globalThis.clearTimeout(timeout);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -868,8 +894,8 @@ export function listAgentStates(params?: { status?: string; limit?: number; offs
   return fetchJSON<PageResponse<AgentStateListItem>>(`/api/scheduler/states?${q}`);
 }
 
-export function getAgentState(stateId: string) {
-  return fetchJSON<AgentStateDetail>(`/api/scheduler/states/${stateId}`);
+export function getAgentState(stateId: string, init?: RequestInit) {
+  return fetchJSON<AgentStateDetail>(`/api/scheduler/states/${stateId}`, init);
 }
 
 export function getAgentStateChildren(stateId: string) {

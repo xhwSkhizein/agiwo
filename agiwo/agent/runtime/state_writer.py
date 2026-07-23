@@ -52,6 +52,17 @@ class RunStateWriter:
         await self._state.session_runtime.append_run_log_entries(typed_entries)
         return typed_entries
 
+    async def project_entries(self, entries: list[object]) -> None:
+        if not entries:
+            return
+        await self._state.session_runtime.project_run_log_entries(
+            entries,
+            run_id=self._state.run_id,
+            agent_id=self._state.agent_id,
+            parent_run_id=self._state.parent_run_id,
+            depth=self._state.depth,
+        )
+
     async def start_run(self, user_input: UserInput) -> list[object]:
         return await self.append_entries(
             [
