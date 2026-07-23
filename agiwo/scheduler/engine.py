@@ -23,7 +23,7 @@ from agiwo.scheduler._runtime_agents import ensure_root_runtime_agent
 from agiwo.scheduler._tick import dispatch_action, tick as _tick
 from agiwo.scheduler._tree_ops import cancel_subtree, shutdown_subtree
 from agiwo.scheduler._wait import wait_for_state_result
-from agiwo.scheduler.commands import DispatchAction, DispatchReason
+from agiwo.scheduler.commands import DispatchAction, DispatchReason, SpawnChildRequest
 from agiwo.scheduler.execution import ExecutionTreeNode
 from agiwo.scheduler.engine_context import EngineContext
 from agiwo.scheduler.guard import TaskGuard
@@ -216,6 +216,21 @@ class Scheduler:
                 is_persistent=True,
             )
         )
+
+    async def spawn_worker(self, request: SpawnChildRequest) -> AgentState:
+        """Spawn a depth-1 worker child (public Worker delegation surface, ADR 0049)."""
+        return await self._tool_control.spawn_child(request)
+
+    async def get_result_summary(self, state: AgentState) -> str | None:
+        """Resolve the final report/result summary for a terminal state."""
+        return await self._rt.get_result_summary(state)
+
+    async def mark_parent_idle(self, parent_id: str) -> None:
+        """Force a registered worker-parent back to IDLE after its loop ends."""
+        state = await self._store.get_state(parent_id)
+        if state is None or state.status is AgentStateStatus.IDLE:
+            return
+        await self._save_state(state.with_updates(status=AgentStateStatus.IDLE))
 
     async def wait_for_nudge(self, timeout: float) -> None:
         try:

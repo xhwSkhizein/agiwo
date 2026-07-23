@@ -127,7 +127,7 @@
 - `Scheduler` 是 Agent 之上的编排层；依赖方向保持 `scheduler -> agent`。
 - Scheduler runtime tools（`SpawnChildAgentTool`、`ForkChildAgentTool`、`SleepAndWaitTool` 等）通过 `runtime_agent.inject_system_tools(...)` 注入，不混入 `tools`（extra_tools），不受 `allowed_tools` 约束。
 - 子 Agent 的 system_tools 由 `SchedulerRunner` 从父 Agent 的 `system_tools` 派生；非 fork 模式排除 `spawn_child_agent` / `fork_child_agent`，fork 模式继承全部（gate 检查仍阻止实际继续派生 child）。
-- 当前公开编排接口包括：`enqueue_input`（persistent root：IDLE/FAILED 下一轮、RUNNING 入 live Loop、WAITING/QUEUED 写 USER_HINT）、`wait_for`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`、`register_worker_parent`。Session 用户消息走 `MainAgent.accept`，不再暴露 `route_root_input` / `dispatch_execution` / `inject_user_message` / `steer`。
+- 当前公开编排接口包括：`enqueue_input`（persistent root：IDLE/FAILED 下一轮、RUNNING 入 live Loop、WAITING/QUEUED 写 USER_HINT）、`wait_for`、`cancel`、`shutdown`，以及查询面 `list_states`、`list_events`、`get_stats`、`rebind_agent`、`register_worker_parent`。Worker 委派公开面：`register_worker_parent` / `spawn_worker` / `get_result_summary` / `mark_parent_idle`；bridge 见 `agiwo.scheduler.worker_bridge`。Session 用户消息走 `MainAgent.accept`，不再暴露 `route_root_input` / `dispatch_execution` / `inject_user_message` / `steer`。
 - `Scheduler`（定义于 `engine.py`）只做 facade 和 lifecycle；编排 tick 在 `_tick.py`，单次 dispatch 在 `runner.py`，stream 装配在 `route_stream.py`，树操作在 `_tree_ops.py` / `_wait.py`。
 - `SchedulerRunner` 只负责单次 dispatch action；`TaskGuard` 是 spawn/wake 的唯一护栏入口。
 - scheduler 状态现在显式区分 `WAITING`、`IDLE`、`QUEUED`；不要再把待命/排队语义塞回一个泛化 `SLEEPING`。

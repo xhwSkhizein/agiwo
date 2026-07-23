@@ -1,5 +1,7 @@
 """Scheduler-backed implementation of ``WorkerSchedulerPort``."""
 
+from typing import TYPE_CHECKING
+
 from agiwo.agent.worker_port import (
     WorkerSchedulerPort,
     WorkerSpawnRequest,
@@ -9,6 +11,9 @@ from agiwo.agent.worker_port import (
 from agiwo.scheduler.commands import SpawnChildRequest
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import AgentState, AgentStateStatus
+
+if TYPE_CHECKING:
+    from agiwo.agent.agent import Agent
 
 
 def _to_worker_status(status: AgentStateStatus) -> WorkerStateStatus:
@@ -24,7 +29,7 @@ def _to_worker_view(state: AgentState) -> WorkerStateView:
 
 
 class SchedulerWorkerPort:
-    """Adapts ``Scheduler`` to the agent-side Worker port."""
+    """Adapts ``Scheduler`` to the agent-side Worker port via public facade APIs."""
 
     def __init__(self, scheduler: Scheduler) -> None:
         self._scheduler = scheduler
@@ -34,19 +39,19 @@ class SchedulerWorkerPort:
         *,
         state_id: str,
         session_id: str,
-        agent: object,
+        agent: "Agent",
     ) -> None:
         await self._scheduler.register_worker_parent(
             state_id=state_id,
             session_id=session_id,
-            agent=agent,  # type: ignore[arg-type]
+            agent=agent,
         )
 
     async def start(self) -> None:
         await self._scheduler.start()
 
     async def spawn_worker(self, request: WorkerSpawnRequest) -> WorkerStateView:
-        state = await self._scheduler._tool_control.spawn_child(
+        state = await self._scheduler.spawn_worker(
             SpawnChildRequest(
                 parent_agent_id=request.parent_agent_id,
                 session_id=request.session_id,
@@ -90,7 +95,7 @@ class SchedulerWorkerPort:
         state = await self._scheduler.get_state(worker_id)
         if state is None:
             return "Worker state missing after completion."
-        summary = await self._scheduler._rt.get_result_summary(state)
+        summary = await self._scheduler.get_result_summary(state)
         if summary:
             return summary
         if state.status is AgentStateStatus.FAILED:
@@ -98,12 +103,7 @@ class SchedulerWorkerPort:
         return "Worker completed."
 
     async def sync_parent_idle(self, parent_id: str) -> None:
-        state = await self._scheduler.get_state(parent_id)
-        if state is None or state.status is AgentStateStatus.IDLE:
-            return
-        await self._scheduler._save_state(
-            state.with_updates(status=AgentStateStatus.IDLE)
-        )
+        await self._scheduler.mark_parent_idle(parent_id)
 
 
 def scheduler_worker_port(scheduler: Scheduler) -> WorkerSchedulerPort:

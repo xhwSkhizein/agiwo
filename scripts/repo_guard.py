@@ -853,15 +853,16 @@ def _detect_import_name_errors(
 
 def _detect_attribute_errors(path: Path, node: ast.Attribute) -> list[GuardError]:
     errors: list[GuardError] = []
-    if path == Path("agiwo/scheduler/tools.py") and _is_scheduler_private_access(node):
+    if _is_scheduler_private_access(node):
         errors.append(
             _make_error(
                 path,
                 node.lineno,
                 "AGW007",
                 (
-                    "Scheduler tools must not reach into Scheduler private state; "
-                    "expose an explicit scheduler port instead."
+                    "Do not reach into Scheduler private attributes via "
+                    "self._scheduler._*; use the public Worker/facade API "
+                    "(spawn_worker / get_result_summary / mark_parent_idle / …)."
                 ),
             )
         )
