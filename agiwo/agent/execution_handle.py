@@ -1,5 +1,6 @@
 """Live root execution handle owned by a SessionRuntime."""
 
+import asyncio
 from asyncio import Task
 from collections.abc import AsyncIterator
 
@@ -41,6 +42,32 @@ class AgentExecutionHandle:
 
     async def wait(self) -> RunOutput:
         return await self._task
+
+    async def wait_until_started(self) -> None:
+        """Wait until bootstrap finished (or the run task ended early).
+
+        MainAgent uses this so mid-run ``accept`` cannot write Session history
+        into the bootstrap window and then also enqueue the same message as
+        pending input (which would duplicate it in MessagesRebuilt).
+        """
+        if self._session_runtime.is_bootstrap_ready or self._task.done():
+            return
+        ready_task = asyncio.create_task(
+            self._session_runtime.wait_until_bootstrap_ready()
+        )
+        try:
+            await asyncio.wait(
+                {ready_task, self._task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            # Never cancel the run task — only the bootstrap waiter.
+            if not ready_task.done():
+                ready_task.cancel()
+                try:
+                    await ready_task
+                except asyncio.CancelledError:
+                    pass
 
     @property
     def is_active(self) -> bool:

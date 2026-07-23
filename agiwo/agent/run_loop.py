@@ -92,6 +92,7 @@ class RunLoopOrchestrator(
         continuation: bool = False,
     ) -> RunOutput:
         """Execute a single agent run with the orchestrator."""
+        bootstrap_signaled = False
         try:
             if resume:
                 if resume_checkpoint_id is None:
@@ -129,9 +130,18 @@ class RunLoopOrchestrator(
                     )
                 self.runtime.compact_start_seq = bootstrap.compact_start_seq
 
+            self.context.session_runtime.mark_bootstrap_ready()
+            bootstrap_signaled = True
+
             exit_result = await self._run_loop(pending_tool_calls=pending_tool_calls)
             return await self._dispatch_loop_exit(user_input, exit_result)
+        except asyncio.CancelledError:
+            if not bootstrap_signaled:
+                self.context.session_runtime.mark_bootstrap_ready()
+            raise
         except Exception as error:
+            if not bootstrap_signaled:
+                self.context.session_runtime.mark_bootstrap_ready()
             await self._fail_run(error)
             raise
 

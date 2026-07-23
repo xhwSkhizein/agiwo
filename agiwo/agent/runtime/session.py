@@ -38,10 +38,24 @@ class SessionRuntime:
         self._pending_inputs: list[UserMessage] = []
         self._subscribers: set[asyncio.Queue[AgentStreamItem | object]] = set()
         self._closed = False
+        # Set after prepare_run_context finishes so callers (MainAgent.accept)
+        # can wait out the bootstrap window before staging mid-run input.
+        self._bootstrap_ready = asyncio.Event()
 
     # ------------------------------------------------------------------
     # Storage convenience methods
     # ------------------------------------------------------------------
+
+    def mark_bootstrap_ready(self) -> None:
+        """Unblock waiters once initial context assembly has finished."""
+        self._bootstrap_ready.set()
+
+    @property
+    def is_bootstrap_ready(self) -> bool:
+        return self._bootstrap_ready.is_set()
+
+    async def wait_until_bootstrap_ready(self) -> None:
+        await self._bootstrap_ready.wait()
 
     async def allocate_sequence(self) -> int:
         return await self.run_log_storage.allocate_sequence(self.session_id)
@@ -168,6 +182,7 @@ class SessionRuntime:
         if self._closed:
             return
         self._closed = True
+        self.mark_bootstrap_ready()
         if self.trace_runtime is not None:
             await self.trace_runtime.stop()
         for subscriber in list(self._subscribers):

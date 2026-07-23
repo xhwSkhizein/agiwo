@@ -90,6 +90,7 @@ class MainAgent:
         self._drain_lock = asyncio.Lock()
         self._cancelling = False
         self._handle: AgentExecutionHandle | None = None
+        self._last_handle: AgentExecutionHandle | None = None
         self._completion_task: asyncio.Task[None] | None = None
         self._worker_service = None
         if worker_scheduler is not None:
@@ -166,8 +167,11 @@ class MainAgent:
                 created_at=time.time(),
             )
         )
-        await self._drain()
-        return self._handle
+        started = await self._drain()
+        # Prefer the live handle; if a short run finished during bootstrap wait
+        # (or was started by a concurrent completion-finally drain), still return
+        # the handle that consumed this accept.
+        return self._handle or started or self._last_handle
 
     async def _append_user_input_intent(self, message: UserMessage) -> None:
         await self._session_intent_store.append_entry(
@@ -259,7 +263,7 @@ class MainAgent:
         )
         await self._drain()
 
-    async def _drain(self) -> None:
+    async def _drain(self) -> AgentExecutionHandle | None:
         """Drain the staging queue through the single delivery path.
 
         Every queued item is eventually acked: delivered into the live Run's
@@ -267,11 +271,15 @@ class MainAgent:
         log line. When the live Run is closing (``enqueue_message`` returns
         False) the item stays queued and the completion-finally drain retries
         it on the idle path, so nothing is lost.
+
+        Returns the last handle started during this drain (may already be done
+        for short runs that finish during bootstrap wait).
         """
+        started: AgentExecutionHandle | None = None
         async with self._drain_lock:
             while (item := self.peek_pending()) is not None:
                 if self._cancelling:
-                    return
+                    return started
                 handle = self._handle
                 if handle is not None and handle.is_active:
                     message = self._queue_item_to_message(item)
@@ -286,14 +294,15 @@ class MainAgent:
                     if await handle.enqueue_message(message):
                         self.ack_pending()
                         continue
-                    return
+                    return started
                 self.ack_pending()
                 if item.kind is QueueItemKind.USER_INPUT:
-                    self._start_new_run()
+                    started = await self._start_new_run()
                 elif item.kind is QueueItemKind.WORKER_REPORT:
                     message = self._queue_item_to_message(item)
                     if message is not None and item.run_id:
-                        self._continue_run(item.run_id, message)
+                        started = await self._continue_run(item.run_id, message)
+        return started
 
     @staticmethod
     def _queue_item_to_message(item: QueueItem) -> UserMessage | None:
@@ -305,7 +314,7 @@ class MainAgent:
             )
         return None
 
-    def _start_new_run(self) -> None:
+    async def _start_new_run(self) -> AgentExecutionHandle:
         handle = self._agent.start_prevalidated(
             None,
             session_id=self._session_id,
@@ -315,16 +324,26 @@ class MainAgent:
             ),
         )
         self._handle = handle
+        self._last_handle = handle
         self._completion_task = asyncio.create_task(self._await_run_completion(handle))
+        # Close the bootstrap race: mid-run accept must not write history that
+        # prepare_run_context would also load, then enqueue the same message.
+        await handle.wait_until_started()
+        return handle
 
-    def _continue_run(self, run_id: str, message: UserMessage) -> None:
+    async def _continue_run(
+        self, run_id: str, message: UserMessage
+    ) -> AgentExecutionHandle:
         handle = self._agent.continue_completed_run(
             run_id=run_id,
             session_id=self._session_id,
             user_input=message,
         )
         self._handle = handle
+        self._last_handle = handle
         self._completion_task = asyncio.create_task(self._await_run_completion(handle))
+        await handle.wait_until_started()
+        return handle
 
     def enqueue(self, item: QueueItem) -> None:
         """Append one item to the unified pending loop queue."""
@@ -393,10 +412,11 @@ class MainAgent:
         return _empty()
 
     async def wait_current_run(self) -> RunOutput:
-        """Wait for the current run to finish."""
-        if self._handle is None:
+        """Wait for the current (or just-finished) run to finish."""
+        handle = self._handle or self._last_handle
+        if handle is None:
             raise RuntimeError("No current run")
-        return await self._handle.wait()
+        return await handle.wait()
 
     async def close(self) -> None:
         """Release resources held by the underlying Agent."""

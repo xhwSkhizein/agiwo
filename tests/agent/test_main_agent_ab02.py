@@ -88,9 +88,9 @@ async def test_idle_accept_runs_to_completion_and_returns_idle() -> None:
     handle = await main.accept("hello")
 
     assert handle is not None
-    assert main.state is MainAgentState.RUNNING
-
-    output = await main.wait_current_run()
+    # Bootstrap wait may let a short run finish before accept returns; the
+    # handle is still the authority for this turn.
+    output = await handle.wait()
 
     assert output.error is None
     assert main.state is MainAgentState.IDLE
@@ -125,12 +125,14 @@ async def test_second_run_sees_first_run_history_for_same_agent_id() -> None:
     agent_id = "main-agent-id"
     main = _build_main_agent(session_id=session_id, agent_id=agent_id)
 
-    await main.accept("hello")
-    await main.wait_current_run()
+    first = await main.accept("hello")
+    assert first is not None
+    await first.wait()
     assert main.state is MainAgentState.IDLE
 
-    await main.accept("follow up")
-    await main.wait_current_run()
+    second = await main.accept("follow up")
+    assert second is not None
+    await second.wait()
 
     steps = await main.run_log_storage.list_step_views(
         session_id=session_id,

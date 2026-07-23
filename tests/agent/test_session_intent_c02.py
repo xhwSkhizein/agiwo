@@ -150,8 +150,12 @@ async def test_cancelled_run_does_not_append_run_report() -> None:
 
 @pytest.mark.asyncio
 async def test_successful_run_snapshots_last_run_plan_when_present() -> None:
+    start_event = asyncio.Event()
     intent_store = InMemorySessionIntentStore()
-    main = _build_main_agent(intent_store=intent_store)
+    main = _build_main_agent(
+        intent_store=intent_store,
+        model=FixedResponseModel(start_event=start_event),
+    )
 
     handle = await main.accept("plan work")
     assert handle is not None
@@ -176,6 +180,7 @@ async def test_successful_run_snapshots_last_run_plan_when_present() -> None:
         ]
     )
 
+    start_event.set()
     await main.wait_current_run()
 
     intent = await intent_store.get(main.session_id)

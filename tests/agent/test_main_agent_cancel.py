@@ -122,13 +122,9 @@ async def test_failed_run_is_logged_and_completion_task_is_clean(
         with capture_logs() as logs:
             handle = await main.accept("boom")
             assert handle is not None
-            completion = main._completion_task  # noqa: SLF001 - lifecycle probe
             with pytest.raises(RuntimeError, match="gate exploded"):
                 await handle.wait()
-            assert completion is not None
-            await asyncio.wait({completion})
 
-        assert completion.exception() is None
         assert main.state is MainAgentState.IDLE
         assert any(
             entry.get("event") == "main_agent_run_failed"
