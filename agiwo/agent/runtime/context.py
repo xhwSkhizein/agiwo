@@ -2,10 +2,10 @@
 
 import copy
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from agiwo.agent.completion_gates.context import CompletionGateContext
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import HookRegistry
 from agiwo.agent.models.run import RunIdentity, RunLedger
@@ -33,7 +33,7 @@ class RunRuntime:
     max_context_window: int | None
     compact_prompt: str | None
     retry_coordinator: RetryCoordinator | None = None
-    completion_gate_context: CompletionGateContext | None = None
+    active_worker_ids: Callable[[], frozenset[str]] | None = None
 
 
 class RunContext:

@@ -21,9 +21,10 @@ from agiwo.agent.models.stream import AgentStreamItem
 from agiwo.agent.queue import QueueItem, QueueItemKind
 from agiwo.agent.session_history import append_session_user_message_to_history
 from agiwo.agent.spec import AgentSpec
-from agiwo.agent.completion_gates.context import CompletionGateContext
 from agiwo.agent.storage.base import RunLogStorage
+from agiwo.agent.worker import WorkerService
 from agiwo.agent.worker_port import WorkerSchedulerPort
+from agiwo.agent.worker_tools import SpawnWorkerTool
 from agiwo.config.termination import TerminationReason
 from agiwo.llm.base import Model
 from agiwo.tool.base import BaseTool
@@ -92,26 +93,21 @@ class MainAgent:
         self._handle: AgentExecutionHandle | None = None
         self._last_handle: AgentExecutionHandle | None = None
         self._completion_task: asyncio.Task[None] | None = None
-        self._worker_service = None
+        self._worker_service: WorkerService | None = None
         if worker_scheduler is not None:
-            from agiwo.agent.worker import WorkerService  # noqa: PLC0415
-            from agiwo.agent.worker_tools import SpawnWorkerTool  # noqa: PLC0415
-
-            self._worker_service = WorkerService(self, worker_scheduler)
+            self._worker_service = WorkerService(
+                agent_id=agent_id,
+                session_id=session_id,
+                agent=self._agent,
+                scheduler=worker_scheduler,
+                deliver_report=self.deliver_worker_report,
+            )
             self._agent._inject_system_tools([SpawnWorkerTool(self._worker_service)])
-        self._agent.bind_completion_gate_context(self._completion_gate_context())
 
-    def _completion_gate_context(self) -> CompletionGateContext:
-        service = self._worker_service
-
-        def _active_worker_ids() -> frozenset[str]:
-            if service is None:
-                return frozenset()
-            return service.active_worker_ids
-
-        return CompletionGateContext(
-            active_worker_ids=_active_worker_ids,
-        )
+    def _active_worker_ids(self) -> frozenset[str]:
+        if self._worker_service is None:
+            return frozenset()
+        return self._worker_service.active_worker_ids
 
     @property
     def session_id(self) -> str:
@@ -322,6 +318,7 @@ class MainAgent:
                 run_id=str(uuid4()),
                 run_tree_role=RunTreeRole.ROOT,
             ),
+            active_worker_ids=self._active_worker_ids,
         )
         self._handle = handle
         self._last_handle = handle
@@ -338,6 +335,7 @@ class MainAgent:
             run_id=run_id,
             session_id=self._session_id,
             user_input=message,
+            active_worker_ids=self._active_worker_ids,
         )
         self._handle = handle
         self._last_handle = handle
@@ -406,8 +404,8 @@ class MainAgent:
             return self._handle.stream()
 
         async def _empty() -> AsyncIterator[AgentStreamItem]:
-            if False:
-                yield  # pragma: no cover - empty async generator
+            return
+            yield  # pragma: no cover - keeps this an async generator
 
         return _empty()
 

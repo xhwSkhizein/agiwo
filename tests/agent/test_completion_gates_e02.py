@@ -13,7 +13,6 @@ from agiwo.agent import (
     RunExecutionRequest,
 )
 from agiwo.agent.completion_gates import CompletionGates
-from agiwo.agent.completion_gates.context import CompletionGateContext
 from agiwo.agent.models.execution import RunTreeRole
 from agiwo.llm.base import Model, StreamChunk
 from tests.agent.worker_test_helpers import build_main_agent_with_scheduler
@@ -42,7 +41,7 @@ class _ScriptedModel(Model):
 async def _run_root(
     model: Model,
     *,
-    completion_gate_context: CompletionGateContext | None = None,
+    active_worker_ids=None,
     max_steps_per_run: int = 50,
 ):
     agent = Agent(
@@ -56,8 +55,6 @@ async def _run_root(
         id="gate-integration",
         model=model,
     )
-    if completion_gate_context is not None:
-        agent.bind_completion_gate_context(completion_gate_context)
     handle = agent.start_prevalidated(
         "complete the work",
         session_id="gate-integration-session",
@@ -65,6 +62,7 @@ async def _run_root(
             run_id="gate-root-run",
             run_tree_role=RunTreeRole.ROOT,
         ),
+        active_worker_ids=active_worker_ids,
     )
     return await handle.wait()
 
@@ -156,11 +154,10 @@ async def test_unfinished_workers_block_then_unblock_root_stop() -> None:
             "completed after workers clear",
         ]
     )
-    context = CompletionGateContext(
+    result = await _run_root(
+        model,
         active_worker_ids=lambda: frozenset(active_workers),
     )
-
-    result = await _run_root(model, completion_gate_context=context)
 
     assert result.response == "completed after workers clear"
     assert len(model.calls) == 2

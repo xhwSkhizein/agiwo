@@ -4,10 +4,9 @@ import asyncio
 import copy
 import secrets
 from asyncio import Task
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from uuid import uuid4
 
-from agiwo.agent.completion_gates.context import CompletionGateContext
 from agiwo.agent.nested.agent_tool import AgentTool
 from agiwo.agent.nested.child_ops import AgentChildOps
 from agiwo.agent.models.config import AgentConfig, AgentOptions
@@ -100,7 +99,6 @@ class Agent(AgentChildOps, AgentResumeOps):
             self._config.options.storage.trace_storage
         )
         self._active_executions: dict[str, tuple[Task[RunOutput], AbortSignal]] = {}
-        self._completion_gate_context: CompletionGateContext | None = None
         self._closing = False
         self._closed = False
         self._close_lock = asyncio.Lock()
@@ -135,16 +133,6 @@ class Agent(AgentChildOps, AgentResumeOps):
     @property
     def model(self) -> Model:
         return self._model
-
-    def bind_completion_gate_context(
-        self, context: CompletionGateContext | None
-    ) -> None:
-        """Attach MainAgent-owned Worker registry + unified queue hooks."""
-        self._completion_gate_context = context
-
-    @property
-    def completion_gate_context(self) -> CompletionGateContext | None:
-        return self._completion_gate_context
 
     @property
     def hooks(self) -> HookRegistry:
@@ -292,6 +280,7 @@ class Agent(AgentChildOps, AgentResumeOps):
         metadata: dict | None = None,
         abort_signal: AbortSignal | None = None,
         execution_request: RunExecutionRequest | None = None,
+        active_worker_ids: Callable[[], frozenset[str]] | None = None,
     ) -> AgentExecutionHandle:
         """Start a root run without re-checking user-input provenance.
 
@@ -300,6 +289,7 @@ class Agent(AgentChildOps, AgentResumeOps):
         ``execution_request`` lets Scheduler dispatch supply a preallocated
         ``run_id``. ``user_input`` may be ``None`` when Session history already
         holds the user message (ADR 0048).
+        ``active_worker_ids`` is an optional Loop gate dependency (ADR 0049).
         """
         self._ensure_open()
         resolved_session_id = session_id or str(uuid4())
@@ -332,6 +322,7 @@ class Agent(AgentChildOps, AgentResumeOps):
                 user_input,
                 context=context,
                 abort_signal=resolved_abort_signal,
+                active_worker_ids=active_worker_ids,
             )
         )
         handle = AgentExecutionHandle(
@@ -350,6 +341,7 @@ class Agent(AgentChildOps, AgentResumeOps):
         *,
         context: RunContext,
         abort_signal: AbortSignal,
+        active_worker_ids: Callable[[], frozenset[str]] | None = None,
     ) -> RunOutput:
         try:
             system_prompt = await self.get_effective_system_prompt()
@@ -368,7 +360,7 @@ class Agent(AgentChildOps, AgentResumeOps):
                 options=options,
                 abort_signal=abort_signal,
                 root_path=options.get_effective_root_path(),
-                completion_gate_context=self._completion_gate_context,
+                active_worker_ids=active_worker_ids,
             )
         finally:
             await context.session_runtime.close()

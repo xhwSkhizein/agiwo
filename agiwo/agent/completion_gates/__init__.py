@@ -1,6 +1,5 @@
 """Completion gates — mechanical first (G-v1a), semantic seam reserved."""
 
-from agiwo.agent.completion_gates.context import CompletionGateContext
 from agiwo.agent.completion_gates.mechanical import (
     build_mechanical_feedback,
     evaluate_mechanical,
@@ -55,7 +54,6 @@ class CompletionGates:
 
 __all__ = [
     "AllowComplete",
-    "CompletionGateContext",
     "CompletionGates",
     "Continue",
     "DisabledSemanticCompletionGate",

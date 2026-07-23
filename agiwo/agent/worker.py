@@ -1,9 +1,10 @@
 """Worker spawn/wait/report service for session MainAgent (ADR 0049 Wave D)."""
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
+from agiwo.agent.agent import Agent
 from agiwo.agent.worker_port import (
     ACTIVE_WORKER_STATUSES,
     WorkerSchedulerPort,
@@ -12,10 +13,9 @@ from agiwo.agent.worker_port import (
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
-if TYPE_CHECKING:
-    from agiwo.agent.main_agent import MainAgent
-
 logger = get_logger(__name__)
+
+DeliverWorkerReport = Callable[[str, str], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,9 +30,20 @@ class WorkerHandle:
 class WorkerService:
     """MainAgent-owned Worker registry backed by a WorkerSchedulerPort."""
 
-    def __init__(self, main_agent: "MainAgent", scheduler: WorkerSchedulerPort) -> None:
-        self._main = main_agent
+    def __init__(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        agent: Agent,
+        scheduler: WorkerSchedulerPort,
+        deliver_report: DeliverWorkerReport,
+    ) -> None:
+        self._agent_id = agent_id
+        self._session_id = session_id
+        self._agent = agent
         self._scheduler = scheduler
+        self._deliver_report = deliver_report
         self._started = False
         self._workers: dict[str, WorkerHandle] = {}
         self._monitor_tasks: dict[str, asyncio.Task[None]] = {}
@@ -47,9 +58,9 @@ class WorkerService:
             return
         await self._scheduler.start()
         await self._scheduler.register_parent(
-            state_id=self._main.agent_id,
-            session_id=self._main.session_id,
-            agent=self._main.agent,
+            state_id=self._agent_id,
+            session_id=self._session_id,
+            agent=self._agent,
         )
         self._started = True
 
@@ -72,8 +83,8 @@ class WorkerService:
 
         state = await self._scheduler.spawn_worker(
             WorkerSpawnRequest(
-                parent_agent_id=self._main.agent_id,
-                session_id=self._main.session_id,
+                parent_agent_id=self._agent_id,
+                session_id=self._session_id,
                 task=task,
                 instruction=instruction,
             )
@@ -143,8 +154,8 @@ class WorkerService:
 
     async def cancel_all_workers(self, reason: str) -> None:
         children = await self._scheduler.list_children(
-            parent_id=self._main.agent_id,
-            session_id=self._main.session_id,
+            parent_id=self._agent_id,
+            session_id=self._session_id,
             limit=self._list_page_size,
         )
         for child in children:
@@ -160,10 +171,7 @@ class WorkerService:
     async def _monitor_async_worker(self, worker_id: str, main_run_id: str) -> None:
         try:
             report = await self._scheduler.get_worker_report(worker_id)
-            await self._deliver_report_to_main(
-                main_run_id=main_run_id,
-                report=report,
-            )
+            await self._deliver_report(main_run_id, report)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - worker monitor boundary
@@ -177,16 +185,8 @@ class WorkerService:
             self._workers.pop(worker_id, None)
             self._monitor_tasks.pop(worker_id, None)
 
-    async def _deliver_report_to_main(
-        self,
-        *,
-        main_run_id: str,
-        report: str,
-    ) -> None:
-        await self._main.deliver_worker_report(main_run_id, report)
-
     async def sync_parent_idle(self) -> None:
-        await self._scheduler.sync_parent_idle(self._main.agent_id)
+        await self._scheduler.sync_parent_idle(self._agent_id)
 
 
-__all__ = ["WorkerHandle", "WorkerService"]
+__all__ = ["DeliverWorkerReport", "WorkerHandle", "WorkerService"]

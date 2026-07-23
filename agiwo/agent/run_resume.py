@@ -1,6 +1,7 @@
 """Resume and continuation mixin for Agent."""
 
 import asyncio
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from agiwo.agent.execution_handle import AgentExecutionHandle
@@ -138,6 +139,7 @@ class AgentResumeOps:
         session_id: str,
         user_input: UserInput,
         abort_signal: AbortSignal | None = None,
+        active_worker_ids: Callable[[], frozenset[str]] | None = None,
     ) -> AgentExecutionHandle:
         """Continue a completed Run with the same ``run_id`` (Wave D worker reports)."""
         self._ensure_open()
@@ -166,6 +168,7 @@ class AgentResumeOps:
                 user_input,
                 context=context,
                 abort_signal=resolved_abort_signal,
+                active_worker_ids=active_worker_ids,
             )
         )
         handle = AgentExecutionHandle(
@@ -184,6 +187,7 @@ class AgentResumeOps:
         *,
         context: RunContext,
         abort_signal: AbortSignal,
+        active_worker_ids: Callable[[], frozenset[str]] | None = None,
     ) -> RunOutput:
         await self._validate_completed_run(
             run_id=context.run_id,
@@ -207,7 +211,7 @@ class AgentResumeOps:
                 abort_signal=abort_signal,
                 root_path=options.get_effective_root_path(),
                 continuation=True,
-                completion_gate_context=self._completion_gate_context,
+                active_worker_ids=active_worker_ids,
             )
         finally:
             await context.session_runtime.close()

@@ -1,17 +1,22 @@
-"""Single-run execution engine — the core run loop."""
+"""Single-run execution engine — the core run loop.
+
+Do not add a third mixin to ``RunLoopOrchestrator``. New loop-stage logic
+should enter as an explicitly constructed collaborator (composition), not
+another inherited Ops mixin.
+"""
 
 import asyncio
+from collections.abc import Callable
 
 from agiwo.agent.compaction import compact_if_needed
 from agiwo.agent.completion_gates import AllowComplete, CompletionGates, Continue
-from agiwo.agent.completion_gates.context import CompletionGateContext
 from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.llm_caller import ModelCallLimitExceeded, execute_model_call
+from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.execution import RunTreeRole
 from agiwo.agent.models.finalization import RunFinalizationResult, completion_result
-from agiwo.agent.models.model_call import ModelCallPhase
-from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.input import UserInput, UserMessage
+from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.run import RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.prompt import append_pending_user_messages
@@ -370,8 +375,10 @@ class RunLoopOrchestrator(
         return await self._maybe_pause()
 
     async def _evaluate_completion_gates(self) -> AllowComplete | Continue:
-        gate_context = self.runtime.completion_gate_context or CompletionGateContext()
-        active_worker_ids = gate_context.active_worker_ids()
+        gate_context_ids = self.runtime.active_worker_ids
+        active_worker_ids = (
+            gate_context_ids() if gate_context_ids is not None else frozenset()
+        )
         gates = CompletionGates()
         return await gates.evaluate(
             plan=self.context.ledger.plan,
@@ -430,7 +437,7 @@ async def execute_run(
     resume: bool = False,
     resume_checkpoint_id: str | None = None,
     continuation: bool = False,
-    completion_gate_context: CompletionGateContext | None = None,
+    active_worker_ids: Callable[[], frozenset[str]] | None = None,
 ) -> RunOutput:
     """Execute a single agent run — the core entry point."""
     options = options or AgentOptions()
@@ -467,7 +474,7 @@ async def execute_run(
             ),
             should_continue=_retry_continue,
         ),
-        completion_gate_context=completion_gate_context,
+        active_worker_ids=active_worker_ids,
     )
 
     orchestrator = RunLoopOrchestrator(context, runtime)
