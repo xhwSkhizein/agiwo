@@ -12,8 +12,8 @@ from agiwo.agent import (
     MainAgent,
     RunExecutionRequest,
 )
+from agiwo.agent.completion_gates import CompletionGates
 from agiwo.agent.completion_gates.context import CompletionGateContext
-from agiwo.agent.models.config import AgentOptions as AgentOptionsModel
 from agiwo.agent.models.execution import RunTreeRole
 from agiwo.llm.base import Model, StreamChunk
 from tests.agent.worker_test_helpers import build_main_agent_with_scheduler
@@ -70,9 +70,9 @@ async def _run_root(
 
 
 @pytest.mark.asyncio
-async def test_semantic_gates_default_off_in_options() -> None:
-    options = AgentOptionsModel()
-    assert options.enable_semantic_completion_gates is False
+async def test_semantic_gates_seam_defaults_to_mechanical_only() -> None:
+    gates = CompletionGates()
+    assert gates.semantic_enabled is False
 
 
 @pytest.mark.asyncio

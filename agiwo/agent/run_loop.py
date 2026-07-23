@@ -362,9 +362,7 @@ class RunLoopOrchestrator(
     async def _evaluate_completion_gates(self) -> AllowComplete | Continue:
         gate_context = self.runtime.completion_gate_context or CompletionGateContext()
         active_worker_ids = gate_context.active_worker_ids()
-        gates = CompletionGates(
-            enable_semantic=self.runtime.config.enable_semantic_completion_gates,
-        )
+        gates = CompletionGates()
         return await gates.evaluate(
             plan=self.context.ledger.plan,
             active_worker_ids=active_worker_ids,

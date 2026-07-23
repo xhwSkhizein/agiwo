@@ -53,8 +53,8 @@ _Avoid_：接力、移交、把工具嵌套当成委派、深度大于一的 Wor
 _Avoid_：中心编排器、ObjectiveService、把 steer/开 Run/写历史收口成 Scheduler 唯一 API、跨 Run 任务账本、用 Scheduler 描述 Agent-as-Tool
 
 **结束门禁（Completion Gates）**：
-Main 宣称本轮结束前的检验：机械门禁始终生效（未完成 Worker、仍 open 的 milestone 等）；语义门禁默认关闭，按复杂度指标开启，开启时以 SessionIntent 为重要检验标准。输出仅为继续（带反馈入队）或允许结束，不维护平行进度状态机。**第一期只交付机械门禁**（G-v1a）；语义门禁留缝默认不开。
-_Avoid_：Objective 验收闩锁、把语义门禁做成跨 Run 任务大脑、解析错误文本当唯一依据、第一期强行上语义门禁阻塞 M3 主路径
+Main 宣称本轮结束前的检验：机械门禁始终生效（未完成 Worker、仍 open 的 milestone 等）；语义门禁 seam 保留（`SemanticCompletionGate` Protocol），v1 无用户可见开关。输出仅为继续（带反馈入队）或允许结束，不维护平行进度状态机。**第一期只交付机械门禁**（G-v1a）。
+_Avoid_：Objective 验收闩锁、把语义门禁做成跨 Run 任务大脑、解析错误文本当唯一依据、第一期强行上语义门禁阻塞 M3 主路径、暴露无效的语义门开关
 
 **会话入口（Session Gateway）**：
 Console Session 与渠道消息的统一用户入口。将用户消息写入 RunLog（Session 历史投影）并交给 MainAgent.accept（或现行等价路径）；不创建或升级任何跨 Run 任务账本。
