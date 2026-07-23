@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from agiwo.agent.models.log import RunLogEntry
+from agiwo.agent.models.log import MessagesRebuilt, RunLogEntry
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.storage.base import (
@@ -35,14 +35,27 @@ class SessionRuntime:
         self.run_log_storage = run_log_storage
         self.trace_runtime = trace_runtime
         self.abort_signal = abort_signal or AbortSignal()
-        self._pending_steer_inputs: list[UserMessage] = []
+        self._pending_inputs: list[UserMessage] = []
         self._subscribers: set[asyncio.Queue[AgentStreamItem | object]] = set()
-        self._hidden_step_ids: set[str] = set()
         self._closed = False
+        # Set after prepare_run_context finishes so callers (MainAgent.accept)
+        # can wait out the bootstrap window before staging mid-run input.
+        self._bootstrap_ready = asyncio.Event()
 
     # ------------------------------------------------------------------
     # Storage convenience methods
     # ------------------------------------------------------------------
+
+    def mark_bootstrap_ready(self) -> None:
+        """Unblock waiters once initial context assembly has finished."""
+        self._bootstrap_ready.set()
+
+    @property
+    def is_bootstrap_ready(self) -> bool:
+        return self._bootstrap_ready.is_set()
+
+    async def wait_until_bootstrap_ready(self) -> None:
+        await self._bootstrap_ready.wait()
 
     async def allocate_sequence(self) -> int:
         return await self.run_log_storage.allocate_sequence(self.session_id)
@@ -84,6 +97,14 @@ class SessionRuntime:
             self.session_id, agent_id
         )
 
+    async def get_latest_messages_rebuilt(
+        self, agent_id: str
+    ) -> MessagesRebuilt | None:
+        """Retrieve the latest complete message snapshot for an agent."""
+        return await self.run_log_storage.get_latest_messages_rebuilt(
+            self.session_id, agent_id
+        )
+
     def subscribe(self) -> AsyncIterator[AgentStreamItem]:
         queue: asyncio.Queue[AgentStreamItem | object] = asyncio.Queue(
             maxsize=self._MAX_SUBSCRIBER_QUEUE_SIZE
@@ -104,22 +125,23 @@ class SessionRuntime:
 
         return _iterator()
 
-    async def enqueue_steer(self, user_input: UserInput) -> bool:
+    async def enqueue_message(self, user_input: UserInput) -> bool:
+        """Append one pending user-role message for the next loop turn."""
         if self._closed:
             return False
         message = UserMessage.from_value(user_input)
         if not message.has_content():
             return False
-        self._pending_steer_inputs.append(message)
+        self._pending_inputs.append(message)
         return True
 
-    def peek_pending_steer_inputs(self) -> list[UserMessage]:
-        return [UserMessage.from_value(item) for item in self._pending_steer_inputs]
+    def peek_pending_inputs(self) -> list[UserMessage]:
+        return [UserMessage.from_value(item) for item in self._pending_inputs]
 
-    def ack_pending_steer_inputs(self, count: int) -> None:
+    def ack_pending_inputs(self, count: int) -> None:
         if count <= 0:
             return
-        del self._pending_steer_inputs[:count]
+        del self._pending_inputs[:count]
 
     async def publish(self, item: AgentStreamItem) -> None:
         if self._closed:
@@ -153,7 +175,6 @@ class SessionRuntime:
         for item in stream_items_from_entries(
             entries,
             run_contexts=run_contexts,
-            persisted_hidden_step_ids=self._hidden_step_ids,
         ):
             await self.publish(item)
 
@@ -161,6 +182,7 @@ class SessionRuntime:
         if self._closed:
             return
         self._closed = True
+        self.mark_bootstrap_ready()
         if self.trace_runtime is not None:
             await self.trace_runtime.stop()
         for subscriber in list(self._subscribers):

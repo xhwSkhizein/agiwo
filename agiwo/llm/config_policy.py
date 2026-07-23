@@ -67,6 +67,8 @@ def sanitize_model_params_data(
 def validate_provider_model_params(
     provider: str | None,
     model_params: Any,
+    *,
+    model_name: str | None = None,
 ) -> None:
     if provider not in COMPATIBLE_MODEL_PROVIDERS:
         return
@@ -78,10 +80,20 @@ def validate_provider_model_params(
         base_url = getattr(model_params, PARAM_BASE_URL, None)
         api_key_env_name = getattr(model_params, PARAM_API_KEY_ENV_NAME, None)
 
+    subject = f"{provider} model"
+    if model_name:
+        subject = f"{provider} model {model_name!r}"
+
     if base_url is None:
-        raise ValueError(f"{provider} models require base_url")
+        raise ValueError(
+            f"{subject} requires base_url in model_params "
+            "(compatible providers have no default endpoint)"
+        )
     if api_key_env_name is None:
-        raise ValueError(f"{provider} models require api_key_env_name")
+        raise ValueError(
+            f"{subject} requires api_key_env_name in model_params "
+            "(compatible providers do not fall back to OPENAI_API_KEY)"
+        )
 
 
 __all__ = [

@@ -11,7 +11,6 @@ from agiwo.llm.openai_response_converter import (
     split_system_instructions,
 )
 from agiwo.utils.logging import get_logger
-from agiwo.utils.retry import retry_async
 
 logger = get_logger(__name__)
 
@@ -20,14 +19,6 @@ class HTTPXError(Exception):
     """Custom exception for httpx errors."""
 
     pass
-
-
-OPENAI_RETRYABLE = (
-    httpx.HTTPStatusError,
-    httpx.ConnectError,
-    httpx.TimeoutException,
-    httpx.NetworkError,
-)
 
 
 OpenAIMessage = dict[str, object]
@@ -285,7 +276,6 @@ class OpenAIResponsesModel(Model):
             elif line.startswith("data:"):
                 current_data = line[len("data:") :].strip()
 
-    @retry_async(exceptions=OPENAI_RETRYABLE)
     async def _open_stream(
         self,
         *,

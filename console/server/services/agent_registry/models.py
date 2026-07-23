@@ -51,7 +51,6 @@ class AgentConfigRecord(BaseModel):
             )
         )
         if normalized.get("allowed_tools") is not None:
-            # Validate agent: references before parsing
             for name in normalized["allowed_tools"]:
                 if isinstance(name, str) and name.startswith("agent:"):
                     agent_ref = AgentToolReference.parse(name)

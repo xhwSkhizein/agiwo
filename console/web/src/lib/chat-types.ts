@@ -43,9 +43,22 @@ export function contentToText(value: unknown): string | undefined {
   return undefined;
 }
 
+export function isUserProvidedInput(userInput: UserInput): boolean {
+  if (typeof userInput === "string" || Array.isArray(userInput)) {
+    return true;
+  }
+  if (userInput.__type === "user_message") {
+    return userInput.is_user_provided !== false;
+  }
+  return true;
+}
+
 export function messageFromStep(step: StepResponse): ChatMessage | null {
   if (step.role === "user") {
     if (!step.user_input) {
+      return null;
+    }
+    if (!isUserProvidedInput(step.user_input)) {
       return null;
     }
     return {

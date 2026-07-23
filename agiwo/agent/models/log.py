@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from agiwo.agent.introspect.models import Milestone
 from agiwo.agent.models.input import MessageContent, UserInput
+from agiwo.agent.models.model_call import ModelCallPhase
+from agiwo.agent.models.plan import Milestone
 from agiwo.agent.models.run import CompactMetadata
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 from agiwo.config.termination import TerminationReason
@@ -25,21 +26,27 @@ class RunLogEntryKind(str, Enum):
     MESSAGES_REBUILT = "messages_rebuilt"
     LLM_CALL_STARTED = "llm_call_started"
     LLM_CALL_COMPLETED = "llm_call_completed"
+    LLM_CALL_FAILED = "llm_call_failed"
     USER_STEP_COMMITTED = "user_step_committed"
     ASSISTANT_STEP_COMMITTED = "assistant_step_committed"
     TOOL_STEP_COMMITTED = "tool_step_committed"
     COMPACTION_APPLIED = "compaction_applied"
     COMPACTION_FAILED = "compaction_failed"
-    STEP_BACK_APPLIED = "step_back_applied"
     STEP_CONDENSED_CONTENT_UPDATED = "step_condensed_content_updated"
     CONTEXT_STEPS_HIDDEN = "context_steps_hidden"
     TERMINATION_DECIDED = "termination_decided"
     HOOK_FAILED = "hook_failed"
-    GOAL_MILESTONES_UPDATED = "goal_milestones_updated"
+    RUN_PLAN_UPDATED = "run_plan_updated"
     INTROSPECTION_TRIGGERED = "introspection_triggered"
     INTROSPECTION_CHECKPOINT_RECORDED = "introspection_checkpoint_recorded"
     INTROSPECTION_OUTCOME_RECORDED = "introspection_outcome_recorded"
     CONTEXT_REPAIR_APPLIED = "context_repair_applied"
+    RUN_CHECKPOINT = "run_checkpoint"
+    RUN_PAUSED = "run_paused"
+    RUN_RESUME_PREPARED = "run_resume_prepared"
+    RUN_RESUMED = "run_resumed"
+    EXTERNAL_EFFECT_MAY_HAVE_STARTED = "external_effect_may_have_started"
+    RETRY_BACKOFF = "retry_backoff"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -58,6 +65,7 @@ class RunStarted(RunLogEntry):
     user_id: str | None = None
     parent_run_id: str | None = None
     depth: int = 0
+    run_tree_role: str | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_STARTED)
 
 
@@ -66,6 +74,7 @@ class RunFinished(RunLogEntry):
     response: str | None = None
     termination_reason: TerminationReason | None = None
     metrics: dict[str, Any] | None = None
+    finalization: dict[str, Any] | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_FINISHED)
 
 
@@ -73,6 +82,68 @@ class RunFinished(RunLogEntry):
 class RunFailed(RunLogEntry):
     error: str
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_FAILED)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunCheckpoint(RunLogEntry):
+    """Minimal resume cursor; messages are rebuilt from RunLog replay."""
+
+    checkpoint_id: str
+    last_committed_sequence: int
+    agent_config_hash: str | None = None
+    template_hash: str | None = None
+    reason: str | None = None
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_CHECKPOINT)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunPaused(RunLogEntry):
+    """Recoverable interrupt; must not pair with RunFinished/Failed/TerminationDecided."""
+
+    checkpoint_id: str
+    reason: str
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_PAUSED)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunResumePrepared(RunLogEntry):
+    """Runtime rebuilt and validated; still PAUSED until barrier release."""
+
+    checkpoint_id: str
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.RUN_RESUME_PREPARED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RunResumed(RunLogEntry):
+    checkpoint_id: str
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_RESUMED)
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExternalEffectMayHaveStarted(RunLogEntry):
+    """Marker committed before a tool adapter that may cause external side effects."""
+
+    tool_name: str
+    tool_call_id: str
+    idempotency: str
+    idempotency_key: str | None = None
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.EXTERNAL_EFFECT_MAY_HAVE_STARTED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class RetryBackoff(RunLogEntry):
+    """Recorded wait before a safe automatic retry attempt."""
+
+    operation: str
+    attempt_no: int
+    wait_seconds: float
+    reason: str
+    logical_call_id: str | None = None
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RETRY_BACKOFF)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -99,21 +170,57 @@ class MessagesRebuilt(RunLogEntry):
 
 @dataclass(frozen=True, kw_only=True)
 class LLMCallStarted(RunLogEntry):
+    logical_call_id: str
+    phase: ModelCallPhase
+    attempt_no: int
+    call_ordinal: int
+    retry_reason: str | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     tools: list[dict[str, Any]] | None = None
+    request_tokens: int | None = None
+    call_cost_ceiling: float | None = None
+    price_snapshot: dict[str, float] | None = None
     kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.LLM_CALL_STARTED)
 
 
 @dataclass(frozen=True, kw_only=True)
 class LLMCallCompleted(RunLogEntry):
+    logical_call_id: str
+    phase: ModelCallPhase
+    attempt_no: int
+    call_ordinal: int
+    retry_reason: str | None = None
     content: MessageContent | None = None
     reasoning_content: str | None = None
     tool_calls: list[dict[str, Any]] | None = None
     finish_reason: str | None = None
     metrics: StepMetrics | None = None
+    response_observed: bool = True
+    request_tokens: int | None = None
+    call_cost_ceiling: float | None = None
+    price_snapshot: dict[str, float] | None = None
     kind: RunLogEntryKind = field(
         init=False, default=RunLogEntryKind.LLM_CALL_COMPLETED
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class LLMCallFailed(RunLogEntry):
+    logical_call_id: str
+    phase: ModelCallPhase
+    attempt_no: int
+    call_ordinal: int
+    retry_reason: str | None = None
+    error: str
+    content: MessageContent | None = None
+    reasoning_content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None
+    metrics: StepMetrics | None = None
+    response_observed: bool = False
+    request_tokens: int | None = None
+    call_cost_ceiling: float | None = None
+    price_snapshot: dict[str, float] | None = None
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.LLM_CALL_FAILED)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -182,16 +289,6 @@ class CompactionFailed(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
-class StepBackApplied(RunLogEntry):
-    """Log entry recorded when step-back condenses off-track tool results."""
-
-    affected_count: int
-    checkpoint_seq: int
-    experience: str
-    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.STEP_BACK_APPLIED)
-
-
-@dataclass(frozen=True, kw_only=True)
 class StepCondensedContentUpdated(RunLogEntry):
     step_id: str
     condensed_content: str
@@ -232,15 +329,20 @@ class HookFailed(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GoalMilestonesUpdated(RunLogEntry):
+class RunPlanUpdated(RunLogEntry):
     milestones: list[Milestone] = field(default_factory=list)
-    active_milestone_id: str | None = None
+    revision: int = 0
     source_tool_call_id: str | None = None
     source_step_id: str | None = None
     reason: Literal["declared", "updated", "completed", "activated"] = "updated"
-    kind: RunLogEntryKind = field(
-        init=False, default=RunLogEntryKind.GOAL_MILESTONES_UPDATED
-    )
+    kind: RunLogEntryKind = field(init=False, default=RunLogEntryKind.RUN_PLAN_UPDATED)
+
+    @property
+    def active_milestone_id(self) -> str | None:
+        for milestone in self.milestones:
+            if milestone.status == "active":
+                return milestone.id
+        return None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -269,13 +371,14 @@ class IntrospectionCheckpointRecorded(RunLogEntry):
 
 @dataclass(frozen=True, kw_only=True)
 class IntrospectionOutcomeRecorded(RunLogEntry):
-    mode: Literal["metadata_only", "step_back"]
     boundary_seq: int
+    mode: Literal["metadata_only", "step_back"] = "metadata_only"
     aligned: bool | None = None
     experience: str | None = None
     active_milestone_id: str | None = None
     review_tool_call_id: str | None = None
     review_step_id: str | None = None
+    tool_usefulness: list[dict[str, Any]] = field(default_factory=list)
     hidden_step_ids: list[str] = field(default_factory=list)
     notice_cleaned_step_ids: list[str] = field(default_factory=list)
     condensed_step_ids: list[str] = field(default_factory=list)
@@ -358,16 +461,22 @@ __all__ = [
     "ContextRepairApplied",
     "ContextStepsHidden",
     "ContextAssembled",
-    "GoalMilestonesUpdated",
+    "RunPlanUpdated",
     "HookFailed",
     "IntrospectionCheckpointRecorded",
     "IntrospectionOutcomeRecorded",
     "IntrospectionTriggered",
     "LLMCallCompleted",
+    "LLMCallFailed",
     "LLMCallStarted",
     "MessagesRebuilt",
+    "RunCheckpoint",
+    "RunPaused",
+    "RunResumePrepared",
+    "RunResumed",
+    "ExternalEffectMayHaveStarted",
+    "RetryBackoff",
     "RunRolledBack",
-    "StepBackApplied",
     "StepCondensedContentUpdated",
     "RunFailed",
     "RunFinished",

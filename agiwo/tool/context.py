@@ -28,6 +28,7 @@ class ToolContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     gate_checked: bool = False
     tool_call_id: str = ""
+    run_id: str | None = None
 
 
 __all__ = ["RunContextLike", "ToolContext"]

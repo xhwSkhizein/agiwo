@@ -90,7 +90,8 @@ export function SessionItem({
                 type="button"
                 onClick={onDelete}
                 className="ui-button ui-button-ghost min-h-7 rounded-full px-2 py-1 text-[10px] text-danger hover:text-danger"
-                aria-label={`Delete session ${session.session_id.slice(0, 8)}`}
+                aria-label={`Archive session ${session.session_id.slice(0, 8)}`}
+                title="Archive"
               >
                 <Trash2 className="w-3 h-3" />
               </button>

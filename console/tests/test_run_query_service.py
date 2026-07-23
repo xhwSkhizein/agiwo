@@ -9,7 +9,6 @@ from agiwo.agent import (
     RunFinished,
     RunRolledBack,
     RunStarted,
-    StepBackApplied,
     TerminationDecided,
     TerminationReason,
     UserStepCommitted,
@@ -159,17 +158,8 @@ async def test_run_query_service_exposes_runtime_decision_state() -> None:
                 transcript_path="/tmp/compact.json",
                 summary="compact",
             ),
-            StepBackApplied(
-                sequence=2,
-                session_id="sess-1",
-                run_id="run-1",
-                agent_id="agent-1",
-                affected_count=1,
-                checkpoint_seq=2,
-                experience="switch plan",
-            ),
             TerminationDecided(
-                sequence=3,
+                sequence=2,
                 session_id="sess-1",
                 run_id="run-1",
                 agent_id="agent-1",
@@ -186,8 +176,6 @@ async def test_run_query_service_exposes_runtime_decision_state() -> None:
 
     assert state.latest_compaction is not None
     assert state.latest_compaction.summary == "compact"
-    assert state.latest_step_back is not None
-    assert state.latest_step_back.experience == "switch plan"
     assert state.latest_termination is not None
     assert state.latest_termination.reason is TerminationReason.COMPLETED
     assert snapshot.runtime_decisions.latest_termination is not None
@@ -221,17 +209,8 @@ async def test_run_query_service_lists_recent_runtime_decisions_descending() -> 
                 max_attempts=2,
                 terminal=False,
             ),
-            StepBackApplied(
-                sequence=3,
-                session_id="sess-1",
-                run_id="run-1",
-                agent_id="agent-1",
-                affected_count=2,
-                checkpoint_seq=2,
-                experience="switch plan",
-            ),
             RunRolledBack(
-                sequence=4,
+                sequence=3,
                 session_id="sess-1",
                 run_id="run-1",
                 agent_id="agent-1",
@@ -240,7 +219,7 @@ async def test_run_query_service_lists_recent_runtime_decisions_descending() -> 
                 reason="cleanup",
             ),
             TerminationDecided(
-                sequence=5,
+                sequence=4,
                 session_id="sess-1",
                 run_id="run-1",
                 agent_id="agent-1",
@@ -257,9 +236,8 @@ async def test_run_query_service_lists_recent_runtime_decisions_descending() -> 
     assert [decision.kind for decision in decisions] == [
         "termination",
         "rollback",
-        "step_back",
         "compaction_failed",
         "compaction",
     ]
     assert decisions[1].details["reason"] == "cleanup"
-    assert decisions[3].details["error"] == "timeout"
+    assert decisions[2].details["error"] == "timeout"

@@ -171,6 +171,11 @@ async def test_lifespan_closes_partial_startup_resources_on_error(
     monkeypatch.setattr(
         app_module, "create_session_store", lambda **_kwargs: session_store
     )
+    monkeypatch.setattr(
+        app_module,
+        "AgentRuntimeCache",
+        lambda **_kwargs: SimpleNamespace(close=AsyncMock()),
+    )
     monkeypatch.setattr(app_module, "safe_close_all", fake_safe_close_all)
 
     with pytest.raises(RuntimeError, match="Feishu channel enabled but missing"):

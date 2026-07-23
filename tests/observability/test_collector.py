@@ -13,10 +13,10 @@ from agiwo.agent.models.log import (
     RunFinished,
     RunRolledBack,
     RunStarted,
-    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
 )
+from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.step import MessageRole
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.observability.base import BaseTraceStorage, TraceQuery
@@ -88,6 +88,10 @@ async def test_collects_trace_from_committed_run_log_entries_only() -> None:
                 session_id="session-1",
                 run_id="run-1",
                 agent_id="agent-1",
+                logical_call_id="logical-1",
+                phase=ModelCallPhase.ASSISTANT,
+                attempt_no=1,
+                call_ordinal=1,
                 messages=[{"role": "user", "content": "search"}],
                 tools=[{"name": "web_search"}],
             ),
@@ -107,6 +111,10 @@ async def test_collects_trace_from_committed_run_log_entries_only() -> None:
                 session_id="session-1",
                 run_id="run-1",
                 agent_id="agent-1",
+                logical_call_id="logical-1",
+                phase=ModelCallPhase.ASSISTANT,
+                attempt_no=1,
+                call_ordinal=1,
                 content="Let me search that.",
                 tool_calls=[tool_call],
                 finish_reason="tool_calls",
@@ -149,6 +157,12 @@ async def test_collects_trace_from_committed_run_log_entries_only() -> None:
         "response_tool_calls": [tool_call],
         "finish_reason": "tool_calls",
         "status": "completed",
+        "logical_call_id": "logical-1",
+        "phase": "assistant",
+        "attempt_no": 1,
+        "call_ordinal": 1,
+        "retry_reason": None,
+        "response_observed": True,
         "metrics": {
             "duration_ms": 1000.0,
             "first_token_ms": None,
@@ -216,26 +230,17 @@ async def test_collector_records_runtime_run_log_entries() -> None:
                 max_attempts=2,
                 terminal=False,
             ),
-            StepBackApplied(
+            RunRolledBack(
                 sequence=5,
                 session_id="session-1",
                 run_id="run-1",
                 agent_id="agent-1",
-                affected_count=1,
-                checkpoint_seq=2,
-                experience="switch plan",
-            ),
-            RunRolledBack(
-                sequence=6,
-                session_id="session-1",
-                run_id="run-1",
-                agent_id="agent-1",
                 start_sequence=4,
-                end_sequence=5,
-                reason="step_back_cleanup",
+                end_sequence=4,
+                reason="scheduler_no_progress_periodic",
             ),
             HookFailed(
-                sequence=7,
+                sequence=6,
                 session_id="session-1",
                 run_id="run-1",
                 agent_id="agent-1",
@@ -245,7 +250,7 @@ async def test_collector_records_runtime_run_log_entries() -> None:
                 error="hook exploded",
             ),
             TerminationDecided(
-                sequence=8,
+                sequence=7,
                 session_id="session-1",
                 run_id="run-1",
                 agent_id="agent-1",
@@ -263,7 +268,6 @@ async def test_collector_records_runtime_run_log_entries() -> None:
     assert [span.name for span in runtime_spans] == [
         "compaction",
         "compaction_failed",
-        "step_back",
         "rollback",
         "hook_failed",
         "termination",
@@ -272,10 +276,9 @@ async def test_collector_records_runtime_run_log_entries() -> None:
     assert runtime_spans[0].attributes["summary"] == "short summary"
     assert runtime_spans[1].status == "error"
     assert runtime_spans[1].error_message == "model timeout"
-    assert runtime_spans[2].attributes["experience"] == "switch plan"
-    assert runtime_spans[3].attributes["reason"] == "step_back_cleanup"
-    assert runtime_spans[4].attributes["handler_name"] == "audit_hook"
-    assert runtime_spans[5].attributes["termination_reason"] == "max_steps"
+    assert runtime_spans[2].attributes["reason"] == "scheduler_no_progress_periodic"
+    assert runtime_spans[3].attributes["handler_name"] == "audit_hook"
+    assert runtime_spans[4].attributes["termination_reason"] == "max_steps"
 
 
 @pytest.mark.asyncio

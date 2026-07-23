@@ -22,7 +22,6 @@ from agiwo.llm.message_converter import (
     convert_openai_tools_to_anthropic,
 )
 from agiwo.utils.logging import get_logger
-from agiwo.utils.retry import retry_async
 
 logger = get_logger(__name__)
 
@@ -94,7 +93,6 @@ class BedrockAnthropicModel(Model):
             )
         return self._client
 
-    @retry_async(exceptions=(BedrockRetryableError,))
     async def _invoke_stream(
         self,
         *,

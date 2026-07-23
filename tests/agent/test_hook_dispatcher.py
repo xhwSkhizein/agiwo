@@ -11,6 +11,7 @@ from agiwo.agent.hooks import (
     HookRegistry,
     decision_support,
     observe,
+    phase_spec,
     transform,
 )
 from agiwo.agent.models.log import HookFailed
@@ -163,6 +164,8 @@ async def test_hook_registry_records_hook_failed_entries_for_noncritical_errors(
         run_id: str
         agent_id: str
         session_runtime: SessionRuntime
+        parent_run_id: str | None = None
+        depth: int = 0
 
     storage = InMemoryRunLogStorage()
     session_runtime = SessionRuntime(
@@ -301,3 +304,16 @@ async def test_hook_registry_after_step_back_dispatches_observer() -> None:
     await registry.after_step_back(outcome, context=object())
 
     assert seen == [outcome]
+
+
+def test_phase_spec_exposes_full_before_llm_contract() -> None:
+    spec = phase_spec(HookPhase.BEFORE_LLM)
+    assert spec.allow_transform is True
+    assert spec.allow_decision_support is True
+    assert spec.allow_critical is True
+    assert "messages" in spec.transform_fields
+    assert "llm_advice" in spec.decision_support_fields
+
+    observe_only = phase_spec(HookPhase.AFTER_LLM)
+    assert observe_only.allow_transform is False
+    assert observe_only.allow_critical is False

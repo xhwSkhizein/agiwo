@@ -34,16 +34,17 @@ describe("SessionObservabilityPanel", () => {
           ],
           decision_events: [
             {
-              kind: "step_back",
+              kind: "compaction",
               sequence: 8,
               run_id: "run-1",
               agent_id: "agent-1",
               created_at: "2026-04-22T12:01:00Z",
-              summary: "2 results condensed after checkpoint seq 4",
+              summary: "Context compacted from 1000 to 200 tokens",
               details: {
-                affected_count: 2,
-                checkpoint_seq: 4,
-                experience: "switch plan",
+                start_sequence: 1,
+                end_sequence: 8,
+                before_token_estimate: 1000,
+                after_token_estimate: 200,
               },
             },
           ],
@@ -55,9 +56,9 @@ describe("SessionObservabilityPanel", () => {
     expect(screen.getByText("Trace Context")).toBeInTheDocument();
     expect(screen.getByText("Runtime Decisions")).toBeInTheDocument();
     expect(screen.getByText("hello")).toBeInTheDocument();
-    expect(screen.getByText("2 results condensed after checkpoint seq 4")).toBeInTheDocument();
-    expect(screen.getByText("checkpoint_seq 4")).toBeInTheDocument();
-    expect(screen.getByText("switch plan")).toBeInTheDocument();
+    expect(screen.getByText("Context compacted from 1000 to 200 tokens")).toBeInTheDocument();
+    expect(screen.getByText("seq 1-8")).toBeInTheDocument();
+    expect(screen.getByText("1000 -> 200 tokens")).toBeInTheDocument();
     expect(screen.getByText("Recent Traces")).toBeInTheDocument();
   });
 });

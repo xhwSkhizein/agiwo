@@ -7,22 +7,24 @@ description: Understand when to use the Scheduler and how it manages persistent 
 
 `Scheduler` is the orchestration layer above `Agent`. It does not replace the agent runtime. It manages when and how roots and children are run.
 
+**Session chat** uses `MainAgent.accept` (Console `SessionGateway`), not Scheduler.
+
 ## Use the scheduler when you need
 
 - persistent roots across multiple turns
-- child agents
+- child agents / Workers and waitset
 - waiting and wake conditions
-- steer, cancel, or shutdown controls
-- a long-lived runtime story the Console can inspect
+- cancel or shutdown controls
+- a long-lived orchestration tree the Console can inspect
 
 If you only need one run, prefer `Agent.run()` or `Agent.run_stream()`.
 
 ## Core responsibilities
 
 - root and child lifecycle management
-- persistent input routing
+- persistent input enqueue (`enqueue_input`)
 - sleep and wake semantics
-- streaming and wait-for results
+- wait-for results
 - runtime control tools for scheduler-managed agents
 
 ## Mental model
@@ -44,15 +46,12 @@ You can think of the scheduler as two layers:
 | `COMPLETED` | One-shot root finished |
 | `FAILED` | The state failed or was terminated |
 
-## Root input routing
+## Root input
 
-The high-level integration API is `route_root_input(...)`. It decides whether the right action is:
+Session product input: `MainAgent.accept`.
 
-- submit a new root
-- enqueue input for the next round
-- steer a currently active root
+Scheduler-tree persistent roots: `enqueue_input(...)`:
 
-For non-`RUNNING` paths, it also returns a `RouteResult.stream` iterator for the
-root turn that was just routed.
-
-That is why Console and channel integrations do not need to reimplement root lifecycle logic.
+- `IDLE` / `FAILED` → next-cycle `pending_input`
+- `RUNNING` → live Loop `enqueue_message`
+- `WAITING` / `QUEUED` → `USER_HINT` mailbox

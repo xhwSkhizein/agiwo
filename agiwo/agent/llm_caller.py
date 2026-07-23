@@ -1,13 +1,21 @@
 """
-LLM caller — streaming LLM calls + step building.
+LLM caller — unified model-call boundary with attempt ledger and streaming.
 
-Consolidates the LLM-call and step-building logic into one module.
+All provider requests go through ``execute_model_call`` so every real attempt
+produces Started/Completed/Failed facts with stable logical_call_id and phase.
 """
 
 import asyncio
 import time
 from datetime import datetime, timezone
+from typing import Any
 
+from agiwo.agent.models.model_call import (
+    FINALIZATION_PHASES,
+    LlmAttemptEnvelope,
+    ModelCallPhase,
+    new_logical_call_id,
+)
 from agiwo.agent.models.step import (
     LLMCallContext,
     StepDelta,
@@ -15,10 +23,18 @@ from agiwo.agent.models.step import (
     StepView,
 )
 from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.runtime.state_writer import RunStateWriter
 from agiwo.agent.models.stream import StepDeltaEvent
+from agiwo.agent.termination.run_limit import RunLimitPolicy
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.llm.event_normalizer import normalize_usage_metrics
 from agiwo.llm.usage_resolver import ModelUsageEstimator, UsageEstimate
+from agiwo.agent.retry import (
+    IdempotencyKind,
+    RetryCoordinator,
+    RunBlockingFaultError,
+    map_provider_exception,
+)
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
@@ -27,7 +43,231 @@ logger = get_logger(__name__)
 _CHUNK_TIMEOUT_SECONDS = 120
 
 
-async def stream_assistant_step(
+class ModelCallLimitExceeded(Exception):
+    """Raised when RunLimitPolicy refuses a new provider attempt."""
+
+    def __init__(self, phase: ModelCallPhase, reason: str) -> None:
+        self.phase = phase
+        self.reason = reason
+        super().__init__(f"model call limit exceeded for {phase.value}: {reason}")
+
+
+class ModelCallResult:
+    __slots__ = ("step", "llm_context", "logical_call_id")
+
+    def __init__(
+        self,
+        step: StepView,
+        llm_context: LLMCallContext,
+        *,
+        logical_call_id: str,
+    ) -> None:
+        self.step = step
+        self.llm_context = llm_context
+        self.logical_call_id = logical_call_id
+
+
+async def execute_model_call(
+    *,
+    model: Model,
+    state: RunContext,
+    writer: RunStateWriter,
+    phase: ModelCallPhase,
+    abort_signal: AbortSignal | None,
+    messages: list[dict] | None = None,
+    tools: list[dict] | None = None,
+    use_state_tools: bool = True,
+    name: str | None = None,
+    logical_call_id: str | None = None,
+    limit_policy: RunLimitPolicy | None = None,
+    retry_coordinator: RetryCoordinator | None = None,
+) -> ModelCallResult:
+    """Run a model call through the unified attempt boundary."""
+    policy = limit_policy or RunLimitPolicy()
+    call_id = logical_call_id or new_logical_call_id()
+    coordinator = retry_coordinator or RetryCoordinator()
+
+    attempt_no = 1
+    last_fault = None
+    attempts: list = []
+    while True:
+        # ADR P0-04: every real provider attempt — including retries — must
+        # pass RunLimitPolicy against the current ledger count.
+        decision = policy.check_before_attempt(state.ledger.model_calls, phase)
+        if not decision.allowed:
+            raise ModelCallLimitExceeded(phase, decision.reason or "denied")
+
+        if state.ledger.model_calls.at_or_over_limit() and phase in FINALIZATION_PHASES:
+            # Over-limit finalization slots are single-shot: provider retries
+            # of the same phase do not get a second over-limit allowance.
+            state.ledger.model_calls.mark_finalization_consumed(phase)
+
+        retry_reason = (
+            None
+            if last_fault is None
+            else f"provider_retry:{last_fault.provider_code or last_fault.disposition.value}"
+        )
+        try:
+            step, llm_context = await _stream_single_attempt(
+                model=model,
+                state=state,
+                writer=writer,
+                phase=phase,
+                abort_signal=abort_signal,
+                messages=messages,
+                tools=tools,
+                use_state_tools=use_state_tools,
+                name=name,
+                logical_call_id=call_id,
+                attempt_no=attempt_no,
+                retry_reason=retry_reason,
+            )
+            return ModelCallResult(step, llm_context, logical_call_id=call_id)
+        except ModelCallLimitExceeded:
+            raise
+        except RunBlockingFaultError:
+            raise
+        except Exception as exc:
+            fault = map_provider_exception(
+                exc,
+                response_observed=False,
+                logical_call_id=call_id,
+                attempt_no=attempt_no,
+            )
+            attempts.append(fault)
+            last_fault = fault
+            if not coordinator.can_retry(
+                fault,
+                attempt_no=attempt_no,
+                idempotency=IdempotencyKind.GUARANTEED,
+            ):
+                coordinator.raise_boundary(
+                    fault,
+                    attempts=attempts,
+                    exhausted=attempt_no >= coordinator.policy.max_attempts
+                    and fault.disposition.value == "retryable",
+                )
+                raise
+            await coordinator.ensure_progress_allowed()
+            if state.pause_request is not None:
+                raise
+            wait_seconds = coordinator.backoff_seconds(attempt_no)
+            await writer.record_retry_backoff(
+                operation="llm",
+                attempt_no=attempt_no,
+                wait_seconds=wait_seconds,
+                reason=retry_reason or fault.disposition.value,
+                logical_call_id=call_id,
+            )
+            logger.warning(
+                "model_call_provider_retry",
+                run_id=state.run_id,
+                logical_call_id=call_id,
+                phase=phase.value,
+                attempt_no=attempt_no,
+                retry_reason=retry_reason,
+                disposition=fault.disposition.value,
+                wait_seconds=wait_seconds,
+            )
+            attempt_no += 1
+            await coordinator.wait_before_retry(attempt_no - 1)
+
+
+async def _stream_single_attempt(
+    *,
+    model: Model,
+    state: RunContext,
+    writer: RunStateWriter,
+    phase: ModelCallPhase,
+    abort_signal: AbortSignal | None,
+    messages: list[dict] | None,
+    tools: list[dict] | None,
+    use_state_tools: bool,
+    name: str | None,
+    logical_call_id: str,
+    attempt_no: int,
+    retry_reason: str | None,
+) -> tuple[StepView, LLMCallContext]:
+    ledger = state.ledger.model_calls
+    resolved_messages = messages if messages is not None else state.snapshot_messages()
+    resolved_tools = (
+        state.copy_tool_schemas() if use_state_tools and tools is None else tools
+    )
+
+    metrics_resolver = ModelUsageEstimator(model)
+    request_estimate = metrics_resolver.estimate_request(
+        resolved_messages, resolved_tools
+    )
+    request_tokens = int(request_estimate.input_tokens or 0)
+    max_output_tokens = int(model.max_output_tokens or 0)
+    price_snapshot = metrics_resolver.price_snapshot()
+    call_cost_ceiling = metrics_resolver.compute_call_cost_ceiling(
+        request_tokens=request_tokens,
+        max_output_tokens=max_output_tokens,
+        cache_read_tokens=int(request_estimate.cache_read_tokens or 0),
+        cache_creation_tokens=int(request_estimate.cache_creation_tokens or 0),
+    )
+
+    # call_ordinal reserved before record_attempt_started for stable envelope identity
+    pending_ordinal = ledger.next_ordinal()
+    envelope = LlmAttemptEnvelope(
+        logical_call_id=logical_call_id,
+        phase=phase,
+        attempt_no=attempt_no,
+        call_ordinal=pending_ordinal,
+        retry_reason=retry_reason,
+        request_tokens=request_tokens,
+        call_cost_ceiling=call_cost_ceiling,
+        price_snapshot=price_snapshot,
+    )
+
+    call_ordinal = ledger.record_attempt_started(phase)
+    envelope = LlmAttemptEnvelope(
+        logical_call_id=logical_call_id,
+        phase=phase,
+        attempt_no=attempt_no,
+        call_ordinal=call_ordinal,
+        retry_reason=retry_reason,
+        request_tokens=request_tokens,
+        call_cost_ceiling=call_cost_ceiling,
+        price_snapshot=price_snapshot,
+    )
+    await writer.record_llm_call_started(
+        messages=resolved_messages,
+        tools=resolved_tools,
+        envelope=envelope,
+    )
+
+    try:
+        step, llm_context = await _stream_assistant_step_inner(
+            model,
+            state,
+            abort_signal,
+            messages=resolved_messages,
+            tools=resolved_tools,
+            use_state_tools=False,
+            name=name,
+        )
+    except Exception as exc:
+        await writer.record_llm_call_failed(
+            envelope=envelope,
+            error=str(exc),
+            response_observed=False,
+        )
+        ledger.record_attempt_failed(phase)
+        raise
+
+    await writer.record_llm_call_completed(
+        step=step,
+        llm=llm_context,
+        envelope=envelope,
+        response_observed=True,
+    )
+    ledger.record_attempt_completed(phase)
+    return step, llm_context
+
+
+async def _stream_assistant_step_inner(
     model: Model,
     state: RunContext,
     abort_signal: AbortSignal | None,
@@ -37,7 +277,6 @@ async def stream_assistant_step(
     use_state_tools: bool = True,
     name: str | None = None,
 ) -> tuple[StepView, LLMCallContext]:
-    """Stream call LLM and build Step."""
     messages = messages if messages is not None else state.snapshot_messages()
     tools_resolved = (
         state.copy_tool_schemas() if use_state_tools and tools is None else tools
@@ -132,7 +371,6 @@ async def stream_assistant_step(
 def _accumulate_tool_calls(
     tool_calls_acc: dict[int, dict], delta_calls: list[dict]
 ) -> None:
-    """Accumulate streaming tool calls."""
     for tc in delta_calls:
         idx = tc.get("index", 0)
 
@@ -160,7 +398,6 @@ def _accumulate_tool_calls(
 
 
 def _finalize_tool_calls(tool_calls_acc: dict[int, dict]) -> list[dict]:
-    """Finalize accumulated tool calls."""
     return [call for call in tool_calls_acc.values() if call["id"] is not None]
 
 
@@ -205,7 +442,6 @@ def _resolve_step_metrics(
     metrics_resolver: ModelUsageEstimator,
     request_estimate: UsageEstimate | None,
 ) -> None:
-    """Fill missing metrics on StepView and compute cost."""
     if step.metrics is None:
         return
 
@@ -262,8 +498,7 @@ def _resolve_step_metrics(
     )
 
 
-def _get_request_params(model: Model) -> dict:
-    """Get LLM request parameters."""
+def _get_request_params(model: Model) -> dict[str, Any]:
     return {
         "model_id": model.id,
         "model_name": model.name,
@@ -274,9 +509,12 @@ def _get_request_params(model: Model) -> dict:
 
 
 def _check_abort(abort_signal: AbortSignal | None) -> None:
-    """Check abort signal."""
     if abort_signal and abort_signal.is_aborted():
         raise asyncio.CancelledError(abort_signal.reason)
 
 
-__all__ = ["stream_assistant_step"]
+__all__ = [
+    "ModelCallLimitExceeded",
+    "ModelCallResult",
+    "execute_model_call",
+]

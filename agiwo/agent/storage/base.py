@@ -6,14 +6,11 @@ from dataclasses import dataclass
 from typing import Literal
 
 from agiwo.agent.models.log import (
-    AssistantStepCommitted,
     CompactionApplied,
+    MessagesRebuilt,
     RunLogEntry,
     RunLogEntryKind,
     RunRolledBack,
-    StepCondensedContentUpdated,
-    ToolStepCommitted,
-    UserStepCommitted,
     build_compact_metadata_from_entry,
 )
 from agiwo.agent.models.runtime_decision import RuntimeDecisionState
@@ -184,18 +181,6 @@ class RunLogStorage(ABC):
             ]
         )
 
-    @abstractmethod
-    async def append_step_condensed_content(
-        self,
-        session_id: str,
-        run_id: str,
-        agent_id: str,
-        step_id: str,
-        condensed_content: str,
-    ) -> bool:
-        """Append a step-condensation fact for an existing committed step."""
-        ...
-
     async def get_step_by_tool_call_id(
         self,
         session_id: str,
@@ -224,6 +209,19 @@ class RunLogStorage(ABC):
         if not compact_entries:
             return None
         return build_compact_metadata_from_entry(compact_entries[-1])
+
+    async def get_latest_messages_rebuilt(
+        self, session_id: str, agent_id: str
+    ) -> MessagesRebuilt | None:
+        entries = await self.list_entries(
+            session_id=session_id,
+            agent_id=agent_id,
+            kinds=[RunLogEntryKind.MESSAGES_REBUILT],
+            order="desc",
+            limit=1,
+        )
+        entry = entries[0] if entries else None
+        return entry if isinstance(entry, MessagesRebuilt) else None
 
     async def get_compact_history(
         self, session_id: str, agent_id: str
@@ -400,38 +398,6 @@ class InMemoryRunLogStorage(RunLogStorage):
         if order == "desc":
             step_views = list(reversed(step_views))
         return step_views[:limit]
-
-    async def append_step_condensed_content(
-        self,
-        session_id: str,
-        run_id: str,
-        agent_id: str,
-        step_id: str,
-        condensed_content: str,
-    ) -> bool:
-        bucket = self.run_log_entries.get(session_id, [])
-        for entry in bucket:
-            if not isinstance(
-                entry,
-                (UserStepCommitted, AssistantStepCommitted, ToolStepCommitted),
-            ):
-                continue
-            if entry.step_id == step_id:
-                sequence = await self.allocate_sequence(session_id)
-                await self.append_entries(
-                    [
-                        StepCondensedContentUpdated(
-                            sequence=sequence,
-                            session_id=session_id,
-                            run_id=run_id,
-                            agent_id=agent_id,
-                            step_id=step_id,
-                            condensed_content=condensed_content,
-                        )
-                    ]
-                )
-                return True
-        return False
 
     async def get_max_sequence(self, session_id: str) -> int:
         entries = self.run_log_entries.get(session_id, [])

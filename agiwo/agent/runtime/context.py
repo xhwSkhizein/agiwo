@@ -2,12 +2,15 @@
 
 import copy
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
 from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.hooks import HookRegistry
 from agiwo.agent.models.run import RunIdentity, RunLedger
+from agiwo.agent.pause import PauseRequest
+from agiwo.agent.retry import RetryCoordinator
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.llm.base import Model
 from agiwo.tool.base import BaseTool
@@ -29,12 +32,21 @@ class RunRuntime:
     max_input_tokens_per_call: int
     max_context_window: int | None
     compact_prompt: str | None
+    retry_coordinator: RetryCoordinator | None = None
+    active_worker_ids: Callable[[], frozenset[str]] | None = None
 
 
 class RunContext:
     """Facade for run identity, mutable ledger state, and IO dependencies."""
 
-    __slots__ = ("_identity", "ledger", "_session_runtime", "config", "hooks")
+    __slots__ = (
+        "_identity",
+        "ledger",
+        "_session_runtime",
+        "config",
+        "hooks",
+        "pause_request",
+    )
 
     def __init__(
         self,
@@ -52,6 +64,12 @@ class RunContext:
         # operate safely if they fire before execute_run has injected them.
         self.config = AgentOptions()
         self.hooks = HookRegistry()
+        self.pause_request: PauseRequest | None = None
+
+    def request_pause(self, reason: str) -> None:
+        """Request a cooperative recoverable pause at the next safe boundary."""
+        if self.pause_request is None:
+            self.pause_request = PauseRequest(reason=reason)
 
     @property
     def run_id(self) -> str:
@@ -76,6 +94,14 @@ class RunContext:
     @property
     def parent_run_id(self) -> str | None:
         return self._identity.parent_run_id
+
+    @property
+    def run_tree_role(self):
+        return self._identity.run_tree_role
+
+    @property
+    def identity(self) -> RunIdentity:
+        return self._identity
 
     @property
     def timeout_at(self) -> float | None:

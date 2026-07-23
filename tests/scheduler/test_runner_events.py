@@ -1,5 +1,5 @@
 from agiwo.scheduler.models import SchedulerEventType
-from agiwo.scheduler.runner_events import build_parent_pending_event
+from agiwo.scheduler.runner import build_parent_pending_event
 
 
 def test_build_parent_pending_event_creates_child_failed_payload() -> None:

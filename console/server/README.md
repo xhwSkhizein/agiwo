@@ -45,7 +45,7 @@ console/server/
 ### Web Chat
 
 1. `routers/agents.py` 创建会话，`routers/sessions.py` 接收 session 输入。
-2. `SessionRuntimeService` 统一调用 scheduler 路由接口。
+2. `SessionTurnService` 通过 `MainAgent.accept` 提交用户输入并等待 Run 结束。
 3. `response_serialization.py` 负责把 `AgentStreamItem` 转成 SSE payload。
 
 ### Feishu
@@ -53,7 +53,7 @@ console/server/
 1. `channels/feishu/` 负责消息解析、过滤、批处理和 delivery。
 2. `SessionContextService` 解析/创建当前 session。
 3. `AgentRuntimeCache` 负责 runtime Agent 复用与配置变更刷新。
-4. `SessionRuntimeService` 负责调度执行与 stream/no-stream 统一语义。
+4. `SessionTurnService` 负责 accept + wait 与 session metadata touch。
 
 ## 开发约定
 

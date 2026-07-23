@@ -6,9 +6,12 @@ from agiwo.agent.models.config import AgentOptions
 from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
 from agiwo.agent.runtime.context import RunContext
+from agiwo.agent.termination.run_limit import RunLimitPolicy
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_run_limit_policy = RunLimitPolicy()
 
 
 def check_non_recoverable_limits(
@@ -16,11 +19,12 @@ def check_non_recoverable_limits(
     options: AgentOptions,
     current_step: int,
 ) -> TerminationReason | None:
-    if current_step >= options.max_steps:
+    del current_step
+    if _run_limit_policy.should_refuse_work_at_limit(state.ledger.model_calls):
         logger.warning(
-            "limit_hit_max_steps",
-            current_step=current_step,
-            max_steps=options.max_steps,
+            "limit_hit_max_steps_per_run",
+            model_call_attempts=state.ledger.model_calls.total_attempts,
+            max_steps_per_run=options.max_steps_per_run,
             run_id=state.run_id,
         )
         return TerminationReason.MAX_STEPS

@@ -6,7 +6,7 @@ import {
   listAgentSessions,
   createAgentSession,
   forkSession,
-  deleteSession,
+  archiveSession,
 } from "@/lib/api";
 import type { ChatSessionItem } from "@/lib/api";
 import { ErrorStateMessage } from "@/components/state-message";
@@ -110,11 +110,11 @@ export function SessionPanel({
     setActionLoading(true);
     setError(null);
     try {
-      await deleteSession(sessionId);
+      await archiveSession(sessionId);
       onDelete?.(sessionId);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete session");
+      setError(err instanceof Error ? err.message : "Failed to archive session");
     } finally {
       setActionLoading(false);
     }

@@ -105,7 +105,6 @@ def test_build_feishu_command_registry_includes_expected_commands() -> None:
         "new",
         "resume",
         "status",
-        "steer",
         "switch",
     }
 

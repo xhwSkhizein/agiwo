@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import argparse
 import json
 from pathlib import Path
@@ -14,7 +12,7 @@ FALLBACK_RESPONSIBILITIES: dict[str, str] = {
     "agiwo/agent": "Canonical agent runtime, execution loop, runtime state, models, nested-agent adapters, and persistence hooks.",
     "agiwo/llm": "Model abstraction, provider adapters, configuration policy, and factory construction.",
     "agiwo/tool": "Tool contracts, builtin tools, execution context, process registry, and tool-side persistence.",
-    "agiwo/scheduler": "Agent-level orchestration, runtime tools, lifecycle management, and scheduler state persistence.",
+    "agiwo/scheduler": "Agent-level orchestration, child waitset, lifecycle management, and scheduler state persistence.",
     "agiwo/observability": "Trace and span storage, querying, and runtime trace adaptation.",
     "agiwo/embedding": "Embedding abstraction and provider-backed implementations.",
     "agiwo/skill": "Skill discovery, allowlisting, loading, and skill-to-tool bridging.",
@@ -102,7 +100,7 @@ RUNTIME_SURFACE_SPECS: list[dict[str, object]] = [
     },
     {
         "import_path": "agiwo.scheduler",
-        "role": "Public entry for orchestration, persistent roots, routing, waiting, and scheduler-backed agent coordination.",
+        "role": "Public entry for orchestration, persistent roots, child waitset, routing, and scheduler-backed agent coordination.",
         "source_paths": ["agiwo/scheduler", "agiwo/scheduler/engine.py"],
     },
     {

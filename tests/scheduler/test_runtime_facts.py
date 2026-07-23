@@ -8,7 +8,6 @@ from agiwo.agent import (
     MessageRole,
     RunFinished,
     RunStarted,
-    StepBackApplied,
     TerminationDecided,
     TerminationReason,
     UserStepCommitted,
@@ -136,17 +135,8 @@ async def test_runtime_facts_reads_runtime_decision_state_from_runtime_agent():
                 transcript_path="/tmp/transcript.json",
                 summary="compacted",
             ),
-            StepBackApplied(
-                sequence=2,
-                session_id="sess-1",
-                run_id="run-1",
-                agent_id="root",
-                affected_count=2,
-                checkpoint_seq=5,
-                experience="switch plan",
-            ),
             TerminationDecided(
-                sequence=3,
+                sequence=2,
                 session_id="sess-1",
                 run_id="run-1",
                 agent_id="root",
@@ -164,7 +154,5 @@ async def test_runtime_facts_reads_runtime_decision_state_from_runtime_agent():
 
     assert decision_state.latest_compaction is not None
     assert decision_state.latest_compaction.summary == "compacted"
-    assert decision_state.latest_step_back is not None
-    assert decision_state.latest_step_back.experience == "switch plan"
     assert decision_state.latest_termination is not None
     assert decision_state.latest_termination.reason is TerminationReason.MAX_STEPS

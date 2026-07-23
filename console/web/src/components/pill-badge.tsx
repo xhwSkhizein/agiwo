@@ -13,7 +13,7 @@ const pillBadgeVariants = {
   pending: "bg-panel-muted text-ink-muted border-line-strong",
 };
 
-type PillBadgeVariant = keyof typeof pillBadgeVariants;
+export type PillBadgeVariant = keyof typeof pillBadgeVariants;
 
 type PillBadgeProps = {
   children: ReactNode;

@@ -9,6 +9,7 @@ import asyncio
 import dataclasses
 from dataclasses import dataclass
 from collections.abc import Callable
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from agiwo.agent import (
@@ -29,17 +30,14 @@ from agiwo.scheduler.formatting import (
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
+    PendingEvent,
     SchedulerEventType,
 )
 from agiwo.scheduler.runner_completion import (
     RunnerCompletionContext,
     RunnerCompletionHandler,
-)
-from agiwo.scheduler.runner_output import (
     build_last_run_result,
 )
-from agiwo.scheduler.runner_events import build_parent_pending_event
-from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import ExecutionHandleLike, RuntimeState
 from agiwo.scheduler.store.base import AgentStateStorage
 from agiwo.scheduler.store.codec import deserialize_child_agent_config_overrides
@@ -49,8 +47,69 @@ from agiwo.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _CHILD_EXCLUDED_SYSTEM_TOOLS: frozenset[str] = frozenset(
-    {"spawn_child_agent", "fork_child_agent"}
+    {"spawn_child_agent", "fork_child_agent", "spawn_worker"}
 )
+
+
+def build_parent_pending_event(
+    *,
+    parent_agent_id: str,
+    session_id: str,
+    source_agent_id: str,
+    event_type: SchedulerEventType,
+    payload: dict[str, object],
+) -> PendingEvent:
+    created_at = datetime.now(timezone.utc)
+    child_agent_id = source_agent_id
+
+    if event_type == SchedulerEventType.CHILD_FAILED:
+        return PendingEvent.create_child_failed(
+            id=str(uuid4()),
+            target_agent_id=parent_agent_id,
+            session_id=session_id,
+            child_agent_id=child_agent_id,
+            reason=str(payload.get("reason", "")),
+            created_at=created_at,
+            source_agent_id=source_agent_id,
+        )
+
+    if event_type == SchedulerEventType.CHILD_COMPLETED:
+        return PendingEvent.create_child_completed(
+            id=str(uuid4()),
+            target_agent_id=parent_agent_id,
+            session_id=session_id,
+            child_agent_id=child_agent_id,
+            result=str(payload.get("result", "")),
+            created_at=created_at,
+            source_agent_id=source_agent_id,
+        )
+
+    if event_type == SchedulerEventType.CHILD_SLEEP_RESULT:
+        explain_value = payload.get("explain")
+        return PendingEvent.create_child_sleep_result(
+            id=str(uuid4()),
+            target_agent_id=parent_agent_id,
+            session_id=session_id,
+            child_agent_id=child_agent_id,
+            result=str(payload.get("result", "")),
+            explain=explain_value if isinstance(explain_value, str) else None,
+            periodic=bool(payload.get("periodic", False)),
+            created_at=created_at,
+            source_agent_id=source_agent_id,
+        )
+
+    return PendingEvent(
+        id=str(uuid4()),
+        target_agent_id=parent_agent_id,
+        session_id=session_id,
+        event_type=event_type,
+        payload={
+            **payload,
+            "child_agent_id": child_agent_id,
+        },
+        created_at=created_at,
+        source_agent_id=source_agent_id,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +118,6 @@ class RunnerContext:
 
     store: AgentStateStorage
     rt: RuntimeState
-    runtime_facts: SchedulerRuntimeFacts
     notify_state_change: Callable[[str], None]
     nudge: Callable[[], None]
     semaphore: asyncio.Semaphore
@@ -239,7 +297,7 @@ class SchedulerRunner:
         await self._fail_state(state.id, f"Agent '{state.id}' not found in scheduler")
         return None
 
-    async def _prepare_state_for_run(self, action: DispatchAction) -> UserInput:
+    async def _prepare_state_for_run(self, action: DispatchAction) -> UserInput | None:
         state = action.state
         if action.reason == DispatchReason.ROOT_SUBMIT:
             return (
@@ -314,14 +372,17 @@ class SchedulerRunner:
         action: DispatchAction,
         state: AgentState,
         agent: Agent,
-        user_input: UserInput,
+        user_input: UserInput | None,
         session_id: str,
         abort_signal: AbortSignal | None,
     ) -> RunOutput:
-        handle = agent.start(
+        # Bypass Agent.start provenance checks: external Scheduler APIs already
+        # validated user input, and wake/fork paths may inject from_system().
+        handle = agent.start_prevalidated(
             user_input,
             session_id=session_id,
             abort_signal=abort_signal,
+            execution_request=action.execution_request,
         )
         self._ctx.rt.execution_handles[state.id] = handle
         try:
@@ -364,12 +425,21 @@ class SchedulerRunner:
         fallback: RunOutput | None,
     ) -> RunOutput | None:
         if item.type == "run_completed":
+            finalization = None
+            raw_finalization = getattr(item, "finalization", None)
+            if isinstance(raw_finalization, dict):
+                from agiwo.agent.models.finalization import (  # noqa: PLC0415
+                    RunFinalizationResult,
+                )
+
+                finalization = RunFinalizationResult.from_dict(raw_finalization)
             return RunOutput(
                 session_id=item.session_id,
                 run_id=item.run_id,
                 response=item.response,
                 metrics=item.metrics,
                 termination_reason=item.termination_reason,
+                finalization=finalization,
             )
         if item.type == "run_failed":
             return RunOutput(
@@ -597,7 +667,7 @@ class SchedulerRunner:
                 failed[child_id] = child.result_summary or "Unknown failure"
             elif child.status == AgentStateStatus.COMPLETED:
                 succeeded[child_id] = (
-                    await self._ctx.runtime_facts.get_result_summary(child)
+                    await self._ctx.rt.get_result_summary(child)
                 ) or "Completed"
             else:
                 failed[child_id] = f"Not finished: status={child.status.value}"
@@ -618,7 +688,7 @@ class SchedulerRunner:
 
     def _should_rollback_periodic_run(self, state: AgentState) -> bool:
         agent = self._ctx.rt.agents.get(state.id)
-        return agent is not None and agent.config.options.enable_context_rollback
+        return agent is not None and agent.options_snapshot.enable_context_rollback
 
     async def _rollback_run_steps(
         self,

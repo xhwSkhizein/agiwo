@@ -33,7 +33,7 @@ channels/
   位于 `services/runtime/`，负责 session/chat-context 生命周期。
 - `AgentRuntimeCache`
   位于 `services/runtime/`，负责 runtime Agent 缓存与配置指纹刷新。
-- `SessionRuntimeService`
+- `SessionTurnService`
   位于 `services/runtime/`，负责统一调用 scheduler 路由接口并处理 stream / ack 语义。
 
 Feishu service 只持有这些服务并消费它们，不再在 `channels/` 内自己实现一套执行状态机。

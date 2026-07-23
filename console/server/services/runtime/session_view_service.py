@@ -47,8 +47,11 @@ class SessionViewService:
         limit: int,
         offset: int,
         agent_id: str | None = None,
+        include_archived: bool = False,
     ) -> PageSlice[SessionSummaryRecord]:
-        sessions = await self._list_store_sessions(agent_id=agent_id)
+        sessions = await self._list_store_sessions(
+            agent_id=agent_id, include_archived=include_archived
+        )
         sessions.sort(key=lambda s: s.updated_at, reverse=True)
         total = len(sessions)
         page = sessions[offset : offset + limit]
@@ -194,18 +197,25 @@ class SessionViewService:
             root_state_status=root_state_status,
             source_session_id=session.source_session_id,
             fork_context_summary=session.fork_context_summary,
+            archived_at=session.archived_at,
         )
 
     async def _list_store_sessions(
         self,
         *,
         agent_id: str | None = None,
+        include_archived: bool = False,
     ) -> list[Session]:
         if self._session_store is None:
             return []
         if agent_id is not None:
-            return await self._session_store.list_sessions_by_base_agent(agent_id)
-        return await self._session_store.list_sessions()
+            sessions = await self._session_store.list_sessions_by_base_agent(agent_id)
+            if not include_archived:
+                sessions = [s for s in sessions if s.archived_at is None]
+            return sessions
+        return await self._session_store.list_sessions(
+            include_archived=include_archived
+        )
 
     async def _get_session(self, session_id: str) -> Session | None:
         if self._session_store is None:

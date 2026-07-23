@@ -133,8 +133,13 @@ type StepsState = {
   error: string | null;
 };
 
-export function useSessionStepsFeed(sessionId: string, enabled = true) {
-  const activeSessionId = useRef(sessionId);
+export function useSessionStepsFeed(
+  sessionId: string,
+  enabled = true,
+  runId: string | null = null,
+) {
+  const activeKey = useRef(`${sessionId}:${runId ?? ""}`);
+  const requestKey = `${sessionId}:${runId ?? "all"}`;
   const [state, setState] = useState<StepsState>({
     key: null,
     steps: [],
@@ -144,18 +149,22 @@ export function useSessionStepsFeed(sessionId: string, enabled = true) {
   const [loadingMore, setLoadingMore] = useState(false);
 
   useEffect(() => {
-    activeSessionId.current = sessionId;
+    activeKey.current = requestKey;
     if (!enabled) {
       return;
     }
     let cancelled = false;
-    getSessionSteps(sessionId, { limit: 100, order: "desc" })
+    getSessionSteps(sessionId, {
+      limit: 100,
+      order: "desc",
+      run_id: runId ?? undefined,
+    })
       .then((page) => {
         if (cancelled) {
           return;
         }
         setState({
-          key: sessionId,
+          key: requestKey,
           steps: [...page.items].reverse(),
           hasMore: page.has_more,
           error: null,
@@ -166,7 +175,7 @@ export function useSessionStepsFeed(sessionId: string, enabled = true) {
           return;
         }
         setState({
-          key: sessionId,
+          key: requestKey,
           steps: [],
           hasMore: false,
           error: err instanceof Error ? err.message : "Failed to load steps",
@@ -176,13 +185,13 @@ export function useSessionStepsFeed(sessionId: string, enabled = true) {
     return () => {
       cancelled = true;
     };
-  }, [enabled, sessionId]);
+  }, [enabled, requestKey, runId, sessionId]);
 
   async function loadEarlier() {
     if (!enabled || state.steps.length === 0 || loadingMore) {
       return;
     }
-    const requestedSession = sessionId;
+    const requestedKey = requestKey;
     const oldestSequence = state.steps[0]?.sequence;
     if (!oldestSequence || oldestSequence <= 1) {
       setState((current) => ({ ...current, hasMore: false }));
@@ -194,8 +203,9 @@ export function useSessionStepsFeed(sessionId: string, enabled = true) {
         limit: 100,
         order: "desc",
         end_seq: oldestSequence - 1,
+        run_id: runId ?? undefined,
       });
-      if (requestedSession !== activeSessionId.current) {
+      if (requestedKey !== activeKey.current) {
         return;
       }
       setState((current) => ({
@@ -204,7 +214,7 @@ export function useSessionStepsFeed(sessionId: string, enabled = true) {
         hasMore: nextPage.has_more,
       }));
     } catch (err) {
-      if (requestedSession !== activeSessionId.current) {
+      if (requestedKey !== activeKey.current) {
         return;
       }
       setState((current) => ({
@@ -212,7 +222,7 @@ export function useSessionStepsFeed(sessionId: string, enabled = true) {
         error: err instanceof Error ? err.message : "Failed to load older steps",
       }));
     } finally {
-      if (requestedSession === activeSessionId.current) {
+      if (requestedKey === activeKey.current) {
         setLoadingMore(false);
       }
     }
@@ -220,7 +230,7 @@ export function useSessionStepsFeed(sessionId: string, enabled = true) {
 
   return {
     steps: state.steps,
-    loading: enabled && state.key !== sessionId,
+    loading: enabled && state.key !== requestKey,
     error: enabled ? state.error : null,
     hasMore: state.hasMore,
     loadingMore: enabled && loadingMore,

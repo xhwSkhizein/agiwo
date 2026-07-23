@@ -93,6 +93,7 @@ export interface UserMessage {
   __type: "user_message";
   content: ContentPartPayload[];
   context?: ChannelContextPayload | null;
+  is_user_provided?: boolean;
 }
 
 export interface ContentParts {
@@ -134,6 +135,10 @@ export interface RunMetricsPayload {
   token_cost?: number | null;
   steps_count?: number | null;
   tool_calls_count?: number | null;
+  max_steps_per_run?: number | null;
+  model_call_attempts_total?: number | null;
+  model_call_limit_trigger_ordinal?: number | null;
+  model_call_phase_stats?: Record<string, Record<string, number>> | null;
 }
 
 export interface StepMetricsPayload extends RunMetricsPayload {
@@ -224,11 +229,16 @@ export interface ReviewCheckpoint {
   confirmed_at: string;
 }
 
+export interface ToolUsefulnessScore {
+  tool_call_id: string;
+  tool_name: string | null;
+  score: number | null;
+}
+
 export interface ReviewOutcome {
   aligned: boolean | null;
   experience: string | null;
-  step_back_applied: boolean;
-  affected_count: number | null;
+  tool_usefulness: ToolUsefulnessScore[];
   trigger_reason: string | null;
   active_milestone: string | null;
   resolved_at: string | null;
@@ -255,9 +265,9 @@ export interface ReviewCycle {
   hook_advice: string | null;
   aligned: boolean | null;
   experience: string | null;
-  step_back_applied: boolean;
-  rollback_range: number[] | null;
-  affected_count: number | null;
+  tool_usefulness: ToolUsefulnessScore[];
+  review_tool_call_id: string | null;
+  review_latency_ms: number | null;
   started_at: string | null;
   resolved_at: string | null;
   raw_notice: string | null;
@@ -287,7 +297,7 @@ export interface SessionDetail {
 }
 
 export interface RuntimeDecisionEvent {
-  kind: "termination" | "compaction" | "step_back" | "rollback" | string;
+  kind: "termination" | "compaction" | "rollback" | string;
   sequence: number;
   run_id: string;
   agent_id: string;
@@ -309,7 +319,8 @@ export interface RunResponse {
   agent_id: string;
   session_id: string;
   user_id: string | null;
-  user_input: UserInput;
+  /** Null for ADR 0048 history-only root Runs (user text lives in steps). */
+  user_input: UserInput | null;
   status: string;
   response_content: string | null;
   metrics: RunMetricsPayload | null;
@@ -371,12 +382,6 @@ export interface StepCompletedEventPayload extends StreamEventBase {
   step: StepResponse;
 }
 
-export interface ContextStepsHiddenEventPayload extends StreamEventBase {
-  type: "context_steps_hidden";
-  step_ids: string[];
-  reason: string;
-}
-
 export interface RunCompletedEventPayload extends StreamEventBase {
   type: "run_completed";
   response?: string | null;
@@ -402,18 +407,32 @@ export interface SchedulerAckEventPayload {
   state_id?: string | null;
 }
 
+export interface SessionTurnEventPayload {
+  kind: "session";
+  session_id: string;
+  run_id: string | null;
+  status: string;
+  response: string | null;
+}
+
+export interface SessionErrorEventPayload {
+  type: "session_error";
+  message: string;
+}
+
 export type AgentStreamEventPayload =
   | RunStartedEventPayload
   | StepDeltaEventPayload
   | StepCompletedEventPayload
-  | ContextStepsHiddenEventPayload
   | RunCompletedEventPayload
   | RunFailedEventPayload;
 
 export type StreamEventPayload =
   | AgentStreamEventPayload
   | SchedulerFailedEventPayload
-  | SchedulerAckEventPayload;
+  | SchedulerAckEventPayload
+  | SessionTurnEventPayload
+  | SessionErrorEventPayload;
 
 export function listSessions(limit = 20, offset = 0) {
   return fetchJSON<PageResponse<SessionSummary>>(
@@ -539,6 +558,11 @@ export interface TraceLlmCall {
   tool_schema_count: number;
   response_tool_call_count: number;
   output_preview: string | null;
+  logical_call_id?: string | null;
+  phase?: string | null;
+  attempt_no?: number | null;
+  call_ordinal?: number | null;
+  retry_reason?: string | null;
 }
 
 export interface SpanResponse {
@@ -618,7 +642,7 @@ export function getTrace(traceId: string) {
 
 export interface AgentOptionsPayload {
   config_root: string;
-  max_steps: number;
+  max_steps_per_run: number;
   run_timeout: number;
   max_input_tokens_per_call: number | null;
   max_run_cost: number | null;
@@ -628,7 +652,7 @@ export interface AgentOptionsPayload {
   stream_cleanup_timeout: number;
   compact_prompt: string;
   enable_context_rollback: boolean;
-  enable_goal_directed_review: boolean;
+  enable_trajectory_review: boolean;
   review_step_interval: number;
   review_on_error: boolean;
 }
@@ -936,9 +960,16 @@ export function forkSession(sessionId: string, contextSummary: string) {
   });
 }
 
+export async function archiveSession(sessionId: string) {
+  return fetchJSON<{ ok: boolean; session_id: string; archived_at: string }>(
+    `/api/sessions/${sessionId}/archive`,
+    { method: "POST" },
+  );
+}
+
+/** @deprecated Use archiveSession — ordinary delete is archive (P5-06). */
 export async function deleteSession(sessionId: string) {
-  const res = await fetch(apiUrl(`/api/sessions/${sessionId}`), { method: "DELETE" });
-  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+  await archiveSession(sessionId);
 }
 
 // ── Session Input Stream ───────────────────────────────────────────────
@@ -949,11 +980,35 @@ export function sessionInputStreamUrl(sessionId: string) {
 
 export function parseStreamEventPayload(data: string): StreamEventPayload | null {
   try {
-    const parsed = JSON.parse(data) as StreamEventPayload;
-    if (!parsed || typeof parsed !== "object" || typeof parsed.type !== "string") {
+    const parsed = JSON.parse(data) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object") {
       return null;
     }
-    return parsed;
+    if (parsed.kind === "session") {
+      return {
+        kind: "session",
+        session_id: String(parsed.session_id ?? ""),
+        run_id:
+          parsed.run_id === null || parsed.run_id === undefined
+            ? null
+            : String(parsed.run_id),
+        status: String(parsed.status ?? "completed"),
+        response:
+          parsed.response === null || parsed.response === undefined
+            ? null
+            : String(parsed.response),
+      };
+    }
+    if (typeof parsed.type === "string") {
+      return parsed as unknown as StreamEventPayload;
+    }
+    if (typeof parsed.message === "string") {
+      return {
+        type: "session_error",
+        message: parsed.message,
+      };
+    }
+    return null;
   } catch {
     return null;
   }
@@ -978,13 +1033,6 @@ export interface PendingEventItem {
   event_type: string;
   payload: Record<string, unknown>;
   created_at: string | null;
-}
-
-export function steerAgent(id: string, message: string, urgent = false) {
-  return fetchJSON<{ ok: boolean }>(`/api/scheduler/states/${id}/steer`, {
-    method: "POST",
-    body: JSON.stringify({ message, urgent }),
-  });
 }
 
 export function cancelAgent(id: string, reason?: string) {

@@ -50,7 +50,7 @@ Feishu Platform
   -> command handlers or normal-message flow
   -> SessionContextService
   -> AgentRuntimeCache
-  -> SessionRuntimeService
+  -> SessionTurnService
   -> Scheduler
   -> FeishuDeliveryService
   -> Feishu Platform
@@ -81,7 +81,7 @@ The channel package owns Feishu transport concerns only. Session lifecycle and s
 4. regular messages are converted into `UserMessage`.
 5. `SessionContextService` resolves or creates the active session.
 6. `AgentRuntimeCache` returns the stable runtime agent for that session.
-7. `SessionRuntimeService` sends the input through the scheduler and returns a stream or acknowledgement.
+7. `SessionTurnService` accepts input via `MainAgent.accept` and waits for the run.
 8. `FeishuDeliveryService` sends the result back to Feishu.
 
 ## Storage

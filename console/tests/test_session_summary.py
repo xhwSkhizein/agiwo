@@ -25,8 +25,14 @@ class FakeSessionStore:
     async def get_chat_context(self, scope_id: str):
         return None
 
-    async def list_sessions(self):
-        return list(self._sessions.values())
+    async def list_sessions(self, *, include_archived: bool = False):
+        sessions = list(self._sessions.values())
+        if not include_archived:
+            sessions = [s for s in sessions if s.archived_at is None]
+        return sessions
+
+    async def list_archived_sessions(self):
+        return [s for s in self._sessions.values() if s.archived_at is not None]
 
     async def list_sessions_by_base_agent(self, base_agent_id: str):
         return [s for s in self._sessions.values() if s.base_agent_id == base_agent_id]

@@ -14,36 +14,44 @@ from agiwo.agent.models.log import (
     ContextRepairApplied,
     ContextStepsHidden,
     ContextAssembled,
-    GoalMilestonesUpdated,
+    ExternalEffectMayHaveStarted,
     HookFailed,
     IntrospectionCheckpointRecorded,
     IntrospectionOutcomeRecorded,
     IntrospectionTriggered,
     LLMCallCompleted,
+    LLMCallFailed,
     LLMCallStarted,
     MessagesRebuilt,
+    RunCheckpoint,
     RunFailed,
     RunFinished,
     RunLogEntry,
     RunLogEntryKind,
+    RunPaused,
+    RunPlanUpdated,
+    RunResumePrepared,
+    RunResumed,
+    RetryBackoff,
     RunRolledBack,
     RunStarted,
-    StepBackApplied,
     StepCondensedContentUpdated,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
     build_compact_metadata_from_entry,
 )
-from agiwo.agent.introspect.models import Milestone
+from agiwo.agent.models.plan import Milestone
+from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.runtime_decision import (
     CompactionDecisionView,
     CompactionFailureDecisionView,
     RollbackDecisionView,
     RuntimeDecisionState,
-    StepBackDecisionView,
     TerminationDecisionView,
 )
+from agiwo.agent.models.execution import RunTreeRole
+from agiwo.agent.models.finalization import RunFinalizationResult
 from agiwo.agent.models.run import RunMetrics, RunStatus, RunView, TerminationReason
 from agiwo.agent.models.step import MessageRole, StepMetrics, StepView
 
@@ -56,21 +64,27 @@ _RUN_LOG_TYPES: dict[RunLogEntryKind, type[RunLogEntry]] = {
     RunLogEntryKind.MESSAGES_REBUILT: MessagesRebuilt,
     RunLogEntryKind.LLM_CALL_STARTED: LLMCallStarted,
     RunLogEntryKind.LLM_CALL_COMPLETED: LLMCallCompleted,
+    RunLogEntryKind.LLM_CALL_FAILED: LLMCallFailed,
     RunLogEntryKind.USER_STEP_COMMITTED: UserStepCommitted,
     RunLogEntryKind.ASSISTANT_STEP_COMMITTED: AssistantStepCommitted,
     RunLogEntryKind.TOOL_STEP_COMMITTED: ToolStepCommitted,
     RunLogEntryKind.COMPACTION_APPLIED: CompactionApplied,
     RunLogEntryKind.COMPACTION_FAILED: CompactionFailed,
-    RunLogEntryKind.STEP_BACK_APPLIED: StepBackApplied,
     RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED: StepCondensedContentUpdated,
     RunLogEntryKind.CONTEXT_STEPS_HIDDEN: ContextStepsHidden,
     RunLogEntryKind.TERMINATION_DECIDED: TerminationDecided,
     RunLogEntryKind.HOOK_FAILED: HookFailed,
-    RunLogEntryKind.GOAL_MILESTONES_UPDATED: GoalMilestonesUpdated,
+    RunLogEntryKind.RUN_PLAN_UPDATED: RunPlanUpdated,
     RunLogEntryKind.INTROSPECTION_TRIGGERED: IntrospectionTriggered,
     RunLogEntryKind.INTROSPECTION_CHECKPOINT_RECORDED: IntrospectionCheckpointRecorded,
     RunLogEntryKind.INTROSPECTION_OUTCOME_RECORDED: IntrospectionOutcomeRecorded,
     RunLogEntryKind.CONTEXT_REPAIR_APPLIED: ContextRepairApplied,
+    RunLogEntryKind.RUN_CHECKPOINT: RunCheckpoint,
+    RunLogEntryKind.RUN_PAUSED: RunPaused,
+    RunLogEntryKind.RUN_RESUME_PREPARED: RunResumePrepared,
+    RunLogEntryKind.RUN_RESUMED: RunResumed,
+    RunLogEntryKind.EXTERNAL_EFFECT_MAY_HAVE_STARTED: ExternalEffectMayHaveStarted,
+    RunLogEntryKind.RETRY_BACKOFF: RetryBackoff,
 }
 
 
@@ -126,7 +140,10 @@ def serialize_run_log_entry_for_storage(entry: RunLogEntry) -> dict[str, Any]:
     user_input = getattr(entry, "user_input", None)
     if user_input is not None:
         data["user_input"] = UserMessage.to_storage_value(user_input)
-    return _as_storage_dict(_drop_none(data))
+    payload = _as_storage_dict(_drop_none(data))
+    if isinstance(entry, IntrospectionOutcomeRecorded):
+        payload["tool_usefulness"] = list(entry.tool_usefulness)
+    return payload
 
 
 def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
@@ -160,11 +177,16 @@ def deserialize_run_log_entry_from_storage(data: dict[str, Any]) -> RunLogEntry:
         metrics = normalized.get("metrics")
         if isinstance(metrics, dict):
             normalized["metrics"] = StepMetrics(**metrics)
-    if entry_type is LLMCallCompleted:
+    if entry_type in {LLMCallCompleted, LLMCallFailed}:
         metrics = normalized.get("metrics")
         if isinstance(metrics, dict):
             normalized["metrics"] = StepMetrics(**metrics)
-    if entry_type is GoalMilestonesUpdated:
+    if entry_type in {LLMCallStarted, LLMCallCompleted, LLMCallFailed}:
+        phase = normalized.get("phase")
+        if isinstance(phase, str):
+            normalized["phase"] = ModelCallPhase(phase)
+    if entry_type is RunPlanUpdated:
+        normalized.pop("active_milestone_id", None)
         milestones = normalized.get("milestones")
         if isinstance(milestones, list):
             normalized_milestones: list[Milestone] = []
@@ -218,15 +240,29 @@ def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
     termination_reason = None
     metrics: RunMetrics | None = None
 
+    finalization = None
     if finished is not None:
         status = RunStatus.COMPLETED
         response = finished.response
         termination_reason = finished.termination_reason
         metrics = RunMetrics(**finished.metrics) if finished.metrics else None
         updated_at = finished.created_at
+        if finished.finalization is not None:
+            finalization = RunFinalizationResult.from_dict(finished.finalization)
     elif failed is not None:
         status = RunStatus.FAILED
         updated_at = failed.created_at
+    else:
+        # Latest pause/resume marker wins when the run has not finished.
+        for entry in reversed(entries):
+            if isinstance(entry, RunResumed):
+                status = RunStatus.RUNNING
+                updated_at = entry.created_at
+                break
+            if isinstance(entry, (RunPaused, RunResumePrepared)):
+                status = RunStatus.PAUSED
+                updated_at = entry.created_at
+                break
 
     if (
         response is None
@@ -235,6 +271,11 @@ def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
     ):
         response = last_assistant.content
 
+    role_raw = started.run_tree_role
+    try:
+        run_tree_role = RunTreeRole(role_raw) if role_raw else RunTreeRole.NONE
+    except ValueError:
+        run_tree_role = RunTreeRole.NONE
     return RunView(
         run_id=started.run_id,
         session_id=started.session_id,
@@ -248,6 +289,8 @@ def build_run_view_from_entries(entries: list[RunLogEntry]) -> RunView | None:
         created_at=started.created_at,
         updated_at=updated_at,
         parent_run_id=started.parent_run_id,
+        run_tree_role=run_tree_role,
+        finalization=finalization,
     )
 
 
@@ -382,7 +425,6 @@ def build_runtime_decision_state_from_entries(
     latest_termination: TerminationDecisionView | None = None
     latest_compaction: CompactionDecisionView | None = None
     latest_compaction_failure: CompactionFailureDecisionView | None = None
-    latest_step_back: StepBackDecisionView | None = None
     latest_rollback: RollbackDecisionView | None = None
 
     for entry in entries:
@@ -422,30 +464,6 @@ def build_runtime_decision_state_from_entries(
                 terminal=entry.terminal,
             )
             continue
-        if isinstance(entry, StepBackApplied):
-            latest_step_back = StepBackDecisionView(
-                session_id=entry.session_id,
-                run_id=entry.run_id,
-                agent_id=entry.agent_id,
-                sequence=entry.sequence,
-                created_at=entry.created_at,
-                affected_count=entry.affected_count,
-                checkpoint_seq=entry.checkpoint_seq,
-                experience=entry.experience,
-            )
-            continue
-        if isinstance(entry, ContextRepairApplied):
-            latest_step_back = StepBackDecisionView(
-                session_id=entry.session_id,
-                run_id=entry.run_id,
-                agent_id=entry.agent_id,
-                sequence=entry.sequence,
-                created_at=entry.created_at,
-                affected_count=entry.affected_count,
-                checkpoint_seq=max(0, entry.start_seq - 1),
-                experience=entry.experience,
-            )
-            continue
         if isinstance(entry, RunRolledBack):
             latest_rollback = RollbackDecisionView(
                 session_id=entry.session_id,
@@ -462,7 +480,6 @@ def build_runtime_decision_state_from_entries(
         latest_termination=latest_termination,
         latest_compaction=latest_compaction,
         latest_compaction_failure=latest_compaction_failure,
-        latest_step_back=latest_step_back,
         latest_rollback=latest_rollback,
     )
 

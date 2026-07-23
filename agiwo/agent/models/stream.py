@@ -17,7 +17,6 @@ from agiwo.agent.models.log import (
     RunLogEntry,
     RunRolledBack,
     RunStarted,
-    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
@@ -157,21 +156,6 @@ class CompactionFailedEvent(AgentStreamItemBase):
 
 
 @dataclass(kw_only=True)
-class StepBackAppliedEvent(AgentStreamItemBase):
-    affected_count: int
-    checkpoint_seq: int
-    experience: str
-    type: Literal["step_back_applied"] = "step_back_applied"
-
-    def to_dict(self) -> dict[str, Any]:
-        payload = self._base_dict()
-        payload["affected_count"] = self.affected_count
-        payload["checkpoint_seq"] = self.checkpoint_seq
-        payload["experience"] = self.experience
-        return payload
-
-
-@dataclass(kw_only=True)
 class TerminationDecidedEvent(AgentStreamItemBase):
     termination_reason: TerminationReason
     phase: str
@@ -206,6 +190,7 @@ class RunCompletedEvent(AgentStreamItemBase):
     response: str | None = None
     metrics: RunMetrics | None = None
     termination_reason: TerminationReason | None = None
+    finalization: dict[str, Any] | None = None
     type: Literal["run_completed"] = "run_completed"
 
     def to_dict(self) -> dict[str, Any]:
@@ -215,6 +200,7 @@ class RunCompletedEvent(AgentStreamItemBase):
         payload["termination_reason"] = (
             self.termination_reason.value if self.termination_reason else None
         )
+        payload["finalization"] = self.finalization
         return payload
 
 
@@ -350,13 +336,6 @@ def _stream_item_from_runtime_entry(
             max_attempts=entry.max_attempts,
             terminal=entry.terminal,
         )
-    elif isinstance(entry, StepBackApplied):
-        item = StepBackAppliedEvent(
-            **base_kwargs,
-            affected_count=entry.affected_count,
-            checkpoint_seq=entry.checkpoint_seq,
-            experience=entry.experience,
-        )
     elif isinstance(entry, TerminationDecided):
         item = TerminationDecidedEvent(
             **base_kwargs,
@@ -377,6 +356,7 @@ def _stream_item_from_runtime_entry(
             response=entry.response,
             metrics=_run_metrics_from_dict(entry.metrics),
             termination_reason=entry.termination_reason,
+            finalization=entry.finalization,
         )
     elif isinstance(entry, RunFailed):
         item = RunFailedEvent(
@@ -473,7 +453,6 @@ AgentStreamItem: TypeAlias = (
     | ContextStepsHiddenEvent
     | CompactionAppliedEvent
     | CompactionFailedEvent
-    | StepBackAppliedEvent
     | TerminationDecidedEvent
     | RunRolledBackEvent
     | RunCompletedEvent
@@ -492,7 +471,6 @@ __all__ = [
     "RunCompletedEvent",
     "RunFailedEvent",
     "RunStartedEvent",
-    "StepBackAppliedEvent",
     "StepCompletedEvent",
     "StepDeltaEvent",
     "TerminationDecidedEvent",

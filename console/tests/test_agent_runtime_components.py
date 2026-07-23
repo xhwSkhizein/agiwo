@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import AsyncMock
 
 import pytest
 
-from agiwo.agent import RunCompletedEvent
-from agiwo.scheduler.commands import RouteResult, RouteStreamMode
+from agiwo.agent import MainAgentState
+from agiwo.agent.models.input import UserMessage
+from agiwo.agent.models.run import RunOutput
+from agiwo.agent.models.stream import RunCompletedEvent
 
 from server.channels.batch_manager import ChannelBatchManager
 from server.config import ConsoleConfig
@@ -21,7 +23,7 @@ from server.services.runtime import (
     AgentRuntimeCache,
     CachedAgent,
     SessionContextService,
-    SessionRuntimeService,
+    SessionTurnService,
 )
 
 
@@ -100,6 +102,50 @@ class FakeAgent:
         self.closed = True
 
 
+class FakeMainAgent:
+    def __init__(
+        self,
+        agent_id: str,
+        *,
+        state: MainAgentState = MainAgentState.IDLE,
+        stream_response: str = "stub reply",
+    ) -> None:
+        self.agent_id = agent_id
+        self.agent = FakeAgent(agent_id)
+        self.state = state
+        self.closed = False
+        self.accept_calls = 0
+        self._stream_response = stream_response
+
+    async def close(self) -> None:
+        self.closed = True
+        await self.agent.close()
+
+    async def cancel(self, reason: str | None = None) -> None:
+        del reason
+        self.state = MainAgentState.IDLE
+
+    async def accept(self, user_input: object) -> object | None:
+        """Stub accept used by cancel-then-restart console assertions."""
+        del user_input
+        self.accept_calls += 1
+        self.state = MainAgentState.RUNNING
+        return object()
+
+    def subscribe(self):
+        async def _gen():
+            yield RunCompletedEvent(
+                session_id=self.agent_id,
+                run_id=f"run_{self.agent_id}",
+                agent_id=self.agent_id,
+                parent_run_id=None,
+                depth=0,
+                response=self._stream_response,
+            )
+
+        return _gen()
+
+
 class _TestChannelService:
     def __init__(self, *, session_service, agent_pool, executor) -> None:
         self.reply_calls: list[tuple[BatchContext, str]] = []
@@ -124,24 +170,17 @@ class _TestChannelService:
             batch.context
         )
         session = resolution.session
-        agent = await self._agent_pool.get_or_create_runtime_agent(session)
-        dispatch = await self._executor.execute(agent, session, batch.user_message)
+        main_agent = await self._agent_pool.get_or_create_main_agent(session)
+        _run_id, output = await self._executor.submit_user_message(
+            main_agent,
+            session,
+            batch.user_message,
+        )
 
-        if dispatch.stream is None:
+        final_text = (output.response or "").strip() if output is not None else None
+        if not final_text:
             if await self._can_deliver_session(batch.context, session):
                 await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
-            return
-
-        final_text = None
-        async for item in dispatch.stream:
-            if (
-                isinstance(item, RunCompletedEvent)
-                and item.depth == 0
-                and item.response
-            ):
-                final_text = item.response
-
-        if final_text is None:
             return
         if await self._can_deliver_session(batch.context, session):
             await self._deliver_reply(batch.context, final_text)
@@ -245,19 +284,17 @@ async def test_agent_runtime_cache_uses_session_id_as_runtime_identity(
         model_name="gpt-test",
     )
     registry = SimpleNamespace(get_agent=AsyncMock(return_value=base_config))
-    scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=True))
-    built_agent = FakeAgent("sess-1")
+    built_main_agent = FakeMainAgent("sess-1")
 
-    async def fake_materialize_agent(*args, **kwargs):
-        return built_agent
+    async def fake_materialize_main_agent(*args, **kwargs):
+        return built_main_agent
 
     monkeypatch.setattr(
-        "server.services.runtime.agent_runtime_cache.materialize_agent",
-        fake_materialize_agent,
+        "server.services.runtime.agent_runtime_cache.materialize_main_agent",
+        fake_materialize_main_agent,
     )
 
     pool = AgentRuntimeCache(
-        scheduler=scheduler,
         agent_registry=registry,
         console_config=ConsoleConfig(),
         session_store=store,
@@ -271,15 +308,15 @@ async def test_agent_runtime_cache_uses_session_id_as_runtime_identity(
         updated_at=datetime.now(timezone.utc),
     )
 
-    agent = await pool.get_or_create_runtime_agent(session)
+    main_agent = await pool.get_or_create_main_agent(session)
 
-    assert agent is built_agent
+    assert main_agent is built_main_agent
     assert store.sessions["sess-1"] is session
-    assert pool.runtime_agents["sess-1"] is built_agent
+    assert pool.main_agents["sess-1"] is built_main_agent
 
 
 @pytest.mark.asyncio
-async def test_agent_runtime_cache_defers_refresh_while_state_active(
+async def test_agent_runtime_cache_defers_refresh_while_main_agent_running(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FakeChannelChatSessionStore()
@@ -291,26 +328,24 @@ async def test_agent_runtime_cache_defers_refresh_while_state_active(
         system_prompt="updated prompt",
     )
     registry = SimpleNamespace(get_agent=AsyncMock(return_value=base_config))
-    scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=False))
-    replacement_agent = FakeAgent("sess-1")
+    replacement_main_agent = FakeMainAgent("sess-1")
 
-    async def fake_materialize_agent(*args, **kwargs):
-        return replacement_agent
+    async def fake_materialize_main_agent(*args, **kwargs):
+        return replacement_main_agent
 
     monkeypatch.setattr(
-        "server.services.runtime.agent_runtime_cache.materialize_agent",
-        fake_materialize_agent,
+        "server.services.runtime.agent_runtime_cache.materialize_main_agent",
+        fake_materialize_main_agent,
     )
 
     pool = AgentRuntimeCache(
-        scheduler=scheduler,
         agent_registry=registry,
         console_config=ConsoleConfig(),
         session_store=store,
     )
-    existing_agent = FakeAgent("sess-1")
+    existing_main_agent = FakeMainAgent("sess-1", state=MainAgentState.RUNNING)
     pool._cache["sess-1"] = CachedAgent(
-        agent=existing_agent,
+        main_agent=existing_main_agent,
         config_snapshot=("stale", "", "", "", "", None, None, (), ()),
     )
     session = Session(
@@ -322,11 +357,10 @@ async def test_agent_runtime_cache_defers_refresh_while_state_active(
         updated_at=datetime.now(timezone.utc),
     )
 
-    agent = await pool.get_or_create_runtime_agent(session)
+    main_agent = await pool.get_or_create_main_agent(session)
 
-    assert agent is existing_agent
-    assert replacement_agent.closed is True
-    scheduler.rebind_agent.assert_awaited_once_with("sess-1", replacement_agent)
+    assert main_agent is existing_main_agent
+    assert replacement_main_agent.closed is False
 
 
 @pytest.mark.asyncio
@@ -345,17 +379,15 @@ async def test_agent_runtime_cache_refreshes_when_allowed_skills_change(
     registry = SimpleNamespace(
         get_agent=AsyncMock(side_effect=[first_config, second_config])
     )
-    scheduler = SimpleNamespace(rebind_agent=AsyncMock(return_value=True))
-    first_agent = FakeAgent("sess-1-a")
-    second_agent = FakeAgent("sess-1-b")
+    first_main_agent = FakeMainAgent("sess-1-a")
+    second_main_agent = FakeMainAgent("sess-1-b")
 
     monkeypatch.setattr(
-        "server.services.runtime.agent_runtime_cache.materialize_agent",
-        AsyncMock(side_effect=[first_agent, second_agent]),
+        "server.services.runtime.agent_runtime_cache.materialize_main_agent",
+        AsyncMock(side_effect=[first_main_agent, second_main_agent]),
     )
 
     pool = AgentRuntimeCache(
-        scheduler=scheduler,
         agent_registry=registry,
         console_config=ConsoleConfig(),
         session_store=store,
@@ -369,25 +401,18 @@ async def test_agent_runtime_cache_refreshes_when_allowed_skills_change(
         updated_at=datetime.now(timezone.utc),
     )
 
-    initial = await pool.get_or_create_runtime_agent(session)
-    refreshed = await pool.get_or_create_runtime_agent(session)
+    initial = await pool.get_or_create_main_agent(session)
+    refreshed = await pool.get_or_create_main_agent(session)
 
-    assert initial is first_agent
-    assert refreshed is second_agent
-    assert first_agent.closed is True
-    scheduler.rebind_agent.assert_awaited_once_with("sess-1", second_agent)
+    assert initial is first_main_agent
+    assert refreshed is second_main_agent
+    assert first_main_agent.closed is True
 
 
 @pytest.mark.asyncio
-async def test_session_runtime_service_routes_with_session_id_as_root_state() -> None:
+async def test_session_turn_service_submit_user_message_waits_for_run() -> None:
     store = FakeChannelChatSessionStore()
-    route_result = SimpleNamespace(action="steered", state_id="sess-1", stream=None)
-    scheduler = SimpleNamespace(
-        route_root_input=AsyncMock(return_value=route_result),
-        wait_for=AsyncMock(),
-    )
-    runtime_service = SessionRuntimeService(
-        scheduler=scheduler,
+    runtime_service = SessionTurnService(
         session_store=store,
         timeout=60,
     )
@@ -399,34 +424,33 @@ async def test_session_runtime_service_routes_with_session_id_as_root_state() ->
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
-
-    dispatch = await runtime_service.execute(FakeAgent("sess-1"), session, "hello")
-
-    assert dispatch.action == "steered"
-    scheduler.route_root_input.assert_awaited_once_with(
-        "hello",
-        agent=ANY,
-        state_id="sess-1",
-        session_id="sess-1",
-        persistent=True,
-        timeout=60,
-        stream_mode=RouteStreamMode.UNTIL_SETTLED,
+    handle = SimpleNamespace(run_id="run-1")
+    main_agent = AsyncMock()
+    main_agent.accept = AsyncMock(return_value=handle)
+    main_agent.wait_current_run = AsyncMock(
+        return_value=RunOutput(response="done", session_id=session.id)
     )
+
+    run_id, output = await runtime_service.submit_user_message(
+        main_agent,
+        session,
+        UserMessage.from_value("hello"),
+    )
+
+    assert run_id == "run-1"
+    assert output.response == "done"
+    main_agent.accept.assert_awaited_once()
+    accepted = main_agent.accept.await_args.args[0]
+    assert accepted.extract_text() == "hello"
     assert store.sessions["sess-1"] is session
 
 
 @pytest.mark.asyncio
-async def test_session_runtime_service_cancel_if_active_uses_session_id() -> None:
-    active_state = SimpleNamespace(is_active=lambda: True)
-    inactive_state = SimpleNamespace(is_active=lambda: False)
-    scheduler = SimpleNamespace(
-        get_state=AsyncMock(side_effect=[active_state, inactive_state]),
-        cancel=AsyncMock(),
-    )
-    runtime_service = SessionRuntimeService(
-        scheduler=scheduler,
-        session_store=FakeChannelChatSessionStore(),
-    )
+async def test_session_turn_service_cancel_if_active_uses_main_agent() -> None:
+    store = FakeChannelChatSessionStore()
+    runtime_service = SessionTurnService(session_store=store)
+    running_main_agent = FakeMainAgent("sess-active", state=MainAgentState.RUNNING)
+    idle_main_agent = FakeMainAgent("sess-inactive", state=MainAgentState.IDLE)
     active_session = Session(
         id="sess-active",
         chat_context_scope_id=None,
@@ -444,10 +468,11 @@ async def test_session_runtime_service_cancel_if_active_uses_session_id() -> Non
         updated_at=datetime.now(timezone.utc),
     )
 
-    await runtime_service.cancel_if_active(active_session, "stop")
-    await runtime_service.cancel_if_active(inactive_session, "stop")
+    await runtime_service.cancel_if_active(running_main_agent, active_session, "stop")
+    await runtime_service.cancel_if_active(idle_main_agent, inactive_session, "stop")
 
-    scheduler.cancel.assert_awaited_once_with("sess-active", "stop")
+    assert running_main_agent.state is MainAgentState.IDLE
+    assert idle_main_agent.state is MainAgentState.IDLE
 
 
 @pytest.mark.asyncio
@@ -470,22 +495,11 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
         updated_at=now,
     )
 
-    async def _stream():
-        yield RunCompletedEvent(
-            session_id=stale_session.id,
-            run_id="run-1",
-            agent_id=stale_session.id,
-            parent_run_id=None,
-            depth=0,
-            response="stale output",
-        )
-
     executor = SimpleNamespace(
-        execute=AsyncMock(
-            return_value=RouteResult(
-                action="submitted",
-                state_id=stale_session.id,
-                stream=_stream(),
+        submit_user_message=AsyncMock(
+            return_value=(
+                "run-1",
+                RunOutput(response="stale output", session_id=stale_session.id),
             )
         ),
     )
@@ -498,7 +512,9 @@ async def test_base_channel_service_skips_delivery_for_stale_session() -> None:
         ),
     )
     agent_pool = SimpleNamespace(
-        get_or_create_runtime_agent=AsyncMock(return_value=FakeAgent(stale_session.id)),
+        get_or_create_main_agent=AsyncMock(
+            return_value=FakeMainAgent(stale_session.id)
+        ),
         close=AsyncMock(),
     )
     service = _TestChannelService(

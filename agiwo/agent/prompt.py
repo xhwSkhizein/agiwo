@@ -1,5 +1,6 @@
 """System prompt construction."""
 
+import copy
 import locale
 import platform
 from datetime import datetime
@@ -10,7 +11,6 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     distro = None
 
-from agiwo.agent.hooks import filter_relevant_memories
 from agiwo.agent.models.input import ChannelContext, UserMessage
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.step import StepView
@@ -103,39 +103,41 @@ Date: {current_date}, use the `bash` tool get current time if there is a need
 """
 
 
-def _render_goal_directed_review() -> str:
-    return """---
-## Goal-Directed Review
+def _render_run_plan(*, has_update_plan: bool, has_review_trajectory: bool) -> str:
+    if not has_update_plan and not has_review_trajectory:
+        return ""
+    sections = ["---", "## Run Plan"]
+    if has_update_plan:
+        sections.append(
+            """
+### Planning
+When a task benefits from an explicit plan, use the `update_plan` tool with
+incremental `changes`. Each milestone should be a verifiable stage outcome
+within this run's responsibility — not successor agent, verifier, or user
+work, and not tiny operational steps. Keep milestones focused and specific:
+"understand the code" is too vague; "identify how auth tokens are validated"
+is concrete. There is no delete: abandon items that are no longer needed.
+Completed or abandoned items may be reopened in this same run.
+""".strip()
+        )
+    if has_review_trajectory:
+        sections.append(
+            """
+### Trajectory Review
+The system may periodically ask you to review your trajectory against the
+active milestone. When you see a `<system-review>` tag in a tool result, you
+MUST respond with the `review_trajectory` tool:
 
-You are expected to work in a goal-directed manner. The system helps you
-stay on track through a review mechanism.
+- If your recent steps advance the milestone: set `aligned=true`.
+- If your recent steps drifted: set `aligned=false` and provide a concise
+  experience summary.
+- Optionally score tools in the review window via `tool_usefulness`
+  (0=harmful, 1=low value, 2=useful, 3=critical). Omit tools you cannot judge.
 
-### Milestones
-When you receive a task, break it into concrete milestones using the
-`declare_milestones` tool. Each milestone should be a verifiable
-sub-goal. Keep milestones focused and specific -- "understand the code"
-is too vague; "identify how auth tokens are validated" is concrete.
-
-### System Reviews
-The system will periodically ask you to review your trajectory against
-the active milestone. When you see a `<system-review>` tag in a tool
-result, you MUST respond with the `review_trajectory` tool:
-
-- If your recent steps advance the milestone: set `aligned=true` and
-  briefly note what was accomplished.
-- If your recent steps drifted from the milestone: set `aligned=false`
-  and provide a concise experience summary of what was learned.
-  The system will condense the off-track results so they don't clutter
-  the context.
-
-The system review is not optional -- it enforces that you periodically
-check your own direction. Treat it as a mandatory checkpoint.
-
-### Step-Back
-When you indicate misalignment, the system automatically condenses the
-off-target tool results into your experience summary. The tool call
-history is preserved so future decisions can reference what was tried,
-but the verbose outputs are replaced with the lesson learned."""
+The system review is not optional — treat it as a mandatory checkpoint.
+""".strip()
+        )
+    return "\n\n".join(sections)
 
 
 def _render_tools(tools: tuple[tuple[str, str], ...]) -> str:
@@ -216,10 +218,15 @@ def assemble_run_messages(
     before_run_hook_result: str | None = None,
     *,
     channel_context: ChannelContext | None = None,
+    base_messages: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = [
-        step.to_message() for step in (existing_steps or [])
-    ]
+    messages = _build_initial_messages(
+        system_prompt,
+        existing_steps=existing_steps,
+        base_messages=base_messages,
+    )
+    from agiwo.memory.defaults import filter_relevant_memories  # noqa: PLC0415
+
     filtered_memories = filter_relevant_memories(messages, memories or [])
 
     preamble_parts: list[str] = []
@@ -237,26 +244,44 @@ def assemble_run_messages(
         elif preamble_text.strip():
             messages.append({"role": "user", "content": preamble_text})
 
-    if system_prompt:
+    if system_prompt and not (messages and messages[0].get("role") == "system"):
         messages.insert(0, {"role": "system", "content": system_prompt})
 
     return messages
 
 
-def apply_steering_messages(
-    messages: list[dict[str, Any]],
-    steer_inputs: list[UserMessage] | None,
+def _build_initial_messages(
+    system_prompt: str,
+    *,
+    existing_steps: list[StepView] | None,
+    base_messages: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    """Append staged steer inputs to ``messages`` and return it.
+    if base_messages is None:
+        return [step.to_message() for step in (existing_steps or [])]
+
+    messages = copy.deepcopy(base_messages)
+    messages.extend(step.to_message() for step in (existing_steps or []))
+    if messages and messages[0].get("role") == "system":
+        messages[0]["content"] = system_prompt
+    elif system_prompt:
+        messages.insert(0, {"role": "system", "content": system_prompt})
+    return messages
+
+
+def append_pending_user_messages(
+    messages: list[dict[str, Any]],
+    pending_inputs: list[UserMessage] | None,
+) -> list[dict[str, Any]]:
+    """Append staged pending user-role inputs to ``messages`` and return it.
 
     The caller owns ``messages`` (typically a fresh ``state.snapshot_messages()``
     deep copy).  This function mutates and returns the same list so we avoid a
     per-turn deep copy of the entire conversation history.
     """
-    if not steer_inputs:
+    if not pending_inputs:
         return messages
 
-    for normalized in steer_inputs:
+    for normalized in pending_inputs:
         if not normalized.has_content():
             continue
         messages.append(
@@ -292,6 +317,13 @@ async def build_system_prompt(
         skills_section = skill_manager.render_skills_section(allowed_skills)
 
     documents = document_store.read(workspace)
+    tool_names = {tool.name for tool in (tools or [])}
+    tools_xml = _render_tools(
+        tuple((tool.name, tool.get_short_description()) for tool in (tools or []))
+    )
+    # TOOLS.md duplicates the live tool catalog; keep it only when no tools
+    # are injected so the prompt stays useful without paying twice for tokens.
+    tools_document = "" if tools_xml else _render_tools_document(documents)
     sections = [
         _render_identity(documents),
         _render_soul(workspace, documents),
@@ -303,11 +335,12 @@ async def build_system_prompt(
             timezone=str(current_dt.tzinfo),
             current_date=current_dt.strftime("%Y-%m-%d"),
         ),
-        _render_goal_directed_review(),
-        _render_tools_document(documents),
-        _render_tools(
-            tuple((tool.name, tool.get_short_description()) for tool in (tools or []))
+        _render_run_plan(
+            has_update_plan="update_plan" in tool_names,
+            has_review_trajectory="review_trajectory" in tool_names,
         ),
+        tools_document,
+        tools_xml,
         f"---\n\n{skills_section}".strip() if skills_section else "",
         _render_user(documents),
     ]
@@ -332,7 +365,7 @@ def compose_child_system_prompt(
 
 
 __all__ = [
-    "apply_steering_messages",
+    "append_pending_user_messages",
     "assemble_run_messages",
     "build_system_prompt",
     "compose_child_system_prompt",

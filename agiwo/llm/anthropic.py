@@ -2,12 +2,7 @@ from typing import Any, AsyncIterator
 
 
 try:
-    from anthropic import (
-        APIConnectionError,
-        APITimeoutError,
-        AsyncAnthropic,
-        RateLimitError,
-    )
+    from anthropic import AsyncAnthropic
 except ImportError:
     raise ImportError("Please install anthropic package: uv add anthropic") from None
 
@@ -21,18 +16,9 @@ from agiwo.llm.message_converter import (
     convert_openai_tools_to_anthropic,
 )
 from agiwo.config.settings import get_settings
-from agiwo.utils.retry import retry_async
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-# Retryable exceptions for Anthropic
-ANTHROPIC_RETRYABLE = (
-    APIConnectionError,
-    RateLimitError,
-    APITimeoutError,
-)
 
 
 class AnthropicModel(Model):
@@ -94,7 +80,6 @@ class AnthropicModel(Model):
             include_reasoning=True,
         )
 
-    @retry_async(exceptions=ANTHROPIC_RETRYABLE)
     async def _create_stream(
         self,
         *,

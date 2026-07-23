@@ -72,7 +72,6 @@ async def apply_introspection_outcome(
     writer: RunStateWriter,
     step_lookup: dict[str, dict[str, Any]],
 ) -> None:
-    projectable_entries: list[object] = []
     previous_boundary_seq = context.ledger.introspection.last_boundary_seq
     repair_plan = build_context_repair_plan(
         context.ledger.messages,
@@ -83,11 +82,9 @@ async def apply_introspection_outcome(
     outcome.repair_plan = repair_plan
 
     if outcome.hidden_step_ids:
-        projectable_entries.extend(
-            await writer.record_context_steps_hidden(
-                step_ids=outcome.hidden_step_ids,
-                reason=_HIDDEN_CONTEXT_REASON,
-            )
+        await writer.record_context_steps_hidden(
+            step_ids=outcome.hidden_step_ids,
+            reason=_HIDDEN_CONTEXT_REASON,
         )
 
     if repair_plan is not None:
@@ -99,11 +96,9 @@ async def apply_introspection_outcome(
             ],
         )
         for update in repair_plan.content_updates:
-            projectable_entries.extend(
-                await writer.record_step_condensed_content_updated(
-                    step_id=update.step_id,
-                    condensed_content=update.content,
-                )
+            await writer.record_step_condensed_content_updated(
+                step_id=update.step_id,
+                condensed_content=update.content,
             )
 
     remove_tool_call_from_messages(
@@ -118,50 +113,51 @@ async def apply_introspection_outcome(
                 milestone_id=outcome.active_milestone_id or "",
             )
         )
-        projectable_entries.extend(
-            await writer.record_introspection_checkpoint_recorded(
-                checkpoint_seq=outcome.boundary_seq,
-                milestone_id=outcome.active_milestone_id,
-                review_tool_call_id=outcome.review_tool_call_id,
-                review_step_id=outcome.review_step_id,
-            )
-        )
-
-    projectable_entries.extend(
-        await writer.record_introspection_outcome_recorded(
-            aligned=outcome.aligned,
-            mode=outcome.mode,
-            experience=outcome.experience,
-            active_milestone_id=outcome.active_milestone_id,
+        await writer.record_introspection_checkpoint_recorded(
+            checkpoint_seq=outcome.boundary_seq,
+            milestone_id=outcome.active_milestone_id,
             review_tool_call_id=outcome.review_tool_call_id,
             review_step_id=outcome.review_step_id,
-            hidden_step_ids=outcome.hidden_step_ids,
-            notice_cleaned_step_ids=(
-                repair_plan.notice_cleaned_step_ids if repair_plan is not None else []
-            ),
-            condensed_step_ids=repair_plan.condensed_step_ids
-            if repair_plan is not None and outcome.mode == "step_back"
-            else [],
-            boundary_seq=outcome.boundary_seq,
-            repair_start_seq=repair_plan.start_seq if repair_plan is not None else None,
-            repair_end_seq=repair_plan.end_seq if repair_plan is not None else None,
         )
+
+    context.ledger.introspection.latest_tool_usefulness = list(outcome.tool_usefulness)
+
+    await writer.record_introspection_outcome_recorded(
+        aligned=outcome.aligned,
+        mode=outcome.mode,
+        experience=outcome.experience,
+        tool_usefulness=[
+            {
+                "tool_call_id": entry.tool_call_id,
+                "tool_name": entry.tool_name,
+                "score": entry.score,
+            }
+            for entry in outcome.tool_usefulness
+        ],
+        active_milestone_id=outcome.active_milestone_id,
+        review_tool_call_id=outcome.review_tool_call_id,
+        review_step_id=outcome.review_step_id,
+        hidden_step_ids=outcome.hidden_step_ids,
+        notice_cleaned_step_ids=(
+            repair_plan.notice_cleaned_step_ids if repair_plan is not None else []
+        ),
+        condensed_step_ids=repair_plan.condensed_step_ids
+        if repair_plan is not None and outcome.mode == "step_back"
+        else [],
+        boundary_seq=outcome.boundary_seq,
+        repair_start_seq=repair_plan.start_seq if repair_plan is not None else None,
+        repair_end_seq=repair_plan.end_seq if repair_plan is not None else None,
     )
 
     if outcome.mode == "step_back" and repair_plan is not None:
-        projectable_entries.extend(
-            await writer.record_context_repair_applied(
-                mode="step_back",
-                affected_count=repair_plan.affected_count,
-                start_seq=repair_plan.start_seq,
-                end_seq=repair_plan.end_seq,
-                experience=repair_plan.experience,
-            )
+        await writer.record_context_repair_applied(
+            mode="step_back",
+            affected_count=repair_plan.affected_count,
+            start_seq=repair_plan.start_seq,
+            end_seq=repair_plan.end_seq,
+            experience=repair_plan.experience,
         )
-        await writer.project_entries(projectable_entries)
         await context.hooks.after_step_back(outcome, context)
-    else:
-        await writer.project_entries(projectable_entries)
 
     context.ledger.introspection.pending_trigger = None
     context.ledger.introspection.notice_requested = False

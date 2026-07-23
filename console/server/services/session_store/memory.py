@@ -121,7 +121,14 @@ class InMemorySessionStore:
         sessions.sort(key=lambda session: session.updated_at, reverse=True)
         return sessions
 
-    async def list_sessions(self) -> list[Session]:
+    async def list_sessions(self, *, include_archived: bool = False) -> list[Session]:
         sessions = list(self._session_map.values())
+        if not include_archived:
+            sessions = [s for s in sessions if s.archived_at is None]
+        sessions.sort(key=lambda session: session.updated_at, reverse=True)
+        return sessions
+
+    async def list_archived_sessions(self) -> list[Session]:
+        sessions = [s for s in self._session_map.values() if s.archived_at is not None]
         sessions.sort(key=lambda session: session.updated_at, reverse=True)
         return sessions

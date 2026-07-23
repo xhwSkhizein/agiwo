@@ -4,9 +4,12 @@ from agiwo.agent import Agent, AgentConfig
 from agiwo.agent import (
     AgentOptions,
     AgentStorageOptions,
+    MainAgent,
     RunLogStorageConfig,
     TraceStorageConfig,
 )
+from agiwo.agent.spec import AgentSpec
+from agiwo.agent.worker_port import WorkerSchedulerPort
 from agiwo.llm import create_model_from_dict
 from agiwo.llm.base import Model
 from agiwo.scheduler.engine import Scheduler
@@ -67,11 +70,31 @@ def build_default_agent_record(template: DefaultAgentConfig) -> AgentConfigRecor
 
 def build_model(config: AgentConfigRecord) -> Model:
     model_params = ModelParamsInput.model_validate(config.model_params or {})
-    return create_model_from_dict(
-        provider=config.model_provider,
-        model_name=config.model_name,
-        params=model_params.model_dump(exclude_none=True),
-    )
+    params = model_params.model_dump(exclude_none=True)
+    try:
+        return create_model_from_dict(
+            provider=config.model_provider,
+            model_name=config.model_name,
+            params=params,
+        )
+    except ValueError as exc:
+        logger.error(
+            "agent_model_build_failed",
+            agent_id=config.id,
+            agent_name=config.name,
+            model_provider=config.model_provider,
+            model_name=config.model_name,
+            model_params_keys=sorted(params.keys()),
+            has_base_url="base_url" in params,
+            api_key_env_name=params.get("api_key_env_name"),
+            error=str(exc),
+        )
+        raise ValueError(
+            "Failed to build model for "
+            f"agent_id={config.id!r} agent_name={config.name!r} "
+            f"provider={config.model_provider!r} model={config.model_name!r}: "
+            f"{exc}"
+        ) from exc
 
 
 async def materialize_agent(
@@ -142,6 +165,76 @@ async def materialize_agent(
         model=model,
         tools=agent_tools or None,
         id=id or config.id,
+    )
+
+
+async def materialize_main_agent(
+    config: AgentConfigRecord,
+    console_config: ConsoleConfig,
+    registry: AgentRegistry,
+    *,
+    session_id: str,
+    agent_id: str | None = None,
+    worker_scheduler: WorkerSchedulerPort | None = None,
+    _building: set[str] | None = None,
+) -> MainAgent:
+    """Construct a session-bound MainAgent from a persisted config record."""
+    if _building is None:
+        _building = set()
+    if config.id in _building:
+        raise ValueError(f"Circular agent reference detected: {config.id}")
+    _building.add(config.id)
+
+    model = build_model(config)
+    opts_input = AgentOptionsInput.model_validate(config.options or {})
+    options = agent_options_input_to_agent_options(
+        opts_input,
+        run_log_storage=build_run_log_storage_config(console_config),
+        trace_storage=build_trace_storage_config(console_config),
+    )
+
+    get_global_tool_manager(build_citation_store_config(console_config))
+
+    agent_tools: list[BaseTool] = []
+    tool_refs = get_global_tool_manager().parse_allowed_tools(config.allowed_tools)
+    if tool_refs:
+        for ref in tool_refs:
+            if isinstance(ref, AgentToolReference):
+                child_config = await registry.get_agent(ref.agent_id)
+                if child_config is None:
+                    continue
+                child_agent = await materialize_agent(
+                    child_config,
+                    console_config,
+                    registry,
+                    _building=_building.copy(),
+                )
+                agent_tools.append(child_agent.as_tool())
+
+    agent_config = AgentConfig(
+        name=config.name,
+        description=config.description,
+        system_prompt=config.system_prompt,
+        options=options,
+        allowed_skills=config.allowed_skills,
+        allowed_tools=config.allowed_tools,
+    )
+    stable_id = agent_id or session_id
+    logger.info(
+        "materialize_main_agent",
+        session_id=session_id,
+        agent_id=stable_id,
+        base_agent=config.id,
+        allowed_tools=config.allowed_tools,
+        extra_tools=[t.name for t in agent_tools],
+    )
+    return MainAgent(
+        session_id=session_id,
+        agent_id=stable_id,
+        spec=AgentSpec(config=agent_config),
+        model=model,
+        tools=agent_tools or None,
+        worker_scheduler=worker_scheduler,
     )
 
 

@@ -25,6 +25,7 @@ def build_tool_context(
         depth=depth,
         metadata=dict(metadata or {}),
         gate_checked=gate_checked,
+        run_id=run_id,
     )
 
 

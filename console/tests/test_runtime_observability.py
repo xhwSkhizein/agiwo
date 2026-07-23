@@ -1,12 +1,10 @@
 from datetime import datetime, timezone
 
-from agiwo.agent.models.log import ContextRepairApplied
-from agiwo.agent import MessageRole, StepView
+from agiwo.agent import MessageRole, StepView, UserMessage
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
 
 from server.services.runtime.runtime_observability import (
     build_conversation_events,
-    build_runtime_decision_record_from_entry,
     build_session_milestone_board,
     build_trace_llm_call_records,
     build_trace_mainline_events,
@@ -202,57 +200,18 @@ def _trace_with_review_and_llm() -> Trace:
                 "agent_id": "agent-1",
                 "sequence": 7,
                 "aligned": False,
-                "mode": "step_back",
                 "experience": "switch plan",
                 "active_milestone_id": "inspect",
                 "review_tool_call_id": "tc-review",
                 "review_step_id": "step-2",
-                "hidden_step_ids": ["assistant-review", "step-2"],
-                "notice_cleaned_step_ids": [],
-                "condensed_step_ids": ["step-a", "step-b"],
-            },
-        ),
-        Span(
-            trace_id="trace-1",
-            span_id="runtime-1",
-            parent_span_id="run-1-root",
-            kind=SpanKind.RUNTIME,
-            name="step_back",
-            depth=1,
-            run_id="run-1",
-            start_time=datetime(2026, 4, 25, 0, 0, 4, tzinfo=timezone.utc),
-            end_time=datetime(2026, 4, 25, 0, 0, 4, tzinfo=timezone.utc),
-            duration_ms=0.0,
-            status=SpanStatus.OK,
-            attributes={
-                "agent_id": "agent-1",
-                "sequence": 8,
-                "affected_count": 2,
-                "checkpoint_seq": 4,
-                "experience": "switch plan",
+                "tool_usefulness": [
+                    {"tool_call_id": "tc-a", "tool_name": "bash", "score": 1},
+                    {"tool_call_id": "tc-b", "tool_name": "read", "score": None},
+                ],
             },
         ),
     ]
     return trace
-
-
-def test_context_repair_observability_clamps_checkpoint_seq() -> None:
-    record = build_runtime_decision_record_from_entry(
-        ContextRepairApplied(
-            sequence=1,
-            session_id="sess-1",
-            run_id="run-1",
-            agent_id="agent-1",
-            mode="step_back",
-            affected_count=1,
-            start_seq=0,
-            end_seq=3,
-            experience="drifted",
-        )
-    )
-
-    assert record.details["checkpoint_seq"] == 0
-    assert record.details["start_sequence"] == 0
 
 
 def test_build_trace_llm_call_records_extracts_summary_fields() -> None:
@@ -271,7 +230,7 @@ def test_build_trace_llm_call_records_extracts_summary_fields() -> None:
     assert record.output_preview == "Aligned."
 
 
-def test_build_trace_review_cycles_groups_checkpoint_result_and_step_back() -> None:
+def test_build_trace_review_cycles_groups_checkpoint_result_and_scores() -> None:
     trace = _trace_with_review_and_llm()
 
     cycles = build_trace_review_cycles(trace)
@@ -284,8 +243,12 @@ def test_build_trace_review_cycles_groups_checkpoint_result_and_step_back() -> N
     assert cycle.active_milestone == "Inspect auth"
     assert cycle.aligned is False
     assert cycle.experience == "switch plan"
-    assert cycle.step_back_applied is True
-    assert cycle.affected_count == 2
+    assert cycle.review_tool_call_id == "tc-review"
+    assert cycle.review_latency_ms == 10.0
+    assert [(item.tool_call_id, item.score) for item in cycle.tool_usefulness] == [
+        ("tc-a", 1),
+        ("tc-b", None),
+    ]
 
 
 def test_build_trace_review_cycles_disambiguates_missing_sequences() -> None:
@@ -340,12 +303,10 @@ def test_build_trace_mainline_events_returns_readable_narrative_sequence() -> No
         "milestone_update",
         "review_checkpoint",
         "review_result",
-        "runtime_decision",
         "run_finished",
     ]
     assert events[2].summary == "triggered by step_interval after 8 steps"
     assert events[3].summary == "trajectory misaligned"
-    assert events[4].details["kind"] == "step_back"
 
 
 def test_build_session_milestone_board_and_conversation_events() -> None:
@@ -363,7 +324,7 @@ def test_build_session_milestone_board_and_conversation_events() -> None:
     assert board.active_milestone_id == "inspect"
     assert board.milestones[0].description == "Inspect auth"
     assert board.latest_review_outcome is not None
-    assert board.latest_review_outcome.step_back_applied is True
+    assert board.latest_review_outcome.tool_usefulness[0].score == 1
 
     steps = [
         StepView(
@@ -399,8 +360,8 @@ def test_build_session_milestone_board_and_conversation_events() -> None:
             run_id="run-1",
             sequence=3,
             role=MessageRole.TOOL,
-            name="declare_milestones",
-            content="Milestones declared: inspect, fix",
+            name="update_plan",
+            content="Plan updated (revision=1): pending=1, active=1, completed=0, abandoned=0",
         ),
     ]
 
@@ -419,8 +380,42 @@ def test_build_session_milestone_board_and_conversation_events() -> None:
     assert events[0].details["content"] == "please inspect auth"
     assert events[1].details["content"] == "I will inspect auth"
     assert events[1].details["tool_calls"][0]["function"]["name"] == "read_file"
-    assert events[2].details["tool_name"] == "declare_milestones"
-    assert events[-1].summary == "Review misaligned; 2 steps condensed"
+    assert events[2].details["tool_name"] == "update_plan"
+    assert events[-1].summary == "Review flagged trajectory drift (1 usefulness scores)"
+
+
+def test_build_conversation_events_separates_system_user_notices() -> None:
+    steps = [
+        StepView(
+            id="step-user",
+            session_id="sess-1",
+            run_id="run-1",
+            sequence=1,
+            role=MessageRole.USER,
+            content="real user",
+            user_input="real user",
+        ),
+        StepView(
+            id="step-system",
+            session_id="sess-1",
+            run_id="run-1",
+            sequence=2,
+            role=MessageRole.USER,
+            content="assignment reminder",
+            user_input=UserMessage.from_system("assignment reminder"),
+        ),
+    ]
+
+    events = build_conversation_events(
+        session_id="sess-1",
+        steps=steps,
+        review_cycles=[],
+    )
+
+    assert [event.kind for event in events] == [
+        "user_message",
+        "system_user_notice",
+    ]
 
 
 def test_milestone_board_skips_checkpoint_without_milestone_id() -> None:

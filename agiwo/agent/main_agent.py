@@ -1,0 +1,424 @@
+"""Session-scoped MainAgent executor skeleton (ADR 0049 / CONTEXT MainAgent)."""
+
+import asyncio
+import time
+from collections.abc import AsyncIterator
+from enum import Enum
+from uuid import uuid4
+
+from agiwo.agent.agent import Agent, AgentExecutionHandle
+from agiwo.agent.hooks import HookRegistration, HookRegistry
+from agiwo.agent.intent.base import SessionIntentStore
+from agiwo.agent.intent.factory import create_session_intent_store
+from agiwo.agent.intent.models import IntentEntry
+from agiwo.agent.intent.report import summarize_run_report
+from agiwo.agent.introspect.replay import build_introspect_state_from_entries
+from agiwo.agent.models.execution import RunExecutionRequest, RunTreeRole
+from agiwo.agent.models.input import UserInput, UserMessage
+from agiwo.agent.models.plan import RunPlan
+from agiwo.agent.models.run import RunOutput
+from agiwo.agent.models.stream import AgentStreamItem
+from agiwo.agent.queue import QueueItem, QueueItemKind
+from agiwo.agent.session_history import append_session_user_message_to_history
+from agiwo.agent.spec import AgentSpec
+from agiwo.agent.storage.base import RunLogStorage
+from agiwo.agent.worker import WorkerService
+from agiwo.agent.worker_port import WorkerSchedulerPort
+from agiwo.agent.worker_tools import SpawnWorkerTool
+from agiwo.config.termination import TerminationReason
+from agiwo.llm.base import Model
+from agiwo.tool.base import BaseTool
+from agiwo.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class MainAgentState(str, Enum):
+    """Lifecycle state for a session-bound MainAgent."""
+
+    IDLE = "idle"
+    RUNNING = "running"
+
+
+class MainAgent:
+    """Session-scoped live executor bound from an AgentSpec (ADR 0049).
+
+    MainAgent stays alive across Runs within a Session. External user input
+    and async Worker reports share one Session-level staging queue drained by
+    a single routine: items go to the live Run's loop queue while a Run is
+    active, or start/continue a Run while idle. Gate feedback is written by
+    the Loop directly into the live Run's queue and never staged here.
+
+    SessionIntent writes (Wave C):
+    - ``accept``: append full user text after RunLog user write (D1).
+    - successful Run end: append summarized run report; optional last_run_plan.
+    - cancel / fail / non-completed termination: no run_report append.
+    """
+
+    def __init__(
+        self,
+        session_id: str,
+        agent_id: str,
+        spec: AgentSpec,
+        *,
+        model: Model,
+        tools: list[BaseTool] | None = None,
+        hooks: HookRegistry | list[HookRegistration] | None = None,
+        run_log_storage: RunLogStorage | None = None,
+        session_intent_store: SessionIntentStore | None = None,
+        worker_scheduler: WorkerSchedulerPort | None = None,
+    ) -> None:
+        self._session_id = session_id
+        self._agent_id = agent_id
+        self._spec = spec
+        # Persistence is owned by the internal Agent (from spec.config). An
+        # external run_log_storage argument is ignored for now.
+        del run_log_storage
+        self._agent = Agent(
+            spec.config,
+            model=model,
+            tools=tools,
+            hooks=hooks,
+            id=agent_id,
+        )
+        if session_intent_store is None:
+            self._session_intent_store = create_session_intent_store(
+                spec.config.options.storage.run_log_storage
+            )
+        else:
+            self._session_intent_store = session_intent_store
+        self._pending: list[QueueItem] = []
+        self._drain_lock = asyncio.Lock()
+        self._cancelling = False
+        self._handle: AgentExecutionHandle | None = None
+        self._last_handle: AgentExecutionHandle | None = None
+        self._completion_task: asyncio.Task[None] | None = None
+        self._worker_service: WorkerService | None = None
+        if worker_scheduler is not None:
+            self._worker_service = WorkerService(
+                agent_id=agent_id,
+                session_id=session_id,
+                agent=self._agent,
+                scheduler=worker_scheduler,
+                deliver_report=self.deliver_worker_report,
+            )
+            self._agent._inject_system_tools([SpawnWorkerTool(self._worker_service)])
+
+    def _active_worker_ids(self) -> frozenset[str]:
+        if self._worker_service is None:
+            return frozenset()
+        return self._worker_service.active_worker_ids
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def agent_id(self) -> str:
+        return self._agent_id
+
+    @property
+    def spec(self) -> AgentSpec:
+        return self._spec
+
+    @property
+    def state(self) -> MainAgentState:
+        if self._handle is not None and self._handle.is_active:
+            return MainAgentState.RUNNING
+        return MainAgentState.IDLE
+
+    @property
+    def agent(self) -> Agent:
+        """Underlying SDK Agent used for this session-bound executor."""
+        return self._agent
+
+    @property
+    def run_log_storage(self) -> RunLogStorage:
+        return self._agent.run_log_storage
+
+    @property
+    def session_intent_store(self) -> SessionIntentStore:
+        return self._session_intent_store
+
+    async def accept(self, user_input: UserInput) -> AgentExecutionHandle | None:
+        """Accept external user input into Session history and the live loop."""
+        if self._worker_service is not None:
+            await self._worker_service.ensure_started()
+        UserMessage.require_user_provided(user_input)
+        message = UserMessage.from_value(user_input)
+        # User bubbles are committed once under a synthetic run_id so Session
+        # history is not tied to any single live Run id (ADR 0048).
+        await append_session_user_message_to_history(
+            self._agent,
+            session_id=self._session_id,
+            user_message=message,
+            run_id=f"session-history-{self._session_id}",
+        )
+        await self._append_user_input_intent(message)
+
+        self.enqueue(
+            QueueItem(
+                kind=QueueItemKind.USER_INPUT,
+                message=message,
+                created_at=time.time(),
+            )
+        )
+        started = await self._drain()
+        # Prefer the live handle; if a short run finished during bootstrap wait
+        # (or was started by a concurrent completion-finally drain), still return
+        # the handle that consumed this accept.
+        return self._handle or started or self._last_handle
+
+    async def _append_user_input_intent(self, message: UserMessage) -> None:
+        await self._session_intent_store.append_entry(
+            self._session_id,
+            IntentEntry(
+                kind="user_input",
+                text=message.extract_text(),
+                at=int(time.time()),
+            ),
+        )
+
+    async def _await_run_completion(self, handle: AgentExecutionHandle) -> None:
+        output: RunOutput | None = None
+        try:
+            output = await handle.wait()
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            # The failure fact already lives in the RunLog (RunFailed fact);
+            # this keeps the SDK-side structured trail and prevents the
+            # background completion task from escaping with an unretrieved
+            # exception.
+            logger.error(
+                "main_agent_run_failed",
+                session_id=self._session_id,
+                run_id=handle.run_id,
+                exc_info=True,
+            )
+        finally:
+            if output is not None:
+                await self._maybe_append_run_report(handle, output)
+            if self._handle is handle:
+                self._handle = None
+                self._completion_task = None
+                if self._worker_service is not None:
+                    await self._worker_service.sync_parent_idle()
+                await self._drain()
+
+    async def _maybe_append_run_report(
+        self,
+        handle: AgentExecutionHandle,
+        output: RunOutput,
+    ) -> None:
+        if not self._should_append_run_report(output):
+            return
+        summary = summarize_run_report(response=output.response)
+        if not summary:
+            return
+        last_run_plan = await self._load_run_plan_snapshot(handle.run_id)
+        await self._session_intent_store.append_entry(
+            self._session_id,
+            IntentEntry(
+                kind="run_report",
+                text=summary,
+                at=int(time.time()),
+                run_id=handle.run_id,
+            ),
+            last_run_plan=last_run_plan,
+        )
+
+    @staticmethod
+    def _should_append_run_report(output: RunOutput) -> bool:
+        return (
+            output.error is None
+            and output.termination_reason is TerminationReason.COMPLETED
+        )
+
+    async def _load_run_plan_snapshot(self, run_id: str) -> RunPlan | None:
+        entries = await self.run_log_storage.list_entries(
+            session_id=self._session_id,
+            run_id=run_id,
+            agent_id=self._agent_id,
+        )
+        replay = build_introspect_state_from_entries(entries)
+        plan = replay.plan
+        if not plan.milestones and plan.revision <= 0:
+            return None
+        return plan
+
+    async def deliver_worker_report(self, run_id: str, report: str) -> None:
+        """Enqueue an async Worker report on the unified loop queue."""
+        self.enqueue(
+            QueueItem(
+                kind=QueueItemKind.WORKER_REPORT,
+                text=report,
+                run_id=run_id,
+                created_at=time.time(),
+            )
+        )
+        await self._drain()
+
+    async def _drain(self) -> AgentExecutionHandle | None:
+        """Drain the staging queue through the single delivery path.
+
+        Every queued item is eventually acked: delivered into the live Run's
+        loop queue, used to start/continue a Run while idle, or dropped with a
+        log line. When the live Run is closing (``enqueue_message`` returns
+        False) the item stays queued and the completion-finally drain retries
+        it on the idle path, so nothing is lost.
+
+        Returns the last handle started during this drain (may already be done
+        for short runs that finish during bootstrap wait).
+        """
+        started: AgentExecutionHandle | None = None
+        async with self._drain_lock:
+            while (item := self.peek_pending()) is not None:
+                if self._cancelling:
+                    return started
+                handle = self._handle
+                if handle is not None and handle.is_active:
+                    message = self._queue_item_to_message(item)
+                    if message is None:
+                        self.ack_pending()
+                        logger.warning(
+                            "main_agent_queue_item_discarded",
+                            session_id=self._session_id,
+                            kind=item.kind.value,
+                        )
+                        continue
+                    if await handle.enqueue_message(message):
+                        self.ack_pending()
+                        continue
+                    return started
+                self.ack_pending()
+                if item.kind is QueueItemKind.USER_INPUT:
+                    started = await self._start_new_run()
+                elif item.kind is QueueItemKind.WORKER_REPORT:
+                    message = self._queue_item_to_message(item)
+                    if message is not None and item.run_id:
+                        started = await self._continue_run(item.run_id, message)
+        return started
+
+    @staticmethod
+    def _queue_item_to_message(item: QueueItem) -> UserMessage | None:
+        if item.kind is QueueItemKind.USER_INPUT:
+            return item.message
+        if item.kind is QueueItemKind.WORKER_REPORT and item.text:
+            return UserMessage.from_system(
+                f"<worker-report>\n{item.text}\n</worker-report>"
+            )
+        return None
+
+    async def _start_new_run(self) -> AgentExecutionHandle:
+        handle = self._agent.start_prevalidated(
+            None,
+            session_id=self._session_id,
+            execution_request=RunExecutionRequest(
+                run_id=str(uuid4()),
+                run_tree_role=RunTreeRole.ROOT,
+            ),
+            active_worker_ids=self._active_worker_ids,
+        )
+        self._handle = handle
+        self._last_handle = handle
+        self._completion_task = asyncio.create_task(self._await_run_completion(handle))
+        # Close the bootstrap race: mid-run accept must not write history that
+        # prepare_run_context would also load, then enqueue the same message.
+        await handle.wait_until_started()
+        return handle
+
+    async def _continue_run(
+        self, run_id: str, message: UserMessage
+    ) -> AgentExecutionHandle:
+        handle = self._agent.continue_completed_run(
+            run_id=run_id,
+            session_id=self._session_id,
+            user_input=message,
+            active_worker_ids=self._active_worker_ids,
+        )
+        self._handle = handle
+        self._last_handle = handle
+        self._completion_task = asyncio.create_task(self._await_run_completion(handle))
+        await handle.wait_until_started()
+        return handle
+
+    def enqueue(self, item: QueueItem) -> None:
+        """Append one item to the unified pending loop queue."""
+        self._pending.append(item)
+
+    def peek_pending(self) -> QueueItem | None:
+        """Return the oldest pending queue item without removing it."""
+        if not self._pending:
+            return None
+        return self._pending[0]
+
+    def ack_pending(self) -> QueueItem | None:
+        """Remove and return the oldest pending queue item."""
+        if not self._pending:
+            return None
+        return self._pending.pop(0)
+
+    async def cancel(self, reason: str | None = None) -> None:
+        """Cancel the current run, Workers, and return to idle.
+
+        Single-loop constraint: ``_cancelling`` is a plain in-process flag,
+        so one MainAgent instance must live on one event loop (the Console
+        deployment shape: one instance per session per loop).
+        """
+        self._cancelling = True
+        try:
+            if self._worker_service is not None:
+                await self._worker_service.cancel_all_workers(
+                    reason or "Cancelled by user"
+                )
+            handle = self._handle
+            completion_task = self._completion_task
+            if handle is not None:
+                handle.cancel(reason)
+            if completion_task is not None:
+                await completion_task
+            # cancel_all_workers already cancelled every Worker, so no new
+            # reports can arrive; resuming a cancelled run from a leftover
+            # report would violate the caller's cancel intent (and its
+            # run_id no longer passes the COMPLETED resume check anyway).
+            self._discard_pending_on_cancel(reason)
+        finally:
+            self._cancelling = False
+            self._handle = None
+            self._completion_task = None
+
+    def _discard_pending_on_cancel(self, reason: str | None) -> None:
+        while (item := self.ack_pending()) is not None:
+            if item.kind is QueueItemKind.WORKER_REPORT:
+                logger.info(
+                    "worker_report_discarded_on_cancel",
+                    session_id=self._session_id,
+                    run_id=item.run_id,
+                    reason=reason,
+                )
+
+    def subscribe(self) -> AsyncIterator[AgentStreamItem]:
+        """Subscribe to live stream items for the current run."""
+        if self._handle is not None:
+            return self._handle.stream()
+
+        async def _empty() -> AsyncIterator[AgentStreamItem]:
+            return
+            yield  # pragma: no cover - keeps this an async generator
+
+        return _empty()
+
+    async def wait_current_run(self) -> RunOutput:
+        """Wait for the current (or just-finished) run to finish."""
+        handle = self._handle or self._last_handle
+        if handle is None:
+            raise RuntimeError("No current run")
+        return await handle.wait()
+
+    async def close(self) -> None:
+        """Release resources held by the underlying Agent."""
+        if self._handle is not None and self._handle.is_active:
+            await self.cancel()
+        await self._agent.close()
+        await self._session_intent_store.close()

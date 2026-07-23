@@ -66,9 +66,20 @@ _USAGE_METRIC_ALIASES: dict[str, tuple[str, ...]] = {
         "cache_read_tokens",
         "cache_read_input_tokens",
         "cached_tokens",
+        # OpenAI Chat Completions / openai-compatible stream usage
+        "prompt_tokens_details.cached_tokens",
+        # OpenAI Responses API usage
         "input_tokens_details.cached_tokens",
     ),
-    "cache_creation_tokens": ("cache_creation_tokens", "cache_creation_input_tokens"),
+    "cache_creation_tokens": (
+        "cache_creation_tokens",
+        "cache_creation_input_tokens",
+        # Some OpenAI-compatible gateways expose creation under prompt details.
+        "prompt_tokens_details.cache_creation_tokens",
+        "prompt_tokens_details.cache_write_tokens",
+        "input_tokens_details.cache_creation_tokens",
+        "input_tokens_details.cache_write_tokens",
+    ),
 }
 
 

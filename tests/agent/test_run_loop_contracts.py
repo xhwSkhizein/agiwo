@@ -12,7 +12,7 @@ from agiwo.agent import (
     UserMessage,
 )
 from agiwo.agent.hooks import HookPhase, HookRegistry, transform
-from agiwo.agent.prompt import apply_steering_messages
+from agiwo.agent.prompt import append_pending_user_messages
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.llm.base import Model, StreamChunk
@@ -37,10 +37,10 @@ def _make_session_runtime() -> SessionRuntime:
 
 
 @pytest.mark.asyncio
-async def test_enqueue_steer_accepts_image_only_input() -> None:
+async def test_enqueue_message_accepts_image_only_input() -> None:
     session_runtime = _make_session_runtime()
 
-    accepted = await session_runtime.enqueue_steer(
+    accepted = await session_runtime.enqueue_message(
         UserMessage(
             content=[
                 ContentPart(
@@ -55,19 +55,19 @@ async def test_enqueue_steer_accepts_image_only_input() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_steering_messages_preserves_multimodal_payloads() -> None:
+async def test_append_pending_user_messages_preserves_multimodal_payloads() -> None:
     session_runtime = _make_session_runtime()
-    steering_input = UserMessage(
+    pending_input = UserMessage(
         content=[
             ContentPart(type=ContentType.TEXT, text="Look at this image"),
             ContentPart(type=ContentType.IMAGE, url="https://example.com/diagram.png"),
         ]
     )
-    await session_runtime.enqueue_steer(steering_input)
+    await session_runtime.enqueue_message(pending_input)
 
-    updated = apply_steering_messages(
+    updated = append_pending_user_messages(
         [{"role": "assistant", "content": "waiting"}],
-        session_runtime.peek_pending_steer_inputs(),
+        session_runtime.peek_pending_inputs(),
     )
 
     assert updated[-1] == {
@@ -83,24 +83,24 @@ async def test_apply_steering_messages_preserves_multimodal_payloads() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_runtime_peek_steer_does_not_consume_until_ack() -> None:
+async def test_session_runtime_peek_pending_does_not_consume_until_ack() -> None:
     session_runtime = _make_session_runtime()
 
-    await session_runtime.enqueue_steer("follow up")
+    await session_runtime.enqueue_message("follow up")
 
-    pending = session_runtime.peek_pending_steer_inputs()
+    pending = session_runtime.peek_pending_inputs()
 
     assert [UserMessage.from_value(item).extract_text() for item in pending] == [
         "follow up"
     ]
     assert [
         UserMessage.from_value(item).extract_text()
-        for item in session_runtime.peek_pending_steer_inputs()
+        for item in session_runtime.peek_pending_inputs()
     ] == ["follow up"]
 
-    session_runtime.ack_pending_steer_inputs(len(pending))
+    session_runtime.ack_pending_inputs(len(pending))
 
-    assert session_runtime.peek_pending_steer_inputs() == []
+    assert session_runtime.peek_pending_inputs() == []
 
 
 @pytest.mark.asyncio
@@ -115,7 +115,7 @@ async def test_early_hooks_receive_initialized_context() -> None:
         observed.append(
             (
                 "before_run",
-                context.config.max_steps,
+                context.config.max_steps_per_run,
                 context.config.config_root,
                 context.hooks.has_phase(HookPhase.ASSEMBLE_CONTEXT),
             )
@@ -131,7 +131,7 @@ async def test_early_hooks_receive_initialized_context() -> None:
         observed.append(
             (
                 "memory_retrieve",
-                context.config.max_steps,
+                context.config.max_steps_per_run,
                 context.config.config_root,
                 context.hooks.has_phase(HookPhase.PREPARE),
             )
@@ -144,7 +144,7 @@ async def test_early_hooks_receive_initialized_context() -> None:
     agent = Agent(
         AgentConfig(
             name="hook-context",
-            options=AgentOptions(max_steps=7, config_root="/tmp/agiwo-root"),
+            options=AgentOptions(max_steps_per_run=7, config_root="/tmp/agiwo-root"),
         ),
         model=_FixedResponseModel(),
         hooks=HookRegistry(

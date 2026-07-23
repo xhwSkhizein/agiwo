@@ -5,7 +5,6 @@ import { parseStreamEventPayload } from "@/lib/api";
 import type {
   AgentStreamEventPayload,
   RunCompletedEventPayload,
-  StreamEventPayload,
   StepResponse,
 } from "@/lib/api";
 import type { ChatMessage } from "@/lib/chat-types";
@@ -14,7 +13,7 @@ import { contentToText, genMessageId } from "@/lib/chat-types";
 export interface ChatStreamCallbacks {
   onSessionCaptured?: (sessionId: string) => void;
   onRootStateCaptured?: (stateId: string) => void;
-  onChildEvent?: (agentId: string, event: StreamEventPayload) => void;
+  onChildEvent?: (agentId: string, event: AgentStreamEventPayload) => void;
   onSchedulerFailed?: (error: string) => void;
   onRunCompleted?: (event: RunCompletedEventPayload) => void;
   onRunStarted?: (event: AgentStreamEventPayload) => void;
@@ -164,6 +163,30 @@ export function useChatStream(
             const data = parseStreamEventPayload(dataStr);
             if (!data) continue;
 
+            if ("kind" in data && data.kind === "session") {
+              callbacksRef.current.onSessionCaptured?.(data.session_id);
+              const assistantId = ensureAssistantPlaceholder();
+              const responseText = data.response ?? "";
+              currentAssistantText = responseText;
+              setMessages((prev) =>
+                prev.map((message) =>
+                  message.id === assistantId
+                    ? {
+                        ...message,
+                        text: responseText,
+                        isStreaming: false,
+                      }
+                    : message,
+                ),
+              );
+              currentAssistantId = null;
+              continue;
+            }
+
+            if (!("type" in data)) {
+              continue;
+            }
+
             if (data.type === "scheduler_failed") {
               callbacksRef.current.onSchedulerFailed?.(
                 "error" in data ? String(data.error) : "Unknown error",
@@ -179,6 +202,12 @@ export function useChatStream(
               if (data.session_id) {
                 callbacksRef.current.onSessionCaptured?.(data.session_id);
               }
+              continue;
+            }
+
+            if (data.type === "session_error") {
+              callbacksRef.current.onSchedulerFailed?.(data.message);
+              finishCurrentAssistant(false);
               continue;
             }
 
@@ -205,17 +234,9 @@ export function useChatStream(
             const isChildEvent =
               rootStateId && eventAgentId && eventAgentId !== rootStateId;
             if (isChildEvent) {
-              callbacksRef.current.onChildEvent?.(eventAgentId, data);
-              continue;
-            }
-
-            if (agentEvent.type === "context_steps_hidden") {
-              const hiddenStepIds = new Set(agentEvent.step_ids);
-              setMessages((prev) =>
-                prev.filter(
-                  (message) =>
-                    !message.stepId || !hiddenStepIds.has(message.stepId),
-                ),
+              callbacksRef.current.onChildEvent?.(
+                eventAgentId,
+                agentEvent,
               );
               continue;
             }

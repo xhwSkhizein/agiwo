@@ -1,4 +1,9 @@
-"""Scheduler facade — lifecycle, public API, delegation to sub-modules."""
+"""Scheduler facade — waitset, cancel-subtree, and child delegation (ADR 0049).
+
+The Session **product** entry is ``MainAgent.accept`` (Console ``SessionGateway``).
+This module owns waitset, cancel/shutdown, child dispatch, and Worker parent
+registration — not Session chat entry.
+"""
 
 import asyncio
 import time
@@ -9,24 +14,17 @@ from uuid import uuid4
 from agiwo.agent import (
     Agent,
     RunOutput,
+    RunStatus,
     UserInput,
     UserMessage,
 )
+from agiwo.agent.models.run import RUN_TERMINAL_STATUSES
 from agiwo.scheduler._runtime_agents import ensure_root_runtime_agent
-from agiwo.scheduler._stream import route_with_stream
 from agiwo.scheduler._tick import dispatch_action, tick as _tick
 from agiwo.scheduler._tree_ops import cancel_subtree, shutdown_subtree
-from agiwo.scheduler._wait import (
-    deadline_remaining,
-    resolve_routable_state,
-    wait_for_state_result,
-)
-from agiwo.scheduler.commands import (
-    DispatchAction,
-    DispatchReason,
-    RouteResult,
-    RouteStreamMode,
-)
+from agiwo.scheduler._wait import wait_for_state_result
+from agiwo.scheduler.commands import DispatchAction, DispatchReason, SpawnChildRequest
+from agiwo.scheduler.execution import ExecutionTreeNode
 from agiwo.scheduler.engine_context import EngineContext
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
@@ -37,15 +35,12 @@ from agiwo.scheduler.models import (
     SchedulerConfig,
 )
 from agiwo.scheduler.runner import RunnerContext, SchedulerRunner
-from agiwo.scheduler.runtime_facts import SchedulerRuntimeFacts
 from agiwo.scheduler.runtime_state import RuntimeState, list_all_states
 from agiwo.scheduler.runtime_tools import (
     CancelAgentTool,
-    DeclareMilestonesTool,
     ForkChildAgentTool,
     ListAgentsTool,
     QuerySpawnedAgentTool,
-    ReviewTrajectoryTool,
     SleepAndWaitTool,
     SpawnChildAgentTool,
 )
@@ -59,7 +54,11 @@ logger = get_logger(__name__)
 
 
 class Scheduler:
-    """Scheduler: lifecycle, tick loop, API, state machine, and runtime coordination."""
+    """Slim orchestration layer: waitset, cancel subtree, and child agent tree (ADR 0049).
+
+    Owns ``AgentState`` persistence and dispatch for spawned children. Session user
+    input and RunLog execution belong to ``MainAgent`` / the agent Loop — not here.
+    """
 
     def __init__(
         self,
@@ -77,12 +76,10 @@ class Scheduler:
             state_list_page_size=self._config.state_list_page_size,
         )
         self._rt = RuntimeState()
-        self._runtime_facts = SchedulerRuntimeFacts(self._rt)
         self._tool_control = SchedulerToolControl(
             store=self._store,
             guard=self._guard,
             rt=self._rt,
-            runtime_facts=self._runtime_facts,
             save_state=self._save_state,
             cancel_subtree=self._cancel_subtree,
             state_list_page_size=self._config.state_list_page_size,
@@ -94,14 +91,11 @@ class Scheduler:
             QuerySpawnedAgentTool(self._tool_control),
             CancelAgentTool(self._tool_control),
             ListAgentsTool(self._tool_control),
-            DeclareMilestonesTool(),
-            ReviewTrajectoryTool(),
         )
         self._runner = SchedulerRunner(
             RunnerContext(
                 store=self._store,
                 rt=self._rt,
-                runtime_facts=self._runtime_facts,
                 notify_state_change=self._notify_state_change,
                 nudge=self.nudge,
                 semaphore=semaphore or asyncio.Semaphore(self._config.max_concurrent),
@@ -159,6 +153,7 @@ class Scheduler:
         self._rt.agents.clear()
         self._rt.canonical_agents.clear()
         self._rt.execution_handles.clear()
+        self._rt.prepared_resumes.clear()
         if remaining_agents:
             results = await asyncio.gather(
                 *[agent.close() for agent in remaining_agents],
@@ -198,6 +193,45 @@ class Scheduler:
     def get_registered_agent(self, state_id: str):
         return self._rt.agents.get(state_id)
 
+    async def register_worker_parent(
+        self,
+        *,
+        state_id: str,
+        session_id: str,
+        agent: Agent,
+    ) -> None:
+        """Register a session MainAgent as Worker spawn parent (ADR 0049 Wave D)."""
+        self._rt.agents[state_id] = agent
+        self._rt.canonical_agents[state_id] = agent
+        existing = await self._store.get_state(state_id)
+        if existing is not None:
+            return
+        await self._save_state(
+            AgentState(
+                id=state_id,
+                session_id=session_id,
+                status=AgentStateStatus.IDLE,
+                task="",
+                depth=0,
+                is_persistent=True,
+            )
+        )
+
+    async def spawn_worker(self, request: SpawnChildRequest) -> AgentState:
+        """Spawn a depth-1 worker child (public Worker delegation surface, ADR 0049)."""
+        return await self._tool_control.spawn_child(request)
+
+    async def get_result_summary(self, state: AgentState) -> str | None:
+        """Resolve the final report/result summary for a terminal state."""
+        return await self._rt.get_result_summary(state)
+
+    async def mark_parent_idle(self, parent_id: str) -> None:
+        """Force a registered worker-parent back to IDLE after its loop ends."""
+        state = await self._store.get_state(parent_id)
+        if state is None or state.status is AgentStateStatus.IDLE:
+            return
+        await self._save_state(state.with_updates(status=AgentStateStatus.IDLE))
+
     async def wait_for_nudge(self, timeout: float) -> None:
         try:
             await asyncio.wait_for(self._rt.nudge.wait(), timeout=timeout)
@@ -219,6 +253,7 @@ class Scheduler:
         persistent: bool = False,
         agent_config_id: str | None = None,
     ) -> str:
+        UserMessage.require_user_provided(user_input)
         # Get or create lock for this agent_id to prevent concurrent submit
         lock = self._rt.state_locks.setdefault(agent.id, asyncio.Lock())
         async with lock:
@@ -263,6 +298,21 @@ class Scheduler:
         *,
         agent: Agent | None = None,
     ) -> None:
+        """Enqueue user input for a persistent root (one Session entry replacement).
+
+        Session product chat still uses ``MainAgent.accept``. This method is the
+        Scheduler-tree control surface for persistent roots:
+
+        - ``IDLE`` / ``FAILED`` → queue as ``pending_input`` (next root cycle)
+        - ``RUNNING`` → live Loop ``enqueue_message``
+        - ``WAITING`` / ``QUEUED`` → ``USER_HINT`` mailbox event (WAITING is urgent
+          so an explicit operator enqueue wakes immediately)
+        """
+        UserMessage.require_user_provided(user_input)
+        message = UserMessage.from_value(user_input)
+        if not message.has_content():
+            raise RuntimeError("Cannot enqueue empty user input")
+
         # Get or create lock for this state_id to prevent concurrent enqueue
         lock = self._rt.state_locks.setdefault(state_id, asyncio.Lock())
         async with lock:
@@ -273,138 +323,47 @@ class Scheduler:
                 raise RuntimeError(
                     f"Agent '{state_id}' is not persistent. Use submit() instead."
                 )
-            if not state.can_accept_enqueue_input():
-                raise RuntimeError(
-                    f"Agent '{state_id}' is {state.status.value}. "
-                    f"Cannot enqueue input (expected IDLE or FAILED)."
-                )
             if agent is not None:
                 await self._ensure_root_runtime_agent(agent, state_id)
 
-            await self._save_state(state.with_queued(pending_input=user_input))
-            self.nudge()
+            if state.status == AgentStateStatus.RUNNING:
+                handle = self._rt.execution_handles.get(state_id)
+                if handle is None:
+                    raise RuntimeError(
+                        f"Agent '{state_id}' is RUNNING but has no live handle"
+                    )
+                if not await handle.enqueue_message(message):
+                    raise RuntimeError(
+                        f"Agent '{state_id}' rejected enqueued user input"
+                    )
+                return
 
-    async def route_root_input(
-        self,
-        user_input: UserInput,
-        *,
-        agent: Agent,
-        state_id: str | None = None,
-        session_id: str | None = None,
-        abort_signal: AbortSignal | None = None,
-        persistent: bool = True,
-        agent_config_id: str | None = None,
-        timeout: float | None = None,
-        include_child_events: bool = True,
-        stream_mode: RouteStreamMode = RouteStreamMode.RUN_END,
-    ) -> RouteResult:
-        return await self._route_root_input_impl(
-            user_input,
-            agent=agent,
-            state_id=state_id,
-            session_id=session_id,
-            abort_signal=abort_signal,
-            persistent=persistent,
-            agent_config_id=agent_config_id,
-            timeout=timeout,
-            include_child_events=include_child_events,
-            close_on_root_run_end=stream_mode == RouteStreamMode.RUN_END,
-        )
+            if state.status in (
+                AgentStateStatus.WAITING,
+                AgentStateStatus.QUEUED,
+            ):
+                event = PendingEvent.create_user_hint(
+                    id=str(uuid4()),
+                    target_agent_id=state_id,
+                    session_id=state.session_id,
+                    user_input=UserMessage.to_storage_value(message),
+                    created_at=datetime.now(timezone.utc),
+                    urgent=state.status == AgentStateStatus.WAITING,
+                )
+                await self._store.save_event(event)
+                self.nudge()
+                return
 
-    async def _route_root_input_impl(
-        self,
-        user_input: UserInput,
-        *,
-        agent: Agent,
-        state_id: str | None = None,
-        session_id: str | None = None,
-        abort_signal: AbortSignal | None = None,
-        persistent: bool = True,
-        agent_config_id: str | None = None,
-        timeout: float | None = None,
-        include_child_events: bool = True,
-        close_on_root_run_end: bool,
-    ) -> RouteResult:
-        lookup_id = state_id or agent.id
-        deadline = None if timeout is None else time.monotonic() + timeout
-
-        async def do_submit() -> str:
-            return await self._submit(
-                agent,
-                user_input,
-                session_id=session_id,
-                abort_signal=abort_signal,
-                persistent=persistent,
-                agent_config_id=agent_config_id,
-            )
-
-        current_state = await resolve_routable_state(
-            store=self._store,
-            rt=self._rt,
-            state_id=lookup_id,
-            deadline=deadline,
-        )
-
-        if current_state is None:
-            return await route_with_stream(
-                self._ctx,
-                root_state_id=agent.id,
-                action="submitted",
-                timeout=(
-                    deadline_remaining(deadline) if deadline is not None else timeout
-                ),
-                include_child_events=include_child_events,
-                close_on_root_run_end=close_on_root_run_end,
-                operation=do_submit,
-            )
-
-        if current_state.status in (
-            AgentStateStatus.RUNNING,
-            AgentStateStatus.WAITING,
-            AgentStateStatus.QUEUED,
-        ):
-            if current_state.status == AgentStateStatus.RUNNING:
-                return await self._steer_into_running(
-                    current_state,
-                    user_input,
+            if state.status not in (
+                AgentStateStatus.IDLE,
+                AgentStateStatus.FAILED,
+            ):
+                raise RuntimeError(
+                    f"Agent '{state_id}' is {state.status.value}. Cannot enqueue input."
                 )
 
-            return await self._steer_with_stream(
-                current_state,
-                user_input,
-                timeout=timeout,
-                include_child_events=include_child_events,
-                close_on_root_run_end=close_on_root_run_end,
-            )
-
-        if (
-            current_state.is_root
-            and current_state.is_persistent
-            and current_state.status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
-        ):
-            return await route_with_stream(
-                self._ctx,
-                root_state_id=current_state.id,
-                action="enqueued",
-                timeout=timeout,
-                include_child_events=include_child_events,
-                close_on_root_run_end=close_on_root_run_end,
-                operation=lambda: self._enqueue_and_return_state_id(
-                    state_id=current_state.id,
-                    agent=agent,
-                    user_input=user_input,
-                ),
-            )
-
-        return await route_with_stream(
-            self._ctx,
-            root_state_id=agent.id,
-            action="submitted",
-            timeout=timeout,
-            include_child_events=include_child_events,
-            close_on_root_run_end=close_on_root_run_end,
-            operation=do_submit,
-        )
+            await self._save_state(state.with_queued(pending_input=user_input))
+            self.nudge()
 
     async def wait_for(
         self,
@@ -414,7 +373,6 @@ class Scheduler:
         return await wait_for_state_result(
             store=self._store,
             rt=self._rt,
-            runtime_facts=self._runtime_facts,
             state_id=state_id,
             timeout=timeout,
         )
@@ -474,81 +432,6 @@ class Scheduler:
         await self._cancel_subtree(state_id, reason)
         return True
 
-    async def _steer_into_running(
-        self,
-        state: AgentState,
-        user_input: UserInput,
-    ) -> RouteResult:
-        steered = await self.steer(state.id, user_input, urgent=False)
-        if not steered:
-            refreshed = await self._store.get_state(state.id)
-            if refreshed is not None and refreshed.status in ACTIVE_AGENT_STATUSES:
-                raise RuntimeError(
-                    f"Failed to steer active scheduler state '{state.id}'"
-                )
-        return RouteResult(action="steered", state_id=state.id)
-
-    async def _steer_with_stream(
-        self,
-        state: AgentState,
-        user_input: UserInput,
-        *,
-        timeout: float | None,
-        include_child_events: bool,
-        close_on_root_run_end: bool,
-    ) -> RouteResult:
-        urgent = state.status == AgentStateStatus.WAITING
-        sid = state.id
-
-        async def _do_steer() -> str:
-            steered = await self.steer(sid, user_input, urgent=urgent)
-            if not steered:
-                raise RuntimeError(f"Failed to steer scheduler state '{sid}'")
-            return sid
-
-        return await route_with_stream(
-            self._ctx,
-            root_state_id=sid,
-            action="steered",
-            timeout=timeout,
-            include_child_events=include_child_events,
-            close_on_root_run_end=close_on_root_run_end,
-            operation=_do_steer,
-        )
-
-    async def steer(
-        self,
-        state_id: str,
-        user_input: UserInput,
-        *,
-        urgent: bool = False,
-    ) -> bool:
-        message = UserMessage.from_value(user_input)
-        if not message.has_content():
-            return False
-
-        state = await self._store.get_state(state_id)
-        if state is None:
-            return False
-
-        if state.status == AgentStateStatus.RUNNING:
-            handle = self._rt.execution_handles.get(state_id)
-            if handle is None:
-                return False
-            return await handle.steer(message)
-
-        event = PendingEvent.create_user_hint(
-            id=str(uuid4()),
-            target_agent_id=state_id,
-            session_id=state.session_id,
-            user_input=UserMessage.to_storage_value(message),
-            created_at=datetime.now(timezone.utc),
-            urgent=urgent,
-        )
-        await self._store.save_event(event)
-        self.nudge()
-        return True
-
     async def shutdown(self, state_id: str) -> bool:
         state = await self._store.get_state(state_id)
         if state is None or not state.is_active():
@@ -568,6 +451,131 @@ class Scheduler:
 
         await self._ensure_root_runtime_agent(agent, state_id)
         return True
+
+    async def get_run_view(self, run_id: str):
+        return await self._rt.get_run_view(run_id)
+
+    async def list_run_log_entries(
+        self, run_id: str, *, kinds=None, limit: int = 10_000
+    ):
+        return await self._rt.list_run_log_entries(run_id, kinds=kinds, limit=limit)
+
+    async def get_run_status(self, run_id: str) -> RunStatus | None:
+        view = await self.get_run_view(run_id)
+        return view.status if view is not None else None
+
+    async def list_execution_tree(
+        self,
+        root_run_id: str,
+    ) -> list[ExecutionTreeNode]:
+        """List the root run and its direct children (depth-1 only)."""
+        root = await self.get_run_view(root_run_id)
+        if root is None:
+            return []
+        nodes = [
+            ExecutionTreeNode(
+                run_id=root.run_id,
+                agent_id=root.agent_id,
+                status=root.status,
+                parent_run_id=root.parent_run_id,
+                run_tree_role=root.run_tree_role,
+                depth=0,
+            )
+        ]
+        seen = {root.run_id}
+        # Children share the same session; scan runtime agents for descendants.
+        for agent in self._rt.agents.values():
+            views = await agent.run_log_storage.list_run_views(
+                session_id=root.session_id, limit=1000
+            )
+            for view in views:
+                if view.parent_run_id != root_run_id or view.run_id in seen:
+                    continue
+                seen.add(view.run_id)
+                nodes.append(
+                    ExecutionTreeNode(
+                        run_id=view.run_id,
+                        agent_id=view.agent_id,
+                        status=view.status,
+                        parent_run_id=view.parent_run_id,
+                        run_tree_role=view.run_tree_role,
+                        depth=1,
+                    )
+                )
+        return nodes
+
+    async def request_recoverable_pause(
+        self,
+        run_ids: list[str],
+        reason: str,
+        *,
+        timeout: float = 120.0,
+    ) -> None:
+        """Cooperatively pause runs at the next safe boundary (not cancel)."""
+        targets = {rid for rid in run_ids if rid}
+        if not targets:
+            return
+        for handle in list(self._rt.execution_handles.values()):
+            if handle.run_id in targets:
+                handle.request_pause(reason)
+        deadline = time.monotonic() + timeout
+        pending = set(targets)
+        while pending and time.monotonic() < deadline:
+            done: set[str] = set()
+            for run_id in pending:
+                status = await self.get_run_status(run_id)
+                if status is None:
+                    done.add(run_id)
+                elif status is RunStatus.PAUSED:
+                    done.add(run_id)
+                elif status in RUN_TERMINAL_STATUSES:
+                    # Terminal without pause: treat as converged for barrier.
+                    done.add(run_id)
+            pending -= done
+            if pending:
+                await asyncio.sleep(0.05)
+        if pending:
+            raise TimeoutError(
+                f"recoverable pause timed out for run_ids={sorted(pending)}"
+            )
+
+    async def prepare_resume(self, run_ids: list[str]) -> None:
+        """Validate and park resume runtimes; status stays PAUSED until release."""
+        prepared: dict[str, tuple[Agent, str, str]] = {}
+        try:
+            for run_id in run_ids:
+                view = await self.get_run_view(run_id)
+                if view is None:
+                    raise ValueError(f"unknown run_id={run_id!r}")
+                if view.status is not RunStatus.PAUSED:
+                    raise ValueError(
+                        f"run {run_id!r} status={view.status.value} is not PAUSED"
+                    )
+                agent = self._rt.find_agent(view.agent_id)
+                if agent is None:
+                    raise ValueError(
+                        f"no scheduler agent available to resume run {run_id!r}"
+                    )
+                checkpoint_id = await agent.prepare_resume(
+                    run_id=run_id, session_id=view.session_id
+                )
+                prepared[run_id] = (agent, view.session_id, checkpoint_id)
+        except Exception:
+            self._rt.prepared_resumes.clear()
+            raise
+        self._rt.prepared_resumes.update(prepared)
+
+    async def release_resume_barrier(self) -> None:
+        """Release prepared resumes and continue each paused run."""
+        prepared = dict(self._rt.prepared_resumes)
+        self._rt.prepared_resumes.clear()
+        if not prepared:
+            return
+        tasks = [
+            agent.resume_paused_run(run_id=run_id, session_id=session_id)
+            for run_id, (agent, session_id, _checkpoint) in prepared.items()
+        ]
+        await asyncio.gather(*tasks)
 
     async def tick(self) -> None:
         await _tick(self._ctx)
@@ -620,16 +628,6 @@ class Scheduler:
             canonical_agent=canonical_agent,
             state_id=state_id,
         )
-
-    async def _enqueue_and_return_state_id(
-        self,
-        *,
-        state_id: str,
-        agent: Agent,
-        user_input: UserInput,
-    ) -> str:
-        await self.enqueue_input(state_id, user_input, agent=agent)
-        return state_id
 
 
 __all__ = ["Scheduler"]

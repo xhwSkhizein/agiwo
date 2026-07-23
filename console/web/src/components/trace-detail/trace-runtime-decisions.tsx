@@ -7,13 +7,6 @@ import type { RuntimeDecisionEvent } from "@/lib/api";
 import { formatLocalDateTime } from "@/lib/time";
 
 function decisionPreviewItems(decision: RuntimeDecisionEvent): string[] {
-  if (decision.kind === "step_back") {
-    return [
-      `affected_count ${String(decision.details.affected_count ?? "-")}`,
-      `checkpoint_seq ${String(decision.details.checkpoint_seq ?? "-")}`,
-      typeof decision.details.experience === "string" ? decision.details.experience : "",
-    ].filter(Boolean);
-  }
   if (decision.kind === "compaction_failed") {
     return [
       `attempt ${String(decision.details.attempt ?? "-")}/${String(decision.details.max_attempts ?? "-")}`,

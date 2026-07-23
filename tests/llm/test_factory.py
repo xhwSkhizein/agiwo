@@ -116,7 +116,10 @@ def test_create_model_from_dict_rejects_openai_compatible_without_base_url(
 ) -> None:
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
 
-    with pytest.raises(ValueError, match="base_url"):
+    with pytest.raises(
+        ValueError,
+        match=r"openai-compatible model 'MiniMax-M2\.5' requires base_url",
+    ):
         create_model_from_dict(
             provider="openai-compatible",
             model_name="MiniMax-M2.5",

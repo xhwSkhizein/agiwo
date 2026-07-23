@@ -21,6 +21,7 @@ from server.channels.utils import safe_close_all
 from server.channels.feishu import FeishuChannelService
 from server.services.session_store import create_session_store
 from server.config import ConsoleConfig
+from server.models.session import ChannelChatSessionStore
 from server.services.agent_registry import AgentRegistry, build_default_agent_record
 from server.services.runtime import AgentRuntimeCache
 from server.services.runtime_config import RuntimeConfigService
@@ -31,6 +32,8 @@ from server.services.storage_wiring import (
 )
 from server.routers import (
     sessions,
+    sessions_input,
+    sessions_lifecycle,
     traces,
     overview,
     agents,
@@ -77,6 +80,9 @@ async def _build_feishu_channel_service(
     config: ConsoleConfig,
     sched: Scheduler,
     agent_registry: AgentRegistry,
+    *,
+    session_store: ChannelChatSessionStore,
+    agent_runtime_cache: AgentRuntimeCache,
 ) -> FeishuChannelService | None:
     _validate_feishu_config(config)
     if not config.channels.feishu.enabled:
@@ -85,7 +91,6 @@ async def _build_feishu_channel_service(
         config.channels.feishu.default_agent_name
     )
     if base_agent is None:
-        # 使用 .env 中的默认 Agent（不持久化到 DB）
         base_agent = build_default_agent_record(config.default_agent)
         logger.info("using_default_agent_from_env", name=base_agent.name)
 
@@ -93,6 +98,8 @@ async def _build_feishu_channel_service(
         config=config,
         scheduler=sched,
         agent_registry=agent_registry,
+        session_store=session_store,
+        agent_runtime_cache=agent_runtime_cache,
     )
     await feishu_channel_service.initialize()
     return feishu_channel_service
@@ -146,16 +153,19 @@ async def _startup_console_runtime(
     )
     await resources.console_session_store.connect()
 
+    resources.agent_runtime_cache = AgentRuntimeCache(
+        agent_registry=resources.agent_registry,
+        console_config=config,
+        session_store=resources.console_session_store,
+        scheduler=resources.scheduler,
+    )
+
     resources.feishu_channel_service = await _build_feishu_channel_service(
         config,
         resources.scheduler,
         resources.agent_registry,
-    )
-    resources.agent_runtime_cache = AgentRuntimeCache(
-        scheduler=resources.scheduler,
-        agent_registry=resources.agent_registry,
-        console_config=config,
         session_store=resources.console_session_store,
+        agent_runtime_cache=resources.agent_runtime_cache,
     )
 
     bind_console_runtime(
@@ -215,6 +225,8 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(sessions.router)
+    app.include_router(sessions_input.router)
+    app.include_router(sessions_lifecycle.router)
     app.include_router(traces.router)
     app.include_router(overview.router)
     app.include_router(agents.router)

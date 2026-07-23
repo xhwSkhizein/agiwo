@@ -8,11 +8,9 @@ from agiwo.agent import StepView
 from agiwo.agent.models.log import (
     CompactionApplied,
     CompactionFailed,
-    ContextRepairApplied,
     HookFailed,
     RunLogEntry,
     RunRolledBack,
-    StepBackApplied,
     TerminationDecided,
 )
 from agiwo.observability.trace import Span, SpanKind, SpanStatus, Trace
@@ -25,6 +23,7 @@ from server.models.session import (
     ReviewOutcomeRecord,
     RuntimeDecisionRecord,
     SessionMilestoneBoardRecord,
+    ToolUsefulnessRecord,
     TraceLlmCallRecord,
     TraceMainlineEventRecord,
     TraceTimelineEventRecord,
@@ -330,13 +329,39 @@ def _step_event_details(step: StepView, **extra: Any) -> dict[str, Any]:
     return {key: value for key, value in details.items() if value is not None}
 
 
+def _parse_tool_usefulness_records(
+    raw_entries: object,
+) -> list[ToolUsefulnessRecord]:
+    if not isinstance(raw_entries, list):
+        return []
+    records: list[ToolUsefulnessRecord] = []
+    for item in raw_entries:
+        if not isinstance(item, dict):
+            continue
+        tool_call_id = _string_value(item.get("tool_call_id"))
+        if tool_call_id is None:
+            continue
+        tool_name = _string_value(item.get("tool_name"))
+        score = item.get("score")
+        if score is not None and not isinstance(score, int):
+            continue
+        records.append(
+            ToolUsefulnessRecord(
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                score=score,
+            )
+        )
+    return records
+
+
 def _review_cycle_summary(cycle: ReviewCycleRecord) -> str:
     if cycle.aligned is True:
         return "Review aligned with milestone"
-    if cycle.aligned is False and cycle.step_back_applied:
-        count = cycle.affected_count or 0
-        return f"Review misaligned; {count} steps condensed"
     if cycle.aligned is False:
+        scored = [item for item in cycle.tool_usefulness if item.score is not None]
+        if scored:
+            return f"Review flagged trajectory drift ({len(scored)} usefulness scores)"
         return "Review flagged trajectory drift"
     return "Review checkpoint recorded"
 
@@ -358,11 +383,6 @@ def _build_runtime_decision_record(
         )
     elif kind == "compaction_failed":
         summary = f"compaction failed (attempt {details['attempt']}/{details['max_attempts']})"
-    elif kind == "step_back":
-        summary = (
-            f"{details['affected_count']} results condensed after checkpoint seq "
-            f"{details['checkpoint_seq']}"
-        )
     elif kind == "rollback":
         summary = f"seq {details['start_sequence']}-{details['end_sequence']} hidden"
     elif kind == "termination":
@@ -414,34 +434,6 @@ def build_runtime_decision_record_from_entry(
                 "attempt": entry.attempt,
                 "max_attempts": entry.max_attempts,
                 "terminal": entry.terminal,
-            },
-        )
-    if isinstance(entry, StepBackApplied):
-        return _build_runtime_decision_record(
-            kind="step_back",
-            sequence=entry.sequence,
-            run_id=entry.run_id,
-            agent_id=entry.agent_id,
-            created_at=entry.created_at,
-            payload={
-                "affected_count": entry.affected_count,
-                "checkpoint_seq": entry.checkpoint_seq,
-                "experience": entry.experience,
-            },
-        )
-    if isinstance(entry, ContextRepairApplied):
-        return _build_runtime_decision_record(
-            kind="step_back",
-            sequence=entry.sequence,
-            run_id=entry.run_id,
-            agent_id=entry.agent_id,
-            created_at=entry.created_at,
-            payload={
-                "affected_count": entry.affected_count,
-                "checkpoint_seq": max(0, entry.start_seq - 1),
-                "start_sequence": entry.start_seq,
-                "end_sequence": entry.end_seq,
-                "experience": entry.experience,
             },
         )
     if isinstance(entry, RunRolledBack):
@@ -536,26 +528,6 @@ def _build_compaction_failed_decision_from_span(
     )
 
 
-def _build_step_back_decision_from_span(
-    trace: Trace,
-    span: Span,
-    *,
-    sequence: int,
-) -> RuntimeDecisionRecord:
-    return _build_runtime_decision_record(
-        kind="step_back",
-        sequence=sequence,
-        run_id=span.run_id or "",
-        agent_id=_runtime_agent_id(trace, span),
-        created_at=span.start_time,
-        payload={
-            "affected_count": _as_int(span.attributes.get("affected_count")) or 0,
-            "checkpoint_seq": _as_int(span.attributes.get("checkpoint_seq")) or 0,
-            "experience": _json_text(span.attributes.get("experience")),
-        },
-    )
-
-
 def _build_rollback_decision_from_span(
     trace: Trace,
     span: Span,
@@ -632,11 +604,6 @@ _RUNTIME_DECISION_SPAN_BUILDERS: dict[
             span,
             sequence=_span_sequence(span),
         )
-    ),
-    "step_back": lambda trace, span: _build_step_back_decision_from_span(
-        trace,
-        span,
-        sequence=_span_sequence(span),
     ),
     "rollback": lambda trace, span: _build_rollback_decision_from_span(
         trace,
@@ -969,39 +936,7 @@ def _apply_runtime_review_outcome_to_cycles(
     span: Span,
     decision: RuntimeDecisionRecord,
 ) -> None:
-    if decision.kind == "step_back":
-        cycle = _find_latest_review_cycle(
-            cycles,
-            run_id=decision.run_id,
-            predicate=lambda item: item.aligned is False,
-        )
-        if cycle is None:
-            cycle = _fallback_review_cycle(trace, span)
-            cycles.append(cycle)
-        cycle.step_back_applied = True
-        cycle.affected_count = _as_int(decision.details.get("affected_count"))
-        experience = _string_value(decision.details.get("experience"))
-        if experience:
-            cycle.experience = experience
-        cycle.resolved_at = decision.created_at
-        return
-
-    if decision.kind != "rollback":
-        return
-
-    cycle = _find_latest_review_cycle(
-        cycles,
-        run_id=decision.run_id,
-        predicate=lambda item: item.step_back_applied and item.rollback_range is None,
-    )
-    if cycle is None:
-        cycle = _fallback_review_cycle(trace, span)
-        cycles.append(cycle)
-    start_sequence = _as_int(decision.details.get("start_sequence"))
-    end_sequence = _as_int(decision.details.get("end_sequence"))
-    if start_sequence is not None and end_sequence is not None:
-        cycle.rollback_range = (start_sequence, end_sequence)
-    cycle.resolved_at = decision.created_at
+    del cycles, trace, span, decision
 
 
 def _apply_review_outcome_fact_to_cycles(
@@ -1031,12 +966,12 @@ def _apply_review_outcome_fact_to_cycles(
     experience = _string_value(span.attributes.get("experience"))
     if experience:
         cycle.experience = experience
-    mode = _string_value(span.attributes.get("mode"))
-    condensed_step_ids = span.attributes.get("condensed_step_ids")
-    if mode == "step_back":
-        cycle.step_back_applied = True
-        if isinstance(condensed_step_ids, list):
-            cycle.affected_count = len(condensed_step_ids)
+    cycle.review_tool_call_id = _string_value(
+        span.attributes.get("review_tool_call_id")
+    )
+    cycle.tool_usefulness = _parse_tool_usefulness_records(
+        span.attributes.get("tool_usefulness")
+    )
     cycle.resolved_at = span.start_time
 
 
@@ -1101,8 +1036,38 @@ def build_trace_review_cycles(trace: Trace) -> list[ReviewCycleRecord]:
             _update_review_cycles_from_runtime_span(cycles, trace=trace, span=span)
 
     _attach_cycle_milestone_ids(cycles, milestones)
+    _attach_review_tool_metrics(cycles, trace)
     cycles.sort(key=_cycle_sort_key)
     return cycles
+
+
+def _attach_review_tool_metrics(
+    cycles: list[ReviewCycleRecord],
+    trace: Trace,
+) -> None:
+    if not cycles:
+        return
+    tool_spans_by_call_id: dict[str, Span] = {}
+    for span in trace.spans:
+        if span.kind != SpanKind.TOOL_CALL:
+            continue
+        tool_details = _normalize_tool_details(span)
+        tool_name = _string_value(tool_details.get("tool_name"))
+        if tool_name != "review_trajectory":
+            continue
+        tool_call_id = _string_value(tool_details.get("tool_call_id"))
+        if tool_call_id is None:
+            continue
+        tool_spans_by_call_id[tool_call_id] = span
+
+    for cycle in cycles:
+        tool_call_id = cycle.review_tool_call_id
+        if tool_call_id is None:
+            continue
+        span = tool_spans_by_call_id.get(tool_call_id)
+        if span is None:
+            continue
+        cycle.review_latency_ms = span.duration_ms
 
 
 def build_trace_llm_call_records(trace: Trace) -> list[TraceLlmCallRecord]:
@@ -1180,6 +1145,16 @@ def build_trace_llm_call_records(trace: Trace) -> list[TraceLlmCallRecord]:
                         else None
                     )
                 ),
+                logical_call_id=_string_value(span.attributes.get("logical_call_id"))
+                or _string_value(details.get("logical_call_id")),
+                phase=_string_value(span.attributes.get("phase"))
+                or _string_value(details.get("phase")),
+                attempt_no=_as_int(span.attributes.get("attempt_no"))
+                or _as_int(details.get("attempt_no")),
+                call_ordinal=_as_int(span.attributes.get("call_ordinal"))
+                or _as_int(details.get("call_ordinal")),
+                retry_reason=_string_value(span.attributes.get("retry_reason"))
+                or _string_value(details.get("retry_reason")),
             )
         )
     return records
@@ -1290,8 +1265,7 @@ def _latest_review_outcome_for_board(
     return ReviewOutcomeRecord(
         aligned=latest_cycle.aligned,
         experience=latest_cycle.experience,
-        step_back_applied=latest_cycle.step_back_applied,
-        affected_count=latest_cycle.affected_count,
+        tool_usefulness=list(latest_cycle.tool_usefulness),
         trigger_reason=latest_cycle.trigger_reason,
         active_milestone=latest_cycle.active_milestone,
         resolved_at=latest_cycle.resolved_at,
@@ -1356,19 +1330,34 @@ def build_conversation_events(
 
     for step in sorted(steps, key=lambda item: item.sequence):
         if step.is_user_step():
-            events.append(
-                ConversationEventRecord(
-                    id=step.id,
-                    session_id=session_id,
-                    run_id=step.run_id,
-                    sequence=step.sequence,
-                    kind="user_message",
-                    priority="primary",
-                    title="User",
-                    summary=_summary_from_step(step),
-                    details=_step_event_details(step),
+            if step.is_user_provided_input():
+                events.append(
+                    ConversationEventRecord(
+                        id=step.id,
+                        session_id=session_id,
+                        run_id=step.run_id,
+                        sequence=step.sequence,
+                        kind="user_message",
+                        priority="primary",
+                        title="User",
+                        summary=_summary_from_step(step),
+                        details=_step_event_details(step),
+                    )
                 )
-            )
+            else:
+                events.append(
+                    ConversationEventRecord(
+                        id=step.id,
+                        session_id=session_id,
+                        run_id=step.run_id,
+                        sequence=step.sequence,
+                        kind="system_user_notice",
+                        priority="secondary",
+                        title="System notice",
+                        summary=_summary_from_step(step),
+                        details=_step_event_details(step),
+                    )
+                )
             continue
 
         if step.is_assistant_step():
@@ -1404,8 +1393,8 @@ def build_conversation_events(
             )
             continue
 
-        if tool_name == "declare_milestones":
-            summary = _summary_from_step(step) or "Milestones updated"
+        if tool_name == "update_plan":
+            summary = _summary_from_step(step) or "Plan updated"
             events.append(
                 ConversationEventRecord(
                     id=step.id,
@@ -1414,7 +1403,7 @@ def build_conversation_events(
                     sequence=step.sequence,
                     kind="milestone_event",
                     priority="secondary",
-                    title="Milestones Updated",
+                    title="Plan Updated",
                     summary=summary,
                     details=_step_event_details(step, tool_name=tool_name),
                 )
@@ -1472,8 +1461,17 @@ def build_conversation_events(
                     "cycle_id": cycle.cycle_id,
                     "trigger_reason": cycle.trigger_reason,
                     "aligned": cycle.aligned,
-                    "step_back_applied": cycle.step_back_applied,
                     "experience": cycle.experience,
+                    "tool_usefulness": [
+                        {
+                            "tool_call_id": item.tool_call_id,
+                            "tool_name": item.tool_name,
+                            "score": item.score,
+                        }
+                        for item in cycle.tool_usefulness
+                    ],
+                    "review_tool_call_id": cycle.review_tool_call_id,
+                    "review_latency_ms": cycle.review_latency_ms,
                     "active_milestone": cycle.active_milestone,
                 },
             )

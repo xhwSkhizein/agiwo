@@ -28,10 +28,11 @@ export function reviewSummary(
   if (cycle.aligned === true) {
     return "Aligned";
   }
-  if (cycle.aligned === false && cycle.step_back_applied) {
-    return `${cycle.affected_count ?? 0} steps condensed`;
-  }
   if (cycle.aligned === false) {
+    const scored = cycle.tool_usefulness.filter((item) => item.score !== null);
+    if (scored.length > 0) {
+      return `${scored.length} usefulness scores`;
+    }
     return "Drift detected";
   }
   return "Checkpoint recorded";
@@ -47,7 +48,7 @@ export function activeMilestoneFromBoard(
   );
 }
 
-export function latestObjective(trace: TraceDetail): string {
+export function latestMilestone(trace: TraceDetail): string {
   const latestCycle = trace.review_cycles[trace.review_cycles.length - 1];
   if (latestCycle?.active_milestone) {
     return latestCycle.active_milestone;

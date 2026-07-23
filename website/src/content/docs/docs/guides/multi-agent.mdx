@@ -6,7 +6,7 @@ description: Compose agents with Agent.as_tool() or use the Scheduler for persis
 # Multi-Agent
 
 Agiwo supports two public ways to compose agents: agent-as-tool composition and
-scheduler-managed orchestration.
+scheduler-managed orchestration. Session chat uses `MainAgent.accept` separately.
 
 ## Choose the right level
 
@@ -20,7 +20,7 @@ scheduler-managed orchestration.
 
 - roots must stay alive across multiple inputs
 - agents need waiting and wake conditions
-- you need explicit steering, cancellation, or shutdown
+- you need cancel / shutdown / Worker waitset
 - the runtime should manage child lifecycles directly
 
 ## Agent-as-tool
@@ -58,28 +58,23 @@ like a functional tool.
 from agiwo.scheduler import Scheduler
 
 async with Scheduler() as scheduler:
-    route = await scheduler.route_root_input(
+    await scheduler.register_worker_parent(
+        state_id=orchestrator.id,
+        session_id="sess-1",
+        agent=orchestrator,
+    )
+    await scheduler.enqueue_input(
+        orchestrator.id,
         "Research two competing approaches and compare them.",
         agent=orchestrator,
-        persistent=False,
     )
-    result = await scheduler.wait_for(route.state_id)
+    result = await scheduler.wait_for(orchestrator.id)
     print(result.response)
 ```
 
-For longer-lived roots:
-
-```python
-route = await scheduler.route_root_input(
-    "Manage the research pipeline",
-    agent=orchestrator,
-    persistent=True,
-)
-state_id = route.state_id
-
-await scheduler.wait_for(state_id)
-await scheduler.enqueue_input(state_id, "Now focus on pricing.")
-```
+For longer-lived roots, call `enqueue_input` again after the root returns to
+`IDLE` (or while `RUNNING` / `WAITING` / `QUEUED` to feed the live Loop /
+USER_HINT mailbox).
 
 ## Scheduler runtime tools
 
@@ -88,26 +83,5 @@ as:
 
 - `spawn_child_agent`
 - `fork_child_agent`
-- `sleep_and_wait`
 - `query_spawned_agent`
-- `cancel_agent`
-- `list_agents`
-- `retrospect_tool_result`
-
-These are runtime-owned tools. You do not register them manually on the agent.
-
-## Common patterns
-
-### Specialist delegation
-
-One orchestrator delegates bounded work to specialist agents via
-`Agent.as_tool()`.
-
-### Persistent supervisor
-
-One root stays alive and coordinates work over time through scheduler tools.
-
-### Fan-out and synthesis
-
-Multiple worker agents gather or analyze in parallel, then another run
-synthesizes the results.
+- `sleep_and_wait`

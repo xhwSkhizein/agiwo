@@ -71,6 +71,10 @@ class SessionStore(Protocol):
         """List sessions for a specific base agent."""
         ...
 
-    async def list_sessions(self) -> list[Session]:
-        """List all sessions."""
+    async def list_sessions(self, *, include_archived: bool = False) -> list[Session]:
+        """List sessions. Archived sessions are excluded unless requested."""
+        ...
+
+    async def list_archived_sessions(self) -> list[Session]:
+        """List only archived sessions."""
         ...

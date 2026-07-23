@@ -22,7 +22,7 @@ def _step_id_for_tool_call(
     return step_id if isinstance(step_id, str) else ""
 
 
-def build_context_repair_plan(
+def build_context_repair_plan(  # noqa: C901
     messages: list[dict[str, Any]],
     outcome: IntrospectionOutcome,
     *,

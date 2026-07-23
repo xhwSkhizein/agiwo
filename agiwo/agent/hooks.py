@@ -1,28 +1,22 @@
 """Phase-based hook registry for agent runtime extensibility."""
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 import traceback as traceback_lib
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from agiwo.agent.models.input import UserInput, UserMessage
+from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import MemoryRecord
-from agiwo.config.settings import get_settings
-from agiwo.memory import WorkspaceMemoryService
 from agiwo.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from agiwo.memory.defaults import DefaultMemoryHook, filter_relevant_memories
 
 logger = get_logger(__name__)
 
 
 class HookPhase(str, Enum):
-    """Agent runtime hook phases.
-
-    Review phases are intentionally asymmetric: BEFORE_REVIEW gates the
-    decision and can provide review_advice, while AFTER_STEP_BACK only fires
-    when condensation actually runs. A review that decides no step-back is
-    needed does not produce an after-review event.
-    """
+    """Agent runtime hook phases."""
 
     PREPARE = "prepare"
     ASSEMBLE_CONTEXT = "assemble_context"
@@ -75,42 +69,71 @@ class HookRegistration:
     critical: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class PhaseSpec:
+    """Full contract for one hook phase: capabilities, field allowlists, critical."""
+
+    allow_transform: bool = False
+    allow_decision_support: bool = False
+    allow_critical: bool = False
+    transform_fields: frozenset[str] = frozenset()
+    decision_support_fields: frozenset[str] = frozenset()
+
+
+_DEFAULT_PHASE_SPEC = PhaseSpec()
+
+PHASE_SPECS: dict[HookPhase, PhaseSpec] = {
+    HookPhase.PREPARE: PhaseSpec(
+        allow_transform=True,
+        allow_critical=True,
+        transform_fields=frozenset({"prelude_text"}),
+    ),
+    HookPhase.ASSEMBLE_CONTEXT: PhaseSpec(
+        allow_transform=True,
+        allow_critical=True,
+        transform_fields=frozenset({"memories", "context_additions"}),
+    ),
+    HookPhase.BEFORE_LLM: PhaseSpec(
+        allow_transform=True,
+        allow_decision_support=True,
+        allow_critical=True,
+        transform_fields=frozenset({"messages", "model_settings_override"}),
+        decision_support_fields=frozenset({"llm_advice"}),
+    ),
+    HookPhase.BEFORE_TOOL_CALL: PhaseSpec(
+        allow_transform=True,
+        allow_decision_support=True,
+        allow_critical=True,
+        transform_fields=frozenset({"parameters"}),
+        decision_support_fields=frozenset({"tool_advice"}),
+    ),
+    HookPhase.BEFORE_COMPACTION: PhaseSpec(
+        allow_decision_support=True,
+        decision_support_fields=frozenset({"compaction_advice"}),
+    ),
+    HookPhase.BEFORE_REVIEW: PhaseSpec(
+        allow_decision_support=True,
+        decision_support_fields=frozenset({"review_advice"}),
+    ),
+    HookPhase.BEFORE_TERMINATION: PhaseSpec(
+        allow_decision_support=True,
+        decision_support_fields=frozenset({"termination_advice"}),
+    ),
+}
+
+
+def phase_spec(phase: HookPhase) -> PhaseSpec:
+    """Return the contract for ``phase`` (observe-only default when unset)."""
+    return PHASE_SPECS.get(phase, _DEFAULT_PHASE_SPEC)
+
+
 @dataclass
 class HookRegistry:
     registrations: list[HookRegistration] = field(default_factory=list)
+    _phase_index: dict[HookPhase, list[HookRegistration]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
-    _TRANSFORM_PHASES = {
-        HookPhase.PREPARE,
-        HookPhase.ASSEMBLE_CONTEXT,
-        HookPhase.BEFORE_LLM,
-        HookPhase.BEFORE_TOOL_CALL,
-    }
-    _DECISION_SUPPORT_PHASES = {
-        HookPhase.BEFORE_LLM,
-        HookPhase.BEFORE_TOOL_CALL,
-        HookPhase.BEFORE_COMPACTION,
-        HookPhase.BEFORE_REVIEW,
-        HookPhase.BEFORE_TERMINATION,
-    }
-    _CRITICAL_PHASES = {
-        HookPhase.PREPARE,
-        HookPhase.ASSEMBLE_CONTEXT,
-        HookPhase.BEFORE_LLM,
-        HookPhase.BEFORE_TOOL_CALL,
-    }
-    _TRANSFORM_ALLOWLISTS = {
-        HookPhase.PREPARE: {"prelude_text"},
-        HookPhase.ASSEMBLE_CONTEXT: {"memories", "context_additions"},
-        HookPhase.BEFORE_LLM: {"messages", "model_settings_override"},
-        HookPhase.BEFORE_TOOL_CALL: {"parameters"},
-    }
-    _DECISION_SUPPORT_ALLOWLISTS = {
-        HookPhase.BEFORE_LLM: {"llm_advice"},
-        HookPhase.BEFORE_TOOL_CALL: {"tool_advice"},
-        HookPhase.BEFORE_COMPACTION: {"compaction_advice"},
-        HookPhase.BEFORE_REVIEW: {"review_advice"},
-        HookPhase.BEFORE_TERMINATION: {"termination_advice"},
-    }
     _GROUP_ORDER = {
         HookGroup.SYSTEM: 0,
         HookGroup.RUNTIME_ADAPTER: 1,
@@ -120,21 +143,32 @@ class HookRegistry:
     def __post_init__(self) -> None:
         for registration in self.registrations:
             self._validate_registration(registration)
+        self._rebuild_phase_index()
+
+    def _rebuild_phase_index(self) -> None:
+        buckets: dict[HookPhase, list[tuple[int, HookRegistration]]] = {}
+        for index, item in enumerate(self.registrations):
+            buckets.setdefault(item.phase, []).append((index, item))
+        self._phase_index = {
+            phase: [
+                item
+                for _, item in sorted(
+                    pairs,
+                    key=lambda pair: (
+                        self._GROUP_ORDER[pair[1].group],
+                        pair[1].order,
+                        pair[0],
+                    ),
+                )
+            ]
+            for phase, pairs in buckets.items()
+        }
 
     def for_phase(self, phase: HookPhase) -> list[HookRegistration]:
-        indexed = list(enumerate(self.registrations))
-        matching = [(index, item) for index, item in indexed if item.phase == phase]
-        matching.sort(
-            key=lambda pair: (
-                self._GROUP_ORDER[pair[1].group],
-                pair[1].order,
-                pair[0],
-            )
-        )
-        return [item for _, item in matching]
+        return list(self._phase_index.get(phase, ()))
 
     def has_phase(self, phase: HookPhase) -> bool:
-        return bool(self.for_phase(phase))
+        return bool(self._phase_index.get(phase))
 
     def has_handler(self, handler_name: str) -> bool:
         return any(item.handler_name == handler_name for item in self.registrations)
@@ -142,12 +176,14 @@ class HookRegistry:
     def add(self, registration: HookRegistration) -> None:
         self._validate_registration(registration)
         self.registrations.append(registration)
+        self._rebuild_phase_index()
 
     def _validate_registration(self, registration: HookRegistration) -> None:
+        spec = phase_spec(registration.phase)
         allowed_capabilities = {HookCapability.OBSERVE_ONLY}
-        if registration.phase in self._TRANSFORM_PHASES:
+        if spec.allow_transform:
             allowed_capabilities.add(HookCapability.TRANSFORM)
-        if registration.phase in self._DECISION_SUPPORT_PHASES:
+        if spec.allow_decision_support:
             allowed_capabilities.add(HookCapability.DECISION_SUPPORT)
 
         if registration.capability not in allowed_capabilities:
@@ -155,7 +191,7 @@ class HookRegistry:
                 "Unsupported hook capability for "
                 f"{registration.phase.value}: {registration.handler_name}"
             )
-        if registration.critical and registration.phase not in self._CRITICAL_PHASES:
+        if registration.critical and not spec.allow_critical:
             raise ValueError(
                 "Critical hooks are allowed only in early phases: "
                 f"{registration.phase.value}: {registration.handler_name}"
@@ -171,10 +207,11 @@ class HookRegistry:
         if not isinstance(result, dict):
             return current
 
+        spec = phase_spec(phase)
         if capability is HookCapability.TRANSFORM:
-            allowed = self._TRANSFORM_ALLOWLISTS.get(phase, set())
+            allowed = spec.transform_fields
         elif capability is HookCapability.DECISION_SUPPORT:
-            allowed = self._DECISION_SUPPORT_ALLOWLISTS.get(phase, set())
+            allowed = spec.decision_support_fields
         else:
             return current
 
@@ -506,146 +543,6 @@ def decision_support(
     )
 
 
-def _text_similarity(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    if a in b or b in a:
-        return 0.9
-
-    a_words = set(a.split())
-    b_words = set(b.split())
-    if not a_words or not b_words:
-        return 0.0
-
-    intersection = a_words & b_words
-    union = a_words | b_words
-    return len(intersection) / len(union)
-
-
-def filter_relevant_memories(
-    messages: list[Mapping[str, object]],
-    memories: list[MemoryRecord],
-) -> list[MemoryRecord]:
-    if not memories:
-        return []
-
-    min_relevance_score = 0.5
-    similarity_threshold = 0.8
-
-    existing_texts: list[str] = [
-        content
-        for message in messages[:-1]
-        if isinstance(content := message.get("content"), str)
-    ]
-
-    def _is_similar_to_history(content: str) -> bool:
-        content_lower = content.lower()
-        for text in existing_texts:
-            if _text_similarity(content_lower, text.lower()) > similarity_threshold:
-                return True
-        return False
-
-    filtered: list[MemoryRecord] = []
-    seen_contents: set[str] = set()
-
-    for memory in sorted(
-        [m for m in memories if m.relevance_score is not None],
-        key=lambda m: m.relevance_score or 0,
-        reverse=True,
-    ):
-        if memory.relevance_score < min_relevance_score:
-            continue
-
-        content_normalized = memory.content.strip()
-        if content_normalized in seen_contents:
-            continue
-        seen_contents.add(content_normalized)
-
-        if _is_similar_to_history(content_normalized):
-            continue
-
-        filtered.append(memory)
-
-    return filtered
-
-
-class DefaultMemoryHook:
-    """Default memory hook implementation using WorkspaceMemoryService."""
-
-    def __init__(
-        self,
-        *,
-        embedding_provider: str | None = None,
-        top_k: int | None = None,
-        root_path: str | None = None,
-    ) -> None:
-        self._top_k = top_k if top_k is not None else get_settings().memory_top_k
-        self._memory_service = WorkspaceMemoryService(
-            root_path=root_path,
-            embedding_provider=embedding_provider,
-        )
-
-    def _resolve_workspace(self, context: MemoryHookContext):
-        workspace = self._memory_service.resolve_workspace(
-            agent_name=getattr(context, "agent_name", None),
-            agent_id=getattr(context, "agent_id", None),
-        )
-        if workspace is None:
-            return None
-        return workspace.workspace
-
-    async def retrieve_memories(
-        self, user_input: UserInput, context: MemoryHookContext
-    ) -> list[MemoryRecord]:
-        query = UserMessage.from_value(user_input).extract_text()
-        if not query or len(query.strip()) < 3:
-            return []
-
-        try:
-            workspace, results = await self._memory_service.search(
-                agent_name=context.agent_name,
-                agent_id=context.agent_id,
-                query=query,
-                top_k=self._top_k,
-            )
-        except Exception as error:  # noqa: BLE001 - memory retrieval boundary
-            logger.warning("memory_retrieve_error", error=str(error), query=query[:50])
-            return []
-
-        if workspace is None:
-            logger.debug("memory_retrieve_no_workspace", agent_id=context.agent_id)
-            return []
-
-        if not results:
-            return []
-
-        records: list[MemoryRecord] = []
-        for r in results:
-            content = f"[{r.path}:{r.start_line}-{r.end_line}] {r.text}"
-            records.append(
-                MemoryRecord(
-                    content=content,
-                    relevance_score=r.score,
-                    source=r.path,
-                    metadata={
-                        "chunk_id": r.chunk_id,
-                        "start_line": r.start_line,
-                        "end_line": r.end_line,
-                        "vector_score": r.vector_score,
-                        "bm25_score": r.bm25_score,
-                    },
-                )
-            )
-
-        logger.debug(
-            "memory_retrieved",
-            query=query[:50],
-            count=len(records),
-            agent_id=context.agent_id,
-        )
-        return records
-
-
 __all__ = [
     "DefaultMemoryHook",
     "HookCapability",
@@ -654,9 +551,31 @@ __all__ = [
     "HookRegistration",
     "HookRegistry",
     "MemoryHookContext",
+    "PHASE_SPECS",
     "PhaseHook",
+    "PhaseSpec",
     "decision_support",
     "filter_relevant_memories",
     "observe",
+    "phase_spec",
     "transform",
 ]
+
+
+def __getattr__(name: str) -> object:
+    # Lazy re-export: defaults imports agent models; eager import cycles when
+    # ``agiwo.agent`` is loaded while ``agiwo.memory.defaults`` is initializing.
+    if name in {"DefaultMemoryHook", "filter_relevant_memories"}:
+        from agiwo.memory.defaults import (  # noqa: PLC0415
+            DefaultMemoryHook,
+            filter_relevant_memories,
+        )
+
+        exports = {
+            "DefaultMemoryHook": DefaultMemoryHook,
+            "filter_relevant_memories": filter_relevant_memories,
+        }
+        value = exports[name]
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agiwo.config.settings import settings
-from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.tool.base import BaseTool, ToolIdempotency, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.http_client import AsyncHttpClient
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
@@ -46,6 +46,7 @@ class WebSearchTool(BaseTool):
     )
     cacheable = True
     is_stateless = True
+    idempotency = ToolIdempotency.GUARANTEED
 
     def __init__(
         self,

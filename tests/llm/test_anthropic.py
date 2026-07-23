@@ -1,7 +1,6 @@
 import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from tenacity import wait_none
 from agiwo.llm.anthropic import AnthropicModel
 
 
@@ -56,9 +55,10 @@ async def test_anthropic_model_arun_stream_basic(
 
 @pytest.mark.asyncio
 @patch("agiwo.llm.anthropic.get_settings")
-async def test_anthropic_model_arun_stream_retries_stream_creation(
+async def test_anthropic_model_arun_stream_propagates_stream_creation_errors(
     mock_get_settings, mock_anthropic_client
 ):
+    """Provider adapters must not hide retries; agent execute_model_call owns them."""
     mock_settings = mock_get_settings.return_value
     mock_settings.anthropic_api_key = None
     model = AnthropicModel(
@@ -67,31 +67,15 @@ async def test_anthropic_model_arun_stream_retries_stream_creation(
         api_key="test-key",
     )
     model.client = mock_anthropic_client
-    model._create_stream.retry.wait = wait_none()
-
-    mock_event = MagicMock()
-    mock_event.type = "content_block_delta"
-    mock_event.delta = MagicMock(type="text_delta", text="Recovered")
-    mock_event.index = 0
-
-    class _MockStream:
-        def __aiter__(self):
-            return self._iterate()
-
-        async def _iterate(self):
-            yield mock_event
-
     mock_anthropic_client.messages.create = AsyncMock(
-        side_effect=[ConnectionError("temporary"), _MockStream()]
+        side_effect=ConnectionError("temporary")
     )
 
-    messages = [{"role": "user", "content": "Hello"}]
-    chunks = []
-    async for chunk in model.arun_stream(messages):
-        chunks.append(chunk)
+    with pytest.raises(ConnectionError, match="temporary"):
+        async for _ in model.arun_stream([{"role": "user", "content": "Hello"}]):
+            pass
 
-    assert [chunk.content for chunk in chunks] == ["Recovered"]
-    assert mock_anthropic_client.messages.create.await_count == 2
+    assert mock_anthropic_client.messages.create.await_count == 1
 
 
 @pytest.mark.asyncio

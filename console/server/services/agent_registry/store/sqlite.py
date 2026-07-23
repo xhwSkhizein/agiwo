@@ -89,11 +89,12 @@ class SqliteAgentRegistryStore:
                 system_prompt,
                 allowed_tools,
                 allowed_skills,
+                assignment_templates,
                 options,
                 model_params,
                 created_at,
                 updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 data["id"],
@@ -104,6 +105,7 @@ class SqliteAgentRegistryStore:
                 data["system_prompt"],
                 data["allowed_tools"],
                 data["allowed_skills"],
+                None,
                 data["options"],
                 data["model_params"],
                 data["created_at"],
@@ -134,6 +136,7 @@ class SqliteAgentRegistryStore:
                 system_prompt TEXT DEFAULT '',
                 allowed_tools TEXT DEFAULT NULL,
                 allowed_skills TEXT DEFAULT NULL,
+                assignment_templates TEXT DEFAULT NULL,  -- retired ADR 0048; unused
                 options TEXT DEFAULT '{}',
                 model_params TEXT DEFAULT '{}',
                 created_at TEXT NOT NULL,

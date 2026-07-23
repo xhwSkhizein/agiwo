@@ -13,10 +13,11 @@ function latestReviewSummary(board: SessionMilestoneBoard | null): string {
   if (outcome.aligned === true) {
     return "Latest review stayed aligned";
   }
-  if (outcome.aligned === false && outcome.step_back_applied) {
-    return `Latest review triggered step-back for ${outcome.affected_count ?? 0} steps`;
-  }
   if (outcome.aligned === false) {
+    const scored = outcome.tool_usefulness.filter((item) => item.score !== null);
+    if (scored.length > 0) {
+      return `Latest review recorded ${scored.length} usefulness scores`;
+    }
     return "Latest review detected drift";
   }
   return "Latest checkpoint recorded";

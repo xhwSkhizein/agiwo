@@ -13,7 +13,7 @@ from agiwo.agent.runtime.state_writer import RunStateWriter
 
 @dataclass(frozen=True, slots=True)
 class RunBootstrapResult:
-    user_step: StepView
+    user_step: StepView | None
     compact_start_seq: int
 
 
@@ -30,30 +30,47 @@ async def prepare_run_context(
     memories = await _retrieve_memories(context, user_input)
     await _restore_introspect_state(context)
 
-    user_step = await _build_user_step(context, user_input)
+    user_step = (
+        await _build_user_step(context, user_input) if user_input is not None else None
+    )
     latest_compact = await context.session_runtime.get_latest_compact_metadata(
         context.agent_id
     )
     compact_start_seq = latest_compact.end_seq + 1 if latest_compact is not None else 0
+    latest_rebuilt = await context.session_runtime.get_latest_messages_rebuilt(
+        context.agent_id
+    )
+    history_start_seq = (
+        latest_rebuilt.sequence + 1 if latest_rebuilt is not None else compact_start_seq
+    )
     existing_steps = await _load_existing_steps(
         context=context,
-        compact_start_seq=compact_start_seq,
+        compact_start_seq=history_start_seq,
     )
-    existing_steps.append(user_step)
+    if user_step is not None:
+        existing_steps.append(user_step)
     existing_steps.sort(key=lambda step: step.sequence)
 
-    user_message = UserMessage.from_value(user_input)
+    channel_context = (
+        UserMessage.from_value(user_input).context if user_input is not None else None
+    )
     assembled_messages = assemble_run_messages(
         system_prompt,
         existing_steps,
         memories,
         before_run_hook_result,
-        channel_context=user_message.context,
+        channel_context=channel_context,
+        base_messages=latest_rebuilt.messages if latest_rebuilt is not None else None,
+    )
+    run_start_seq = (
+        user_step.sequence
+        if user_step is not None
+        else (existing_steps[-1].sequence if existing_steps else 0)
     )
     await writer.record_context_assembled(
         messages=assembled_messages,
         memory_count=len(memories),
-        run_start_seq=user_step.sequence,
+        run_start_seq=run_start_seq,
         tool_schemas=_build_tool_schemas(runtime),
         latest_compaction=latest_compact,
     )
@@ -89,7 +106,7 @@ async def _retrieve_memories(
 
 async def _build_user_step(
     context: RunContext,
-    user_input: UserInput | None,
+    user_input: UserInput,
 ) -> StepView:
     return StepView.user(
         context,
@@ -107,17 +124,16 @@ async def _load_existing_steps(
         session_id=context.session_id,
         agent_id=context.agent_id,
         start_seq=compact_start_seq if compact_start_seq > 0 else None,
-        include_hidden_from_context=False,
     )
 
 
 async def _restore_introspect_state(context: RunContext) -> None:
     entries = await context.session_runtime.list_run_log_entries(
-        agent_id=context.agent_id,
+        run_id=context.run_id,
         limit=100_000,
     )
     replay_state = build_introspect_state_from_entries(entries)
-    context.ledger.goal = replay_state.goal
+    context.ledger.plan = replay_state.plan
     context.ledger.introspection = replay_state.introspection
 
 

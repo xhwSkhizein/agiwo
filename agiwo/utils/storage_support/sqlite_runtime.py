@@ -1,13 +1,34 @@
 """Shared SQLite runtime helpers for storage implementations."""
 
-from collections.abc import Awaitable, Callable, Sequence
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
+from typing import Any
 
 import aiosqlite
 
-from agiwo.utils.logging import FilteringBoundLogger
-from agiwo.utils.sqlite_pool import get_shared_connection, release_shared_connection
+from agiwo.utils.logging import FilteringBoundLogger, get_logger
+from agiwo.utils.sqlite_pool import (
+    get_shared_connection,
+    get_shared_write_lock,
+    release_shared_connection,
+)
 
 SQLiteInitializer = Callable[[aiosqlite.Connection], Awaitable[None]]
+
+_tx_logger = get_logger(__name__)
+
+
+def dumps_json_object(payload: dict[str, Any]) -> str:
+    """Serialize a dict for SQLite JSON columns (schemas differ per store)."""
+    return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+def loads_json_object(raw: str) -> dict[str, Any]:
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise TypeError("expected JSON object payload")
+    return data
 
 
 class SQLiteConnectionRuntime:
@@ -81,8 +102,73 @@ async def get_table_columns(
     return {row[1] for row in rows}
 
 
+def _is_nested_transaction_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return "within a transaction" in message or "cannot start a transaction" in message
+
+
+async def safe_rollback(connection: aiosqlite.Connection) -> None:
+    """Rollback only when SQLite still has an open transaction."""
+    if connection.in_transaction:
+        await connection.rollback()
+
+
+async def begin_immediate(connection: aiosqlite.Connection) -> None:
+    """Start an exclusive transaction; clear any stale open transaction first.
+
+    aiosqlite's ``in_transaction`` can lag the real SQLite state on a shared
+    autocommit connection, so recover from nested-BEGIN errors explicitly.
+    """
+    if connection.in_transaction:
+        _tx_logger.warning("sqlite_stale_transaction_rollback")
+        await safe_rollback(connection)
+    try:
+        await connection.execute("BEGIN IMMEDIATE")
+    except Exception as exc:
+        if not _is_nested_transaction_error(exc):
+            raise
+        _tx_logger.warning(
+            "sqlite_nested_transaction_recovered",
+            error=str(exc),
+        )
+        await safe_rollback(connection)
+        await connection.execute("BEGIN IMMEDIATE")
+
+
+@asynccontextmanager
+async def exclusive_sqlite_access(
+    db_path: str,
+) -> AsyncIterator[None]:
+    """Serialize writers that share one pooled connection for ``db_path``."""
+    async with get_shared_write_lock(db_path):
+        yield
+
+
+@asynccontextmanager
+async def immediate_transaction(
+    connection: aiosqlite.Connection,
+    db_path: str,
+) -> AsyncIterator[aiosqlite.Connection]:
+    """Exclusive BEGIN IMMEDIATE … COMMIT/ROLLBACK on a shared connection."""
+    async with exclusive_sqlite_access(db_path):
+        await begin_immediate(connection)
+        try:
+            yield connection
+            if connection.in_transaction:
+                await connection.commit()
+        except BaseException:
+            await safe_rollback(connection)
+            raise
+
+
 __all__ = [
     "SQLiteConnectionRuntime",
+    "begin_immediate",
+    "dumps_json_object",
+    "exclusive_sqlite_access",
     "execute_statements",
     "get_table_columns",
+    "immediate_transaction",
+    "loads_json_object",
+    "safe_rollback",
 ]

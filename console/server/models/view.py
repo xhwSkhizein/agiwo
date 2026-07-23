@@ -64,7 +64,11 @@ class AgentConfigPayload(BaseModel):
 
     @model_validator(mode="after")
     def _validate_model_connection(self) -> "AgentConfigPayload":
-        validate_provider_model_params(self.model_provider, self.model_params)
+        validate_provider_model_params(
+            self.model_provider,
+            self.model_params,
+            model_name=self.model_name,
+        )
         return self
 
 
@@ -105,11 +109,6 @@ class ForkSessionRequest(BaseModel):
     context_summary: str
 
 
-class SteerRequest(BaseModel):
-    message: str
-    urgent: bool = False
-
-
 class CancelRequest(BaseModel):
     reason: str = "Cancelled by operator"
 
@@ -147,6 +146,10 @@ class RunMetricsResponse(BaseModel):
     token_cost: float | None = None
     steps_count: int | None = None
     tool_calls_count: int | None = None
+    max_steps_per_run: int | None = None
+    model_call_attempts_total: int | None = None
+    model_call_limit_trigger_ordinal: int | None = None
+    model_call_phase_stats: dict[str, dict[str, int]] | None = None
 
 
 class StepMetricsResponse(RunMetricsResponse):
@@ -299,6 +302,7 @@ class SessionSummaryResponse(BaseModel):
     root_state_status: str | None = None
     source_session_id: str | None = None
     fork_context_summary: str | None = None
+    archived_at: str | None = None
 
     @field_validator("last_user_input", mode="before")
     @classmethod
@@ -315,6 +319,7 @@ class SessionRecordResponse(BaseModel):
     updated_at: str
     source_session_id: str | None = None
     fork_context_summary: str | None = None
+    archived_at: str | None = None
 
 
 class ChatContextResponse(BaseModel):
@@ -343,11 +348,16 @@ class ReviewCheckpointResponse(BaseModel):
     confirmed_at: str
 
 
+class ToolUsefulnessResponse(BaseModel):
+    tool_call_id: str
+    tool_name: str | None = None
+    score: int | None = None
+
+
 class ReviewOutcomeResponse(BaseModel):
     aligned: bool | None = None
     experience: str | None = None
-    step_back_applied: bool = False
-    affected_count: int | None = None
+    tool_usefulness: list[ToolUsefulnessResponse] = Field(default_factory=list)
     trigger_reason: str | None = None
     active_milestone: str | None = None
     resolved_at: str | None = None
@@ -374,9 +384,9 @@ class ReviewCycleResponse(BaseModel):
     hook_advice: str | None = None
     aligned: bool | None = None
     experience: str | None = None
-    step_back_applied: bool = False
-    rollback_range: list[int] | None = None
-    affected_count: int | None = None
+    tool_usefulness: list[ToolUsefulnessResponse] = Field(default_factory=list)
+    review_tool_call_id: str | None = None
+    review_latency_ms: float | None = None
     started_at: str | None = None
     resolved_at: str | None = None
     raw_notice: str | None = None
@@ -463,6 +473,11 @@ class TraceLlmCallResponse(BaseModel):
     tool_schema_count: int
     response_tool_call_count: int
     output_preview: str | None = None
+    logical_call_id: str | None = None
+    phase: str | None = None
+    attempt_no: int | None = None
+    call_ordinal: int | None = None
+    retry_reason: str | None = None
 
 
 class StepResponse(BaseModel):
@@ -491,7 +506,9 @@ class RunResponse(BaseModel):
     agent_id: str
     session_id: str
     user_id: str | None = None
-    user_input: UserInput
+    # ADR 0048 history-only root Runs start with user_input=None (text already
+    # in Session history / RunLog steps).
+    user_input: UserInput | None = None
     status: str
     response_content: str | None = None
     metrics: RunMetricsResponse | None = None
@@ -609,7 +626,6 @@ __all__ = [
     "SpanResponse",
     "StepMetricsResponse",
     "StepResponse",
-    "SteerRequest",
     "TraceLlmCallResponse",
     "TraceListItem",
     "TraceMainlineEventResponse",

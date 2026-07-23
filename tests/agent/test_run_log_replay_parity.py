@@ -4,18 +4,14 @@ from typing import Any
 import pytest
 
 from agiwo.agent import Agent, AgentConfig, TerminationReason
-from agiwo.agent.models.log import AssistantStepCommitted, ContextStepsHidden
-from agiwo.agent.models.step import MessageRole
 from agiwo.agent.models.stream import stream_items_from_entries
 from agiwo.llm.base import Model, StreamChunk
 
 _REPLAYABLE_TYPES = {
     "run_started",
     "step_completed",
-    "context_steps_hidden",
     "messages_rebuilt",
     "compaction_applied",
-    "step_back_applied",
     "termination_decided",
     "run_rolled_back",
     "run_completed",
@@ -36,68 +32,6 @@ class _FixedResponseModel(Model):
         del messages, tools
         yield StreamChunk(content=self._response)
         yield StreamChunk(finish_reason="stop")
-
-
-def test_context_steps_hidden_emits_public_stream_event_with_step_ids() -> None:
-    entries = [
-        AssistantStepCommitted(
-            sequence=1,
-            session_id="sess-1",
-            run_id="run-1",
-            agent_id="agent-1",
-            step_id="step-review-call",
-            role=MessageRole.ASSISTANT,
-            content="Trajectory review: aligned=True.",
-        ),
-        ContextStepsHidden(
-            sequence=2,
-            session_id="sess-1",
-            run_id="run-1",
-            agent_id="agent-1",
-            step_ids=["step-review-call"],
-            reason="review_metadata",
-        ),
-    ]
-
-    items = stream_items_from_entries(entries)
-
-    assert [item.type for item in items] == ["context_steps_hidden"]
-    assert items[0].step_ids == ["step-review-call"]
-
-
-def test_stream_replay_persists_hidden_step_ids_across_pages() -> None:
-    hidden_step_ids: set[str] = set()
-
-    first_page = stream_items_from_entries(
-        [
-            ContextStepsHidden(
-                sequence=2,
-                session_id="sess-1",
-                run_id="run-1",
-                agent_id="agent-1",
-                step_ids=["step-review-call"],
-                reason="review_metadata",
-            ),
-        ],
-        persisted_hidden_step_ids=hidden_step_ids,
-    )
-    second_page = stream_items_from_entries(
-        [
-            AssistantStepCommitted(
-                sequence=1,
-                session_id="sess-1",
-                run_id="run-1",
-                agent_id="agent-1",
-                step_id="step-review-call",
-                role=MessageRole.ASSISTANT,
-                content="Trajectory review: aligned=True.",
-            ),
-        ],
-        persisted_hidden_step_ids=hidden_step_ids,
-    )
-
-    assert [item.type for item in first_page] == ["context_steps_hidden"]
-    assert second_page == []
 
 
 @pytest.mark.asyncio

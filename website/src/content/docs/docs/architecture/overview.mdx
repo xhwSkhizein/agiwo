@@ -8,22 +8,22 @@ description: Understand the current runtime boundaries between Agent, Scheduler,
 ## Console Interaction Path
 
 ```text
-Console / Feishu -> Session runtime services -> Scheduler -> Agent
+Console / Feishu -> SessionGateway -> MainAgent.accept -> Agent Loop / RunLog
 ```
 
 The Console and Feishu adapters share the same session-first conversation semantics:
 
 - **Entry adapters** handle transport-specific concerns such as SSE, long connections, and message parsing.
-- **Session runtime services** own session lifecycle, runtime routing, and projection assembly.
-- **Scheduler** mediates execution for persistent roots and child agents.
-- **Agent** executes the actual work, with results projected back as SDK execution facts.
+- **SessionGateway / SessionTurnService** accept user input via `MainAgent.accept`.
+- **Scheduler** owns waitset, cancel, and Worker parent registration—not Session chat entry.
+- **Agent / MainAgent** execute the work; results are projected from RunLog facts.
 
 ## Main runtime services
 
 The session runtime service layer includes:
 
 - `SessionContextService` for session creation and forking
-- `SessionRuntimeService` for routing session input through the scheduler
+- `SessionTurnService` for accepting session input via `MainAgent.accept`
 - `SessionViewService` for session list and detail projections
 - `SchedulerTreeViewService` for tree responses used by the Console UI
 

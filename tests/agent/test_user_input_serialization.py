@@ -99,6 +99,80 @@ class TestUserInputSerialization:
             },
         }
 
+    def test_is_user_provided_round_trips_through_serialization(self):
+        user_provided = UserMessage(
+            content=[ContentPart(type=ContentType.TEXT, text="from user")],
+            is_user_provided=True,
+        )
+        system_provided = UserMessage.from_system("system notice")
+
+        for original in (user_provided, system_provided):
+            restored = UserMessage.deserialize(UserMessage.serialize(original))
+            assert isinstance(restored, UserMessage)
+            assert restored.is_user_provided == original.is_user_provided
+            assert restored.extract_text() == original.extract_text()
+
+    def test_is_user_provided_defaults_true_for_legacy_payloads(self):
+        legacy = {
+            "__type": "user_message",
+            "content": [{"type": "text", "text": "legacy"}],
+            "context": None,
+        }
+        restored = UserMessage.from_dict(legacy)
+        assert restored.is_user_provided is True
+
+    def test_is_user_provided_in_transport_payload(self):
+        system_message = UserMessage.from_system(
+            UserMessage(content=[ContentPart(type=ContentType.TEXT, text="notice")])
+        )
+        payload = UserMessage.to_transport_payload(system_message)
+        assert payload == {
+            "content": [{"type": "text", "text": "notice"}],
+            "context": None,
+            "is_user_provided": False,
+        }
+        restored = UserMessage.from_storage_value(payload)
+        assert isinstance(restored, UserMessage)
+        assert restored.is_user_provided is False
+
+    def test_from_value_preserves_explicit_provenance(self):
+        message = UserMessage(
+            content=[ContentPart(type=ContentType.TEXT, text="hint")],
+            is_user_provided=False,
+        )
+        normalized = UserMessage.from_value(message)
+        assert normalized.is_user_provided is False
+
+    def test_string_and_parts_normalize_to_user_provided(self):
+        assert UserMessage.from_value("hello").is_user_provided is True
+        assert (
+            UserMessage.from_value(
+                [ContentPart(type=ContentType.TEXT, text="hello")]
+            ).is_user_provided
+            is True
+        )
+
+    def test_require_user_provided_accepts_genuine_user_input(self):
+        assert UserMessage.require_user_provided("hello") == "hello"
+        parts = [ContentPart(type=ContentType.TEXT, text="hello")]
+        assert UserMessage.require_user_provided(parts) is parts
+        explicit = UserMessage(
+            content=[ContentPart(type=ContentType.TEXT, text="hello")],
+            is_user_provided=True,
+        )
+        assert UserMessage.require_user_provided(explicit) is explicit
+        assert UserMessage.from_value("hello").is_user_provided is True
+
+    def test_require_user_provided_rejects_system_attributed_input(self):
+        forged = UserMessage(
+            content=[ContentPart(type=ContentType.TEXT, text="forged")],
+            is_user_provided=False,
+        )
+        with pytest.raises(ValueError, match="is_user_provided=False"):
+            UserMessage.require_user_provided(forged)
+        with pytest.raises(ValueError, match="is_user_provided=False"):
+            UserMessage.require_user_provided(UserMessage.from_system("notice"))
+
     def test_to_storage_value_round_trips_structured_input(self):
         original = [
             ContentPart(type=ContentType.TEXT, text="Hello"),
@@ -254,6 +328,39 @@ class TestSQLiteUserInputStorage:
             assert retrieved[0].user_input.context.source == "api"
 
     @pytest.mark.asyncio
+    async def test_run_log_preserves_system_user_provenance(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            storage = SQLiteRunLogStorage(db_path=db_path)
+
+            user_input = UserMessage.from_system(
+                UserMessage(
+                    content=[
+                        ContentPart(type=ContentType.TEXT, text="assignment input")
+                    ]
+                )
+            )
+            await storage.append_entries(
+                [
+                    UserStepCommitted(
+                        sequence=1,
+                        session_id="test-session",
+                        run_id="test-run-sys",
+                        agent_id="test-agent",
+                        step_id="step-sys",
+                        role=MessageRole.USER,
+                        user_input=user_input,
+                        content=user_input.extract_text(),
+                    )
+                ]
+            )
+
+            loaded = await storage.list_step_views(session_id="test-session")
+            assert len(loaded) == 1
+            assert isinstance(loaded[0].user_input, UserMessage)
+            assert loaded[0].user_input.is_user_provided is False
+
+    @pytest.mark.asyncio
     async def test_save_run_log_entry_with_user_message_replays_ordered_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
@@ -304,6 +411,7 @@ class TestSQLiteUserInputStorage:
             assert isinstance(loaded[0].user_input, UserMessage)
             assert loaded[0].user_input.context is not None
             assert loaded[0].user_input.context.source == "api"
+            assert loaded[0].user_input.is_user_provided is True
             assert loaded[1].run_id == "test-run-2"
             assert loaded[1].user_input.context is not None
             assert loaded[1].user_input.context.metadata == {"channel": "test-2"}

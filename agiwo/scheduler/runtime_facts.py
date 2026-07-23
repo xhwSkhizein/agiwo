@@ -1,6 +1,11 @@
-"""Scheduler-facing helpers for replaying runtime facts from RunLog."""
+"""Compatibility facade over RuntimeState run-log queries.
+
+Prefer calling the query methods on ``RuntimeState`` directly. This wrapper
+remains for public export and existing tests.
+"""
 
 from agiwo.agent import RunView, RuntimeDecisionState, StepView
+from agiwo.agent.models.log import RunLogEntry, RunLogEntryKind
 from agiwo.scheduler.models import AgentState
 from agiwo.scheduler.runtime_state import RuntimeState
 
@@ -12,15 +17,22 @@ class SchedulerRuntimeFacts:
         self._rt = rt
 
     def has_runtime_agent(self, state: AgentState) -> bool:
-        return state.id in self._rt.agents
+        return self._rt.has_runtime_agent(state)
 
     async def get_latest_run_view(self, state: AgentState) -> RunView | None:
-        agent = self._rt.agents.get(state.id)
-        if agent is None:
-            return None
-        return await agent.run_log_storage.get_latest_run_view(
-            state.resolve_runtime_session_id()
-        )
+        return await self._rt.get_latest_run_view(state)
+
+    async def get_run_view(self, run_id: str) -> RunView | None:
+        return await self._rt.get_run_view(run_id)
+
+    async def list_run_log_entries(
+        self,
+        run_id: str,
+        *,
+        kinds: list[RunLogEntryKind] | None = None,
+        limit: int = 10_000,
+    ) -> list[RunLogEntry]:
+        return await self._rt.list_run_log_entries(run_id, kinds=kinds, limit=limit)
 
     async def list_step_views(
         self,
@@ -30,14 +42,10 @@ class SchedulerRuntimeFacts:
         run_id: str | None = None,
         limit: int = 1000,
     ) -> list[StepView]:
-        agent = self._rt.agents.get(state.id)
-        if agent is None:
-            return []
-        return await agent.run_log_storage.list_step_views(
-            session_id=state.resolve_runtime_session_id(),
-            agent_id=state.id,
-            run_id=run_id,
+        return await self._rt.list_step_views(
+            state,
             include_rolled_back=include_rolled_back,
+            run_id=run_id,
             limit=limit,
         )
 
@@ -47,20 +55,10 @@ class SchedulerRuntimeFacts:
         *,
         run_id: str | None = None,
     ) -> RuntimeDecisionState:
-        agent = self._rt.agents.get(state.id)
-        if agent is None:
-            return RuntimeDecisionState()
-        return await agent.run_log_storage.get_runtime_decision_state(
-            session_id=state.resolve_runtime_session_id(),
-            agent_id=state.id,
-            run_id=run_id,
-        )
+        return await self._rt.get_runtime_decision_state(state, run_id=run_id)
 
     async def get_result_summary(self, state: AgentState) -> str | None:
-        latest_run = await self.get_latest_run_view(state)
-        if latest_run is not None and latest_run.response:
-            return latest_run.response
-        return state.result_summary
+        return await self._rt.get_result_summary(state)
 
 
 __all__ = ["SchedulerRuntimeFacts"]

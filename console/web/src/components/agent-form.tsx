@@ -46,7 +46,7 @@ type AgentFormState = {
   streamCleanupTimeout: number;
   compactPrompt: string;
   enableContextRollback: boolean;
-  enableGoalDirectedReview: boolean;
+  enableTrajectoryReview: boolean;
   reviewStepInterval: number;
   reviewOnError: boolean;
   maxOutputTokens: number;
@@ -59,6 +59,8 @@ type AgentFormState = {
   inputPrice: number;
   outputPrice: number;
   selectedTools: string[];
+  /** true => persist allowed_tools=null (all default builtins). */
+  useDefaultTools: boolean;
   selectedSkills: string[];
 };
 
@@ -81,7 +83,7 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   streamCleanupTimeout: 300,
   compactPrompt: "",
   enableContextRollback: true,
-  enableGoalDirectedReview: true,
+  enableTrajectoryReview: true,
   reviewStepInterval: 8,
   reviewOnError: true,
   maxOutputTokens: 4096,
@@ -94,6 +96,7 @@ const DEFAULT_FORM_STATE: AgentFormState = {
   inputPrice: 0,
   outputPrice: 0,
   selectedTools: [],
+  useDefaultTools: true,
   selectedSkills: [],
 };
 
@@ -122,7 +125,7 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     apiKeyEnvName: agent.model_params?.api_key_env_name ?? "",
     systemPrompt: agent.system_prompt,
     configRoot: agent.options?.config_root ?? "",
-    maxSteps: agent.options?.max_steps ?? 10,
+    maxSteps: agent.options?.max_steps_per_run ?? 10,
     runTimeout: agent.options?.run_timeout ?? 600,
     maxInputTokensPerCall:
       typeof agent.options?.max_input_tokens_per_call === "number"
@@ -139,8 +142,8 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     streamCleanupTimeout: agent.options?.stream_cleanup_timeout ?? 300,
     compactPrompt: agent.options?.compact_prompt ?? "",
     enableContextRollback: agent.options?.enable_context_rollback ?? true,
-    enableGoalDirectedReview:
-      agent.options?.enable_goal_directed_review ?? true,
+    enableTrajectoryReview:
+      agent.options?.enable_trajectory_review ?? true,
     reviewStepInterval: agent.options?.review_step_interval ?? 8,
     reviewOnError: agent.options?.review_on_error ?? true,
     maxOutputTokens: agent.model_params?.max_output_tokens ?? 4096,
@@ -153,6 +156,8 @@ function buildFormState(agent?: AgentConfig | null): AgentFormState {
     inputPrice: agent.model_params?.input_price ?? 0,
     outputPrice: agent.model_params?.output_price ?? 0,
     selectedTools: agent.allowed_tools ?? [],
+    // null means "all default builtins"; [] means explicitly no tools.
+    useDefaultTools: agent.allowed_tools === null || agent.allowed_tools === undefined,
     selectedSkills: agent.allowed_skills ?? [],
   };
 }
@@ -391,12 +396,19 @@ export function AgentForm({
 
   const toggleTool = (toolName: string) => {
     setLocalError(null);
-    setForm((prev) => ({
-      ...prev,
-      selectedTools: prev.selectedTools.includes(toolName)
-        ? prev.selectedTools.filter((tool) => tool !== toolName)
-        : [...prev.selectedTools, toolName],
-    }));
+    setForm((prev) => {
+      const baseline = prev.useDefaultTools
+        ? builtinTools.map((tool) => tool.name)
+        : prev.selectedTools;
+      const selectedTools = baseline.includes(toolName)
+        ? baseline.filter((tool) => tool !== toolName)
+        : [...baseline, toolName];
+      return {
+        ...prev,
+        useDefaultTools: false,
+        selectedTools,
+      };
+    });
   };
 
   const toggleSkill = (skillName: string) => {
@@ -434,11 +446,11 @@ export function AgentForm({
       model_provider: form.modelProvider,
       model_name: form.modelName,
       system_prompt: form.systemPrompt,
-      allowed_tools: form.selectedTools,
+      allowed_tools: form.useDefaultTools ? null : form.selectedTools,
       allowed_skills: form.selectedSkills,
       options: {
         config_root: form.configRoot,
-        max_steps: form.maxSteps,
+        max_steps_per_run: form.maxSteps,
         run_timeout: form.runTimeout,
         max_input_tokens_per_call:
           form.maxInputTokensPerCall.trim() === ""
@@ -454,7 +466,7 @@ export function AgentForm({
         stream_cleanup_timeout: form.streamCleanupTimeout,
         compact_prompt: form.compactPrompt,
         enable_context_rollback: form.enableContextRollback,
-        enable_goal_directed_review: form.enableGoalDirectedReview,
+        enable_trajectory_review: form.enableTrajectoryReview,
         review_step_interval: form.reviewStepInterval,
         review_on_error: form.reviewOnError,
       },
@@ -488,7 +500,7 @@ export function AgentForm({
     form.terminationSummaryPrompt.trim() !== "" ||
     form.compactPrompt.trim() !== "" ||
     !form.enableContextRollback ||
-    !form.enableGoalDirectedReview ||
+    !form.enableTrajectoryReview ||
     form.reviewStepInterval !== DEFAULT_FORM_STATE.reviewStepInterval ||
     form.reviewOnError !== DEFAULT_FORM_STATE.reviewOnError;
 
@@ -503,7 +515,11 @@ export function AgentForm({
         </p>
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <PillBadge variant="default">{form.modelProvider}</PillBadge>
-          <PillBadge variant="info">{form.selectedTools.length} tools selected</PillBadge>
+          <PillBadge variant="info">
+            {form.useDefaultTools
+              ? "all default tools"
+              : `${form.selectedTools.length} tools selected`}
+          </PillBadge>
           {form.selectedSkills.length > 0 && (
             <PillBadge variant="success">{form.selectedSkills.length} skills</PillBadge>
           )}
@@ -672,11 +688,57 @@ export function AgentForm({
                 Start with only the capabilities this agent actually needs.
               </p>
             </div>
-            <PillBadge variant="default">{form.selectedTools.length} selected</PillBadge>
+            <PillBadge variant="default">
+              {form.useDefaultTools
+                ? "all defaults"
+                : `${form.selectedTools.length} selected`}
+            </PillBadge>
           </div>
         </div>
 
         <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              className={`rounded-md border px-3 py-1.5 text-sm ${
+                form.useDefaultTools
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-foreground"
+              }`}
+              onClick={() =>
+                setForm((prev) => ({
+                  ...prev,
+                  useDefaultTools: true,
+                  selectedTools: [],
+                }))
+              }
+            >
+              All default tools
+            </button>
+            <button
+              type="button"
+              className={`rounded-md border px-3 py-1.5 text-sm ${
+                !form.useDefaultTools && form.selectedTools.length === 0
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border text-foreground"
+              }`}
+              onClick={() =>
+                setForm((prev) => ({
+                  ...prev,
+                  useDefaultTools: false,
+                  selectedTools: [],
+                }))
+              }
+            >
+              No tools
+            </button>
+          </div>
+          <p className="text-sm text-ink-faint">
+            {form.useDefaultTools
+              ? "Saving with all default builtins (allowed_tools=null). Toggle any tool below to switch to an explicit allowlist."
+              : "Saving an explicit allowlist. Empty means the agent has no functional tools."}
+          </p>
+
           <div className="space-y-2">
             <h3 className="text-sm font-medium text-foreground">Builtin tools</h3>
             <div className="flex flex-wrap gap-2">
@@ -687,7 +749,11 @@ export function AgentForm({
                   <ToolToggle
                     key={tool.name}
                     tool={tool}
-                    selected={form.selectedTools.includes(tool.name)}
+                    selected={
+                      form.useDefaultTools
+                        ? true
+                        : form.selectedTools.includes(tool.name)
+                    }
                     onToggle={() => toggleTool(tool.name)}
                   />
                 ))
@@ -707,7 +773,11 @@ export function AgentForm({
                   <ToolToggle
                     key={tool.name}
                     tool={tool}
-                    selected={form.selectedTools.includes(tool.name)}
+                    selected={
+                      form.useDefaultTools
+                        ? false
+                        : form.selectedTools.includes(tool.name)
+                    }
                     onToggle={() => toggleTool(tool.name)}
                   />
                 ))
@@ -807,15 +877,15 @@ export function AgentForm({
           />
 
           <ToggleCard
-            id={fieldId("enable-goal-directed-review")}
-            label="Enable Goal-Directed Review"
-            description="Inject milestone-aware review checkpoints and condense off-track tool output into experience summaries."
-            checked={form.enableGoalDirectedReview}
-            onChange={(checked) => setField("enableGoalDirectedReview", checked)}
+            id={fieldId("enable-trajectory-review")}
+            label="Enable Trajectory Review"
+            description="Append alignment, experience, and usefulness scores as review metadata without rewriting or hiding history."
+            checked={form.enableTrajectoryReview}
+            onChange={(checked) => setField("enableTrajectoryReview", checked)}
           />
         </div>
 
-        {form.enableGoalDirectedReview && (
+        {form.enableTrajectoryReview && (
           <div className="grid gap-4 md:grid-cols-2">
             <Field
               id={fieldId("review-step-interval")}

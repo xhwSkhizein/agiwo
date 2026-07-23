@@ -3,7 +3,7 @@
 import { useId, useState } from "react";
 
 import { ErrorStateMessage } from "@/components/state-message";
-import { cancelAgent, resumeAgent, steerAgent } from "@/lib/api";
+import { cancelAgent, resumeAgent } from "@/lib/api";
 import type { AgentStateDetail } from "@/lib/api";
 
 type RootActionsProps = {
@@ -14,15 +14,10 @@ type RootActionsProps = {
 const ACTIVE_ROOT_STATUSES = new Set(["pending", "running", "waiting", "queued"]);
 
 /**
- * Render root-only orchestration controls for a selected AgentStateDetail.
+ * Root-only orchestration controls for a selected AgentStateDetail.
  *
- * Shows a message input and the appropriate action buttons (steer, resume, cancel)
- * when the provided `state` represents a root agent and the state allows those actions.
- * On successful action execution the input is cleared and `onActionComplete` is invoked.
- *
- * @param state - AgentStateDetail used to determine which controls are shown. Controls are shown only for root states (parent_id === null); steering/cancel are available for active root statuses, and resume is available for persistent roots in `idle` or `failed` status.
- * @param onActionComplete - Callback invoked after a successful action to let the parent refresh or update state.
- * @returns The rendered Root Controls panel JSX when actions are applicable, or `null` when no root actions should be shown.
+ * Enqueue uses Scheduler.enqueue_input via the resume API (idle/failed next cycle,
+ * or live/USER_HINT while active). Cancel remains separate.
  */
 export function RootActions({ state, onActionComplete }: RootActionsProps) {
   const [message, setMessage] = useState("");
@@ -30,14 +25,16 @@ export function RootActions({ state, onActionComplete }: RootActionsProps) {
   const [error, setError] = useState<string | null>(null);
   const inputId = useId();
 
-  const canSteerOrCancel =
+  const canCancel =
     state.parent_id === null && ACTIVE_ROOT_STATUSES.has(state.status);
-  const canResume =
+  const canEnqueue =
     state.parent_id === null &&
     state.is_persistent &&
-    (state.status === "idle" || state.status === "failed");
+    (state.status === "idle" ||
+      state.status === "failed" ||
+      ACTIVE_ROOT_STATUSES.has(state.status));
 
-  if (!canSteerOrCancel && !canResume) {
+  if (!canCancel && !canEnqueue) {
     return null;
   }
 
@@ -66,69 +63,54 @@ export function RootActions({ state, onActionComplete }: RootActionsProps) {
 
       {error && <ErrorStateMessage>{error}</ErrorStateMessage>}
 
-      {(canSteerOrCancel || canResume) && (
-        <div className="space-y-3">
-          <label htmlFor={inputId} className="sr-only">
-            {canResume ? "Resume message" : "Steering message"}
-          </label>
-          <input
-            id={inputId}
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-            placeholder={
-              canResume ? "Resume message" : "Steer root agent with an operator hint"
-            }
-            className="ui-input"
-          />
+      <div className="space-y-3">
+        {canEnqueue && (
+          <>
+            <label htmlFor={inputId} className="sr-only">
+              Enqueue message
+            </label>
+            <input
+              id={inputId}
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder="Enqueue input for this persistent root"
+              className="ui-input"
+            />
+          </>
+        )}
 
-          <div className="flex flex-wrap gap-2">
-            {canSteerOrCancel && (
-              <button
-                type="button"
-                disabled={busy || !message.trim()}
-                onClick={() =>
-                  runAction(async () => {
-                    await steerAgent(state.id, message.trim());
-                  })
-                }
-                className="ui-button ui-button-primary"
-              >
-                Send Steering
-              </button>
-            )}
+        <div className="flex flex-wrap gap-2">
+          {canEnqueue && (
+            <button
+              type="button"
+              disabled={busy || !message.trim()}
+              onClick={() =>
+                runAction(async () => {
+                  await resumeAgent(state.id, message.trim());
+                })
+              }
+              className="ui-button ui-button-primary"
+            >
+              Enqueue Input
+            </button>
+          )}
 
-            {canResume && (
-              <button
-                type="button"
-                disabled={busy || !message.trim()}
-                onClick={() =>
-                  runAction(async () => {
-                    await resumeAgent(state.id, message.trim());
-                  })
-                }
-                className="ui-button ui-button-primary"
-              >
-                Resume Root
-              </button>
-            )}
-
-            {canSteerOrCancel && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() =>
-                  runAction(async () => {
-                    await cancelAgent(state.id, "Cancelled by operator");
-                  })
-                }
-                className="ui-button ui-button-danger"
-              >
-                Cancel Root
-              </button>
-            )}
-          </div>
+          {canCancel && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                runAction(async () => {
+                  await cancelAgent(state.id, "Cancelled by operator");
+                })
+              }
+              className="ui-button ui-button-danger"
+            >
+              Cancel Root
+            </button>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

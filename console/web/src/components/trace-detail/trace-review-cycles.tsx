@@ -9,10 +9,11 @@ function reviewSummary(cycle: ReviewCycle): string {
   if (cycle.aligned === true) {
     return "Aligned with the current milestone";
   }
-  if (cycle.aligned === false && cycle.step_back_applied) {
-    return `Misaligned; ${cycle.affected_count ?? 0} steps condensed`;
-  }
   if (cycle.aligned === false) {
+    const scored = cycle.tool_usefulness.filter((item) => item.score !== null);
+    if (scored.length > 0) {
+      return `Misaligned; ${scored.length} usefulness scores recorded`;
+    }
     return "Misaligned with the current milestone";
   }
   return "Checkpoint recorded";
@@ -54,15 +55,28 @@ export function TraceReviewCycles({
                   {cycle.steps_since_last_review !== null ? (
                     <span>{cycle.steps_since_last_review} steps since last review</span>
                   ) : null}
+                  {cycle.review_latency_ms !== null ? (
+                    <span>{cycle.review_latency_ms.toFixed(0)} ms review latency</span>
+                  ) : null}
                   {cycle.resolved_at ? (
                     <span>{formatLocalDateTime(cycle.resolved_at)}</span>
                   ) : cycle.started_at ? (
                     <span>{formatLocalDateTime(cycle.started_at)}</span>
                   ) : null}
-                  {cycle.step_back_applied ? (
-                    <span>step back applied</span>
-                  ) : null}
                 </div>
+                {cycle.tool_usefulness.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 text-xs text-ink-muted">
+                    {cycle.tool_usefulness.map((item) => (
+                      <span
+                        key={item.tool_call_id}
+                        className="rounded-full border border-line px-2 py-0.5"
+                      >
+                        {item.tool_call_id}
+                        {item.score === null ? ": unknown" : `: ${item.score}`}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 {cycle.experience ? (
                   <p className="text-sm text-foreground">{cycle.experience}</p>
                 ) : null}

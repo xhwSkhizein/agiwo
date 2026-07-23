@@ -26,7 +26,7 @@ vi.mock("@/lib/api", async () => {
 import SessionDetailPage from "./page";
 
 describe("SessionDetailPage", () => {
-  test("switches between mainline and debug session views", async () => {
+  test("shows runs and steps as the main stage", async () => {
     apiMocks.getSessionDetail.mockResolvedValue({
       summary: {
         session_id: "sess-1",
@@ -56,6 +56,7 @@ describe("SessionDetailPage", () => {
         root_state_status: "idle",
         source_session_id: null,
         fork_context_summary: null,
+        archived_at: null,
       },
       session: {
         id: "sess-1",
@@ -66,6 +67,7 @@ describe("SessionDetailPage", () => {
         updated_at: "2026-04-22T12:01:00Z",
         source_session_id: null,
         fork_context_summary: null,
+        archived_at: null,
       },
       chat_context: null,
       scheduler_state: null,
@@ -82,42 +84,11 @@ describe("SessionDetailPage", () => {
           },
         ],
         active_milestone_id: "inspect",
-        latest_checkpoint: {
-          seq: 8,
-          milestone_id: "inspect",
-          confirmed_at: "2026-04-22T12:00:01Z",
-        },
-        latest_review_outcome: {
-          aligned: false,
-          experience: "switch plan",
-          step_back_applied: true,
-          affected_count: 2,
-          trigger_reason: "step_interval",
-          active_milestone: "Inspect auth flow",
-          resolved_at: "2026-04-22T12:00:02Z",
-        },
+        latest_checkpoint: null,
+        latest_review_outcome: null,
         pending_review_reason: null,
       },
-      review_cycles: [
-        {
-          cycle_id: "run-1:8",
-          run_id: "run-1",
-          agent_id: "agent-1",
-          trigger_reason: "step_interval",
-          steps_since_last_review: 8,
-          active_milestone: "Inspect auth flow",
-          active_milestone_id: "inspect",
-          hook_advice: "narrow the search",
-          aligned: false,
-          experience: "switch plan",
-          step_back_applied: true,
-          rollback_range: null,
-          affected_count: 2,
-          started_at: "2026-04-22T12:00:01Z",
-          resolved_at: "2026-04-22T12:00:02Z",
-          raw_notice: "Trigger: step_interval",
-        },
-      ],
+      review_cycles: [],
       conversation_events: [
         {
           id: "evt-1",
@@ -153,55 +124,76 @@ describe("SessionDetailPage", () => {
             final_output: "done",
           },
         ],
-        decision_events: [
-          {
-            kind: "termination",
-            sequence: 8,
-            run_id: "run-1",
-            agent_id: "agent-1",
-            created_at: "2026-04-22T12:00:01Z",
-            summary: "completed via finished",
-            details: {
-              reason: "completed",
-              source: "finished",
-            },
-          },
-        ],
+        decision_events: [],
       },
     });
     apiMocks.listRuns.mockResolvedValue({
-      items: [],
+      items: [
+        {
+          id: "run-1",
+          agent_id: "agent-1",
+          session_id: "sess-1",
+          user_id: null,
+          user_input: "hello",
+          status: "completed",
+          response_content: "done",
+          metrics: {
+            steps_count: 2,
+            tool_calls_count: 0,
+            duration_ms: 10,
+            token_cost: 0.01,
+          },
+          created_at: "2026-04-22T12:00:00Z",
+          updated_at: "2026-04-22T12:01:00Z",
+          parent_run_id: null,
+        },
+      ],
       limit: 50,
       offset: 0,
       has_more: false,
-      total: 0,
+      total: 1,
     });
     apiMocks.getSessionSteps.mockResolvedValue({
-      items: [],
+      items: [
+        {
+          id: "step-1",
+          session_id: "sess-1",
+          run_id: "run-1",
+          sequence: 1,
+          role: "user",
+          agent_id: "agent-1",
+          content: "hello",
+          content_for_user: "hello",
+          reasoning_content: null,
+          user_input: null,
+          tool_calls: null,
+          tool_call_id: null,
+          name: null,
+          metrics: null,
+          created_at: "2026-04-22T12:00:00Z",
+          parent_run_id: null,
+          depth: 0,
+        },
+      ],
       limit: 100,
       offset: 0,
       has_more: false,
-      total: 0,
+      total: 1,
     });
 
     render(<SessionDetailPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Milestone Board")).toBeInTheDocument();
+      expect(screen.getByText("Agent Runs & Steps")).toBeInTheDocument();
     });
 
-    expect(screen.getAllByText("Inspect auth flow").length).toBeGreaterThan(0);
-    expect(screen.getByText("Conversation")).toBeInTheDocument();
-    expect(screen.queryByText("Observability")).not.toBeInTheDocument();
-    expect(apiMocks.listRuns).not.toHaveBeenCalled();
-    expect(apiMocks.getSessionSteps).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole("button", { name: "Debug" }));
-
-    expect(await screen.findByText("Observability")).toBeInTheDocument();
-    expect(screen.getByText("Trace Context")).toBeInTheDocument();
-    expect(screen.getByText("Runtime Decisions")).toBeInTheDocument();
-    expect(screen.getByText("completed via finished")).toBeInTheDocument();
     expect(screen.getByText("hello")).toBeInTheDocument();
+    expect(apiMocks.listRuns).toHaveBeenCalled();
+    expect(apiMocks.getSessionSteps).toHaveBeenCalled();
+
+    expect(screen.queryByText("Milestone Board")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show debug extras" }));
+    expect(await screen.findByText("Milestone Board")).toBeInTheDocument();
+    expect(screen.getByText("Conversation")).toBeInTheDocument();
   });
 });

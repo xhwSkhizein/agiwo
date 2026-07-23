@@ -9,23 +9,16 @@ batching, agent runtime, and scheduler message pipeline.
 import asyncio
 import shutil
 import tempfile
-from collections.abc import AsyncIterator
+import uuid
 from pathlib import Path
 from typing import Any
 
-from agiwo.agent import (
-    Agent,
-    AgentStreamItem,
-    RunCompletedEvent,
-    RunFailedEvent,
-    UserMessage,
-)
+from agiwo.agent import Agent, UserMessage
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.utils import (
     safe_close_all,
-    split_text_into_chunks,
     truncate_for_log,
 )
 from server.channels.exceptions import (
@@ -50,20 +43,21 @@ from server.channels.feishu.message_parser import (
 )
 from server.channels.feishu.sender_resolver import FeishuSenderResolver
 from server.channels.feishu.dedup_store import create_feishu_dedup_store
-from server.services.session_store import create_session_store
 from server.channels.batch_manager import ChannelBatchManager
 from server.config import ConsoleConfig
 from server.models.session import (
     BatchContext,
     BatchPayload,
+    ChannelChatSessionStore,
     InboundMessage,
     Session,
 )
 from server.services.agent_registry import AgentRegistry
+from server.services.session_gateway import SessionGateway
 from server.services.runtime import (
     AgentRuntimeCache,
     SessionContextService,
-    SessionRuntimeService,
+    SessionTurnService,
 )
 
 logger = get_logger(__name__)
@@ -76,6 +70,8 @@ class FeishuChannelService:
         config: ConsoleConfig,
         scheduler: Scheduler,
         agent_registry: AgentRegistry,
+        session_store: ChannelChatSessionStore,
+        agent_runtime_cache: AgentRuntimeCache,
     ) -> None:
         feishu = config.channels.feishu
 
@@ -83,10 +79,6 @@ class FeishuChannelService:
             app_id=feishu.app_id,
             app_secret=feishu.app_secret,
             api_base_url=feishu.api_base_url,
-        )
-        session_store = create_session_store(
-            db_path=config.sqlite_db_path,
-            use_persistent_store=config.storage.metadata_type == "sqlite",
         )
         dedup_store = create_feishu_dedup_store(
             db_path=config.sqlite_db_path,
@@ -115,16 +107,14 @@ class FeishuChannelService:
             agent_registry=agent_registry,
             default_agent_name=feishu.default_agent_name,
         )
-        agent_pool = AgentRuntimeCache(
-            scheduler=scheduler,
-            agent_registry=agent_registry,
-            console_config=config,
-            session_store=session_store,
-        )
-        executor = SessionRuntimeService(
-            scheduler=scheduler,
+        executor = SessionTurnService(
             session_store=session_store,
             timeout=feishu.scheduler_wait_timeout,
+        )
+        gateway = SessionGateway(
+            session_store=session_store,
+            agent_runtime_cache=agent_runtime_cache,
+            session_turn=executor,
         )
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="feishu_attachments_"))
@@ -151,8 +141,9 @@ class FeishuChannelService:
         self._delivery_service = delivery_service
 
         self._session_service = session_service
-        self._agent_pool = agent_pool
+        self._agent_pool = agent_runtime_cache
         self._executor = executor
+        self._gateway = gateway
         self._session_mgr = ChannelBatchManager(
             on_batch_ready=self._on_batch_ready,
             debounce_ms=feishu.debounce_ms,
@@ -161,7 +152,7 @@ class FeishuChannelService:
 
         command_registry = build_feishu_command_registry(
             session_service=session_service,
-            agent_pool=agent_pool,
+            agent_pool=agent_runtime_cache,
             session_manager=self._session_mgr,
             scheduler=scheduler,
             agent_registry=agent_registry,
@@ -197,7 +188,7 @@ class FeishuChannelService:
         return self._agent_pool
 
     @property
-    def executor(self) -> SessionRuntimeService:
+    def executor(self) -> SessionTurnService:
         return self._executor
 
     async def initialize(self) -> None:
@@ -228,7 +219,8 @@ class FeishuChannelService:
             logger.warning(
                 "resource_close_failed", resource="FeishuConnection", exc_info=True
             )
-        await safe_close_all(self._api, self._session_store, self._dedup_store)
+        # Session store is owned by Console lifespan; Feishu must not close it.
+        await safe_close_all(self._api, self._dedup_store)
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
     def get_status(self) -> dict[str, Any]:
@@ -282,33 +274,30 @@ class FeishuChannelService:
             await self._deliver_reply(batch.context, failure_text)
 
     async def _execute_batch(self, batch: BatchPayload) -> None:
-        session, agent = await self._prepare_batch_runtime(batch)
-        dispatch = await self._executor.execute(agent, session, batch.user_message)
+        session, _agent = await self._prepare_batch_runtime(batch)
+        user_message = batch.user_message
+        if not user_message.is_user_provided:
+            user_message = UserMessage(
+                content=list(user_message.content),
+                context=user_message.context,
+                is_user_provided=True,
+            )
 
-        had_output = await self._consume_dispatch_stream(
-            batch,
-            session,
-            dispatch.stream,
+        idempotency_key = self._batch_idempotency_key(batch)
+        result = await self._gateway.handle_user_message(
+            session.id,
+            user_message,
+            idempotency_key=idempotency_key,
         )
-        if had_output:
-            return
-
+        reply_text = (result.response or "").strip() or "（无回复）"
         if not await self._can_deliver_session(batch.context, session):
             return
+        await self._deliver_reply(batch.context, reply_text)
 
-        if dispatch.stream is None:
-            await self._deliver_reply(batch.context, "消息已收到，正在继续处理。")
-            return
-
-        state = await self._executor.get_state(session.id)
-        if state is not None and state.result_summary:
-            await self._deliver_stream_text(
-                batch.context,
-                state.result_summary,
-                had_output=False,
-            )
-            return
-        await self._deliver_reply(batch.context, "执行完成，但未产出可展示内容。")
+    def _batch_idempotency_key(self, batch: BatchPayload) -> str:
+        if batch.messages:
+            return f"feishu:{batch.messages[0].message_id}"
+        return f"feishu:{uuid.uuid4().hex}"
 
     async def _prepare_batch_runtime(
         self, batch: BatchPayload
@@ -317,56 +306,8 @@ class FeishuChannelService:
             batch.context,
         )
         session = resolution.session
-        agent = await self._agent_pool.get_or_create_runtime_agent(session)
+        agent = await self._agent_pool.get_or_create_main_agent(session)
         return session, agent
-
-    async def _consume_dispatch_stream(
-        self,
-        batch: BatchPayload,
-        session: Session,
-        stream: AsyncIterator[AgentStreamItem] | None,
-    ) -> bool:
-        if stream is None:
-            return False
-
-        final_text: str | None = None
-        async for item in stream:
-            if isinstance(item, RunCompletedEvent):
-                if item.depth == 0 and item.response:
-                    final_text = item.response
-                continue
-            if isinstance(item, RunFailedEvent):
-                if item.depth == 0 and item.error:
-                    final_text = item.error
-                continue
-
-        if final_text is None:
-            return False
-        if not await self._can_deliver_session(batch.context, session):
-            return False
-        await self._deliver_stream_text(
-            batch.context,
-            final_text,
-            had_output=False,
-        )
-        return True
-
-    async def _deliver_stream_text(
-        self,
-        context: BatchContext,
-        text: str,
-        *,
-        had_output: bool,
-    ) -> bool:
-        chunks = split_text_into_chunks(text)
-        for index, chunk in enumerate(chunks):
-            if not had_output and index == 0:
-                await self._deliver_reply(context, chunk)
-                had_output = True
-                continue
-            await self._deliver_message(context, chunk)
-            had_output = True
-        return had_output
 
     async def _can_deliver_session(
         self,

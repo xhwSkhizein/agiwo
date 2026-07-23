@@ -192,6 +192,7 @@ def _validate_default_agent_override(
     validate_provider_model_params(
         str(default_agent["model_provider"]),
         model_params if isinstance(model_params, dict) else {},
+        model_name=str(default_agent.get("model_name") or "") or None,
     )
 
 

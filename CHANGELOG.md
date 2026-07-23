@@ -26,7 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Streaming-first Agent SDK with `run()`, `run_stream()`, and `start()` API
 - Tool system with `BaseTool`, `ToolResult`, session caching, and builtin tools (bash, web_search, web_reader, memory_retrieval)
 - Agent-as-tool composition via `as_tool()` / `AgentTool`
-- Scheduler orchestration layer with spawn, sleep/wake, steer, cancel
+- Scheduler orchestration layer with spawn, sleep/wake, enqueue, cancel
 - LLM providers: OpenAI, Anthropic, DeepSeek, NVIDIA, Bedrock, OpenAI-compatible, Anthropic-compatible
 - Hook system for run, tool, LLM, step, and memory lifecycle events
 - Run/step/session/trace storage backends (memory, SQLite, MongoDB)

@@ -66,7 +66,6 @@ class RunQueryService:
             end_seq=end_seq,
             run_id=run_id,
             agent_id=agent_id,
-            include_hidden_from_context=False,
             limit=limit + 1,
             order=order,
         )
@@ -78,10 +77,7 @@ class RunQueryService:
             and run_id is None
             and agent_id is None
         ):
-            total = await self.run_storage.count_step_views(
-                session_id=session_id,
-                include_hidden_from_context=False,
-            )
+            total = await self.run_storage.count_step_views(session_id=session_id)
         return PageSlice(
             items=raw_steps[:limit],
             limit=limit,
@@ -128,7 +124,6 @@ class RunQueryService:
             kinds=[
                 RunLogEntryKind.COMPACTION_APPLIED,
                 RunLogEntryKind.COMPACTION_FAILED,
-                RunLogEntryKind.STEP_BACK_APPLIED,
                 RunLogEntryKind.RUN_ROLLED_BACK,
                 RunLogEntryKind.TERMINATION_DECIDED,
             ],

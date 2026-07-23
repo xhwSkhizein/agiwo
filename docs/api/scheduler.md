@@ -29,6 +29,8 @@ await scheduler.stop()
 
 `Scheduler` 不再暴露 `store` property。查询和控制统一走 facade API。
 
+Session 产品聊天入口是 `MainAgent.accept`（Console `SessionGateway`），不是 Scheduler。
+
 ## Core Orchestration Methods
 
 ### `enqueue_input()`
@@ -43,39 +45,13 @@ async def enqueue_input(
 ) -> None
 ```
 
-给 persistent root 的下一轮输入赋值。当前只接受 `IDLE` 或 `FAILED` 的 persistent root；它不是消息队列，也不会并发堆积多条待处理输入。
+给 persistent root 入队用户输入：
 
-### `route_root_input()`
+- `IDLE` / `FAILED` → 写入 `pending_input` 并进入 `QUEUED`
+- `RUNNING` → live handle `enqueue_message`
+- `WAITING` / `QUEUED` → `USER_HINT` mailbox（WAITING 为 urgent）
 
-```python
-async def route_root_input(
-    self,
-    user_input: UserInput,
-    *,
-    agent: Agent,
-    state_id: str | None = None,
-    session_id: str | None = None,
-    abort_signal: AbortSignal | None = None,
-    persistent: bool = True,
-    agent_config_id: str | None = None,
-    timeout: float | None = None,
-    include_child_events: bool = True,
-    stream_mode: RouteStreamMode = RouteStreamMode.RUN_END,
-) -> RouteResult
-```
-
-集成侧 canonical 高层入口。它会根据当前 root state 自动决定：
-
-- `submitted`
-- `enqueued`
-- `steered`
-
-返回值里的 `RouteResult.stream` 是对应 root 的流式事件迭代器。对同一个 root `state_id`，同时只允许一个活跃 subscriber。
-
-`stream_mode` 控制 stream 生命周期：
-
-- `RouteStreamMode.RUN_END`：root 当前这次 run 结束就关闭 stream
-- `RouteStreamMode.UNTIL_SETTLED`：持续到 root 收敛到 `IDLE` / `COMPLETED` / `FAILED`
+Session 产品聊天仍走 `MainAgent.accept`，不经过本方法。
 
 ### `wait_for()`
 
@@ -135,20 +111,6 @@ async def get_stats(self) -> dict[str, int]
 
 ## Control Methods
 
-### `steer()`
-
-```python
-async def steer(
-    self,
-    state_id: str,
-    user_input: UserInput,
-    *,
-    urgent: bool = False,
-) -> bool
-```
-
-对 `RUNNING` state 直接转给 live handle；否则会把输入记录成 `USER_HINT` event 并唤醒 scheduler loop。
-
 ### `cancel()`
 
 ```python
@@ -185,6 +147,10 @@ def get_registered_agent(self, state_id: str) -> Agent | None
 ```
 
 Returns the live Agent instance bound to `state_id`, or `None` if not found.
+
+### `register_worker_parent()`
+
+Register a session MainAgent (or debug persistent root) as the Worker spawn parent.
 
 ## Core Models
 
@@ -230,26 +196,6 @@ class AgentState:
     explain: str | None = None
     created_at: datetime = ...
     updated_at: datetime = ...
-```
-
-### `RouteResult`
-
-```python
-@dataclass(frozen=True, slots=True)
-class RouteResult:
-    action: Literal["submitted", "enqueued", "steered"]
-    state_id: str
-    stream: AsyncIterator[AgentStreamItem] | None = None
-```
-
-`route_root_input()` 在所有非 `RUNNING` 路径都会返回非空 `stream`。只有 `steered + RUNNING` 场景下，`stream` 为 `None`，因为原有 live subscriber 会继续消费同一 root 的流。
-
-### `RouteStreamMode`
-
-```python
-class RouteStreamMode(str, Enum):
-    RUN_END = "run_end"
-    UNTIL_SETTLED = "until_settled"
 ```
 
 ### `DispatchAction`

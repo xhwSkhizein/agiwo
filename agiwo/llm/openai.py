@@ -1,31 +1,16 @@
 from typing import AsyncIterator
 
 try:
-    from openai import (
-        AsyncOpenAI,
-        APIConnectionError,
-        APITimeoutError,
-        InternalServerError,
-        RateLimitError,
-    )
+    from openai import AsyncOpenAI
 except ImportError:
     raise ImportError("Please install openai package: pip install openai") from None
 
 from agiwo.llm.base import LLMConfig, Model, StreamChunk
 from agiwo.llm.event_normalizer import normalize_usage_metrics
 from agiwo.config.settings import get_settings
-from agiwo.utils.retry import retry_async
 from agiwo.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-
-OPENAI_RETRYABLE = (
-    APIConnectionError,
-    RateLimitError,
-    InternalServerError,
-    APITimeoutError,
-)
 
 
 class OpenAIModel(Model):
@@ -94,7 +79,6 @@ class OpenAIModel(Model):
             base_url=self._resolve_base_url(),
         )
 
-    @retry_async(exceptions=OPENAI_RETRYABLE)
     async def _create_stream(
         self,
         *,

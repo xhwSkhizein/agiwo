@@ -8,7 +8,6 @@ from agiwo.agent.introspect.apply import (
     build_tool_step_lookup,
     register_committed_tool_step,
 )
-from agiwo.agent.introspect.goal import handle_goal_tool_result
 from agiwo.agent.introspect.models import IntrospectionOutcome
 from agiwo.agent.introspect.trajectory import (
     append_system_review_notice,
@@ -18,6 +17,11 @@ from agiwo.agent.introspect.trajectory import (
 )
 from agiwo.agent.models.run import TerminationReason
 from agiwo.agent.models.step import StepView
+from agiwo.agent.plan import (
+    PlanValidationError,
+    format_plan_update_content,
+    handle_plan_tool_result,
+)
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.step_commit import StepCommitter
 from agiwo.agent.runtime.state_writer import RunStateWriter
@@ -43,6 +47,8 @@ async def execute_tool_batch_cycle(
         tools_map=runtime.tools_map,
         context=context,
         abort_signal=runtime.abort_signal,
+        writer=writer,
+        retry_coordinator=getattr(runtime, "retry_coordinator", None),
     )
     terminated = False
     introspection_enabled = _introspection_enabled(context, runtime)
@@ -69,21 +75,30 @@ async def execute_tool_batch_cycle(
             content_for_user=result.content_for_user,
             is_error=not result.is_success,
         )
-        goal_update = None
+        plan_update = None
         introspection_notice = None
-        if introspection_enabled:
-            goal_update = handle_goal_tool_result(
-                result,
-                context.ledger.goal,
-                current_seq=seq,
-            )
-            if goal_update is not None and goal_update.milestone_switch:
-                context.ledger.introspection.pending_milestone_switch = True
+        if result.tool_name == "update_plan" and result.is_success:
+            try:
+                plan_update = handle_plan_tool_result(
+                    result,
+                    context.ledger.plan,
+                    current_seq=seq,
+                )
+            except PlanValidationError as error:
+                tool_step.is_error = True
+                tool_step.content = str(error)
+                plan_update = None
+            else:
+                if plan_update is not None:
+                    tool_step.content = format_plan_update_content(plan_update)
+                    if plan_update.milestone_switch:
+                        context.ledger.introspection.pending_milestone_switch = True
 
+        if introspection_enabled:
             pending_outcome = (
                 parse_introspection_outcome(
                     result,
-                    context.ledger.goal,
+                    context.ledger.plan,
                     current_seq=seq,
                     assistant_step_id=assistant_step_id,
                     tool_step_id=tool_step.id,
@@ -93,7 +108,7 @@ async def execute_tool_batch_cycle(
 
             introspection_notice = maybe_build_introspection_notice(
                 result,
-                context.ledger.goal,
+                context.ledger.plan,
                 context.ledger.introspection,
                 step_interval=context.config.review_step_interval,
                 review_on_error=context.config.review_on_error,
@@ -109,7 +124,7 @@ async def execute_tool_batch_cycle(
                     context=context,
                 )
                 tool_step.content = append_system_review_notice(
-                    result.content or "",
+                    tool_step.content,
                     introspection_notice.active_milestone,
                     introspection_notice.step_count,
                     trigger_reason=introspection_notice.trigger_reason,
@@ -122,13 +137,13 @@ async def execute_tool_batch_cycle(
             tool_call_id=call_id,
             step=committed_step,
         )
-        if goal_update is not None:
-            await writer.record_goal_milestones_updated(
-                milestones=goal_update.milestones,
-                active_milestone_id=goal_update.active_milestone_id,
-                source_tool_call_id=goal_update.source_tool_call_id,
+        if plan_update is not None:
+            await writer.record_run_plan_updated(
+                milestones=plan_update.milestones,
+                revision=plan_update.revision,
+                source_tool_call_id=plan_update.source_tool_call_id,
                 source_step_id=committed_step.id,
-                reason=goal_update.reason,
+                reason=plan_update.reason,
             )
         if introspection_notice is not None:
             await writer.record_introspection_triggered(
@@ -165,9 +180,9 @@ async def execute_tool_batch_cycle(
 
 def _introspection_enabled(context: RunContext, runtime: RunRuntime) -> bool:
     return (
-        context.config.enable_goal_directed_review
+        context.config.enable_trajectory_review
         and "review_trajectory" in runtime.tools_map
-        and "declare_milestones" in runtime.tools_map
+        and "update_plan" in runtime.tools_map
     )
 
 

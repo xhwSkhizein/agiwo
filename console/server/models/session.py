@@ -64,6 +64,7 @@ class Session:
     updated_at: datetime
     source_session_id: str | None = None
     fork_context_summary: str | None = None
+    archived_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -109,6 +110,7 @@ class SessionSummaryRecord:
     root_state_status: str | None = None
     source_session_id: str | None = None
     fork_context_summary: str | None = None
+    archived_at: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -140,11 +142,17 @@ class ReviewCheckpointRecord:
 
 
 @dataclass(slots=True)
+class ToolUsefulnessRecord:
+    tool_call_id: str
+    tool_name: str | None = None
+    score: int | None = None
+
+
+@dataclass(slots=True)
 class ReviewOutcomeRecord:
     aligned: bool | None = None
     experience: str | None = None
-    step_back_applied: bool = False
-    affected_count: int | None = None
+    tool_usefulness: list[ToolUsefulnessRecord] = field(default_factory=list)
     trigger_reason: str | None = None
     active_milestone: str | None = None
     resolved_at: datetime | None = None
@@ -173,9 +181,9 @@ class ReviewCycleRecord:
     hook_advice: str | None = None
     aligned: bool | None = None
     experience: str | None = None
-    step_back_applied: bool = False
-    rollback_range: tuple[int, int] | None = None
-    affected_count: int | None = None
+    tool_usefulness: list[ToolUsefulnessRecord] = field(default_factory=list)
+    review_tool_call_id: str | None = None
+    review_latency_ms: float | None = None
     started_at: datetime | None = None
     resolved_at: datetime | None = None
     raw_notice: str | None = None
@@ -257,6 +265,11 @@ class TraceLlmCallRecord:
     tool_schema_count: int
     response_tool_call_count: int
     output_preview: str | None
+    logical_call_id: str | None = None
+    phase: str | None = None
+    attempt_no: int | None = None
+    call_ordinal: int | None = None
+    retry_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -305,4 +318,7 @@ class ChannelChatSessionStore(Protocol):
     async def list_sessions_by_base_agent(
         self, base_agent_id: str
     ) -> list[Session]: ...
-    async def list_sessions(self) -> list[Session]: ...
+    async def list_sessions(
+        self, *, include_archived: bool = False
+    ) -> list[Session]: ...
+    async def list_archived_sessions(self) -> list[Session]: ...

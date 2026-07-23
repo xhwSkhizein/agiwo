@@ -11,7 +11,6 @@ from agiwo.agent.models.log import (
     CompactionFailed,
     RunFinished,
     RunStarted,
-    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
@@ -436,7 +435,7 @@ async def test_get_session_detail_includes_milestone_board_and_conversation_even
                     trace_id="trace-mainline",
                     parent_span_id=root_span.span_id,
                     kind=SpanKind.TOOL_CALL,
-                    name="declare_milestones",
+                    name="update_plan",
                     depth=1,
                     run_id="run-a2",
                     step_id="step-milestones",
@@ -447,12 +446,12 @@ async def test_get_session_detail_includes_milestone_board_and_conversation_even
                     attributes={
                         "sequence": 6,
                         "agent_id": "agent-alpha",
-                        "tool_name": "declare_milestones",
+                        "tool_name": "update_plan",
                     },
                     tool_details={
-                        "tool_name": "declare_milestones",
+                        "tool_name": "update_plan",
                         "input_args": {
-                            "milestones": [
+                            "changes": [
                                 {
                                     "id": "inspect",
                                     "description": "Inspect auth flow",
@@ -466,7 +465,7 @@ async def test_get_session_detail_includes_milestone_board_and_conversation_even
                             ]
                         },
                         "output": {
-                            "milestones": [
+                            "changes": [
                                 {
                                     "id": "inspect",
                                     "description": "Inspect auth flow",
@@ -613,31 +612,13 @@ async def test_get_session_detail_includes_milestone_board_and_conversation_even
                         "sequence": 8,
                         "agent_id": "agent-alpha",
                         "aligned": False,
-                        "mode": "step_back",
                         "experience": "Switch to code inspection.",
                         "active_milestone_id": "inspect",
                         "review_tool_call_id": "tc-review",
                         "review_step_id": "step-2",
-                        "condensed_step_ids": ["step-a", "step-b"],
-                    },
-                ),
-                Span(
-                    trace_id="trace-mainline",
-                    parent_span_id=root_span.span_id,
-                    kind=SpanKind.RUNTIME,
-                    name="step_back",
-                    depth=1,
-                    run_id="run-a2",
-                    start_time=created_at.replace(second=9),
-                    end_time=created_at.replace(second=9),
-                    duration_ms=0.0,
-                    status=SpanStatus.OK,
-                    attributes={
-                        "sequence": 9,
-                        "agent_id": "agent-alpha",
-                        "affected_count": 2,
-                        "checkpoint_seq": 5,
-                        "experience": "Switch to code inspection.",
+                        "tool_usefulness": [
+                            {"tool_call_id": "tc-a", "tool_name": "bash", "score": 1}
+                        ],
                     },
                 ),
             ],
@@ -650,7 +631,10 @@ async def test_get_session_detail_includes_milestone_board_and_conversation_even
     payload = response.json()
     assert payload["milestone_board"]["active_milestone_id"] == "inspect"
     assert (
-        payload["milestone_board"]["latest_review_outcome"]["step_back_applied"] is True
+        payload["milestone_board"]["latest_review_outcome"]["tool_usefulness"][0][
+            "score"
+        ]
+        == 1
     )
     assert payload["review_cycles"][0]["trigger_reason"] == "step_interval"
     assert payload["conversation_events"][0]["kind"] == "user_message"
@@ -677,16 +661,6 @@ async def test_get_session_detail_lists_recent_runtime_decisions(client) -> None
                 terminal=False,
                 created_at=datetime(2026, 4, 2, 12, 0, 2, tzinfo=timezone.utc),
             ),
-            StepBackApplied(
-                sequence=10,
-                session_id="session-a",
-                run_id="run-a2",
-                agent_id="agent-alpha",
-                affected_count=2,
-                checkpoint_seq=7,
-                experience="switch plan",
-                created_at=datetime(2026, 4, 2, 12, 0, 3, tzinfo=timezone.utc),
-            ),
         ]
     )
 
@@ -695,15 +669,11 @@ async def test_get_session_detail_lists_recent_runtime_decisions(client) -> None
     assert response.status_code == 200
     payload = response.json()
     assert [event["kind"] for event in payload["observability"]["decision_events"]] == [
-        "step_back",
         "compaction_failed",
         "termination",
     ]
-    assert payload["observability"]["decision_events"][0]["details"]["experience"] == (
-        "switch plan"
-    )
     assert (
-        payload["observability"]["decision_events"][1]["details"]["error"]
+        payload["observability"]["decision_events"][0]["details"]["error"]
         == "model timeout"
     )
 

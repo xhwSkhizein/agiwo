@@ -7,8 +7,12 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from agiwo.agent.introspect.models import GoalState, IntrospectionState
+from agiwo.agent.introspect.models import IntrospectionState
+from agiwo.agent.models.execution import RunTreeRole
+from agiwo.agent.models.finalization import RunFinalizationResult
 from agiwo.agent.models.input import UserInput
+from agiwo.agent.models.model_call import ModelCallLedger
+from agiwo.agent.models.plan import RunPlan
 from agiwo.config.termination import TerminationReason
 from agiwo.utils.serialization import serialize_optional_datetime
 
@@ -27,13 +31,22 @@ def fields_to_dict(obj: object) -> dict[str, Any]:
 
 
 class RunStatus(str, Enum):
-    """Agent run status."""
+    """Agent run status (recoverable pause uses PAUSED; forced cancel maps to FAILED)."""
 
-    STARTING = "starting"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
+    INTERRUPTED = "interrupted"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+
+
+RUN_TERMINAL_STATUSES: frozenset[RunStatus] = frozenset(
+    {
+        RunStatus.COMPLETED,
+        RunStatus.INTERRUPTED,
+        RunStatus.FAILED,
+    }
+)
 
 
 @dataclass
@@ -104,6 +117,7 @@ class RunIdentity:
     depth: int = 0
     parent_run_id: str | None = None
     timeout_at: float | None = None
+    run_tree_role: RunTreeRole = RunTreeRole.NONE
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -122,8 +136,9 @@ class RunLedger:
     tokens: TokenStats = field(default_factory=TokenStats)
     steps: StepStats = field(default_factory=StepStats)
     compaction: CompactionState = field(default_factory=CompactionState)
-    goal: GoalState = field(default_factory=GoalState)
+    plan: RunPlan = field(default_factory=RunPlan)
     introspection: IntrospectionState = field(default_factory=IntrospectionState)
+    model_calls: ModelCallLedger = field(default_factory=ModelCallLedger)
 
 
 @dataclass
@@ -144,9 +159,14 @@ class RunMetrics:
     tool_errors_count: int = 0
     first_token_latency: float | None = None
     response_latency: float | None = None
+    max_steps_per_run: int | None = None
+    model_call_attempts_total: int = 0
+    model_call_limit_trigger_ordinal: int | None = None
+    model_call_phase_stats: dict[str, dict[str, int]] | None = None
 
     @classmethod
     def from_ledger(cls, ledger: "RunLedger", *, elapsed_ms: float) -> "RunMetrics":
+        model_call_metrics = ledger.model_calls.to_metrics_dict()
         return cls(
             duration_ms=elapsed_ms,
             total_tokens=ledger.tokens.total,
@@ -157,6 +177,12 @@ class RunMetrics:
             token_cost=ledger.tokens.cost,
             steps_count=ledger.steps.total,
             tool_calls_count=ledger.steps.tool_calls,
+            max_steps_per_run=model_call_metrics["max_steps_per_run"],
+            model_call_attempts_total=model_call_metrics["model_call_attempts_total"],
+            model_call_limit_trigger_ordinal=model_call_metrics[
+                "model_call_limit_trigger_ordinal"
+            ],
+            model_call_phase_stats=model_call_metrics["model_call_phase_stats"],
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -174,6 +200,9 @@ class RunOutput:
     termination_reason: TerminationReason | None = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    finalization: RunFinalizationResult | None = None
+    paused: bool = False
+    checkpoint_id: str | None = None
 
 
 @dataclass
@@ -190,12 +219,16 @@ class RunView:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     parent_run_id: str | None = None
+    run_tree_role: RunTreeRole = RunTreeRole.NONE
+    finalization: RunFinalizationResult | None = None
 
 
 __all__ = [
+    "RunTreeRole",
     "CompactMetadata",
     "CompactionState",
     "MemoryRecord",
+    "RUN_TERMINAL_STATUSES",
     "RunIdentity",
     "RunLedger",
     "RunMetrics",

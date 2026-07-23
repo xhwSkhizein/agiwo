@@ -202,7 +202,7 @@ def test_agent_options_input_defaults() -> None:
         trace_storage=build_trace_storage_config(console_config),
     )
 
-    assert options.max_steps == 50
+    assert options.max_steps_per_run == 50
     assert options.enable_termination_summary is True
 
 
@@ -213,7 +213,7 @@ def test_default_agent_record_uses_shared_option_defaults() -> None:
 
     expected = AgentOptionsInput.model_validate({}).model_dump(exclude_none=True)
     assert record.options == expected
-    assert record.options["max_steps"] == AgentOptions().max_steps
+    assert record.options["max_steps_per_run"] == AgentOptions().max_steps_per_run
     assert record.allowed_skills is None
 
 
@@ -252,7 +252,7 @@ def test_agent_options_input_maps_all_fields() -> None:
     opts = AgentOptionsInput.model_validate(
         {
             "config_root": "/tmp/agent-root",
-            "max_steps": 42,
+            "max_steps_per_run": 42,
             "run_timeout": 120,
             "max_input_tokens_per_call": 64000,
             "max_run_cost": 1.25,
@@ -262,7 +262,7 @@ def test_agent_options_input_maps_all_fields() -> None:
             "stream_cleanup_timeout": 90.5,
             "compact_prompt": "Compact the context",
             "enable_context_rollback": False,
-            "enable_goal_directed_review": True,
+            "enable_trajectory_review": True,
             "review_step_interval": 10,
             "review_on_error": False,
         }
@@ -274,7 +274,7 @@ def test_agent_options_input_maps_all_fields() -> None:
     )
 
     assert options.config_root == "/tmp/agent-root"
-    assert options.max_steps == 42
+    assert options.max_steps_per_run == 42
     assert options.run_timeout == 120
     assert options.max_input_tokens_per_call == 64000
     assert options.max_run_cost == 1.25
@@ -284,7 +284,7 @@ def test_agent_options_input_maps_all_fields() -> None:
     assert options.stream_cleanup_timeout == 90.5
     assert options.compact_prompt == "Compact the context"
     assert options.enable_context_rollback is False
-    assert options.enable_goal_directed_review is True
+    assert options.enable_trajectory_review is True
     assert options.review_step_interval == 10
     assert options.review_on_error is False
 
@@ -519,6 +519,26 @@ def test_build_model_does_not_fallback_to_openai_credentials_for_compatible_prov
         build_model(config)
 
 
+def test_build_model_error_includes_agent_provider_and_model() -> None:
+    config = AgentConfigRecord(
+        id="agent-abc",
+        name="research-bot",
+        model_provider="openai-compatible",
+        model_name="MiniMax-M2.5",
+        model_params={"api_key_env_name": "MINIMAX_API_KEY"},
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        build_model(config)
+
+    message = str(exc_info.value)
+    assert "agent_id='agent-abc'" in message
+    assert "agent_name='research-bot'" in message
+    assert "provider='openai-compatible'" in message
+    assert "model='MiniMax-M2.5'" in message
+    assert "base_url" in message
+
+
 def test_agent_config_create_requires_explicit_connection_for_compatible_provider() -> (
     None
 ):
@@ -596,7 +616,7 @@ def test_agent_config_payload_uses_defaults_when_options_omitted() -> None:
             },
         }
     )
-    assert payload.options.max_steps == 50
+    assert payload.options.max_steps_per_run == 50
     assert payload.model_params.max_output_tokens == 4096
 
 
@@ -619,7 +639,7 @@ async def test_agent_registry_replace_overwrites_nested_config_without_merge() -
                 name="tester",
                 model_provider="openai-compatible",
                 model_name="MiniMax-M2.5",
-                options={"max_steps": 10, "max_run_cost": 1.5},
+                options={"max_steps_per_run": 10, "max_run_cost": 1.5},
                 model_params={
                     "base_url": "https://api.minimax.chat/v1",
                     "api_key_env_name": "MINIMAX_API_KEY",
@@ -636,7 +656,7 @@ async def test_agent_registry_replace_overwrites_nested_config_without_merge() -
                 model_provider="openai-compatible",
                 model_name="MiniMax-M2.5",
                 allowed_tools=["web_search"],
-                options={"max_steps": 5},
+                options={"max_steps_per_run": 5},
                 model_params={
                     "base_url": "https://api.other.example/v1",
                     "api_key_env_name": "OTHER_API_KEY",
@@ -648,7 +668,7 @@ async def test_agent_registry_replace_overwrites_nested_config_without_merge() -
         assert updated is not None
         assert updated.description == "replacement"
         assert updated.allowed_tools == ["web_search"]
-        assert updated.options["max_steps"] == 5
+        assert updated.options["max_steps_per_run"] == 5
         assert "max_run_cost" not in updated.options
         assert updated.model_params["base_url"] == "https://api.other.example/v1"
         assert updated.model_params["api_key_env_name"] == "OTHER_API_KEY"

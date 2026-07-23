@@ -1,6 +1,19 @@
 """Canonical public Agent SDK surface."""
 
 from agiwo.agent.agent import Agent, AgentExecutionHandle
+from agiwo.agent.intent import (
+    InMemorySessionIntentStore,
+    IntentEntry,
+    IntentEntryKind,
+    SessionIntent,
+    SessionIntentStore,
+    SQLiteSessionIntentStore,
+    create_session_intent_store,
+    summarize_run_report,
+)
+from agiwo.agent.main_agent import MainAgent, MainAgentState
+from agiwo.agent.queue import QueueItem, QueueItemKind
+from agiwo.agent.spec import AgentSpec
 from agiwo.agent.models.config import (
     AgentConfig,
     AgentOptions,
@@ -43,11 +56,12 @@ from agiwo.agent.models.log import (
     RunLogEntryKind,
     RunRolledBack,
     RunStarted,
-    StepBackApplied,
     TerminationDecided,
     ToolStepCommitted,
     UserStepCommitted,
 )
+from agiwo.agent.models.execution import RunTreeRole, RunExecutionRequest
+from agiwo.agent.models.finalization import RunFinalizationResult
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.run import (
     RunMetrics,
@@ -61,7 +75,6 @@ from agiwo.agent.models.runtime_decision import (
     CompactionFailureDecisionView,
     RollbackDecisionView,
     RuntimeDecisionState,
-    StepBackDecisionView,
     TerminationDecisionView,
 )
 from agiwo.agent.models.step import (
@@ -82,7 +95,6 @@ from agiwo.agent.models.stream import (
     RunFailedEvent,
     RunRolledBackEvent,
     RunStartedEvent,
-    StepBackAppliedEvent,
     StepCompletedEvent,
     StepDeltaEvent,
     TerminationDecidedEvent,
@@ -93,11 +105,13 @@ from agiwo.agent.storage.base import RunLogStorage
 __all__ = [
     "Agent",
     "AgentExecutionHandle",
+    "AgentSpec",
     "AgentConfig",
     "AgentOptions",
     "AgentStorageOptions",
     "AgentStreamItem",
     "AgentStreamItemBase",
+    "RunTreeRole",
     "AssistantStepCommitted",
     "build_committed_step_entry",
     "ChannelContext",
@@ -108,15 +122,24 @@ __all__ = [
     "CompactionFailedEvent",
     "CompactionDecisionView",
     "CompactionFailureDecisionView",
-    "ContextStepsHiddenEvent",
     "ContentPart",
     "ContentType",
     "ContextAssembled",
+    "ContextStepsHiddenEvent",
     "HookFailed",
     "LLMCallContext",
     "LLMCallCompleted",
     "LLMCallStarted",
+    "MainAgent",
+    "MainAgentState",
     "MemoryRecord",
+    "SessionIntent",
+    "SessionIntentStore",
+    "SQLiteSessionIntentStore",
+    "create_session_intent_store",
+    "summarize_run_report",
+    "QueueItem",
+    "QueueItemKind",
     "MessagesRebuiltEvent",
     "MessagesRebuilt",
     "MessageContent",
@@ -126,6 +149,9 @@ __all__ = [
     "HookPhase",
     "HookRegistration",
     "HookRegistry",
+    "InMemorySessionIntentStore",
+    "IntentEntry",
+    "IntentEntryKind",
     "RunFailedEntry",
     "RunFinished",
     "RunCompletedEvent",
@@ -134,6 +160,8 @@ __all__ = [
     "RunLogEntryKind",
     "RunRolledBack",
     "RunRolledBackEvent",
+    "RunExecutionRequest",
+    "RunFinalizationResult",
     "RunMetrics",
     "RunOutput",
     "RunStarted",
@@ -144,9 +172,6 @@ __all__ = [
     "RunView",
     "RollbackDecisionView",
     "RuntimeDecisionState",
-    "StepBackApplied",
-    "StepBackAppliedEvent",
-    "StepBackDecisionView",
     "StepCompletedEvent",
     "StepDelta",
     "StepDeltaEvent",

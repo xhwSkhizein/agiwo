@@ -1,7 +1,8 @@
 """Termination-summary execution for interrupted agent runs."""
 
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.llm_caller import stream_assistant_step
+from agiwo.agent.llm_caller import ModelCallLimitExceeded, execute_model_call
+from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.step import StepView
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.step_commit import StepCommitter
@@ -50,41 +51,29 @@ async def maybe_generate_termination_summary(
     await commit_step(summary_user_step, append_message=True)
 
     try:
-        started_entries = await writer.record_llm_call_started(
-            messages=state.snapshot_messages(),
-            tools=None,
-        )
-        await state.session_runtime.project_run_log_entries(
-            started_entries,
-            run_id=state.run_id,
-            agent_id=state.agent_id,
-            parent_run_id=state.parent_run_id,
-            depth=state.depth,
-        )
-        step, llm_context = await stream_assistant_step(
-            model,
-            state,
-            abort_signal,
+        call_result = await execute_model_call(
+            model=model,
+            state=state,
+            writer=writer,
+            phase=ModelCallPhase.TERMINATION_SUMMARY,
+            abort_signal=abort_signal,
             messages=state.snapshot_messages(),
             use_state_tools=False,
         )
+        step = call_result.step
+        llm_context = call_result.llm_context
         step.name = "summary"
         await commit_step(step, llm=llm_context, append_message=False)
-        completed_entries = await writer.record_llm_call_completed(
-            step=step,
-            llm=llm_context,
-        )
-        await state.session_runtime.project_run_log_entries(
-            completed_entries,
-            run_id=state.run_id,
-            agent_id=state.agent_id,
-            parent_run_id=state.parent_run_id,
-            depth=state.depth,
-        )
 
         logger.info(
             "summary_generated",
             tokens=step.metrics.total_tokens if step.metrics else 0,
+        )
+    except ModelCallLimitExceeded:
+        logger.warning(
+            "summary_generation_skipped_limit",
+            run_id=state.run_id,
+            termination_reason=state.ledger.termination_reason,
         )
     except Exception:  # noqa: BLE001 - summary is best-effort
         logger.warning(

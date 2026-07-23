@@ -8,6 +8,7 @@ from server.services.runtime.agent_factory import (
     build_default_agent_record,
     build_model,
     materialize_agent,
+    materialize_main_agent,
     rehydrate_agent,
     resume_persistent_agent,
 )
@@ -27,7 +28,7 @@ from server.services.runtime.run_query_service import (
     SessionRunSnapshot,
 )
 from server.services.runtime.trace_query_service import TraceQueryService
-from server.services.runtime.session_runtime_service import SessionRuntimeService
+from server.services.runtime.session_turn_service import SessionTurnService
 from server.services.runtime.session_service import (
     SessionContextResolution,
     SessionContextService,
@@ -44,7 +45,7 @@ __all__ = [
     "SessionContextResolution",
     "SessionContextService",
     "SessionRunSnapshot",
-    "SessionRuntimeService",
+    "SessionTurnService",
     "TraceQueryService",
     "SchedulerTreeError",
     "SchedulerTreeNotFoundError",
@@ -56,6 +57,7 @@ __all__ = [
     "build_default_agent_record",
     "build_model",
     "materialize_agent",
+    "materialize_main_agent",
     "rehydrate_agent",
     "resume_persistent_agent",
 ]

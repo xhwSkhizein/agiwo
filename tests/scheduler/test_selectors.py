@@ -214,6 +214,35 @@ def _make_user_hint_event(
     )
 
 
+def test_build_mailbox_input_preserves_user_provenance() -> None:
+    hint_message = UserMessage(
+        content=[ContentPart(type=ContentType.TEXT, text="queued hint")],
+        is_user_provided=True,
+    )
+    events = (_make_user_hint_event("h-1", hint_message),)
+
+    merged = build_mailbox_input(None, events)
+
+    assert isinstance(merged, UserMessage)
+    assert merged.is_user_provided is True
+
+
+def test_build_events_message_marks_system_provenance() -> None:
+    events = (
+        PendingEvent(
+            id="child-1",
+            target_agent_id="root",
+            session_id="sess",
+            event_type=SchedulerEventType.CHILD_COMPLETED,
+            payload={"result": "done", "child_agent_id": "worker-1"},
+            created_at=datetime.now(timezone.utc),
+        ),
+    )
+    message = build_events_message(events)
+    assert isinstance(message, UserMessage)
+    assert message.is_user_provided is False
+
+
 def test_build_mailbox_input_preserves_multimodal_parts_and_channel_context() -> None:
     """USER_HINT attachments and ChannelContext must flow into the next run."""
     hint_message = UserMessage(

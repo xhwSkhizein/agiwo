@@ -853,15 +853,16 @@ def _detect_import_name_errors(
 
 def _detect_attribute_errors(path: Path, node: ast.Attribute) -> list[GuardError]:
     errors: list[GuardError] = []
-    if path == Path("agiwo/scheduler/tools.py") and _is_scheduler_private_access(node):
+    if _is_scheduler_private_access(node):
         errors.append(
             _make_error(
                 path,
                 node.lineno,
                 "AGW007",
                 (
-                    "Scheduler tools must not reach into Scheduler private state; "
-                    "expose an explicit scheduler port instead."
+                    "Do not reach into Scheduler private attributes via "
+                    "self._scheduler._*; use the public Worker/facade API "
+                    "(spawn_worker / get_result_summary / mark_parent_idle / …)."
                 ),
             )
         )
@@ -1435,6 +1436,112 @@ def _detect_console_tool_catalog_text_errors(
     return errors
 
 
+def _detect_objective_boundary_text_errors(
+    path: Path, content: str
+) -> list[GuardError]:
+    """ADR 0048: forbid Objective core revival and retired Goal* names."""
+    errors: list[GuardError] = []
+    posix = path.as_posix()
+    if not (
+        posix.startswith("agiwo/")
+        or posix.startswith("console/server/")
+        or posix.startswith("tests/")
+        or posix.startswith("console/tests/")
+    ):
+        return errors
+
+    for pattern, label in (
+        (r"\bGoalState\b", "GoalState"),
+        (r"\bGoalUpdate\b", "GoalUpdate"),
+        (r"\bGoalMilestonesUpdated\b", "GoalMilestonesUpdated"),
+        (r"\bdeclare_milestones\b", "declare_milestones"),
+        (r"\benable_goal_directed_review\b", "enable_goal_directed_review"),
+    ):
+        line = _find_first_match_line(content, pattern)
+        if line is None:
+            continue
+        errors.append(
+            _make_error(
+                path,
+                line,
+                "AGW045",
+                (
+                    f"Retired domain name `{label}` must not reappear; use RunPlan / "
+                    "update_plan / enable_trajectory_review (ADR 0048 vocabulary)."
+                ),
+            )
+        )
+
+    # Forbid importing removed Objective package outside trash.
+    if not posix.startswith("trash/"):
+        line = _find_first_match_line(content, r"from agiwo\.objective\b")
+        if line is None:
+            line = _find_first_match_line(content, r"import agiwo\.objective\b")
+        if line is not None:
+            errors.append(
+                _make_error(
+                    path,
+                    line,
+                    "AGW048",
+                    (
+                        "agiwo.objective is out of core (ADR 0048); do not import it. "
+                        "Use SessionGateway → Session → root Run."
+                    ),
+                )
+            )
+
+    # Deleted Session facade APIs must not be resurrected in production code.
+    if not posix.startswith("trash/"):
+        for pattern, label in (
+            (r"\broute_root_input\s*\(", "route_root_input"),
+            (r"\bdispatch_execution\s*\(", "dispatch_execution"),
+            (r"\binject_user_message\s*\(", "inject_user_message"),
+            (r"\benqueue_steer\s*\(", "enqueue_steer"),
+            (r"\benqueue_inject\s*\(", "enqueue_inject"),
+            (r"\bapply_steering_messages\b", "apply_steering_messages"),
+            (r"\bclass RouteResult\b", "RouteResult"),
+            (r"\bclass RouteStreamMode\b", "RouteStreamMode"),
+        ):
+            line = _find_first_match_line(content, pattern)
+            if line is not None:
+                errors.append(
+                    _make_error(
+                        path,
+                        line,
+                        "AGW046",
+                        (
+                            f"Deleted M3 Session/queue facade symbol {label!r} "
+                            "must not return; use MainAgent.accept / "
+                            "enqueue_message / Scheduler.enqueue_input."
+                        ),
+                    )
+                )
+
+    # Forbid resurrecting Objective / Turn API symbols in non-trash code.
+    if not posix.startswith("trash/"):
+        for pattern, label in (
+            (r"\bupgrade_from_plain_run\b", "upgrade_from_plain_run"),
+            (r"\bsubmit_turn\b", "submit_turn"),
+            (r"\bTurnHandle\b", "TurnHandle"),
+            (r"\bcreate_objective_store\b", "create_objective_store"),
+        ):
+            line = _find_first_match_line(content, pattern)
+            if line is None:
+                continue
+            errors.append(
+                _make_error(
+                    path,
+                    line,
+                    "AGW049",
+                    (
+                        f"Retired symbol `{label}` must not reappear in core code "
+                        "(ADR 0048)."
+                    ),
+                )
+            )
+    return errors
+
+
 def _detect_text_guard_errors(path: Path, content: str) -> list[GuardError]:
     errors = _detect_agent_v2_text_errors(path, content)
     errors.extend(_detect_agent_config_text_errors(path, content))
@@ -1444,6 +1551,7 @@ def _detect_text_guard_errors(path: Path, content: str) -> list[GuardError]:
     errors.extend(_detect_agent_runtime_text_errors(path, content))
     errors.extend(_detect_console_tool_catalog_text_errors(path, content))
     errors.extend(_detect_agent_lifecycle_stable_id_errors(path, content))
+    errors.extend(_detect_objective_boundary_text_errors(path, content))
     return errors
 
 

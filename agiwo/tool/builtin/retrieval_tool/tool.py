@@ -6,8 +6,8 @@ import time
 from typing import Any
 
 from agiwo.config.settings import settings
-from agiwo.memory import WorkspaceMemoryService
-from agiwo.tool.base import BaseTool, ToolResult
+from agiwo.memory.service import WorkspaceMemoryService
+from agiwo.tool.base import BaseTool, ToolIdempotency, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.registry import builtin_tool, default_enable
 from agiwo.utils.abort_signal import AbortSignal
@@ -24,6 +24,7 @@ class MemoryRetrievalTool(BaseTool):
     name = "memory_retrieval"
     description = "Search your MEMORY directory for relevant past notes, decisions, and knowledge. Use this before answering questions about prior work, preferences, or historical context."
     is_stateless = True
+    idempotency = ToolIdempotency.GUARANTEED
 
     def __init__(
         self,

@@ -95,12 +95,17 @@ async def _execute_status(
     if agent is None:
         return CommandResult(text="加载 Agent 失败: runtime agent unavailable")
 
-    state = None
-    state = await scheduler.get_state(current_session.id)
-    scheduler_status = format_scheduler_status(state.status) if state else "未启动"
+    main_agent = agent_pool.main_agents.get(current_session.id)
+    if main_agent is not None:
+        status_text = main_agent.state.value
+    else:
+        state = await scheduler.get_state(current_session.id)
+        status_text = format_scheduler_status(state.status) if state else "未启动"
 
     metrics_summary = await summarize_run_views_paginated(
-        agent.run_log_storage,
+        main_agent.agent.run_log_storage
+        if main_agent is not None
+        else agent.run_log_storage,
         session_id=current_session.id,
     )
 
@@ -117,7 +122,7 @@ async def _execute_status(
 
     lines = [
         "当前对话统计\n",
-        f"调度状态: {scheduler_status}",
+        f"调度状态: {status_text}",
         f"模型: {_format_model_info(agent)}",
         "Runs: "
         f"{int(metrics_summary.run_count)} "
@@ -134,7 +139,7 @@ async def _execute_status(
         f"总耗时: {float(metrics_summary.duration_ms) / 1000:.1f}s",
         "",
         "配置:",
-        f"  max_steps: {opts.max_steps}",
+        f"  max_steps_per_run: {opts.max_steps_per_run}",
         f"  run_timeout: {opts.run_timeout}s",
         f"  max_context_window: {max_context_window:,}",
         f"  max_output_tokens: {max_output_tokens:,}",
@@ -153,12 +158,13 @@ async def _load_session_agent(
     agent_pool: AgentRuntimeCache,
     current_session: Session,
 ) -> tuple[Agent | None, str | None]:
-    agent = agent_pool.runtime_agents.get(current_session.id)
-    if agent is not None:
-        return (agent, None)
+    cached = agent_pool.main_agents.get(current_session.id)
+    if cached is not None:
+        return (cached.agent, None)
 
     try:
-        return (await agent_pool.get_or_create_runtime_agent(current_session), None)
+        main_agent = await agent_pool.get_or_create_main_agent(current_session)
+        return (main_agent.agent, None)
     except Exception as exc:  # noqa: BLE001
         return (None, f"加载 Agent 失败: {exc}")
 

@@ -37,7 +37,7 @@ describe("AgentsPage", () => {
         allowed_skills: [],
         options: {
           config_root: "",
-          max_steps: 50,
+          max_steps_per_run: 50,
           run_timeout: 0,
           max_input_tokens_per_call: null,
           max_run_cost: null,
@@ -75,7 +75,7 @@ describe("AgentsPage", () => {
         allowed_skills: [],
         options: {
           config_root: "",
-          max_steps: 50,
+          max_steps_per_run: 50,
           run_timeout: 0,
           max_input_tokens_per_call: null,
           max_run_cost: null,

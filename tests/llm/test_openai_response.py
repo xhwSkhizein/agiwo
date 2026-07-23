@@ -3,7 +3,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from tenacity import wait_none
 
 from agiwo.llm.openai_response import OpenAIResponsesModel
 from agiwo.llm.openai_response_converter import (
@@ -544,14 +543,16 @@ async def test_parse_sse_stream_handles_failed_event() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_responses_model_retries_stream_opening(monkeypatch) -> None:
+async def test_openai_responses_model_propagates_stream_opening_errors(
+    monkeypatch,
+) -> None:
+    """Provider adapters must not hide retries; agent execute_model_call owns them."""
     model = OpenAIResponsesModel(
         id="gpt-4.1-mini",
         name="gpt-4.1-mini",
         api_key="test-key",
         base_url="https://example.test/v1",
     )
-    model._open_stream.retry.wait = wait_none()
 
     attempts = {"stream_calls": 0}
 
@@ -578,36 +579,16 @@ async def test_openai_responses_model_retries_stream_opening(monkeypatch) -> Non
         def stream(self, method, url, json, headers):
             del method, url, json, headers
             attempts["stream_calls"] += 1
-            if attempts["stream_calls"] == 1:
 
-                def _raise_connect_error():
-                    raise httpx.ConnectError("temporary")
+            def _raise_connect_error():
+                raise httpx.ConnectError("temporary")
 
-                return _StreamContext(_raise_connect_error)
-
-            return _StreamContext(
-                lambda: _MockHTTPXResponse(
-                    [
-                        _event("response.output_text.delta", delta="Recovered"),
-                        _event(
-                            "response.completed",
-                            response={
-                                "usage": None,
-                                "output": [{"type": "message"}],
-                                "incomplete_details": None,
-                            },
-                        ),
-                    ]
-                )
-            )
+            return _StreamContext(_raise_connect_error)
 
     monkeypatch.setattr("agiwo.llm.openai_response.httpx.AsyncClient", _MockAsyncClient)
 
-    messages = [{"role": "user", "content": "Hello"}]
-    chunks = []
-    async for chunk in model.arun_stream(messages):
-        chunks.append(chunk)
+    with pytest.raises(httpx.ConnectError, match="temporary"):
+        async for _ in model.arun_stream([{"role": "user", "content": "Hello"}]):
+            pass
 
-    assert chunks[0].content == "Recovered"
-    assert chunks[-1].finish_reason == "stop"
-    assert attempts["stream_calls"] == 2
+    assert attempts["stream_calls"] == 1

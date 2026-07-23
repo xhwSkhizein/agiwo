@@ -1,28 +1,17 @@
-"""Integration tests for session-driven scheduler chat APIs."""
+"""Integration tests for session-driven chat APIs."""
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.agent import (
-    RunCompletedEvent,
-    RunStartedEvent,
-    StepDelta,
-    StepDeltaEvent,
-    TerminationReason,
-)
-from agiwo.scheduler.commands import RouteStreamMode
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
-    AgentState,
-    AgentStateStatus,
     AgentStateStorageConfig,
     SchedulerConfig,
-    SchedulerRunResult,
 )
 
+from server.channels.exceptions import BaseAgentNotFoundError
 from server.app import create_app
 from server.services.session_store import InMemorySessionStore
 from server.config import ConsoleConfig
@@ -35,15 +24,34 @@ from server.dependencies import (
 from server.models.session import Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.runtime import AgentRuntimeCache
-from server.services.storage_wiring import create_run_log_storage, create_trace_storage
+from server.services.storage_wiring import (
+    create_run_log_storage,
+    create_trace_storage,
+)
+from server.services.session_gateway import SessionGateway, SessionStreamStart
+from tests.test_agent_runtime_components import FakeMainAgent
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
     return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
 
 
+async def _stub_start_user_message(self, session_id, user_message, *, idempotency_key):
+    del self, user_message, idempotency_key
+    return SessionStreamStart(
+        session_id=session_id,
+        run_id=f"run_{session_id}",
+        main_agent=FakeMainAgent(session_id),
+    )
+
+
 @pytest.fixture
-async def client():
+async def client(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        SessionGateway,
+        "start_user_message",
+        _stub_start_user_message,
+    )
     app = create_app()
 
     config = ConsoleConfig(
@@ -68,7 +76,6 @@ async def client():
     await session_store.connect()
 
     agent_runtime_cache = AgentRuntimeCache(
-        scheduler=scheduler,
         agent_registry=registry,
         console_config=config,
         session_store=session_store,
@@ -133,10 +140,7 @@ async def test_create_and_list_agent_sessions_are_base_agent_scoped(client) -> N
 
 
 @pytest.mark.asyncio
-async def test_session_input_streams_scheduler_events_and_uses_session_identity(
-    client,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_session_input_streams_plain_turn(client) -> None:
     runtime = _runtime(client)
     await runtime.agent_registry.create_agent(
         AgentConfigRecord(
@@ -149,93 +153,25 @@ async def test_session_input_streams_scheduler_events_and_uses_session_identity(
     create_resp = await client.post("/api/agents/agent-1/sessions")
     session_id = create_resp.json()["session_id"]
 
-    class FakeAgent:
-        def __init__(self, agent_id: str) -> None:
-            self.id = agent_id
-
-        async def close(self) -> None:
-            pass
-
-    fake_agent = FakeAgent(session_id)
-    assert runtime.agent_runtime_cache is not None
-    monkeypatch.setattr(
-        runtime.agent_runtime_cache,
-        "get_or_create_runtime_agent",
-        AsyncMock(return_value=fake_agent),
-    )
-
-    scheduler = runtime.scheduler
-    assert scheduler is not None
-
-    async def _stream() -> object:
-        yield StepDeltaEvent(
-            session_id=session_id,
-            run_id="run-1",
-            agent_id=session_id,
-            parent_run_id=None,
-            depth=0,
-            step_id="step-1",
-            delta=StepDelta(content="hello"),
-        )
-        yield RunCompletedEvent(
-            session_id=session_id,
-            run_id="run-1",
-            agent_id=session_id,
-            parent_run_id=None,
-            depth=0,
-            response="done",
-        )
-
-    async def fake_route_root_input(
-        message: str,
-        *,
-        agent,
-        state_id: str | None,
-        session_id: str,
-        persistent: bool,
-        timeout: int | None,
-        stream_mode: RouteStreamMode,
-    ):
-        assert agent is fake_agent
-        assert message == "hello"
-        assert state_id == session_id
-        assert session_id == fake_agent.id
-        assert persistent is True
-        assert timeout == 600
-        assert stream_mode == RouteStreamMode.UNTIL_SETTLED
-        return type(
-            "RouteResultStub",
-            (),
-            {
-                "action": "submitted",
-                "state_id": session_id,
-                "stream": _stream(),
-            },
-        )()
-
-    monkeypatch.setattr(
-        scheduler,
-        "route_root_input",
-        fake_route_root_input,
-    )
-
     async with client.stream(
         "POST",
         f"/api/sessions/{session_id}/input",
         json={"message": "hello"},
+        headers={"Idempotency-Key": "chat-1"},
+        timeout=5.0,
     ) as response:
         assert response.status_code == 200
         lines = [line async for line in response.aiter_lines()]
 
-    assert any(line == "event: step_delta" for line in lines)
-    assert any(line == "event: run_completed" for line in lines)
+    assert any(line == "event: session_turn" for line in lines)
+    assert any("stub reply" in line for line in lines if line.startswith("data:"))
+    assert any(
+        '"kind": "session"' in line for line in lines if line.startswith("data:")
+    )
 
 
 @pytest.mark.asyncio
-async def test_session_input_continues_stream_after_root_sleeping(
-    client,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_session_input_continues_as_plain_turns(client) -> None:
     runtime = _runtime(client)
     await runtime.agent_registry.create_agent(
         AgentConfigRecord(
@@ -248,196 +184,28 @@ async def test_session_input_continues_stream_after_root_sleeping(
     create_resp = await client.post("/api/agents/agent-1/sessions")
     session_id = create_resp.json()["session_id"]
 
-    class FakeAgent:
-        def __init__(self, agent_id: str) -> None:
-            self.id = agent_id
-
-        async def close(self) -> None:
-            pass
-
-    fake_agent = FakeAgent(session_id)
-    assert runtime.agent_runtime_cache is not None
-    monkeypatch.setattr(
-        runtime.agent_runtime_cache,
-        "get_or_create_runtime_agent",
-        AsyncMock(return_value=fake_agent),
-    )
-
-    scheduler = runtime.scheduler
-    assert scheduler is not None
-
-    async def _continuous_stream() -> object:
-        yield RunStartedEvent(
-            session_id=session_id,
-            run_id="run-1",
-            agent_id=session_id,
-            parent_run_id=None,
-            depth=0,
-        )
-        yield StepDeltaEvent(
-            session_id=session_id,
-            run_id="run-1",
-            agent_id=session_id,
-            parent_run_id=None,
-            depth=0,
-            step_id="step-1",
-            delta=StepDelta(content="Waiting on child"),
-        )
-        yield RunCompletedEvent(
-            session_id=session_id,
-            run_id="run-1",
-            agent_id=session_id,
-            parent_run_id=None,
-            depth=0,
-            response="sleep",
-            termination_reason=TerminationReason.SLEEPING,
-        )
-        yield RunStartedEvent(
-            session_id=session_id,
-            run_id="run-2",
-            agent_id=session_id,
-            parent_run_id=None,
-            depth=0,
-        )
-        yield StepDeltaEvent(
-            session_id=session_id,
-            run_id="run-2",
-            agent_id=session_id,
-            parent_run_id=None,
-            depth=0,
-            step_id="step-2",
-            delta=StepDelta(content="Child done"),
-        )
-        yield RunCompletedEvent(
-            session_id=session_id,
-            run_id="run-2",
-            agent_id=session_id,
-            parent_run_id=None,
-            depth=0,
-            response="final",
-        )
-
-    async def fake_route_root_input(
-        message: str,
-        *,
-        agent,
-        state_id: str | None,
-        session_id: str,
-        persistent: bool,
-        timeout: int | None,
-        stream_mode: RouteStreamMode,
-    ):
-        assert agent is fake_agent
-        assert message == "hello"
-        assert state_id == session_id
-        assert session_id == fake_agent.id
-        assert persistent is True
-        assert timeout == 600
-        assert stream_mode == RouteStreamMode.UNTIL_SETTLED
-        return type(
-            "RouteResultStub",
-            (),
-            {
-                "action": "submitted",
-                "state_id": session_id,
-                "stream": _continuous_stream(),
-            },
-        )()
-
-    monkeypatch.setattr(
-        scheduler,
-        "route_root_input",
-        fake_route_root_input,
-    )
+    async with client.stream(
+        "POST",
+        f"/api/sessions/{session_id}/input",
+        json={"message": "first"},
+        headers={"Idempotency-Key": "chat-a"},
+        timeout=5.0,
+    ) as response:
+        assert response.status_code == 200
+        first_lines = [line async for line in response.aiter_lines()]
 
     async with client.stream(
         "POST",
         f"/api/sessions/{session_id}/input",
-        json={"message": "hello"},
+        json={"message": "second"},
+        headers={"Idempotency-Key": "chat-b"},
+        timeout=5.0,
     ) as response:
         assert response.status_code == 200
-        lines = [line async for line in response.aiter_lines()]
+        second_lines = [line async for line in response.aiter_lines()]
 
-    assert sum(1 for line in lines if line == "event: run_started") == 2
-    assert sum(1 for line in lines if line == "event: run_completed") == 2
-    assert any("run-2" in line for line in lines)
-
-
-@pytest.mark.asyncio
-async def test_session_input_fallback_uses_last_run_result(
-    client,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = _runtime(client)
-    await runtime.agent_registry.create_agent(
-        AgentConfigRecord(
-            id="agent-1",
-            name="agent-one",
-            model_provider="openai",
-            model_name="gpt-test",
-        )
-    )
-    create_resp = await client.post("/api/agents/agent-1/sessions")
-    session_id = create_resp.json()["session_id"]
-
-    class FakeAgent:
-        def __init__(self, agent_id: str) -> None:
-            self.id = agent_id
-
-        async def close(self) -> None:
-            pass
-
-    fake_agent = FakeAgent(session_id)
-    assert runtime.agent_runtime_cache is not None
-    monkeypatch.setattr(
-        runtime.agent_runtime_cache,
-        "get_or_create_runtime_agent",
-        AsyncMock(return_value=fake_agent),
-    )
-
-    scheduler = runtime.scheduler
-    assert scheduler is not None
-    await scheduler._store.save_state(
-        AgentState(
-            id=session_id,
-            session_id=session_id,
-            status=AgentStateStatus.IDLE,
-            task="hello",
-            is_persistent=True,
-            last_run_result=SchedulerRunResult(
-                run_id="run-1",
-                termination_reason=TerminationReason.TIMEOUT,
-                error="took too long",
-            ),
-        )
-    )
-
-    async def fake_route_root_input(*args, **kwargs):
-        del args, kwargs
-        return type(
-            "RouteResultStub",
-            (),
-            {
-                "action": "steered",
-                "state_id": session_id,
-                "stream": None,
-            },
-        )()
-
-    monkeypatch.setattr(scheduler, "route_root_input", fake_route_root_input)
-
-    async with client.stream(
-        "POST",
-        f"/api/sessions/{session_id}/input",
-        json={"message": "hello"},
-    ) as response:
-        assert response.status_code == 200
-        lines = [line async for line in response.aiter_lines()]
-
-    payload_lines = [line for line in lines if line.startswith("data: ")]
-    assert payload_lines
-    assert '"last_run_result"' in payload_lines[0]
-    assert '"termination_reason": "timeout"' in payload_lines[0]
+    assert any(line == "event: session_turn" for line in first_lines)
+    assert any(line == "event: session_turn" for line in second_lines)
 
 
 @pytest.mark.asyncio
@@ -450,9 +218,21 @@ async def test_session_input_returns_404_for_missing_session(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_input_returns_404_when_session_base_agent_missing(
+async def test_session_input_accepts_session_even_if_base_agent_missing(
     client,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Gateway owns the turn; missing agent fails later at dispatch, not at accept."""
+
+    async def _raise_missing(self, session_id, user_message, *, idempotency_key):
+        del self, session_id, user_message, idempotency_key
+        raise BaseAgentNotFoundError("missing-agent")
+
+    monkeypatch.setattr(
+        SessionGateway,
+        "start_user_message",
+        _raise_missing,
+    )
     runtime = _runtime(client)
     assert runtime.session_store is not None
     await runtime.session_store.upsert_session(
@@ -460,14 +240,19 @@ async def test_session_input_returns_404_when_session_base_agent_missing(
             id="session-1",
             chat_context_scope_id=None,
             base_agent_id="missing-agent",
-            created_by="TEST",
+            created_by="test",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
         )
     )
 
-    response = await client.post(
+    async with client.stream(
+        "POST",
         "/api/sessions/session-1/input",
         json={"message": "hello"},
-    )
-    assert response.status_code == 404
+        headers={"Idempotency-Key": "orphan-agent"},
+        timeout=5.0,
+    ) as response:
+        assert response.status_code == 200
+        lines = [line async for line in response.aiter_lines()]
+    assert any(line == "event: session_error" for line in lines)

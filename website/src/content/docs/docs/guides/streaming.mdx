@@ -1,13 +1,13 @@
 ---
 title: Streaming
-description: Use Agiwo's shared streaming pipeline across Agent and Scheduler execution.
+description: Use Agiwo's shared streaming pipeline across Agent and MainAgent execution.
 ---
 
 # Streaming
 
 Agiwo is streaming-first. All LLM responses flow through the same streaming
-pipeline, whether you use `run()`, `run_stream()`, `start()`, or scheduler
-`route_root_input()`.
+pipeline, whether you use `run()`, `run_stream()`, `start()`, or
+`MainAgent.subscribe()` after `accept`.
 
 ## Use `run_stream()` for the simple path
 
@@ -29,41 +29,17 @@ async for event in handle.stream():
 result = await handle.wait()
 ```
 
-## Stream from the scheduler
+## Stream from Session / MainAgent
 
 ```python
-from agiwo.scheduler import Scheduler
+await main_agent.accept(user_message)
 
-async with Scheduler() as scheduler:
-    route = await scheduler.route_root_input(
-        "Research topic X",
-        agent=agent,
-        persistent=False,
-    )
-    assert route.stream is not None
-
-    async for event in route.stream:
-        if event.type == "step_delta" and event.delta.content:
-            print(event.delta.content, end="", flush=True)
+async for event in main_agent.subscribe():
+    if event.type == "step_delta" and event.delta.content:
+        print(event.delta.content, end="", flush=True)
 ```
 
-For an existing root:
-
-```python
-route = await scheduler.route_root_input(
-    "Continue the analysis",
-    agent=agent,
-    state_id=existing_state_id,
-)
-assert route.stream is not None
-
-async for event in route.stream:
-    process(event)
-```
-
-Only one live stream subscriber is allowed per root `state_id`. If you steer a
-currently `RUNNING` root, `RouteResult.stream` is `None` because the existing
-subscriber keeps consuming that root's stream.
+Console SSE follows the same `AgentStreamItem` shapes via `MainAgent.subscribe()`.
 
 ## Event shapes
 
@@ -81,5 +57,4 @@ subscriber keeps consuming that root's stream.
 - `run_completed`
 - `run_failed`
 
-This lets one stream consumer work across direct agent runs and
-scheduler-managed runs.
+This lets one stream consumer work across direct agent runs and Session turns.

@@ -1,6 +1,5 @@
 """SQLite-backed run-log storage."""
 
-import asyncio
 import json
 from typing import Literal
 
@@ -11,7 +10,6 @@ from agiwo.agent.models.log import (
     RunLogEntry,
     RunLogEntryKind,
     RunRolledBack,
-    StepCondensedContentUpdated,
     build_compact_metadata_from_entry,
 )
 from agiwo.agent.models.run import CompactMetadata, RunView
@@ -29,6 +27,7 @@ from agiwo.agent.storage.serialization import (
 from agiwo.utils.storage_support.sqlite_runtime import (
     SQLiteConnectionRuntime,
     execute_statements,
+    immediate_transaction,
 )
 from agiwo.utils.logging import get_logger
 
@@ -41,7 +40,6 @@ class SQLiteRunLogStorage(RunLogStorage):
     def __init__(self, db_path: str = "agiwo.db") -> None:
         self.db_path = db_path
         self._connection: aiosqlite.Connection | None = None
-        self._lock = asyncio.Lock()
         self._runtime = SQLiteConnectionRuntime(
             db_path=db_path,
             logger=logger,
@@ -136,35 +134,29 @@ class SQLiteRunLogStorage(RunLogStorage):
             current_max = max_sequences.get(entry.session_id, 0)
             if entry.sequence > current_max:
                 max_sequences[entry.session_id] = entry.sequence
-        async with self._lock:
-            await conn.execute("BEGIN IMMEDIATE")
-            try:
-                await conn.executemany(
+        async with immediate_transaction(conn, self.db_path):
+            await conn.executemany(
+                """
+                INSERT INTO run_log_entries
+                (session_id, sequence, run_id, agent_id, kind, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            for session_id, sequence in max_sequences.items():
+                await conn.execute(
                     """
-                    INSERT INTO run_log_entries
-                    (session_id, sequence, run_id, agent_id, kind, payload)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO counters (session_id, sequence)
+                    VALUES (?, ?)
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        sequence = CASE
+                            WHEN counters.sequence < excluded.sequence
+                            THEN excluded.sequence
+                            ELSE counters.sequence
+                        END
                     """,
-                    rows,
+                    (session_id, sequence),
                 )
-                for session_id, sequence in max_sequences.items():
-                    await conn.execute(
-                        """
-                        INSERT INTO counters (session_id, sequence)
-                        VALUES (?, ?)
-                        ON CONFLICT(session_id) DO UPDATE SET
-                            sequence = CASE
-                                WHEN counters.sequence < excluded.sequence
-                                THEN excluded.sequence
-                                ELSE counters.sequence
-                            END
-                        """,
-                        (session_id, sequence),
-                    )
-                await conn.commit()
-            except Exception:
-                await conn.rollback()
-                raise
 
     async def list_entries(
         self,
@@ -307,7 +299,6 @@ class SQLiteRunLogStorage(RunLogStorage):
             RunLogEntryKind.TERMINATION_DECIDED,
             RunLogEntryKind.COMPACTION_APPLIED,
             RunLogEntryKind.COMPACTION_FAILED,
-            RunLogEntryKind.STEP_BACK_APPLIED,
             RunLogEntryKind.RUN_ROLLED_BACK,
         )
         entries: list[RunLogEntry] = []
@@ -459,48 +450,6 @@ class SQLiteRunLogStorage(RunLogStorage):
             step_views = list(reversed(step_views))
         return step_views[:limit]
 
-    async def append_step_condensed_content(
-        self,
-        session_id: str,
-        run_id: str,
-        agent_id: str,
-        step_id: str,
-        condensed_content: str,
-    ) -> bool:
-        conn = await self._ensure_connection()
-        kinds = [
-            RunLogEntryKind.USER_STEP_COMMITTED.value,
-            RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
-            RunLogEntryKind.TOOL_STEP_COMMITTED.value,
-        ]
-        placeholders = ",".join("?" for _ in kinds)
-        async with conn.execute(
-            f"""
-            SELECT 1 FROM run_log_entries
-            WHERE session_id = ? AND kind IN ({placeholders})
-              AND json_extract(payload, '$.step_id') = ?
-            LIMIT 1
-            """,
-            [session_id, *kinds, step_id],
-        ) as cursor:
-            row = await cursor.fetchone()
-        if row is None:
-            return False
-        sequence = await self.allocate_sequence(session_id)
-        await self.append_entries(
-            [
-                StepCondensedContentUpdated(
-                    sequence=sequence,
-                    session_id=session_id,
-                    run_id=run_id,
-                    agent_id=agent_id,
-                    step_id=step_id,
-                    condensed_content=condensed_content,
-                )
-            ]
-        )
-        return True
-
     async def _get_latest_entry_for_kind(
         self,
         *,
@@ -608,38 +557,30 @@ class SQLiteRunLogStorage(RunLogStorage):
 
     async def allocate_sequence(self, session_id: str) -> int:
         conn = await self._ensure_connection()
-        async with self._lock:
-            await conn.execute("BEGIN IMMEDIATE")
-            try:
+        async with immediate_transaction(conn, self.db_path):
+            async with conn.execute(
+                "SELECT sequence FROM counters WHERE session_id = ?",
+                (session_id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row is None:
                 async with conn.execute(
-                    "SELECT sequence FROM counters WHERE session_id = ?",
+                    "SELECT COALESCE(MAX(sequence), 0) FROM run_log_entries WHERE session_id = ?",
                     (session_id,),
                 ) as cursor:
-                    row = await cursor.fetchone()
-                if row is None:
-                    async with conn.execute(
-                        "SELECT COALESCE(MAX(sequence), 0) FROM run_log_entries WHERE session_id = ?",
-                        (session_id,),
-                    ) as cursor:
-                        max_row = await cursor.fetchone()
-                    new_seq = (
-                        max_row[0] if max_row and max_row[0] is not None else 0
-                    ) + 1
-                    await conn.execute(
-                        "INSERT INTO counters (session_id, sequence) VALUES (?, ?)",
-                        (session_id, new_seq),
-                    )
-                else:
-                    new_seq = row[0] + 1
-                    await conn.execute(
-                        "UPDATE counters SET sequence = ? WHERE session_id = ?",
-                        (new_seq, session_id),
-                    )
-                await conn.commit()
-                return new_seq
-            except Exception:
-                await conn.rollback()
-                raise
+                    max_row = await cursor.fetchone()
+                new_seq = (max_row[0] if max_row and max_row[0] is not None else 0) + 1
+                await conn.execute(
+                    "INSERT INTO counters (session_id, sequence) VALUES (?, ?)",
+                    (session_id, new_seq),
+                )
+            else:
+                new_seq = row[0] + 1
+                await conn.execute(
+                    "UPDATE counters SET sequence = ? WHERE session_id = ?",
+                    (new_seq, session_id),
+                )
+            return new_seq
 
     @staticmethod
     def _loads(value: str):

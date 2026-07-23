@@ -1,12 +1,13 @@
 """Scheduler domain commands and dispatch actions."""
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Literal
 
-from agiwo.agent import AgentStreamItem, UserInput
+from agiwo.agent import UserInput
+from agiwo.agent.models.execution import RunExecutionRequest
 from agiwo.scheduler.models import (
     AgentState,
     PendingEvent,
@@ -25,11 +26,6 @@ CancelChildOutcome = Literal[
 ]
 
 
-class RouteStreamMode(str, Enum):
-    RUN_END = "run_end"
-    UNTIL_SETTLED = "until_settled"
-
-
 class DispatchReason(str, Enum):
     ROOT_SUBMIT = "root_submit"
     ROOT_QUEUED_INPUT = "root_queued_input"
@@ -45,6 +41,7 @@ class DispatchAction:
     reason: DispatchReason
     input_override: UserInput | None = None
     events: tuple[PendingEvent, ...] = ()
+    execution_request: RunExecutionRequest | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,20 +102,11 @@ class CancelChildResult:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class RouteResult:
-    action: Literal["submitted", "enqueued", "steered"]
-    state_id: str
-    stream: AsyncIterator[AgentStreamItem] | None = None
-
-
 __all__ = [
     "CancelChildRequest",
     "CancelChildResult",
     "DispatchAction",
     "DispatchReason",
-    "RouteStreamMode",
-    "RouteResult",
     "SleepRequest",
     "SleepResult",
     "SpawnChildRequest",

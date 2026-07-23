@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 from agiwo.agent.models.config import AgentConfig
 from agiwo.agent.hooks import (
-    DefaultMemoryHook,
     HookGroup,
     HookPhase,
     HookRegistration,
@@ -70,6 +69,8 @@ def build_agent_hooks(
     else:
         resolved = HookRegistry(list(hooks or []))
     if not resolved.has_phase(HookPhase.ASSEMBLE_CONTEXT):
+        from agiwo.memory.defaults import DefaultMemoryHook  # noqa: PLC0415
+
         memory_hook = DefaultMemoryHook(
             root_path=config.options.get_effective_root_path()
         )

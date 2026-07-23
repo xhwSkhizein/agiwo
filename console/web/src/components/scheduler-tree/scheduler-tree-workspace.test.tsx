@@ -11,7 +11,6 @@ const apiMocks = vi.hoisted(() => ({
   getSchedulerTree: vi.fn(),
   getAgentState: vi.fn(),
   getPendingEvents: vi.fn(),
-  steerAgent: vi.fn(),
   cancelAgent: vi.fn(),
   resumeAgent: vi.fn(),
 }));
@@ -23,7 +22,6 @@ vi.mock("@/lib/api", async () => {
     getSchedulerTree: apiMocks.getSchedulerTree,
     getAgentState: apiMocks.getAgentState,
     getPendingEvents: apiMocks.getPendingEvents,
-    steerAgent: apiMocks.steerAgent,
     cancelAgent: apiMocks.cancelAgent,
     resumeAgent: apiMocks.resumeAgent,
   };
@@ -141,7 +139,7 @@ describe("SchedulerTreeWorkspace", () => {
 
     expect(await screen.findByText("Scheduler Tree")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Cancel Root" })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Send Steering" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Enqueue Input" })).toBeInTheDocument();
   });
 
   test("hides root actions when a child node is selected and notifies selection changes", async () => {

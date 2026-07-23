@@ -85,6 +85,39 @@ def test_normalize_usage_metrics_openai_responses_nested_cached_tokens():
     assert result["cache_read_tokens"] == 3
 
 
+def test_normalize_usage_metrics_openai_chat_completions_prompt_tokens_details():
+    """Chat Completions nests cache hits under prompt_tokens_details.cached_tokens."""
+    usage_data = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 50,
+        "total_tokens": 1050,
+        "prompt_tokens_details": {"cached_tokens": 800},
+    }
+
+    result = normalize_usage_metrics(usage_data)
+
+    assert result["input_tokens"] == 1000
+    assert result["output_tokens"] == 50
+    assert result["total_tokens"] == 1050
+    assert result["cache_read_tokens"] == 800
+
+
+def test_normalize_usage_metrics_openai_chat_completions_sdk_object():
+    class PromptTokensDetails:
+        cached_tokens = 800
+
+    class CompletionUsage:
+        prompt_tokens = 1000
+        completion_tokens = 50
+        total_tokens = 1050
+        prompt_tokens_details = PromptTokensDetails()
+
+    result = normalize_usage_metrics(CompletionUsage())
+
+    assert result["cache_read_tokens"] == 800
+    assert result["input_tokens"] == 1000
+
+
 def test_normalize_anthropic_stop_reason_maps_shared_semantics():
     assert normalize_anthropic_stop_reason("tool_use") == "tool_calls"
     assert normalize_anthropic_stop_reason("max_tokens") == "length"
