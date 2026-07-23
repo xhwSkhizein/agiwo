@@ -88,6 +88,7 @@ class MainAgent:
             self._session_intent_store = session_intent_store
         self._pending: list[QueueItem] = []
         self._drain_lock = asyncio.Lock()
+        self._cancelling = False
         self._handle: AgentExecutionHandle | None = None
         self._completion_task: asyncio.Task[None] | None = None
         self._worker_service = None
@@ -184,6 +185,17 @@ class MainAgent:
             output = await handle.wait()
         except asyncio.CancelledError:
             pass
+        except Exception:
+            # The failure fact already lives in the RunLog (RunFailed fact);
+            # this keeps the SDK-side structured trail and prevents the
+            # background completion task from escaping with an unretrieved
+            # exception.
+            logger.error(
+                "main_agent_run_failed",
+                session_id=self._session_id,
+                run_id=handle.run_id,
+                exc_info=True,
+            )
         finally:
             if output is not None:
                 await self._maybe_append_run_report(handle, output)
@@ -258,6 +270,8 @@ class MainAgent:
         """
         async with self._drain_lock:
             while (item := self.peek_pending()) is not None:
+                if self._cancelling:
+                    return
                 handle = self._handle
                 if handle is not None and handle.is_active:
                     message = self._queue_item_to_message(item)
@@ -329,17 +343,43 @@ class MainAgent:
         return self._pending.pop(0)
 
     async def cancel(self, reason: str | None = None) -> None:
-        """Cancel the current run, Workers, and return to idle."""
-        if self._worker_service is not None:
-            await self._worker_service.cancel_all_workers(reason or "Cancelled by user")
-        handle = self._handle
-        completion_task = self._completion_task
-        if handle is not None:
-            handle.cancel(reason)
-        if completion_task is not None:
-            await completion_task
-        self._handle = None
-        self._completion_task = None
+        """Cancel the current run, Workers, and return to idle.
+
+        Single-loop constraint: ``_cancelling`` is a plain in-process flag,
+        so one MainAgent instance must live on one event loop (the Console
+        deployment shape: one instance per session per loop).
+        """
+        self._cancelling = True
+        try:
+            if self._worker_service is not None:
+                await self._worker_service.cancel_all_workers(
+                    reason or "Cancelled by user"
+                )
+            handle = self._handle
+            completion_task = self._completion_task
+            if handle is not None:
+                handle.cancel(reason)
+            if completion_task is not None:
+                await completion_task
+            # cancel_all_workers already cancelled every Worker, so no new
+            # reports can arrive; resuming a cancelled run from a leftover
+            # report would violate the caller's cancel intent (and its
+            # run_id no longer passes the COMPLETED resume check anyway).
+            self._discard_pending_on_cancel(reason)
+        finally:
+            self._cancelling = False
+            self._handle = None
+            self._completion_task = None
+
+    def _discard_pending_on_cancel(self, reason: str | None) -> None:
+        while (item := self.ack_pending()) is not None:
+            if item.kind is QueueItemKind.WORKER_REPORT:
+                logger.info(
+                    "worker_report_discarded_on_cancel",
+                    session_id=self._session_id,
+                    run_id=item.run_id,
+                    reason=reason,
+                )
 
     def subscribe(self) -> AsyncIterator[AgentStreamItem]:
         """Subscribe to live stream items for the current run."""

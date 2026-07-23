@@ -185,3 +185,9 @@ class TestSessionCancel:
         assert data["session_id"] == "session-2"
         assert data["state_id"] == "session-2"
         assert running_main_agent.state is MainAgentState.IDLE
+
+        # After cancel the same MainAgent must accept a new turn (restart).
+        restarted = await running_main_agent.accept("after cancel")
+        assert restarted is not None
+        assert running_main_agent.accept_calls == 1
+        assert running_main_agent.state is MainAgentState.RUNNING

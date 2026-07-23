@@ -114,6 +114,7 @@ class FakeMainAgent:
         self.agent = FakeAgent(agent_id)
         self.state = state
         self.closed = False
+        self.accept_calls = 0
         self._stream_response = stream_response
 
     async def close(self) -> None:
@@ -123,6 +124,13 @@ class FakeMainAgent:
     async def cancel(self, reason: str | None = None) -> None:
         del reason
         self.state = MainAgentState.IDLE
+
+    async def accept(self, user_input: object) -> object | None:
+        """Stub accept used by cancel-then-restart console assertions."""
+        del user_input
+        self.accept_calls += 1
+        self.state = MainAgentState.RUNNING
+        return object()
 
     def subscribe(self):
         async def _gen():
