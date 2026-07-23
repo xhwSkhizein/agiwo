@@ -10,7 +10,7 @@ import pytest
 
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig, AgentOptions
-from agiwo.agent import RunCompletedEvent, TerminationReason
+from agiwo.agent import TerminationReason
 from agiwo.agent import HookPhase, HookRegistry, transform
 from agiwo.agent import ChannelContext, ContentPart, ContentType
 from agiwo.agent import build_committed_step_entry
@@ -20,7 +20,7 @@ from agiwo.agent.storage.base import InMemoryRunLogStorage
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.llm.base import Model, StreamChunk
 from agiwo.scheduler._tick import propagate_signals
-from agiwo.scheduler.commands import DispatchAction, DispatchReason, RouteStreamMode
+from agiwo.scheduler.commands import DispatchAction, DispatchReason
 from agiwo.scheduler.models import (
     AgentState,
     AgentStateStatus,
@@ -133,6 +133,22 @@ def _make_agent(
         tools=tools,
         hooks=hooks,
         id=id,
+    )
+
+
+async def _submit_root(
+    scheduler: Scheduler,
+    agent: Agent,
+    task: str,
+    *,
+    session_id: str | None = None,
+    persistent: bool = False,
+) -> str:
+    return await scheduler._submit(
+        agent,
+        task,
+        session_id=session_id,
+        persistent=persistent,
     )
 
 
@@ -262,10 +278,7 @@ class TestSchedulerPrepareAgent:
             model = MockModel([_simple_completion("Hello")])
             agent = _make_agent(name="test", model=model, id="test", tools=[])
 
-            result = await scheduler.route_root_input(
-                "Hello", agent=agent, stream_mode=RouteStreamMode.UNTIL_SETTLED
-            )
-            state_id = result.state_id
+            state_id = await _submit_root(scheduler, agent, "Hello")
             registered = scheduler.get_registered_agent(state_id)
             assert registered is not None
             assert registered is not agent
@@ -285,9 +298,7 @@ class TestSchedulerPrepareAgent:
                 name="test", model=model, id="test", tools=[], options=opts
             )
 
-            await scheduler.route_root_input(
-                "Hello", agent=agent, stream_mode=RouteStreamMode.UNTIL_SETTLED
-            )
+            await _submit_root(scheduler, agent, "Hello")
 
             tool_names = {t.name for t in agent.tools}
             assert "spawn_child_agent" not in tool_names
@@ -302,9 +313,7 @@ class TestSchedulerPrepareAgent:
             model = MockModel([_simple_completion("Hello")])
             agent = _make_agent(name="test", model=model, id="test", tools=[])
 
-            await scheduler.route_root_input(
-                "Hello", agent=agent, stream_mode=RouteStreamMode.UNTIL_SETTLED
-            )
+            await _submit_root(scheduler, agent, "Hello")
             assert scheduler.get_registered_agent("test") is not None
 
 
@@ -315,10 +324,7 @@ class TestSchedulerSubmit:
             model = MockModel([_simple_completion("Hello")])
             agent = _make_agent(name="test", model=model, id="test", tools=[])
 
-            result = await scheduler.route_root_input(
-                "Hello", agent=agent, stream_mode=RouteStreamMode.UNTIL_SETTLED
-            )
-            state_id = result.state_id
+            state_id = await _submit_root(scheduler, agent, "Hello")
             assert state_id == "test"
 
             state = await scheduler._store.get_state("test")
@@ -334,13 +340,7 @@ class TestSchedulerSubmit:
             model = MockModel([_simple_completion("Hello")])
             agent = _make_agent(name="persist", model=model, id="persist", tools=[])
 
-            result = await scheduler.route_root_input(
-                "Hello",
-                agent=agent,
-                persistent=True,
-                stream_mode=RouteStreamMode.UNTIL_SETTLED,
-            )
-            state_id = result.state_id
+            state_id = await _submit_root(scheduler, agent, "Hello", persistent=True)
             state = await scheduler._store.get_state(state_id)
             assert state is not None
             assert state.is_persistent is True
@@ -363,10 +363,8 @@ class TestSchedulerSubmit:
         model = MockModel()
         agent = _make_agent(name="test", model=model, id="test", tools=[])
 
-        with pytest.raises(RuntimeError, match="Failed to steer"):
-            await scheduler.route_root_input(
-                "Another task", agent=agent, stream_mode=RouteStreamMode.UNTIL_SETTLED
-            )
+        with pytest.raises(RuntimeError, match="already active"):
+            await scheduler._submit(agent, "Another task")
 
         await scheduler.stop()
 
@@ -379,18 +377,8 @@ class TestSchedulerSimpleCompletion:
         agent = _make_agent(name="simple", model=model, id="simple", tools=[])
 
         async with Scheduler(_fast_config()) as scheduler:
-            route_result = await scheduler.route_root_input(
-                "What is the answer?",
-                agent=agent,
-                stream_mode=RouteStreamMode.RUN_END,
-                timeout=_TEST_RUN_TIMEOUT,
-            )
-            # Consume stream to get result
-            result = None
-            async for item in route_result.stream:
-                if isinstance(item, RunCompletedEvent):
-                    result = item
-                    break
+            state_id = await _submit_root(scheduler, agent, "What is the answer?")
+            result = await scheduler.wait_for(state_id, timeout=_TEST_RUN_TIMEOUT)
 
         assert result.termination_reason == TerminationReason.COMPLETED
         assert result.response == "The answer is 42"
@@ -408,10 +396,8 @@ class TestSchedulerCreateChildAgent:
             tools=[],
             system_prompt="Be helpful",
         )
-        result = await scheduler.route_root_input(
-            "root task", agent=parent, stream_mode=RouteStreamMode.UNTIL_SETTLED
-        )
-        state_id = result.state_id
+        result_state_id = await _submit_root(scheduler, parent, "root task")
+        state_id = result_state_id
         assert state_id == "parent"
 
         state = AgentState(
@@ -450,10 +436,8 @@ class TestSchedulerCreateChildAgent:
             tools=[],
             system_prompt="Default prompt",
         )
-        result = await scheduler.route_root_input(
-            "root task", agent=parent, stream_mode=RouteStreamMode.UNTIL_SETTLED
-        )
-        state_id = result.state_id
+        result_state_id = await _submit_root(scheduler, parent, "root task")
+        state_id = result_state_id
         assert state_id == "parent"
 
         state = AgentState(
@@ -484,10 +468,8 @@ class TestSchedulerCreateChildAgent:
             tools=[],
             system_prompt="Default prompt",
         )
-        result = await scheduler.route_root_input(
-            "root task", agent=parent, stream_mode=RouteStreamMode.UNTIL_SETTLED
-        )
-        state_id = result.state_id
+        result_state_id = await _submit_root(scheduler, parent, "root task")
+        state_id = result_state_id
         assert state_id == "parent"
 
         state = AgentState(
@@ -518,10 +500,8 @@ class TestSchedulerCreateChildAgent:
             tools=[],
             system_prompt=parent_system_prompt,
         )
-        result = await scheduler.route_root_input(
-            "root task", agent=parent, stream_mode=RouteStreamMode.UNTIL_SETTLED
-        )
-        state_id = result.state_id
+        result_state_id = await _submit_root(scheduler, parent, "root task")
+        state_id = result_state_id
         assert state_id == "parent-fork"
 
         # Get the runtime clone from scheduler (this is the actual agent that will spawn child)
@@ -939,7 +919,7 @@ class TestSchedulerEnqueueInput:
         await scheduler.stop()
 
     @pytest.mark.asyncio
-    async def test_enqueue_input_rejects_running(self):
+    async def test_enqueue_input_rejects_running_without_live_handle(self):
         scheduler = Scheduler(_fast_config())
         store = scheduler._store
 
@@ -953,7 +933,7 @@ class TestSchedulerEnqueueInput:
         )
         await store.save_state(state)
 
-        with pytest.raises(RuntimeError, match="IDLE or FAILED"):
+        with pytest.raises(RuntimeError, match="no live handle"):
             await scheduler.enqueue_input("root", "New work")
         await scheduler.stop()
 
@@ -972,7 +952,7 @@ class TestSchedulerEnqueueInput:
         )
         await store.save_state(state)
 
-        with pytest.raises(RuntimeError, match="IDLE or FAILED"):
+        with pytest.raises(RuntimeError, match="Cannot enqueue input"):
             await scheduler.enqueue_input("root", "Resume work")
         await scheduler.stop()
 
@@ -1101,8 +1081,7 @@ class TestSchedulerQueuedMailbox:
             )
         )
 
-        steered = await scheduler.steer("root", "second input")
-        assert steered is True
+        await scheduler.enqueue_input("root", "second input")
 
         await scheduler.tick()
         result = await scheduler.wait_for("root", timeout=_TEST_RUN_TIMEOUT)
@@ -1111,149 +1090,6 @@ class TestSchedulerQueuedMailbox:
         assert "first input" in result.response
         assert "second input" in result.response
         await scheduler.stop()
-
-
-class TestSchedulerStream:
-    @pytest.mark.asyncio
-    async def test_route_root_input_stream_survives_fast_completion_before_iteration(
-        self,
-    ):
-        async with Scheduler(_fast_config()) as scheduler:
-            model = MockModel([_simple_completion("Fast answer")])
-            agent = _make_agent(name="stream-race", model=model, id="stream-race")
-
-            result = await scheduler.route_root_input(
-                "What happened?",
-                agent=agent,
-                session_id="sess-stream-race",
-                timeout=0.1,
-                persistent=True,
-                stream_mode=RouteStreamMode.RUN_END,
-            )
-
-            await asyncio.sleep(0.05)
-            items = [item async for item in result.stream]
-
-        assert items
-        assert items[0].type == "run_started"
-        assert isinstance(items[-1], RunCompletedEvent)
-        assert items[-1].response == "Fast answer"
-
-    @pytest.mark.asyncio
-    async def test_stream_new_root_run(self):
-        async with Scheduler(_fast_config()) as scheduler:
-            model = MockModel([_simple_completion("Streamed answer")])
-            agent = _make_agent(
-                name="stream-root", model=model, id="stream-root", tools=[]
-            )
-
-            route_result = await scheduler.route_root_input(
-                "What happened?",
-                agent=agent,
-                session_id="sess-stream",
-                timeout=_TEST_RUN_TIMEOUT,
-                stream_mode=RouteStreamMode.RUN_END,
-            )
-            items = [item async for item in route_result.stream]
-
-        assert items
-        assert isinstance(items[-1], RunCompletedEvent)
-        assert items[-1].response == "Streamed answer"
-
-    @pytest.mark.asyncio
-    async def test_stream_enqueues_input_for_persistent_root(self):
-        async with Scheduler(_fast_config()) as scheduler:
-            model = MockModel(
-                [
-                    _simple_completion("First answer"),
-                    _simple_completion("Second answer"),
-                ]
-            )
-            agent = _make_agent(
-                name="stream-persist", model=model, id="stream-persist", tools=[]
-            )
-
-            state_id = await scheduler._submit(
-                agent,
-                "first",
-                session_id="sess-persist",
-            )
-            first = await scheduler.wait_for(state_id, timeout=_TEST_RUN_TIMEOUT)
-            assert first.response == "First answer"
-
-            route_result = await scheduler.route_root_input(
-                "second",
-                agent=agent,
-                state_id=state_id,
-                timeout=_TEST_RUN_TIMEOUT,
-                stream_mode=RouteStreamMode.RUN_END,
-            )
-            items = [item async for item in route_result.stream]
-
-        assert items
-        assert isinstance(items[-1], RunCompletedEvent)
-        assert items[-1].response == "Second answer"
-
-    @pytest.mark.asyncio
-    async def test_persistent_root_max_steps_per_run_stream_settles_and_can_continue(
-        self,
-    ):
-        async with Scheduler(_fast_config()) as scheduler:
-            model = MockModel(
-                [
-                    _tool_call("noop"),
-                    _simple_completion("Continued answer"),
-                ]
-            )
-            agent = _make_agent(
-                name="stream-max-steps",
-                model=model,
-                id="stream-max-steps",
-                tools=[NoopTool()],
-                options=AgentOptions(
-                    max_steps_per_run=1,
-                    enable_termination_summary=False,
-                ),
-            )
-
-            first = await scheduler.route_root_input(
-                "first",
-                agent=agent,
-                session_id="sess-max-steps",
-                timeout=_TEST_RUN_TIMEOUT,
-                persistent=True,
-                stream_mode=RouteStreamMode.UNTIL_SETTLED,
-            )
-            first_items = [item async for item in first.stream]
-            state = await scheduler.get_state("stream-max-steps")
-
-            assert state is not None
-            assert state.status == AgentStateStatus.IDLE
-            assert state.last_run_result is not None
-            assert (
-                state.last_run_result.termination_reason == TerminationReason.MAX_STEPS
-            )
-            assert isinstance(first_items[-1], RunCompletedEvent)
-            assert first_items[-1].termination_reason == TerminationReason.MAX_STEPS
-
-            second = await scheduler.route_root_input(
-                "continue",
-                agent=agent,
-                state_id="stream-max-steps",
-                timeout=_TEST_RUN_TIMEOUT,
-                persistent=True,
-                stream_mode=RouteStreamMode.UNTIL_SETTLED,
-            )
-            second_items = [item async for item in second.stream]
-
-        assert second_items
-        assert isinstance(second_items[-1], RunCompletedEvent)
-        assert second_items[-1].response == "Continued answer"
-        assert second_items[-1].termination_reason == TerminationReason.COMPLETED
-
-    @pytest.mark.asyncio
-    async def test_stream_rejects_second_subscriber_for_same_root(self):
-        pytest.skip("Not applicable with route_root_input API")
 
 
 class TestSchedulerCancel:
@@ -1543,13 +1379,9 @@ class TestSchedulerShutdown:
             model = EchoMessagesModel(delay_seconds=0.2)
             agent = _make_agent(name="root", model=model, id="root", tools=[])
 
-            result = await scheduler.route_root_input(
-                "initial",
-                agent=agent,
-                session_id="sess",
-                stream_mode=RouteStreamMode.UNTIL_SETTLED,
+            state_id = await _submit_root(
+                scheduler, agent, "initial", session_id="sess", persistent=True
             )
-            state_id = result.state_id
 
             await asyncio.sleep(0.05)
             result = await scheduler.shutdown(state_id)
@@ -1625,13 +1457,9 @@ class TestSchedulerWaiters:
             model = EchoMessagesModel(delay_seconds=0.1)
             agent = _make_agent(name="multiwait", model=model, id="multiwait", tools=[])
 
-            result = await scheduler.route_root_input(
-                "hello",
-                agent=agent,
-                session_id="sess-multiwait",
-                stream_mode=RouteStreamMode.UNTIL_SETTLED,
+            state_id = await _submit_root(
+                scheduler, agent, "hello", session_id="sess-multiwait"
             )
-            state_id = result.state_id
 
             first_task = asyncio.create_task(
                 scheduler.wait_for(state_id, timeout=_TEST_RUN_TIMEOUT)
@@ -1647,10 +1475,10 @@ class TestSchedulerWaiters:
         assert first.response == second.response
 
 
-class TestSchedulerSteer:
+class TestSchedulerEnqueueInputMailbox:
     @pytest.mark.asyncio
-    async def test_steer_urgent_writes_urgent_pending_event(self):
-        """steer(..., urgent=True) on WAITING state must set PendingEvent.urgent."""
+    async def test_enqueue_waiting_writes_urgent_user_hint(self):
+        """WAITING enqueue must set PendingEvent.urgent so the tick wakes immediately."""
         scheduler = Scheduler(_fast_config())
         await scheduler._store.save_state(
             AgentState(
@@ -1659,11 +1487,11 @@ class TestSchedulerSteer:
                 status=AgentStateStatus.WAITING,
                 task="root",
                 parent_id=None,
+                is_persistent=True,
             )
         )
 
-        ok = await scheduler.steer("waiting-root", "please continue", urgent=True)
-        assert ok is True
+        await scheduler.enqueue_input("waiting-root", "please continue")
 
         events = await scheduler._store.list_events(
             target_agent_id="waiting-root",
@@ -1673,7 +1501,7 @@ class TestSchedulerSteer:
         event = events[0]
         assert event.event_type == SchedulerEventType.USER_HINT
         assert event.urgent is True
-        # Payload uses the new structured ``user_input`` key only.
+        # Payload uses the structured ``user_input`` key only.
         assert "hint" not in event.payload
         decoded = UserMessage.from_storage_value(event.payload["user_input"])
         assert UserMessage.from_value(decoded).extract_text() == "please continue"
@@ -1681,22 +1509,24 @@ class TestSchedulerSteer:
         await scheduler.stop()
 
     @pytest.mark.asyncio
-    async def test_steer_defaults_to_non_urgent(self):
+    async def test_enqueue_queued_writes_non_urgent_user_hint(self):
         scheduler = Scheduler(_fast_config())
         await scheduler._store.save_state(
             AgentState(
-                id="waiting-root",
+                id="queued-root",
                 session_id="sess",
-                status=AgentStateStatus.WAITING,
+                status=AgentStateStatus.QUEUED,
                 task="root",
                 parent_id=None,
+                is_persistent=True,
+                pending_input="first",
             )
         )
 
-        await scheduler.steer("waiting-root", "just a hint")
+        await scheduler.enqueue_input("queued-root", "just a hint")
 
         events = await scheduler._store.list_events(
-            target_agent_id="waiting-root",
+            target_agent_id="queued-root",
             session_id="sess",
         )
         assert len(events) == 1
@@ -1705,7 +1535,7 @@ class TestSchedulerSteer:
         await scheduler.stop()
 
     @pytest.mark.asyncio
-    async def test_steer_preserves_structured_user_input(self):
+    async def test_enqueue_preserves_structured_user_input(self):
         """Multimodal UserMessage must round-trip through the PendingEvent payload."""
         scheduler = Scheduler(_fast_config())
         await scheduler._store.save_state(
@@ -1715,6 +1545,7 @@ class TestSchedulerSteer:
                 status=AgentStateStatus.WAITING,
                 task="root",
                 parent_id=None,
+                is_persistent=True,
             )
         )
 
@@ -1731,7 +1562,7 @@ class TestSchedulerSteer:
             context=ChannelContext(source="feishu", metadata={"chat_id": "oc-1"}),
         )
 
-        await scheduler.steer("waiting-root", user_input, urgent=True)
+        await scheduler.enqueue_input("waiting-root", user_input)
 
         events = await scheduler._store.list_events(
             target_agent_id="waiting-root",
@@ -1777,13 +1608,13 @@ class TestSchedulerRuntimeAgentReuse:
                 tools=[],
             )
 
-            result = await scheduler.route_root_input(
+            state_id = await _submit_root(
+                scheduler,
+                canonical,
                 "first turn",
-                agent=canonical,
                 session_id="sess-persist",
-                stream_mode=RouteStreamMode.UNTIL_SETTLED,
+                persistent=True,
             )
-            state_id = result.state_id
             first_output = await scheduler.wait_for(state_id, timeout=_TEST_RUN_TIMEOUT)
             assert first_output.termination_reason == TerminationReason.COMPLETED
             runtime_after_first = scheduler.get_registered_agent(state_id)
@@ -1843,13 +1674,9 @@ class TestSchedulerRuntimeAgentReuse:
             first_canonical = _make_agent(
                 name="persist", model=model_one, id="persist", tools=[]
             )
-            result = await scheduler.route_root_input(
-                "first",
-                agent=first_canonical,
-                session_id="sess-rebind",
-                stream_mode=RouteStreamMode.UNTIL_SETTLED,
+            state_id = await _submit_root(
+                scheduler, first_canonical, "first", session_id="sess-rebind"
             )
-            state_id = result.state_id
 
             await scheduler.wait_for(state_id, timeout=_TEST_RUN_TIMEOUT)
 

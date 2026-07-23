@@ -1,4 +1,9 @@
-"""Scheduler facade — lifecycle, public API, delegation to sub-modules."""
+"""Scheduler facade — waitset, cancel-subtree, and child delegation (ADR 0049).
+
+The Session **product** entry is ``MainAgent.accept`` (Console ``SessionGateway``).
+This module owns waitset, cancel/shutdown, child dispatch, and Worker parent
+registration — not Session chat entry.
+"""
 
 import asyncio
 import time
@@ -15,25 +20,11 @@ from agiwo.agent import (
 )
 from agiwo.agent.models.run import RUN_TERMINAL_STATUSES
 from agiwo.scheduler._runtime_agents import ensure_root_runtime_agent
-from agiwo.scheduler.route_stream import route_with_stream
 from agiwo.scheduler._tick import dispatch_action, tick as _tick
 from agiwo.scheduler._tree_ops import cancel_subtree, shutdown_subtree
-from agiwo.scheduler._wait import (
-    deadline_remaining,
-    resolve_routable_state,
-    wait_for_state_result,
-)
-from agiwo.scheduler.commands import (
-    DispatchAction,
-    DispatchReason,
-    RouteResult,
-    RouteStreamMode,
-)
-from agiwo.scheduler.execution import (
-    ExecutionDispatchResult,
-    ExecutionTreeNode,
-    SchedulerExecutionRequest,
-)
+from agiwo.scheduler._wait import wait_for_state_result
+from agiwo.scheduler.commands import DispatchAction, DispatchReason
+from agiwo.scheduler.execution import ExecutionTreeNode
 from agiwo.scheduler.engine_context import EngineContext
 from agiwo.scheduler.guard import TaskGuard
 from agiwo.scheduler.models import (
@@ -63,7 +54,11 @@ logger = get_logger(__name__)
 
 
 class Scheduler:
-    """Scheduler: lifecycle, tick loop, API, state machine, and runtime coordination."""
+    """Slim orchestration layer: waitset, cancel subtree, and child agent tree (ADR 0049).
+
+    Owns ``AgentState`` persistence and dispatch for spawned children. Session user
+    input and RunLog execution belong to ``MainAgent`` / the agent Loop — not here.
+    """
 
     def __init__(
         self,
@@ -198,6 +193,30 @@ class Scheduler:
     def get_registered_agent(self, state_id: str):
         return self._rt.agents.get(state_id)
 
+    async def register_worker_parent(
+        self,
+        *,
+        state_id: str,
+        session_id: str,
+        agent: Agent,
+    ) -> None:
+        """Register a session MainAgent as Worker spawn parent (ADR 0049 Wave D)."""
+        self._rt.agents[state_id] = agent
+        self._rt.canonical_agents[state_id] = agent
+        existing = await self._store.get_state(state_id)
+        if existing is not None:
+            return
+        await self._save_state(
+            AgentState(
+                id=state_id,
+                session_id=session_id,
+                status=AgentStateStatus.IDLE,
+                task="",
+                depth=0,
+                is_persistent=True,
+            )
+        )
+
     async def wait_for_nudge(self, timeout: float) -> None:
         try:
             await asyncio.wait_for(self._rt.nudge.wait(), timeout=timeout)
@@ -264,7 +283,21 @@ class Scheduler:
         *,
         agent: Agent | None = None,
     ) -> None:
+        """Enqueue user input for a persistent root (one Session entry replacement).
+
+        Session product chat still uses ``MainAgent.accept``. This method is the
+        Scheduler-tree control surface for persistent roots:
+
+        - ``IDLE`` / ``FAILED`` → queue as ``pending_input`` (next root cycle)
+        - ``RUNNING`` → live Loop ``enqueue_message``
+        - ``WAITING`` / ``QUEUED`` → ``USER_HINT`` mailbox event (WAITING is urgent
+          so an explicit operator enqueue wakes immediately)
+        """
         UserMessage.require_user_provided(user_input)
+        message = UserMessage.from_value(user_input)
+        if not message.has_content():
+            raise RuntimeError("Cannot enqueue empty user input")
+
         # Get or create lock for this state_id to prevent concurrent enqueue
         lock = self._rt.state_locks.setdefault(state_id, asyncio.Lock())
         async with lock:
@@ -275,112 +308,47 @@ class Scheduler:
                 raise RuntimeError(
                     f"Agent '{state_id}' is not persistent. Use submit() instead."
                 )
-            if not state.can_accept_enqueue_input():
-                raise RuntimeError(
-                    f"Agent '{state_id}' is {state.status.value}. "
-                    f"Cannot enqueue input (expected IDLE or FAILED)."
-                )
             if agent is not None:
                 await self._ensure_root_runtime_agent(agent, state_id)
 
-            await self._save_state(state.with_queued(pending_input=user_input))
-            self.nudge()
+            if state.status == AgentStateStatus.RUNNING:
+                handle = self._rt.execution_handles.get(state_id)
+                if handle is None:
+                    raise RuntimeError(
+                        f"Agent '{state_id}' is RUNNING but has no live handle"
+                    )
+                if not await handle.enqueue_message(message):
+                    raise RuntimeError(
+                        f"Agent '{state_id}' rejected enqueued user input"
+                    )
+                return
 
-    async def route_root_input(
-        self,
-        user_input: UserInput,
-        *,
-        agent: Agent,
-        state_id: str | None = None,
-        session_id: str | None = None,
-        abort_signal: AbortSignal | None = None,
-        persistent: bool = True,
-        agent_config_id: str | None = None,
-        timeout: float | None = None,
-        include_child_events: bool = True,
-        stream_mode: RouteStreamMode = RouteStreamMode.RUN_END,
-    ) -> RouteResult:
-        close_on_root_run_end = stream_mode == RouteStreamMode.RUN_END
-        lookup_id = state_id or agent.id
-        deadline = None if timeout is None else time.monotonic() + timeout
+            if state.status in (
+                AgentStateStatus.WAITING,
+                AgentStateStatus.QUEUED,
+            ):
+                event = PendingEvent.create_user_hint(
+                    id=str(uuid4()),
+                    target_agent_id=state_id,
+                    session_id=state.session_id,
+                    user_input=UserMessage.to_storage_value(message),
+                    created_at=datetime.now(timezone.utc),
+                    urgent=state.status == AgentStateStatus.WAITING,
+                )
+                await self._store.save_event(event)
+                self.nudge()
+                return
 
-        async def do_submit() -> str:
-            return await self._submit(
-                agent,
-                user_input,
-                session_id=session_id,
-                abort_signal=abort_signal,
-                persistent=persistent,
-                agent_config_id=agent_config_id,
-            )
-
-        current_state = await resolve_routable_state(
-            store=self._store,
-            rt=self._rt,
-            state_id=lookup_id,
-            deadline=deadline,
-        )
-
-        if current_state is None:
-            return await route_with_stream(
-                self._ctx,
-                root_state_id=agent.id,
-                action="submitted",
-                timeout=(
-                    deadline_remaining(deadline) if deadline is not None else timeout
-                ),
-                include_child_events=include_child_events,
-                close_on_root_run_end=close_on_root_run_end,
-                operation=do_submit,
-            )
-
-        if current_state.status in (
-            AgentStateStatus.RUNNING,
-            AgentStateStatus.WAITING,
-            AgentStateStatus.QUEUED,
-        ):
-            if current_state.status == AgentStateStatus.RUNNING:
-                return await self._steer_into_running(
-                    current_state,
-                    user_input,
+            if state.status not in (
+                AgentStateStatus.IDLE,
+                AgentStateStatus.FAILED,
+            ):
+                raise RuntimeError(
+                    f"Agent '{state_id}' is {state.status.value}. Cannot enqueue input."
                 )
 
-            return await self._steer_with_stream(
-                current_state,
-                user_input,
-                timeout=timeout,
-                include_child_events=include_child_events,
-                close_on_root_run_end=close_on_root_run_end,
-            )
-
-        if (
-            current_state.is_root
-            and current_state.is_persistent
-            and current_state.status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
-        ):
-            return await route_with_stream(
-                self._ctx,
-                root_state_id=current_state.id,
-                action="enqueued",
-                timeout=timeout,
-                include_child_events=include_child_events,
-                close_on_root_run_end=close_on_root_run_end,
-                operation=lambda: self._enqueue_and_return_state_id(
-                    state_id=current_state.id,
-                    agent=agent,
-                    user_input=user_input,
-                ),
-            )
-
-        return await route_with_stream(
-            self._ctx,
-            root_state_id=agent.id,
-            action="submitted",
-            timeout=timeout,
-            include_child_events=include_child_events,
-            close_on_root_run_end=close_on_root_run_end,
-            operation=do_submit,
-        )
+            await self._save_state(state.with_queued(pending_input=user_input))
+            self.nudge()
 
     async def wait_for(
         self,
@@ -449,82 +417,6 @@ class Scheduler:
         await self._cancel_subtree(state_id, reason)
         return True
 
-    async def _steer_into_running(
-        self,
-        state: AgentState,
-        user_input: UserInput,
-    ) -> RouteResult:
-        steered = await self.steer(state.id, user_input, urgent=False)
-        if not steered:
-            refreshed = await self._store.get_state(state.id)
-            if refreshed is not None and refreshed.status in ACTIVE_AGENT_STATUSES:
-                raise RuntimeError(
-                    f"Failed to steer active scheduler state '{state.id}'"
-                )
-        return RouteResult(action="steered", state_id=state.id)
-
-    async def _steer_with_stream(
-        self,
-        state: AgentState,
-        user_input: UserInput,
-        *,
-        timeout: float | None,
-        include_child_events: bool,
-        close_on_root_run_end: bool,
-    ) -> RouteResult:
-        urgent = state.status == AgentStateStatus.WAITING
-        sid = state.id
-
-        async def _do_steer() -> str:
-            steered = await self.steer(sid, user_input, urgent=urgent)
-            if not steered:
-                raise RuntimeError(f"Failed to steer scheduler state '{sid}'")
-            return sid
-
-        return await route_with_stream(
-            self._ctx,
-            root_state_id=sid,
-            action="steered",
-            timeout=timeout,
-            include_child_events=include_child_events,
-            close_on_root_run_end=close_on_root_run_end,
-            operation=_do_steer,
-        )
-
-    async def steer(
-        self,
-        state_id: str,
-        user_input: UserInput,
-        *,
-        urgent: bool = False,
-    ) -> bool:
-        UserMessage.require_user_provided(user_input)
-        message = UserMessage.from_value(user_input)
-        if not message.has_content():
-            return False
-
-        state = await self._store.get_state(state_id)
-        if state is None:
-            return False
-
-        if state.status == AgentStateStatus.RUNNING:
-            handle = self._rt.execution_handles.get(state_id)
-            if handle is None:
-                return False
-            return await handle.steer(message)
-
-        event = PendingEvent.create_user_hint(
-            id=str(uuid4()),
-            target_agent_id=state_id,
-            session_id=state.session_id,
-            user_input=UserMessage.to_storage_value(message),
-            created_at=datetime.now(timezone.utc),
-            urgent=urgent,
-        )
-        await self._store.save_event(event)
-        self.nudge()
-        return True
-
     async def shutdown(self, state_id: str) -> bool:
         state = await self._store.get_state(state_id)
         if state is None or not state.is_active():
@@ -544,128 +436,6 @@ class Scheduler:
 
         await self._ensure_root_runtime_agent(agent, state_id)
         return True
-
-    # -- Session / root execution facade (ADR 0048) ---------------------------
-
-    async def dispatch_execution(
-        self,
-        agent: Agent,
-        request: SchedulerExecutionRequest,
-    ) -> ExecutionDispatchResult:
-        """Start or attach a root Run with a preallocated ``run_id``.
-
-        Deterministic for duplicate delivery:
-        - no RunStarted yet → start
-        - RUNNING with live handle → attach
-        - terminal → do not restart
-        """
-        run_id = request.execution.run_id
-        state_id = request.state_id
-        await self._ensure_root_runtime_agent(agent, state_id)
-
-        existing = await self._rt.get_run_view(run_id)
-        if existing is not None:
-            if existing.status in RUN_TERMINAL_STATUSES:
-                return ExecutionDispatchResult(
-                    state_id=state_id,
-                    run_id=run_id,
-                    attached=False,
-                    status=existing.status,
-                )
-            if existing.status == RunStatus.RUNNING:
-                handle = self._rt.execution_handles.get(state_id)
-                if handle is not None and handle.run_id == run_id:
-                    return ExecutionDispatchResult(
-                        state_id=state_id,
-                        run_id=run_id,
-                        attached=True,
-                        status=RunStatus.RUNNING,
-                    )
-                # RunLog says RUNNING but no handle — treat as attachable/no restart
-                return ExecutionDispatchResult(
-                    state_id=state_id,
-                    run_id=run_id,
-                    attached=True,
-                    status=RunStatus.RUNNING,
-                )
-
-        lock = self._rt.state_locks.setdefault(state_id, asyncio.Lock())
-        async with lock:
-            # Re-check after lock (another worker may have started).
-            existing = await self._rt.get_run_view(run_id)
-            if existing is not None:
-                return ExecutionDispatchResult(
-                    state_id=state_id,
-                    run_id=run_id,
-                    attached=True,
-                    status=existing.status,
-                )
-
-            state = await self._store.get_state(state_id)
-            # Persistent roots rest in IDLE between Session root Runs; only busy
-            # statuses block a new preallocated root Run.
-            busy = frozenset(
-                {
-                    AgentStateStatus.PENDING,
-                    AgentStateStatus.RUNNING,
-                    AgentStateStatus.WAITING,
-                    AgentStateStatus.QUEUED,
-                }
-            )
-            if state is not None and state.status in busy:
-                raise RuntimeError(
-                    f"Agent '{state_id}' is already active "
-                    f"(status={state.status.value}); cannot dispatch another root"
-                )
-
-            if state is None:
-                state = AgentState(
-                    id=state_id,
-                    session_id=request.session_id,
-                    status=AgentStateStatus.RUNNING,
-                    task=(
-                        request.user_input
-                        if request.user_input is not None
-                        else UserMessage.from_system("")
-                    ),
-                    agent_config_id=request.agent_config_id,
-                    is_persistent=request.persistent,
-                    depth=0,
-                )
-            else:
-                state = state.with_updates(
-                    session_id=request.session_id,
-                    status=AgentStateStatus.RUNNING,
-                    task=(
-                        request.user_input
-                        if request.user_input is not None
-                        else UserMessage.from_system("")
-                    ),
-                    agent_config_id=request.agent_config_id
-                    if request.agent_config_id is not None
-                    else state.agent_config_id,
-                    is_persistent=request.persistent,
-                    pending_input=None,
-                    wake_condition=None,
-                    last_run_result=None,
-                )
-            await self._save_state(state)
-            await dispatch_action(
-                self._ctx,
-                DispatchAction(
-                    state=state,
-                    reason=DispatchReason.SESSION_ROOT,
-                    input_override=request.user_input,
-                    execution_request=request.execution,
-                ),
-            )
-            self.nudge()
-            return ExecutionDispatchResult(
-                state_id=state_id,
-                run_id=run_id,
-                attached=False,
-                status=RunStatus.RUNNING,
-            )
 
     async def get_run_view(self, run_id: str):
         return await self._rt.get_run_view(run_id)
@@ -792,25 +562,6 @@ class Scheduler:
         ]
         await asyncio.gather(*tasks)
 
-    async def inject_user_message(
-        self,
-        root_run_id: str,
-        message: UserInput,
-    ) -> None:
-        """Inject a system-notice user message into the live root Run context."""
-        view = await self.get_run_view(root_run_id)
-        if view is None:
-            raise ValueError(f"unknown run_id={root_run_id!r}")
-        handle = self._rt.find_handle_by_run_id(root_run_id)
-        if handle is None:
-            raise ValueError(
-                f"no live execution handle for run_id={root_run_id!r}; "
-                "cannot inject into an inactive Run"
-            )
-        ok = await handle.inject_system_user_message(message)
-        if not ok:
-            raise ValueError(f"inject rejected for run_id={root_run_id!r}")
-
     async def tick(self) -> None:
         await _tick(self._ctx)
 
@@ -862,16 +613,6 @@ class Scheduler:
             canonical_agent=canonical_agent,
             state_id=state_id,
         )
-
-    async def _enqueue_and_return_state_id(
-        self,
-        *,
-        state_id: str,
-        agent: Agent,
-        user_input: UserInput,
-    ) -> str:
-        await self.enqueue_input(state_id, user_input, agent=agent)
-        return state_id
 
 
 __all__ = ["Scheduler"]

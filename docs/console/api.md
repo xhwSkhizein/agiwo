@@ -240,21 +240,9 @@ Cancel a state and its descendants.
 }
 ```
 
-### `POST /api/scheduler/states/{state_id}/steer`
-
-Steer a root state (running inject or wake).
-
-**Request:**
-```json
-{
-  "message": "Focus on cost analysis instead",
-  "urgent": false
-}
-```
-
 ### `POST /api/scheduler/states/{state_id}/resume`
 
-Resume a persistent root with a new message.
+Enqueue input for a persistent root (`Scheduler.enqueue_input`: next cycle, live Loop, or USER_HINT).
 
 **Request:**
 ```json

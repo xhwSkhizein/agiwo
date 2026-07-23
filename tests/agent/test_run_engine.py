@@ -174,7 +174,7 @@ async def test_before_llm_message_rewrite_becomes_messages_rebuilt_fact() -> Non
     async def rewrite_messages(payload: dict) -> dict:
         updated = dict(payload)
         messages = list(payload["messages"])
-        messages.append({"role": "user", "content": "steered follow-up"})
+        messages.append({"role": "user", "content": "enqueued follow-up"})
         updated["messages"] = messages
         return updated
 
@@ -202,7 +202,7 @@ async def test_before_llm_message_rewrite_becomes_messages_rebuilt_fact() -> Non
     assert rebuilt.reason == "before_llm"
     assert rebuilt.messages[-1] == {
         "role": "user",
-        "content": "steered follow-up",
+        "content": "enqueued follow-up",
     }
     assert llm_started.messages == rebuilt.messages
 
@@ -219,7 +219,7 @@ async def test_before_llm_failure_records_accepted_steer_input_before_run_failed
         raise RuntimeError("before llm boom")
 
     session_runtime = SessionRuntime(
-        session_id="steer-failure-session",
+        session_id="pending-input-failure-session",
         run_log_storage=InMemoryRunLogStorage(),
     )
     context = RunContext(
@@ -261,7 +261,7 @@ async def test_before_llm_failure_records_accepted_steer_input_before_run_failed
     orchestrator = RunLoopOrchestrator(context, runtime)
 
     await orchestrator._start_run("hello")
-    accepted = await session_runtime.enqueue_steer("follow up")
+    accepted = await session_runtime.enqueue_message("follow up")
 
     assert accepted is True
 

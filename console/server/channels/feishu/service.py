@@ -10,23 +10,15 @@ import asyncio
 import shutil
 import tempfile
 import uuid
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-from agiwo.agent import (
-    Agent,
-    AgentStreamItem,
-    RunCompletedEvent,
-    RunFailedEvent,
-    UserMessage,
-)
+from agiwo.agent import Agent, UserMessage
 from agiwo.scheduler.engine import Scheduler
 from agiwo.utils.logging import get_logger
 
 from server.channels.utils import (
     safe_close_all,
-    split_text_into_chunks,
     truncate_for_log,
 )
 from server.channels.exceptions import (
@@ -65,7 +57,7 @@ from server.services.session_gateway import SessionGateway
 from server.services.runtime import (
     AgentRuntimeCache,
     SessionContextService,
-    SessionRuntimeService,
+    SessionTurnService,
 )
 
 logger = get_logger(__name__)
@@ -115,15 +107,14 @@ class FeishuChannelService:
             agent_registry=agent_registry,
             default_agent_name=feishu.default_agent_name,
         )
-        executor = SessionRuntimeService(
-            scheduler=scheduler,
+        executor = SessionTurnService(
             session_store=session_store,
             timeout=feishu.scheduler_wait_timeout,
         )
         gateway = SessionGateway(
             session_store=session_store,
             agent_runtime_cache=agent_runtime_cache,
-            session_runtime=executor,
+            session_turn=executor,
         )
 
         tmp_dir = Path(tempfile.mkdtemp(prefix="feishu_attachments_"))
@@ -197,7 +188,7 @@ class FeishuChannelService:
         return self._agent_pool
 
     @property
-    def executor(self) -> SessionRuntimeService:
+    def executor(self) -> SessionTurnService:
         return self._executor
 
     async def initialize(self) -> None:
@@ -315,56 +306,8 @@ class FeishuChannelService:
             batch.context,
         )
         session = resolution.session
-        agent = await self._agent_pool.get_or_create_runtime_agent(session)
+        agent = await self._agent_pool.get_or_create_main_agent(session)
         return session, agent
-
-    async def _consume_dispatch_stream(
-        self,
-        batch: BatchPayload,
-        session: Session,
-        stream: AsyncIterator[AgentStreamItem] | None,
-    ) -> bool:
-        if stream is None:
-            return False
-
-        final_text: str | None = None
-        async for item in stream:
-            if isinstance(item, RunCompletedEvent):
-                if item.depth == 0 and item.response:
-                    final_text = item.response
-                continue
-            if isinstance(item, RunFailedEvent):
-                if item.depth == 0 and item.error:
-                    final_text = item.error
-                continue
-
-        if final_text is None:
-            return False
-        if not await self._can_deliver_session(batch.context, session):
-            return False
-        await self._deliver_stream_text(
-            batch.context,
-            final_text,
-            had_output=False,
-        )
-        return True
-
-    async def _deliver_stream_text(
-        self,
-        context: BatchContext,
-        text: str,
-        *,
-        had_output: bool,
-    ) -> bool:
-        chunks = split_text_into_chunks(text)
-        for index, chunk in enumerate(chunks):
-            if not had_output and index == 0:
-                await self._deliver_reply(context, chunk)
-                had_output = True
-                continue
-            await self._deliver_message(context, chunk)
-            had_output = True
-        return had_output
 
     async def _can_deliver_session(
         self,

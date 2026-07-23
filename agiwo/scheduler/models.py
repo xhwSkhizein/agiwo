@@ -402,10 +402,23 @@ class AgentState:
         )
 
     def can_accept_enqueue_input(self) -> bool:
+        """Whether ``Scheduler.enqueue_input`` may accept this state by status.
+
+        Persistent roots in ``IDLE`` / ``FAILED`` / ``RUNNING`` / ``WAITING`` /
+        ``QUEUED`` are eligible. ``RUNNING`` still requires a live execution
+        handle at call time.
+        """
         return (
             self.is_root
             and self.is_persistent
-            and self.status in (AgentStateStatus.IDLE, AgentStateStatus.FAILED)
+            and self.status
+            in (
+                AgentStateStatus.IDLE,
+                AgentStateStatus.FAILED,
+                AgentStateStatus.RUNNING,
+                AgentStateStatus.WAITING,
+                AgentStateStatus.QUEUED,
+            )
         )
 
     def resolve_runtime_session_id(self) -> str:
@@ -518,9 +531,9 @@ class AgentState:
 class PendingEvent:
     """An event in an agent's pending event queue.
 
-    ``urgent`` marks events that must bypass tick-level debounce (e.g. a
-    user-initiated steer to a WAITING root). Non-urgent events continue to
-    follow the normal ``event_debounce_*`` rules.
+    ``urgent`` marks events that must bypass tick-level debounce (e.g.
+    ``enqueue_input`` on a WAITING root writes an urgent USER_HINT). Non-urgent
+    events continue to follow the normal ``event_debounce_*`` rules.
 
     The ``payload`` field remains a frozen mapping for serialization compatibility.
     Use the typed ``get_payload_*`` methods for type-safe access.

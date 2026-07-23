@@ -1489,30 +1489,32 @@ def _detect_objective_boundary_text_errors(
                 )
             )
 
-    # Normal Session/channel paths must not call Scheduler.route_root_input.
-    allowed_route_root = {
-        Path("console/server/routers/scheduler.py"),
-        Path("console/server/services/runtime/session_runtime_service.py"),
-    }
-    if (
-        posix.startswith("console/server/")
-        and path not in allowed_route_root
-        and not posix.startswith("console/server/services/runtime/")
-    ):
-        line = _find_first_match_line(content, r"\broute_root_input\s*\(")
-        if line is not None:
-            errors.append(
-                _make_error(
-                    path,
-                    line,
-                    "AGW046",
-                    (
-                        "Ordinary Console Session/channel paths must enter via "
-                        "SessionGateway; do not call Scheduler.route_root_input() "
-                        "outside the debug scheduler router or SessionRuntimeService."
-                    ),
+    # Deleted Session facade APIs must not be resurrected in production code.
+    if not posix.startswith("trash/"):
+        for pattern, label in (
+            (r"\broute_root_input\s*\(", "route_root_input"),
+            (r"\bdispatch_execution\s*\(", "dispatch_execution"),
+            (r"\binject_user_message\s*\(", "inject_user_message"),
+            (r"\benqueue_steer\s*\(", "enqueue_steer"),
+            (r"\benqueue_inject\s*\(", "enqueue_inject"),
+            (r"\bapply_steering_messages\b", "apply_steering_messages"),
+            (r"\bclass RouteResult\b", "RouteResult"),
+            (r"\bclass RouteStreamMode\b", "RouteStreamMode"),
+        ):
+            line = _find_first_match_line(content, pattern)
+            if line is not None:
+                errors.append(
+                    _make_error(
+                        path,
+                        line,
+                        "AGW046",
+                        (
+                            f"Deleted M3 Session/queue facade symbol {label!r} "
+                            "must not return; use MainAgent.accept / "
+                            "enqueue_message / Scheduler.enqueue_input."
+                        ),
+                    )
                 )
-            )
 
     # Forbid resurrecting Objective / Turn API symbols in non-trash code.
     if not posix.startswith("trash/"):

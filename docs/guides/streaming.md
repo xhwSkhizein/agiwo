@@ -1,6 +1,6 @@
 # Streaming
 
-Agiwo is streaming-first. All LLM responses flow through the same streaming pipeline, whether you use `run()`, `run_stream()`, `start()`, or scheduler `route_root_input()`.
+Agiwo is streaming-first. All LLM responses flow through the same streaming pipeline, whether you use `run()`, `run_stream()`, `start()`, or Session `MainAgent.accept`.
 
 ## Streaming with `run_stream()`
 
@@ -51,42 +51,23 @@ async for event in handle.stream():
 result = await handle.wait()
 ```
 
-## Scheduler Streaming
+## Session / MainAgent Streaming
 
-The Scheduler reuses the same stream protocol, but the public entrypoint is
-`route_root_input()`. Consume `RouteResult.stream`:
-
-```python
-async with Scheduler() as scheduler:
-    route = await scheduler.route_root_input(
-        "Research topic X",
-        agent=agent,
-        persistent=False,
-    )
-    assert route.stream is not None
-
-    async for event in route.stream:
-        if event.type == "step_delta" and event.delta.content:
-            print(event.delta.content, end="", flush=True)
-```
-
-For an existing agent state:
+Console and channel SSE consume the same stream protocol via `MainAgent.accept` and the live execution handle:
 
 ```python
-route = await scheduler.route_root_input(
-    "Continue the analysis",
-    agent=agent,
-    state_id=existing_state_id,
-)
-assert route.stream is not None
+await main_agent.accept(user_message)
 
-async for event in route.stream:
-    process(event)
+async for event in main_agent.stream():
+    if event.type == "step_delta" and event.delta.content:
+        print(event.delta.content, end="", flush=True)
 ```
 
-Only one live stream subscriber is allowed per root `state_id`. If you steer a
-currently `RUNNING` root, `RouteResult.stream` is `None` because the existing
-subscriber continues consuming that root's stream.
+Mid-run user input uses `handle.enqueue_message(...)` on the live handle (MainAgent routes busy accepts through the same queue).
+
+## Scheduler note
+
+The slim `Scheduler` no longer exposes Session root streaming entrypoints (`route_root_input` removed). For orchestration debugging, consume `Agent.start()` / `handle.stream()` on the runtime agent registered under a scheduler `state_id`.
 
 ## Stream Consumption
 
@@ -114,7 +95,7 @@ Agent.run_stream()
                            └─► AgentStreamItem (normalized)
 ```
 
-All execution paths — `run()`, `run_stream()`, `start()`, and scheduler `route_root_input()` — share this pipeline. The difference is only in how the consumer processes events.
+All execution paths — `run()`, `run_stream()`, `start()`, and Session `MainAgent.accept` — share this pipeline. The difference is only in how the consumer processes events.
 
 ## `context_steps_hidden`
 

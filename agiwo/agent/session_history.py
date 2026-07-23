@@ -2,7 +2,8 @@
 
 from uuid import uuid4
 
-from agiwo.agent import Agent, UserMessage
+from agiwo.agent.agent import Agent
+from agiwo.agent.models.input import UserMessage
 from agiwo.agent.models.log import UserStepCommitted
 from agiwo.agent.models.step import MessageRole
 

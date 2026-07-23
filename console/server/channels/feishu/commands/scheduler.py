@@ -1,7 +1,7 @@
 """
 Scheduler control commands for Feishu channel.
 
-Provides /agents, /detail, /steer, /cancel, /resume commands
+Provides /agents, /detail, /cancel, /resume commands
 for managing scheduler agents directly from Feishu chat.
 """
 
@@ -49,18 +49,13 @@ def build_scheduler_command_specs(
             execute=partial(_execute_detail, scheduler),
         ),
         CommandSpec(
-            name="steer",
-            description="向 Agent 发送引导消息 — /steer <state_id> <message>",
-            execute=partial(_execute_steer, scheduler),
-        ),
-        CommandSpec(
             name="cancel",
             description="取消 Agent 执行 — /cancel <state_id>",
             execute=partial(_execute_cancel, scheduler),
         ),
         CommandSpec(
             name="resume",
-            description="恢复持久 Agent — /resume <state_id> <message>",
+            description="向持久 Agent 入队输入 — /resume <state_id> <message>",
             execute=partial(_execute_resume, scheduler, registry, console_config),
         ),
     ]
@@ -264,28 +259,10 @@ async def _execute_detail(
             )
 
     content.append(new_line())
-    content.append([text_element("💡 提示: /steer <state_id> <消息> 发送引导消息")])
+    content.append([text_element("💡 提示: /resume <state_id> <消息> 入队输入")])
 
     post_content = build_post_content("Agent 详情", content)
     return CommandResult(post_content=post_content)
-
-
-async def _execute_steer(
-    scheduler: Scheduler,
-    ctx: CommandContext,
-    args: str,
-) -> CommandResult:
-    del ctx
-
-    parsed = _parse_state_message_args(args, "用法: /steer <state_id> <message>")
-    if isinstance(parsed, CommandResult):
-        return parsed
-
-    state_id, message = parsed
-    ok = await scheduler.steer(state_id, message, urgent=True)
-    if not ok:
-        return CommandResult(text=f"发送失败: Agent {state_id} 不存在或不可用。")
-    return CommandResult(text=f"已向 {state_id} 发送引导消息。")
 
 
 async def _execute_cancel(

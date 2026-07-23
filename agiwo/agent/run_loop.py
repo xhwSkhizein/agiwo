@@ -1,31 +1,35 @@
 """Single-run execution engine — the core run loop."""
 
 import asyncio
-from dataclasses import dataclass
-from typing import NamedTuple
 
-from agiwo.agent.compaction import CompactResult, compact_if_needed
+from agiwo.agent.compaction import compact_if_needed
+from agiwo.agent.completion_gates import AllowComplete, CompletionGates, Continue
+from agiwo.agent.completion_gates.context import CompletionGateContext
 from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.llm_caller import ModelCallLimitExceeded, execute_model_call
 from agiwo.agent.models.execution import RunTreeRole
-from agiwo.agent.models.finalization import (
-    RunFinalizationResult,
-    completion_result,
-    fault_result,
-)
+from agiwo.agent.models.finalization import RunFinalizationResult, completion_result
 from agiwo.agent.models.model_call import ModelCallPhase
 from agiwo.agent.models.config import AgentOptions
-from agiwo.agent.models.input import UserInput
-from agiwo.agent.models.run import RunMetrics, RunOutput, TerminationReason
+from agiwo.agent.models.input import UserInput, UserMessage
+from agiwo.agent.models.run import RunOutput, TerminationReason
 from agiwo.agent.models.step import LLMCallContext, StepView
-from agiwo.agent.prompt import apply_steering_messages
+from agiwo.agent.prompt import append_pending_user_messages
 from agiwo.agent.retry import (
     RetryCoordinator,
     RetryPolicy,
     RunBlockingFaultError,
-    finalization_for_blocking_fault,
 )
 from agiwo.agent.run_bootstrap import prepare_run_context
+from agiwo.agent.run_loop_compaction import RunLoopCompactionOps
+from agiwo.agent.run_loop_finalization import RunLoopFinalizationOps
+from agiwo.agent.run_loop_models import (
+    CompactionCycleResult,
+    LoopCompleted,
+    LoopExit,
+    LoopFault,
+    LoopPaused,
+)
 from agiwo.agent.run_tool_batch import execute_tool_batch_cycle
 from agiwo.agent.runtime.context import RunContext, RunRuntime
 from agiwo.agent.runtime.state_writer import RunStateWriter
@@ -33,7 +37,6 @@ from agiwo.agent.termination.limits import (
     check_non_recoverable_limits,
     check_post_llm_limits,
 )
-from agiwo.agent.termination.summarizer import maybe_generate_termination_summary
 from agiwo.config.settings import settings
 from agiwo.llm.base import Model
 from agiwo.llm.limits import (
@@ -44,40 +47,13 @@ from agiwo.tool.base import BaseTool
 from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
-
-class CompactionCycleResult(NamedTuple):
-    """Result of a compaction cycle."""
-
-    compact_start_seq: int
-    skip_assistant_turn: bool
-
-
-@dataclass(frozen=True, slots=True)
-class LoopCompleted:
-    """Normal loop termination; proceed to finalize."""
-
-
-@dataclass(frozen=True, slots=True)
-class LoopPaused:
-    """Recoverable pause after a committed checkpoint."""
-
-    reason: str
-    checkpoint_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class LoopFault:
-    """Blocking fault that must be finalized or failed at the run boundary."""
-
-    error: RunBlockingFaultError
-
-
-LoopExit = LoopCompleted | LoopPaused | LoopFault
-
 logger = get_logger(__name__)
 
 
-class RunLoopOrchestrator:
+class RunLoopOrchestrator(
+    RunLoopFinalizationOps,
+    RunLoopCompactionOps,
+):
     """RunLoopOrchestrator is the single-run execution owner."""
 
     def __init__(
@@ -113,6 +89,7 @@ class RunLoopOrchestrator:
         *,
         resume: bool = False,
         resume_checkpoint_id: str | None = None,
+        continuation: bool = False,
     ) -> RunOutput:
         """Execute a single agent run with the orchestrator."""
         try:
@@ -120,6 +97,21 @@ class RunLoopOrchestrator:
                 if resume_checkpoint_id is None:
                     raise ValueError("resume requires resume_checkpoint_id")
                 await self.writer.record_resumed(checkpoint_id=resume_checkpoint_id)
+            elif continuation:
+                bootstrap = await prepare_run_context(
+                    context=self.context,
+                    runtime=self.runtime,
+                    user_input=user_input,
+                    system_prompt=system_prompt,
+                    writer=self.writer,
+                )
+                if bootstrap.user_step is not None:
+                    await self._commit_step(
+                        bootstrap.user_step,
+                        append_message=False,
+                        track_state=False,
+                    )
+                self.runtime.compact_start_seq = bootstrap.compact_start_seq
             else:
                 await self._start_run(user_input)
                 bootstrap = await prepare_run_context(
@@ -142,153 +134,6 @@ class RunLoopOrchestrator:
         except Exception as error:
             await self._fail_run(error)
             raise
-
-    async def _dispatch_loop_exit(
-        self,
-        user_input: UserInput | None,
-        exit_result: LoopExit,
-    ) -> RunOutput:
-        """Single dispatch point for loop outcomes."""
-        if isinstance(exit_result, LoopPaused):
-            return self._build_paused_output(
-                reason=exit_result.reason,
-                checkpoint_id=exit_result.checkpoint_id,
-            )
-        if isinstance(exit_result, LoopFault):
-            return await self._finalize_blocking_fault(user_input, exit_result.error)
-        return await self._finalize_run(user_input)
-
-    def _build_paused_output(self, *, reason: str, checkpoint_id: str) -> RunOutput:
-        return RunOutput(
-            response=self.context.ledger.response_content,
-            run_id=self.context.run_id,
-            session_id=self.context.session_id,
-            metrics=RunMetrics.from_ledger(
-                self.context.ledger,
-                elapsed_ms=self.context.elapsed * 1000,
-            ),
-            termination_reason=None,
-            metadata={
-                "run_start_seq": self.context.ledger.run_start_seq,
-                "pause_reason": reason,
-            },
-            paused=True,
-            checkpoint_id=checkpoint_id,
-        )
-
-    async def _finalize_blocking_fault(
-        self,
-        user_input: UserInput | None,
-        blocked: RunBlockingFaultError,
-    ) -> RunOutput:
-        """End ROOT assignment via mechanical Decision; fail non-root runs."""
-        del user_input
-        if self.context.run_tree_role is not RunTreeRole.ROOT:
-            await self._fail_run(blocked)
-            raise blocked
-        carry = [
-            {
-                "id": m.id,
-                "description": m.description,
-                "status": m.status
-                if isinstance(m.status, str)
-                else getattr(m.status, "value", str(m.status)),
-            }
-            for m in self.context.ledger.plan.milestones
-            if (
-                m.status
-                if isinstance(m.status, str)
-                else getattr(m.status, "value", str(m.status))
-            )
-            in {"pending", "active"}
-        ]
-        self._finalization = finalization_for_blocking_fault(
-            blocked,
-            carry_forward=carry,
-            plan_items=carry,
-        )
-        await self._set_termination_reason(
-            TerminationReason.COMPLETED,
-            phase="fault_boundary",
-            source=blocked.fault.disposition.value,
-        )
-        return await self._finalize_run(None)
-
-    async def _start_run(self, user_input: UserInput | None) -> None:
-        """Initialize and start the run."""
-        self.context.ledger.model_calls.configured_limit = (
-            self.runtime.config.max_steps_per_run
-        )
-        await self.writer.start_run(user_input)
-
-    async def _complete_run(self, result: RunOutput) -> None:
-        """Complete the run successfully."""
-        await self.writer.finish_run(result)
-
-    async def _fail_run(self, error: Exception) -> None:
-        """Handle run failure."""
-        await self.writer.fail_run(error)
-
-    def _build_output(self) -> RunOutput:
-        """Build the run output from the current state."""
-        return RunOutput(
-            response=self.context.ledger.response_content,
-            run_id=self.context.run_id,
-            session_id=self.context.session_id,
-            metrics=RunMetrics.from_ledger(
-                self.context.ledger,
-                elapsed_ms=self.context.elapsed * 1000,
-            ),
-            termination_reason=self.context.ledger.termination_reason,
-            metadata={"run_start_seq": self.context.ledger.run_start_seq},
-            finalization=self._finalization,
-        )
-
-    async def _set_termination_reason(
-        self,
-        reason: TerminationReason,
-        *,
-        phase: str,
-        source: str,
-    ) -> None:
-        if self.context.ledger.termination_reason == reason:
-            return
-        await self.writer.record_termination_decided(
-            termination_reason=reason,
-            phase=phase,
-            source=source,
-        )
-
-    async def _finalize_run(self, user_input: UserInput | None) -> RunOutput:
-        """Generate summary, build output, and complete the run."""
-        if (
-            self.context.run_tree_role is RunTreeRole.ROOT
-            and self.context.ledger.termination_reason is TerminationReason.MAX_STEPS
-            and self._finalization is None
-        ):
-            self._finalization = fault_result(
-                self.context.ledger.response_content or "",
-                reason="max_steps_per_run",
-                carry_forward=self._remaining_plan_items(),
-            )
-        await maybe_generate_termination_summary(
-            state=self.context,
-            options=self.runtime.config,
-            model=self.runtime.model,
-            abort_signal=self.runtime.abort_signal,
-            commit_step=self._commit_step,
-        )
-        result = self._build_output()
-        if self._finalization is not None:
-            # A termination summary is diagnostic only; it must not replace the
-            # ordinary report; no cross-run control plane consumes it (ADR 0048).
-            result.response = self._finalization.report
-            self.context.ledger.response_content = self._finalization.report
-        await self.context.hooks.after_run(result, self.context)
-        if result.response is not None and user_input is not None:
-            await self.context.hooks.memory_write(user_input, result, self.context)
-        await self._complete_run(result)
-        return result
 
     async def _run_loop(
         self,
@@ -413,78 +258,19 @@ class RunLoopOrchestrator:
             llm_context=llm_context,
         )
 
-    async def _run_compaction_cycle(self) -> CompactionCycleResult:
-        """Run compaction cycle if needed."""
-        result: CompactResult = await compact_if_needed(
-            state=self.context,
-            model=self.runtime.model,
-            abort_signal=self.runtime.abort_signal,
-            max_context_window=self.runtime.max_context_window,
-            commit_step=self._commit_step,
-            compact_prompt=self.runtime.compact_prompt,
-            compact_start_seq=self.runtime.compact_start_seq,
-            root_path=self.runtime.root_path,
-        )
-        if result.failed:
-            failure_count = self.writer.next_compaction_failure_attempt()
-            err = result.error or ""
-            terminal = failure_count >= 3
-            await self.writer.record_compaction_failed(
-                error=err,
-                attempt=failure_count,
-                max_attempts=3,
-                terminal=terminal,
-            )
-            await self.context.hooks.compaction_failed(
-                self.context.run_id, err, failure_count, self.context
-            )
-            logger.warning(
-                "compaction_failed",
-                run_id=self.context.run_id,
-                error=err,
-                failure_count=failure_count,
-            )
-            if terminal:
-                await self._set_termination_reason(
-                    TerminationReason.MAX_INPUT_TOKENS_PER_CALL,
-                    phase="compaction",
-                    source="compaction_failure_limit",
-                )
-            return CompactionCycleResult(self.runtime.compact_start_seq, False)
-
-        compact_metadata = result.metadata
-        if compact_metadata is None:
-            return CompactionCycleResult(self.runtime.compact_start_seq, False)
-
-        new_start_seq = compact_metadata.end_seq + 1
-        logger.info(
-            "compact_triggered",
-            run_id=self.context.run_id,
-            before_messages=len(self.context.ledger.messages),
-        )
-        if (
-            self.runtime.config.max_run_cost is not None
-            and self.context.ledger.tokens.cost >= self.runtime.config.max_run_cost
-        ):
-            await self._set_termination_reason(
-                TerminationReason.MAX_RUN_COST,
-                phase="compaction",
-                source="max_run_cost_after_compaction",
-            )
-            return CompactionCycleResult(new_start_seq, True)
-        return CompactionCycleResult(new_start_seq, False)
-
     async def _run_assistant_turn(self) -> tuple[StepView, LLMCallContext]:
         """Execute an assistant turn (LLM call)."""
         request_messages = self.context.snapshot_messages()
-        pending_steer = self.context.session_runtime.peek_pending_steer_inputs()
-        if pending_steer:
-            request_messages = apply_steering_messages(request_messages, pending_steer)
+        pending_inputs = self.context.session_runtime.peek_pending_inputs()
+        if pending_inputs:
+            request_messages = append_pending_user_messages(
+                request_messages, pending_inputs
+            )
             await self.writer.rebuild_messages(
                 reason="before_llm",
                 messages=request_messages,
             )
-            self.context.session_runtime.ack_pending_steer_inputs(len(pending_steer))
+            self.context.session_runtime.ack_pending_inputs(len(pending_inputs))
         request_messages = self.context.snapshot_messages()
         modified = await self.context.hooks.before_llm_call(
             request_messages, self.context
@@ -550,12 +336,11 @@ class RunLoopOrchestrator:
             paused = await self._maybe_pause()
             if paused is not None:
                 return paused
-            if (
-                self.context.run_tree_role is RunTreeRole.ROOT
-                and self._has_unfinished_plan_items()
-            ):
-                await self._append_plan_guard_reminder()
-                return None
+            if self.context.run_tree_role is RunTreeRole.ROOT:
+                gate_decision = await self._evaluate_completion_gates()
+                if isinstance(gate_decision, Continue):
+                    await self._enqueue_gate_feedback(gate_decision.feedback_text)
+                    return None
             report = step.content if isinstance(step.content, str) else ""
             if report:
                 self._finalization = completion_result(report)
@@ -574,46 +359,27 @@ class RunLoopOrchestrator:
             return LoopCompleted()
         return await self._maybe_pause()
 
-    def _has_unfinished_plan_items(self) -> bool:
-        return any(
-            milestone.status in {"pending", "active"}
-            for milestone in self.context.ledger.plan.milestones
+    async def _evaluate_completion_gates(self) -> AllowComplete | Continue:
+        gate_context = self.runtime.completion_gate_context or CompletionGateContext()
+        active_worker_ids = gate_context.active_worker_ids()
+        gates = CompletionGates(
+            enable_semantic=self.runtime.config.enable_semantic_completion_gates,
+        )
+        return await gates.evaluate(
+            plan=self.context.ledger.plan,
+            active_worker_ids=active_worker_ids,
         )
 
-    def _remaining_plan_items(self) -> list[dict[str, str]]:
-        return [
-            {
-                "id": milestone.id,
-                "description": milestone.description,
-                "status": milestone.status,
-            }
-            for milestone in self.context.ledger.plan.milestones
-            if milestone.status in {"pending", "active"}
-        ]
-
-    async def _append_plan_guard_reminder(self) -> None:
-        remaining = self._remaining_plan_items()
-        items = "\n".join(
-            f"- [{item['status']}] {item['id']}: {item['description']}"
-            for item in remaining
-        )
-        messages = self.context.snapshot_messages()
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "The run plan still has unfinished milestones. Continue the "
-                    "work and use update_plan to complete, abandon, or "
-                    "revise them before ending:\n"
-                    f"{items}"
-                ),
-                "is_user_provided": False,
-                "origin": "run_plan_guard",
-            }
-        )
-        await self.writer.rebuild_messages(
-            reason="run_plan_guard",
-            messages=messages,
+    async def _enqueue_gate_feedback(self, feedback_text: str) -> None:
+        gate_context = self.runtime.completion_gate_context
+        if gate_context is not None and gate_context.on_gate_feedback is not None:
+            await gate_context.on_gate_feedback(feedback_text)
+        message = UserMessage.from_system(feedback_text)
+        await self.context.session_runtime.enqueue_message(message)
+        logger.info(
+            "completion_gate_feedback_enqueued",
+            run_id=self.context.run_id,
+            feedback_chars=len(feedback_text),
         )
 
     async def _execute_tool_calls(
@@ -658,6 +424,8 @@ async def execute_run(
     root_path: str | None = None,
     resume: bool = False,
     resume_checkpoint_id: str | None = None,
+    continuation: bool = False,
+    completion_gate_context: CompletionGateContext | None = None,
 ) -> RunOutput:
     """Execute a single agent run — the core entry point."""
     options = options or AgentOptions()
@@ -694,6 +462,7 @@ async def execute_run(
             ),
             should_continue=_retry_continue,
         ),
+        completion_gate_context=completion_gate_context,
     )
 
     orchestrator = RunLoopOrchestrator(context, runtime)
@@ -706,6 +475,13 @@ async def execute_run(
             resume=True,
             resume_checkpoint_id=resume_checkpoint_id,
         )
+    if continuation:
+        return await orchestrator.execute_run(
+            user_input,
+            system_prompt,
+            pending_tool_calls,
+            continuation=True,
+        )
     return await orchestrator.execute_run(
         user_input,
         system_prompt,
@@ -714,6 +490,8 @@ async def execute_run(
 
 
 __all__ = [
+    "compact_if_needed",
+    "CompactionCycleResult",
     "LoopCompleted",
     "LoopExit",
     "LoopFault",

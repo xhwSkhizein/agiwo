@@ -1009,13 +1009,6 @@ export interface PendingEventItem {
   created_at: string | null;
 }
 
-export function steerAgent(id: string, message: string, urgent = false) {
-  return fetchJSON<{ ok: boolean }>(`/api/scheduler/states/${id}/steer`, {
-    method: "POST",
-    body: JSON.stringify({ message, urgent }),
-  });
-}
-
 export function cancelAgent(id: string, reason?: string) {
   return fetchJSON<{ ok: boolean }>(`/api/scheduler/states/${id}/cancel`, {
     method: "POST",

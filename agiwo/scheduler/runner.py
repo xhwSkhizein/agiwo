@@ -47,7 +47,7 @@ from agiwo.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _CHILD_EXCLUDED_SYSTEM_TOOLS: frozenset[str] = frozenset(
-    {"spawn_child_agent", "fork_child_agent"}
+    {"spawn_child_agent", "fork_child_agent", "spawn_worker"}
 )
 
 
@@ -299,10 +299,6 @@ class SchedulerRunner:
 
     async def _prepare_state_for_run(self, action: DispatchAction) -> UserInput | None:
         state = action.state
-        if action.reason == DispatchReason.SESSION_ROOT:
-            # None means Session history already holds the user message (ADR 0048).
-            return action.input_override
-
         if action.reason == DispatchReason.ROOT_SUBMIT:
             return (
                 action.input_override

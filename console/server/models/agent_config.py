@@ -40,6 +40,7 @@ class AgentOptionsInput(BaseModel):
     compact_prompt: str = ""
     enable_context_rollback: bool = True
     enable_trajectory_review: bool = True
+    enable_semantic_completion_gates: bool = False
     review_step_interval: int = Field(default=8, ge=1)
     review_on_error: bool = True
     max_provider_attempts: int = Field(default=3, ge=1)

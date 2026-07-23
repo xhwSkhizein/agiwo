@@ -117,9 +117,10 @@ class UserMessage:
         """Reject system-attributed messages at external entry points.
 
         Genuine user entry points (``Agent.start`` / ``run`` / ``run_stream``,
-        Scheduler root input / steer, mid-run steer) must not accept forged
-        ``is_user_provided=False``. Internal system notices use ``from_system()``
-        and enter the runtime through scheduler-owned paths only.
+        ``MainAgent.accept``, ``Scheduler.enqueue_input``, mid-run
+        ``enqueue_message``) must not accept forged ``is_user_provided=False``.
+        Internal system notices use ``from_system()`` and enter the runtime
+        through Loop / completion-gate paths only.
 
         Returns the original ``value`` unchanged so string / ContentPart list
         inputs keep their existing storage shape.

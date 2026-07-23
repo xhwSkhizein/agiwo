@@ -1,21 +1,10 @@
-"""Sessions and Runs API router."""
+"""Sessions and Runs query router (list/detail/steps; control is sessions_lifecycle)."""
 
-import asyncio
-from collections.abc import AsyncIterator
-from datetime import datetime, timezone
-import json
-import uuid
-
-from fastapi import APIRouter, Header, HTTPException, Query
-from sse_starlette.sse import EventSourceResponse
-
-from agiwo.agent.models.input import UserMessage
+from fastapi import APIRouter, HTTPException, Query
 
 from server.dependencies import (
     ConsoleRuntimeDep,
     get_run_query_service,
-    get_session_context_service,
-    get_session_gateway,
     get_session_view_service,
 )
 from server.response_serialization import (
@@ -24,12 +13,7 @@ from server.response_serialization import (
     session_summary_response_from_record,
     step_response_from_sdk,
 )
-from server.channels.exceptions import BaseAgentNotFoundError
-from server.services.runtime.session_runtime_service import SessionRuntimeService
 from server.models.view import (
-    CancelRequest,
-    ChatRequest,
-    ForkSessionRequest,
     PageResponse,
     RunResponse,
     SessionDetailResponse,
@@ -39,38 +23,6 @@ from server.models.view import (
 
 router = APIRouter(prefix="/api", tags=["sessions"])
 _STEPS_MAX_LIMIT = 5000
-_ARCHIVE_DRAIN_TIMEOUT_SECONDS = 30.0
-
-
-async def _session_input_event_stream(
-    *,
-    session_id: str,
-    body: ChatRequest,
-    idempotency_key: str,
-    gateway,
-) -> AsyncIterator[dict[str, str]]:
-    message = UserMessage.from_value(body.message)
-    try:
-        result = await gateway.handle_user_message(
-            session_id,
-            message,
-            idempotency_key=idempotency_key,
-        )
-    except (ValueError, BaseAgentNotFoundError) as exc:
-        yield {
-            "event": "session_error",
-            "data": json.dumps({"message": str(exc)}, default=str),
-        }
-        return
-
-    payload = {
-        "kind": result.kind,
-        "session_id": result.session_id,
-        "run_id": result.run_id,
-        "status": result.status,
-        "response": result.response,
-    }
-    yield {"event": "session_turn", "data": json.dumps(payload, default=str)}
 
 
 @router.get("/runs", response_model=PageResponse[RunResponse])
@@ -137,32 +89,6 @@ async def get_session_detail(
     return session_detail_response_from_record(detail)
 
 
-@router.post("/sessions/{session_id}/input")
-async def send_session_input(
-    session_id: str,
-    body: ChatRequest,
-    runtime: ConsoleRuntimeDep,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-) -> EventSourceResponse:
-    if runtime.session_store is None:
-        raise RuntimeError("Session store not available")
-    session = await runtime.session_store.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    gateway = get_session_gateway(runtime)
-    key = idempotency_key or uuid.uuid4().hex
-
-    return EventSourceResponse(
-        _session_input_event_stream(
-            gateway=gateway,
-            session_id=session_id,
-            body=body,
-            idempotency_key=key,
-        )
-    )
-
-
 @router.get("/sessions/{session_id}/summary", response_model=SessionSummaryResponse)
 async def get_session_summary(
     session_id: str,
@@ -173,94 +99,6 @@ async def get_session_summary(
     if detail is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session_summary_response_from_record(detail.summary)
-
-
-@router.post("/sessions/{session_id}/cancel")
-async def cancel_session(
-    session_id: str,
-    body: CancelRequest,
-    runtime: ConsoleRuntimeDep,
-):
-    if runtime.scheduler is None:
-        raise RuntimeError("Scheduler not initialized")
-    success = await runtime.scheduler.cancel(session_id, body.reason)
-    if not success:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No active orchestration found for session_id={session_id}",
-        )
-    return {"ok": True, "session_id": session_id, "state_id": session_id}
-
-
-@router.post("/sessions/{session_id}/fork")
-async def fork_session(
-    session_id: str,
-    body: ForkSessionRequest,
-    runtime: ConsoleRuntimeDep,
-):
-    result = await get_session_context_service(runtime).fork_session_by_id(
-        session_id=session_id,
-        context_summary=body.context_summary,
-        created_by="CONSOLE_FORK",
-        update_chat_context=False,
-    )
-    return {
-        "session_id": result.session.id,
-        "source_session_id": result.session.source_session_id,
-    }
-
-
-@router.post("/sessions/{session_id}/archive")
-async def archive_session_endpoint(
-    session_id: str,
-    runtime: ConsoleRuntimeDep,
-) -> dict[str, object]:
-    """Archive a session: drain/cancel any active root run, then hide from listing."""
-    if runtime.session_store is None:
-        raise RuntimeError("Session store not available")
-    if runtime.scheduler is None:
-        raise RuntimeError("Scheduler not initialized")
-    session = await runtime.session_store.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    session_runtime = SessionRuntimeService(
-        scheduler=runtime.scheduler,
-        session_store=runtime.session_store,
-    )
-    await session_runtime.cancel_if_active(session, reason="user_archive")
-
-    deadline = asyncio.get_running_loop().time() + _ARCHIVE_DRAIN_TIMEOUT_SECONDS
-    while asyncio.get_running_loop().time() < deadline:
-        state = await runtime.scheduler.get_state(session_id)
-        if state is None or not state.is_active():
-            break
-        await asyncio.sleep(0.2)
-    else:
-        raise HTTPException(
-            status_code=409,
-            detail="archive drain incomplete; root run still active",
-        )
-
-    session.archived_at = datetime.now(timezone.utc)
-    await runtime.session_store.upsert_session(session)
-    return {"ok": True, "session_id": session_id, "archived_at": session.archived_at}
-
-
-@router.post("/sessions/{session_id}/restore")
-async def restore_session_endpoint(
-    session_id: str,
-    runtime: ConsoleRuntimeDep,
-) -> dict[str, bool]:
-    """Clear a session's archived_at flag."""
-    if runtime.session_store is None:
-        raise RuntimeError("Session store not available")
-    session = await runtime.session_store.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    session.archived_at = None
-    await runtime.session_store.upsert_session(session)
-    return {"ok": True}
 
 
 @router.get("/sessions/{session_id}/steps", response_model=PageResponse[StepResponse])

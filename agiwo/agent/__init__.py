@@ -1,6 +1,19 @@
 """Canonical public Agent SDK surface."""
 
 from agiwo.agent.agent import Agent, AgentExecutionHandle
+from agiwo.agent.intent import (
+    InMemorySessionIntentStore,
+    IntentEntry,
+    IntentEntryKind,
+    SessionIntent,
+    SessionIntentStore,
+    SQLiteSessionIntentStore,
+    create_session_intent_store,
+    summarize_run_report,
+)
+from agiwo.agent.main_agent import MainAgent, MainAgentState
+from agiwo.agent.queue import QueueItem, QueueItemKind
+from agiwo.agent.spec import AgentSpec
 from agiwo.agent.models.config import (
     AgentConfig,
     AgentOptions,
@@ -91,6 +104,7 @@ from agiwo.agent.storage.base import RunLogStorage
 __all__ = [
     "Agent",
     "AgentExecutionHandle",
+    "AgentSpec",
     "AgentConfig",
     "AgentOptions",
     "AgentStorageOptions",
@@ -114,7 +128,16 @@ __all__ = [
     "LLMCallContext",
     "LLMCallCompleted",
     "LLMCallStarted",
+    "MainAgent",
+    "MainAgentState",
     "MemoryRecord",
+    "SessionIntent",
+    "SessionIntentStore",
+    "SQLiteSessionIntentStore",
+    "create_session_intent_store",
+    "summarize_run_report",
+    "QueueItem",
+    "QueueItemKind",
     "MessagesRebuiltEvent",
     "MessagesRebuilt",
     "MessageContent",
@@ -124,6 +147,9 @@ __all__ = [
     "HookPhase",
     "HookRegistration",
     "HookRegistry",
+    "InMemorySessionIntentStore",
+    "IntentEntry",
+    "IntentEntryKind",
     "RunFailedEntry",
     "RunFinished",
     "RunCompletedEvent",

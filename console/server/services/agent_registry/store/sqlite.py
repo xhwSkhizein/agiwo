@@ -89,7 +89,7 @@ class SqliteAgentRegistryStore:
                 system_prompt,
                 allowed_tools,
                 allowed_skills,
-                assignment_templates,  # retired ADR 0048 column; always NULL
+                assignment_templates,
                 options,
                 model_params,
                 created_at,

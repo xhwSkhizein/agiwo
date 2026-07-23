@@ -83,6 +83,7 @@ class AgentOptions(BaseModel):
     enable_trajectory_review: bool = True
     review_step_interval: int = Field(default=8, ge=1)
     review_on_error: bool = True
+    enable_semantic_completion_gates: bool = False
     # Provider/tool infrastructure retry (not a cross-run budget).
     max_provider_attempts: int = Field(default=3, ge=1)
     retry_min_backoff_seconds: float = Field(default=1.0, ge=0.0)

@@ -32,6 +32,8 @@ from server.services.storage_wiring import (
 )
 from server.routers import (
     sessions,
+    sessions_input,
+    sessions_lifecycle,
     traces,
     overview,
     agents,
@@ -152,10 +154,10 @@ async def _startup_console_runtime(
     await resources.console_session_store.connect()
 
     resources.agent_runtime_cache = AgentRuntimeCache(
-        scheduler=resources.scheduler,
         agent_registry=resources.agent_registry,
         console_config=config,
         session_store=resources.console_session_store,
+        scheduler=resources.scheduler,
     )
 
     resources.feishu_channel_service = await _build_feishu_channel_service(
@@ -223,6 +225,8 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(sessions.router)
+    app.include_router(sessions_input.router)
+    app.include_router(sessions_lifecycle.router)
     app.include_router(traces.router)
     app.include_router(overview.router)
     app.include_router(agents.router)

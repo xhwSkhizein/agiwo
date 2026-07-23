@@ -1,13 +1,14 @@
-"""Unit tests for scheduler-backed session execution."""
+"""Unit tests for MainAgent-backed session execution."""
 
 from datetime import datetime, timezone
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import AsyncMock
 
 import pytest
 
-from agiwo.scheduler.commands import RouteStreamMode
+from agiwo.agent.models.input import UserMessage
+from agiwo.agent.models.run import RunOutput
 from server.models.session import Session
-from server.services.runtime.session_runtime_service import SessionRuntimeService
+from server.services.runtime.session_turn_service import SessionTurnService
 
 
 def _session() -> Session:
@@ -22,49 +23,59 @@ def _session() -> Session:
     )
 
 
-def _make_runtime_service() -> SessionRuntimeService:
-    scheduler = AsyncMock()
-    scheduler.route_root_input = AsyncMock(
-        return_value=AsyncMock(action="stream", stream=None, state_id="sess-1")
-    )
+def _make_runtime_service() -> SessionTurnService:
     store = AsyncMock()
     store.upsert_session = AsyncMock()
-    return SessionRuntimeService(scheduler=scheduler, session_store=store, timeout=60)
+    return SessionTurnService(session_store=store, timeout=60)
 
 
 @pytest.mark.asyncio
-async def test_execute_routes_to_session_root_state_on_first_dispatch() -> None:
+async def test_submit_user_message_accepts_via_main_agent() -> None:
     session = _session()
     runtime_service = _make_runtime_service()
-
-    await runtime_service.execute(
-        agent=AsyncMock(), session=session, user_input="hello"
+    handle = AsyncMock(run_id="run-1")
+    main_agent = AsyncMock()
+    main_agent.accept = AsyncMock(return_value=handle)
+    main_agent.wait_current_run = AsyncMock(
+        return_value=RunOutput(response="hello", session_id=session.id)
     )
 
-    runtime_service._scheduler.route_root_input.assert_awaited_once_with(
-        "hello",
-        agent=ANY,
-        state_id="sess-1",
-        session_id="sess-1",
-        persistent=True,
-        timeout=60,
-        stream_mode=RouteStreamMode.UNTIL_SETTLED,
+    run_id, output = await runtime_service.submit_user_message(
+        main_agent,
+        session,
+        UserMessage.from_value("hello"),
     )
+
+    assert run_id == "run-1"
+    assert output.response == "hello"
+    main_agent.accept.assert_awaited_once()
+    accepted = main_agent.accept.await_args.args[0]
+    assert accepted.extract_text() == "hello"
+    main_agent.wait_current_run.assert_awaited_once()
+    runtime_service._session_store.upsert_session.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_execute_reuses_same_root_state_for_follow_up_message() -> None:
+async def test_submit_user_message_reuses_same_main_agent_for_follow_up() -> None:
     session = _session()
     runtime_service = _make_runtime_service()
-
-    await runtime_service.execute(
-        agent=AsyncMock(), session=session, user_input="first"
+    handle = AsyncMock(run_id="run-1")
+    main_agent = AsyncMock()
+    main_agent.accept = AsyncMock(return_value=handle)
+    main_agent.wait_current_run = AsyncMock(
+        return_value=RunOutput(response="ok", session_id=session.id)
     )
-    await runtime_service.execute(
-        agent=AsyncMock(), session=session, user_input="follow up"
+
+    await runtime_service.submit_user_message(
+        main_agent,
+        session,
+        UserMessage.from_value("first"),
+    )
+    await runtime_service.submit_user_message(
+        main_agent,
+        session,
+        UserMessage.from_value("follow up"),
     )
 
-    assert runtime_service._scheduler.route_root_input.await_count == 2
-    for call in runtime_service._scheduler.route_root_input.await_args_list:
-        assert call.kwargs["state_id"] == session.id
-        assert call.kwargs["session_id"] == session.id
+    assert main_agent.accept.await_count == 2
+    assert main_agent.wait_current_run.await_count == 2

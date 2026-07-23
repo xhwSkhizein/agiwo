@@ -176,7 +176,7 @@ class TestAgentState:
             is_persistent=True,
         )
         assert state.is_queued_root()
-        assert not state.can_accept_enqueue_input()
+        assert state.can_accept_enqueue_input()
 
     def test_with_running_clears_last_run_result(self):
         state = AgentState(

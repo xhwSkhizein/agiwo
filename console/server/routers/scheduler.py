@@ -1,11 +1,10 @@
-"""Scheduler router — state queries, control operations, and scheduler chat SSE."""
+"""Scheduler router — state queries and control operations."""
 
 from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 
-from agiwo.scheduler.commands import RouteStreamMode
 from agiwo.scheduler.models import AgentStateStatus
 
 from server.dependencies import ConsoleRuntimeDep, SchedulerDep
@@ -25,7 +24,6 @@ from server.models.view import (
     ResumeRequest,
     SchedulerTreeResponse,
     SchedulerStatsResponse,
-    SteerRequest,
 )
 from server.services.runtime import (
     PersistentAgentNotFoundError,
@@ -153,21 +151,6 @@ async def get_stats(scheduler: SchedulerDep) -> SchedulerStatsResponse:
 # ── State Control ────────────────────────────────────────────────────────────
 
 
-@router.post("/states/{state_id}/steer")
-async def steer_agent(
-    state_id: str,
-    body: SteerRequest,
-    scheduler: SchedulerDep,
-) -> dict[str, bool]:
-    """Send a steering message to an agent (root only)."""
-    ok = await scheduler.steer(state_id, body.message, urgent=body.urgent)
-    if not ok:
-        raise HTTPException(
-            status_code=404, detail="Agent not found or steering unavailable"
-        )
-    return {"ok": True}
-
-
 @router.post("/states/{state_id}/cancel")
 async def cancel_agent(
     state_id: str,
@@ -188,7 +171,7 @@ async def resume_agent(
     scheduler: SchedulerDep,
     runtime: ConsoleRuntimeDep,
 ) -> dict[str, bool]:
-    """Resume a persistent root agent by submitting a new task."""
+    """Enqueue input for a persistent root (idle/failed → next cycle; running/waiting/queued → live queue or USER_HINT)."""
     try:
         await resume_persistent_agent(
             scheduler,
@@ -242,18 +225,18 @@ async def create_persistent_agent(
         )
 
     instance_id = f"{config.id}--{uuid4()}"
+    session_id = body.session_id or str(uuid4())
     agent = await materialize_agent(
         config,
         runtime.config,
         runtime.agent_registry,
         id=instance_id,
     )
-    route_result = await scheduler.route_root_input(
-        body.initial_task or "",
+    await scheduler.register_worker_parent(
+        state_id=instance_id,
+        session_id=session_id,
         agent=agent,
-        session_id=body.session_id or str(uuid4()),
-        persistent=True,
-        agent_config_id=config_id,
-        stream_mode=RouteStreamMode.UNTIL_SETTLED,
     )
-    return {"ok": True, "state_id": route_result.state_id}
+    if body.initial_task:
+        await scheduler.enqueue_input(instance_id, body.initial_task, agent=agent)
+    return {"ok": True, "state_id": instance_id}

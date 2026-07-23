@@ -109,11 +109,6 @@ class ForkSessionRequest(BaseModel):
     context_summary: str
 
 
-class SteerRequest(BaseModel):
-    message: str
-    urgent: bool = False
-
-
 class CancelRequest(BaseModel):
     reason: str = "Cancelled by operator"
 
@@ -631,7 +626,6 @@ __all__ = [
     "SpanResponse",
     "StepMetricsResponse",
     "StepResponse",
-    "SteerRequest",
     "TraceLlmCallResponse",
     "TraceListItem",
     "TraceMainlineEventResponse",

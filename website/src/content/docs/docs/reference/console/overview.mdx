@@ -22,7 +22,7 @@ The Console is session-first:
 1. choose or create an agent config
 2. create a session for that agent
 3. send session input
-4. let the scheduler decide whether to submit, enqueue, or steer the root runtime
+4. `SessionGateway` → `MainAgent.accept` (idle opens a Run; busy enqueues)
 
 This keeps the SDK as execution truth while the Console remains the operator-facing projection and control surface.
 

@@ -1,66 +1,55 @@
-# Core interface sketch (ADR 0048)
+# Core interface sketch (ADR 0048 + ADR 0049)
 
-Documentation-level contract for the minimal core. Implementation may rename helpers but must preserve these seams and invariants. Vocabulary: **Session**, **Run** (root/child), **RunLog**, **Scheduler**, **委派**.
+Documentation-level contract for the minimal core. Implementation may rename helpers but must preserve these seams and invariants. Vocabulary: **Session**, **MainAgent**, **Run**, **RunLog**, **Scheduler**, **Worker**, **委派**.
 
 ## Session
 
-Owner of conversation identity and user-visible history. Single user entry for Console/channels.
+Owner of conversation identity. User-visible history is a **RunLog projection**. Single user entry for Console/channels.
 
 ```text
-submit_user_message(session_id, user_input: UserMessage, *, idempotency_key?) -> RootRunHandle
+MainAgent.accept(user_message) -> None
   invariants:
-    - append user_input to Session history exactly once (is_user_provided=true)
-    - if a root Run for this session is RUNNING: inject/steer that run; do not start a second root
-    - else: start one new root Run via Scheduler (user_input=None on dispatch; history already has the text)
+    - append user_message to RunLog history exactly once (is_user_provided=true)
+    - append SessionIntent user entry (D1 full text)
+    - if Main Loop busy: enqueue onto the shared Loop queue
+    - else: open one new root Run
     - never create Objective / Turn aggregate / second user ledger
+    - never call Scheduler.route_root_input / dispatch_execution / inject_user_message / steer
 
-get_history(session_id, ...) -> list[StepView | message projection]
-get_current_root_run(session_id) -> run_id | None
+subscribe() / wait_for_current_run() / cancel(...)
 ```
 
-`RootRunHandle` exposes wait/stream/cancel over the root execution tree; it is not a Turn type.
+Console `SessionGateway` is the HTTP/channel adapter over `accept`.
 
 ## Scheduler
 
-Owner of child delegation tree and waitset. Does not own cross-run task ledgers.
+Owner of child / Worker waitset and cancel subtree. Does **not** own Session chat entry or user-visible history.
 
 ```text
-# Session-facing (one root start verb)
-dispatch_execution(request: SchedulerExecutionRequest) -> None
-  # request carries preallocated or generated run_id, agent, optional thin system notice
-  # Session path sets user_input=None when history already holds the user text
+enqueue_input(state_id, user_input, *, agent?) -> None
+  # persistent root only:
+  #   IDLE/FAILED → pending_input / QUEUED
+  #   RUNNING → live handle enqueue_message
+  #   WAITING/QUEUED → USER_HINT mailbox (WAITING urgent)
 
-inject_user_message(run_id, user_input) -> None   # RUNNING root only
-steer(...) / cancel(...) / wait_for(...)
-list_execution_tree(root_run_id) -> depth-1 root + direct children
-get_run_view / get_run_status / list_run_log_entries   # read bridges over agent RunLog
-request_recoverable_pause / prepare_resume / release_resume_barrier  # Run-level PAUSED
-
-# Agent-facing system tools (unchanged responsibility)
-spawn_child_agent / fork_child_agent / sleep_and_wait(waitset|timer|...)
+register_worker_parent(...)
+cancel(...) / shutdown(...) / wait_for(...)
+list_states / list_events / get_stats / rebind_agent
+spawn_child_agent / fork_child_agent / sleep_and_wait  # system tools
 ```
 
 Invariants:
 
-- `WAITING` on AgentState means waitset/timer/events — not "waiting for user on a task ledger"
-- One public path for "start this root Run"; mailbox `route_root_input` may remain for SDK/debug but Console must not use a second task plane
+- `WAITING` on AgentState means waitset/timer/events — not a Session user-entry facade
+- Session product input is `MainAgent.accept` only
+- Deleted Session facade: `route_root_input`, `dispatch_execution`, `inject_user_message`, `steer`
 
 ## Agent + RunLog
 
 ```text
-Agent.start / start_prevalidated / run_stream
-RunStateWriter — sole write path for RunLog facts
-RunStatus: RUNNING | PAUSED | COMPLETED | INTERRUPTED | FAILED
+Agent.start / handle.enqueue_message / handle.stream / handle.wait
+RunLog append-only facts → RunView / StepView / stream / trace projections
+SessionRuntime: one pending-input queue (enqueue_message / peek / ack)
 ```
 
-Invariants:
-
-- RunLog is the only execution truth; Session history and traces project from it
-- Scheduler does not write RunLog (except documented fork/rollback edge cases)
-- No ObjectiveLog dual-write
-
-## Explicit non-goals (this sketch)
-
-- `submit_turn` / `TurnHandle`
-- `ObjectiveService`, `upgrade_from_plain_run`, `RootRunRequested`
-- Automatic verification / handoff peer root from a control plane
+One Loop queue. No public `enqueue_steer` / `enqueue_inject` / dual drain.

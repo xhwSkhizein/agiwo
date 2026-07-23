@@ -5,10 +5,9 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from agiwo.agent import MainAgentState
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
-    AgentState,
-    AgentStateStatus,
     AgentStateStorageConfig,
     SchedulerConfig,
 )
@@ -23,7 +22,7 @@ from server.dependencies import (
 )
 from server.models.session import Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
-from server.services.runtime import AgentRuntimeCache
+from server.services.runtime import AgentRuntimeCache, CachedAgent
 from server.services.session_store import InMemorySessionStore
 from server.services.storage_wiring import (
     create_run_log_storage,
@@ -31,12 +30,22 @@ from server.services.storage_wiring import (
 )
 
 
+from tests.test_agent_runtime_components import FakeMainAgent
+
+
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
     return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
 
 
 @pytest.fixture
-async def client():
+async def client(monkeypatch: pytest.MonkeyPatch):
+    async def fake_materialize_main_agent(*_args, **_kwargs):
+        return FakeMainAgent("sess-stub")
+
+    monkeypatch.setattr(
+        "server.services.runtime.agent_runtime_cache.materialize_main_agent",
+        fake_materialize_main_agent,
+    )
     app = create_app()
     config = ConsoleConfig(
         storage={
@@ -56,7 +65,6 @@ async def client():
     session_store = InMemorySessionStore()
     await session_store.connect()
     agent_runtime_cache = AgentRuntimeCache(
-        scheduler=scheduler,
         agent_registry=registry,
         console_config=config,
         session_store=session_store,
@@ -136,8 +144,7 @@ async def test_archive_and_restore_idle_session(client) -> None:
 @pytest.mark.asyncio
 async def test_archive_cancels_active_root_run_first(client) -> None:
     runtime = _runtime(client)
-    scheduler = runtime.scheduler
-    assert scheduler is not None
+    assert runtime.agent_runtime_cache is not None
     await runtime.agent_registry.create_agent(
         AgentConfigRecord(
             id="agent-1",
@@ -157,20 +164,29 @@ async def test_archive_cancels_active_root_run_first(client) -> None:
             updated_at=now,
         )
     )
-    await scheduler._store.save_state(
-        AgentState(
-            id="sess-active",
-            session_id="sess-active",
-            status=AgentStateStatus.RUNNING,
-            task="busy",
-        )
+    running_main_agent = FakeMainAgent(
+        "sess-active",
+        state=MainAgentState.RUNNING,
+    )
+    runtime.agent_runtime_cache._cache["sess-active"] = CachedAgent(
+        main_agent=running_main_agent,
+        config_snapshot=(
+            "agent-one",
+            "",
+            "openai",
+            "gpt-test",
+            "",
+            None,
+            None,
+            (),
+            (),
+            "",
+        ),
     )
 
     archive = await client.post("/api/sessions/sess-active/archive")
     assert archive.status_code == 200
-    state = await scheduler.get_state("sess-active")
-    assert state is not None
-    assert not state.is_active()
+    assert running_main_agent.state is MainAgentState.IDLE
     session = await runtime.session_store.get_session("sess-active")
     assert session is not None
     assert session.archived_at is not None

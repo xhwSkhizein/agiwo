@@ -1,4 +1,4 @@
-"""Regression tests for shared scheduler-backed session semantics."""
+"""Regression tests for shared MainAgent-backed session semantics."""
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
@@ -6,9 +6,10 @@ from uuid import uuid4
 
 import pytest
 
-from agiwo.scheduler.commands import RouteStreamMode
+from agiwo.agent.models.input import UserMessage
+from agiwo.agent.models.run import RunOutput
 from server.models.session import ChannelChatContext, Session
-from server.services.runtime.session_runtime_service import SessionRuntimeService
+from server.services.runtime.session_turn_service import SessionTurnService
 
 
 def _session() -> Session:
@@ -73,29 +74,35 @@ def test_fork_lineage_is_consistent_across_channels() -> None:
 
 
 @pytest.mark.asyncio
-async def test_executor_routes_all_channels_to_same_root_state_identity() -> None:
+async def test_executor_accepts_all_channels_via_same_main_agent() -> None:
     session = _session()
-    scheduler = AsyncMock()
-    scheduler.route_root_input = AsyncMock(
-        return_value=AsyncMock(action="stream", stream=None, state_id="sess-1")
-    )
     store = AsyncMock()
     store.upsert_session = AsyncMock()
-    runtime_service = SessionRuntimeService(
-        scheduler=scheduler,
+    runtime_service = SessionTurnService(
         session_store=store,
         timeout=60,
     )
-
-    await runtime_service.execute(
-        agent=AsyncMock(), session=session, user_input="hello from console"
+    handle = AsyncMock(run_id="run-1")
+    main_agent = AsyncMock()
+    main_agent.accept = AsyncMock(return_value=handle)
+    main_agent.wait_current_run = AsyncMock(
+        return_value=RunOutput(response="ok", session_id=session.id)
     )
-    await runtime_service.execute(
-        agent=AsyncMock(), session=session, user_input="hello from feishu"
+
+    await runtime_service.submit_user_message(
+        main_agent,
+        session,
+        UserMessage.from_value("hello from console"),
+    )
+    await runtime_service.submit_user_message(
+        main_agent,
+        session,
+        UserMessage.from_value("hello from feishu"),
     )
 
-    assert scheduler.route_root_input.await_count == 2
-    for awaited in scheduler.route_root_input.await_args_list:
-        assert awaited.kwargs["state_id"] == session.id
-        assert awaited.kwargs["session_id"] == session.id
-        assert awaited.kwargs["stream_mode"] == RouteStreamMode.UNTIL_SETTLED
+    assert main_agent.accept.await_count == 2
+    for call in main_agent.accept.await_args_list:
+        assert call.args[0].extract_text() in {
+            "hello from console",
+            "hello from feishu",
+        }

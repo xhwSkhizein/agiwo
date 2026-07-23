@@ -15,10 +15,7 @@ from agiwo.agent.storage.serialization import (
     serialize_run_log_entry_for_storage,
 )
 from agiwo.llm.base import Model, StreamChunk
-from agiwo.scheduler import (
-    Scheduler,
-    SchedulerExecutionRequest,
-)
+from agiwo.scheduler import Scheduler
 
 
 class _FixedResponseModel(Model):
@@ -109,47 +106,6 @@ def test_run_started_round_trip_keeps_identity_fields() -> None:
     assert view.run_tree_role == RunTreeRole.ROOT
 
 
-@pytest.mark.asyncio
-async def test_scheduler_facade_stubs_and_dispatch() -> None:
-    sched = Scheduler()
-    await sched.start()
-    try:
-        with pytest.raises(ValueError, match="unknown run_id"):
-            await sched.inject_user_message("r1", _user())
-
-        agent = Agent(
-            AgentConfig(name="t", description="t"),
-            model=_FixedResponseModel(),
-            id="root-1",
-        )
-        req = SchedulerExecutionRequest(
-            state_id="root-1",
-            session_id="sess-x",
-            user_input=UserMessage.from_system("assignment input"),
-            execution=RunExecutionRequest(
-                run_id="run_obj_1",
-                run_tree_role=RunTreeRole.ROOT,
-            ),
-        )
-        first = await sched.dispatch_execution(agent, req)
-        assert first.run_id == "run_obj_1"
-        assert first.attached is False
-        await sched.wait_for("root-1", timeout=10)
-        second = await sched.dispatch_execution(agent, req)
-        assert second.run_id == "run_obj_1"
-        assert (
-            second.status
-            in {
-                RunStatus.COMPLETED,
-                RunStatus.FAILED,
-                RunStatus.INTERRUPTED,
-                None,
-            }
-            or second.attached
-        )
-        view = await sched.get_run_view("run_obj_1")
-        assert view is not None
-        assert view.run_tree_role == RunTreeRole.ROOT
-        await agent.close()
-    finally:
-        await sched.stop()
+def test_scheduler_dropped_session_facade_methods() -> None:
+    for name in ("route_root_input", "dispatch_execution", "inject_user_message"):
+        assert not hasattr(Scheduler, name), f"Scheduler must not expose {name!r}"

@@ -304,16 +304,26 @@ async def test_agent_run_stream_rejects_system_attributed_user_input() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_steer_rejects_system_attributed_user_input() -> None:
+async def test_agent_execution_handle_exposes_only_enqueue_message() -> None:
     start_event = asyncio.Event()
     agent = Agent(
-        AgentConfig(name="provenance-steer", description="provenance gate"),
+        AgentConfig(name="provenance-enqueue", description="single queue API"),
         model=FixedResponseModel(start_event=start_event),
     )
-    handle = agent.start("hello", session_id="provenance-steer")
+    handle = agent.start("hello", session_id="provenance-enqueue")
     await asyncio.sleep(0)
-    with pytest.raises(ValueError, match="is_user_provided=False"):
-        await handle.steer(_system_attributed_user_message())
+    public_methods = {
+        name
+        for name, member in inspect.getmembers(
+            type(handle), predicate=inspect.isfunction
+        )
+        if not name.startswith("_")
+    }
+    assert "enqueue_message" in public_methods
+    assert "steer" not in public_methods
+    assert "inject_system_user_message" not in public_methods
+    accepted = await handle.enqueue_message(_system_attributed_user_message())
+    assert accepted is True
     start_event.set()
     await handle.wait()
 

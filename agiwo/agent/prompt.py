@@ -267,20 +267,20 @@ def _build_initial_messages(
     return messages
 
 
-def apply_steering_messages(
+def append_pending_user_messages(
     messages: list[dict[str, Any]],
-    steer_inputs: list[UserMessage] | None,
+    pending_inputs: list[UserMessage] | None,
 ) -> list[dict[str, Any]]:
-    """Append staged steer inputs to ``messages`` and return it.
+    """Append staged pending user-role inputs to ``messages`` and return it.
 
     The caller owns ``messages`` (typically a fresh ``state.snapshot_messages()``
     deep copy).  This function mutates and returns the same list so we avoid a
     per-turn deep copy of the entire conversation history.
     """
-    if not steer_inputs:
+    if not pending_inputs:
         return messages
 
-    for normalized in steer_inputs:
+    for normalized in pending_inputs:
         if not normalized.has_content():
             continue
         messages.append(
@@ -364,7 +364,7 @@ def compose_child_system_prompt(
 
 
 __all__ = [
-    "apply_steering_messages",
+    "append_pending_user_messages",
     "assemble_run_messages",
     "build_system_prompt",
     "compose_child_system_prompt",

@@ -47,43 +47,38 @@ The supported public composition API is `Agent.as_tool()`. If you need child age
 
 ## Scheduler Orchestration
 
-For long-running, persistent multi-agent setups, use the Scheduler:
+For long-running child delegation and waitset control, use the slim Scheduler. Session user chat still belongs to `MainAgent.accept`.
 
 ```python
 from agiwo.scheduler import Scheduler
 
 async with Scheduler() as scheduler:
-    # Create a persistent root via the canonical routing entrypoint
-    route = await scheduler.route_root_input(
+    await scheduler.register_worker_parent(
+        state_id=orchestrator.id,
+        session_id="sess-1",
+        agent=orchestrator,
+    )
+
+    await scheduler.enqueue_input(
+        orchestrator.id,
         "Coordinate the research pipeline",
         agent=orchestrator,
-        persistent=True,  # Stays alive after completion
     )
-    orchestrator_id = route.state_id
+    await scheduler.wait_for(orchestrator.id)
 
-    # Wait until the first round settles to IDLE
-    await scheduler.wait_for(orchestrator_id)
-
-    # Feed more input later
-    await scheduler.enqueue_input(orchestrator_id, "Now analyze the cost implications")
-
-    # Open a fresh stream for the next routed turn
-    route = await scheduler.route_root_input(
-        "Update the analysis",
+    await scheduler.enqueue_input(
+        orchestrator.id,
+        "Now analyze the cost implications",
         agent=orchestrator,
-        state_id=orchestrator_id,
     )
-    assert route.stream is not None
+    await scheduler.wait_for(orchestrator.id)
 
-    async for event in route.stream:
-        if event.type == "step_delta" and event.delta.content:
-            print(event.delta.content, end="", flush=True)
-
-    # Steer only while the root is active
-    await scheduler.steer(orchestrator_id, "Focus on enterprise use cases")
-
-    # Cancel when done
-    await scheduler.cancel(orchestrator_id)
+    await scheduler.enqueue_input(
+        orchestrator.id,
+        "Focus on enterprise use cases",
+        agent=orchestrator,
+    )
+    await scheduler.cancel(orchestrator.id)
 ```
 
 ### Scheduler Tools
@@ -109,82 +104,48 @@ You can use these tools to coordinate work:
 
 ### Pipeline
 
-Chain agents sequentially:
+Chain agents sequentially with `Agent.run()` or Session turns:
 
 ```python
-async with Scheduler() as scheduler:
-    # Step 1: Research
-    research_route = await scheduler.route_root_input(
-        "Gather facts about X",
-        agent=researcher,
-        persistent=False,
-    )
-    research_result = await scheduler.wait_for(research_route.state_id)
-
-    # Step 2: Analyze using research output
-    analysis_route = await scheduler.route_root_input(
-        f"Analyze these findings: {research_result.response}",
-        agent=analyzer,
-        persistent=False,
-    )
-    analysis_result = await scheduler.wait_for(analysis_route.state_id)
-
-    # Step 3: Write report
-    report_route = await scheduler.route_root_input(
-        f"Write a report based on: {analysis_result.response}",
-        agent=writer,
-        persistent=False,
-    )
-    report = await scheduler.wait_for(report_route.state_id)
+research = await researcher.run("Gather facts about X")
+analysis = await analyzer.run(f"Analyze these findings: {research.response}")
+report = await writer.run(f"Write a report based on: {analysis.response}")
 ```
 
 ### Fan-out / Fan-in
 
-Spawn multiple agents in parallel, collect results:
+Use parallel `Agent.run()` calls, or spawn children from a scheduler-managed supervisor:
 
 ```python
-async with Scheduler() as scheduler:
-    # Fan out
-    ids = []
-    for topic in ["topic_a", "topic_b", "topic_c"]:
-        route = await scheduler.route_root_input(
-            f"Research {topic}",
-            agent=researcher,
-            persistent=False,
-        )
-        ids.append(route.state_id)
+results = []
+for topic in ["topic_a", "topic_b", "topic_c"]:
+    result = await researcher.run(f"Research {topic}")
+    results.append(result.response)
 
-    # Fan in
-    results = []
-    for state_id in ids:
-        result = await scheduler.wait_for(state_id)
-        results.append(result.response)
-
-    # Synthesize
-    final_route = await scheduler.route_root_input(
-        f"Synthesize these findings: {results}",
-        agent=synthesizer,
-        persistent=False,
-    )
-    final = await scheduler.wait_for(final_route.state_id)
+final = await synthesizer.run(f"Synthesize these findings: {results}")
 ```
 
 ### Supervisor Pattern
 
-A persistent supervisor coordinates transient workers:
+A persistent supervisor registered on the Scheduler coordinates transient workers via spawn tools; external operators enqueue the next assignment:
 
 ```python
 async with Scheduler() as scheduler:
-    route = await scheduler.route_root_input(
+    await scheduler.register_worker_parent(
+        state_id=supervisor_agent.id,
+        session_id="sess-supervisor",
+        agent=supervisor_agent,
+    )
+    await scheduler.enqueue_input(
+        supervisor_agent.id,
         "Manage the data processing pipeline",
         agent=supervisor_agent,
-        persistent=True,
     )
-    supervisor_id = route.state_id
-
-    # The supervisor uses spawn_child_agent / fork_child_agent internally to create workers
-    # External input can steer the supervisor
-    await scheduler.enqueue_input(supervisor_id, "Priority: process batch 42 first")
+    await scheduler.enqueue_input(
+        supervisor_agent.id,
+        "Priority: process batch 42 first",
+        agent=supervisor_agent,
+    )
 ```
 
 ## Cleanup

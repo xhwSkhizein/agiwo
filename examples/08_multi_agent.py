@@ -1,7 +1,9 @@
 """
 Example 08: Multi-Agent Fan-Out/Fan-In
 
-Spawn multiple agents in parallel, collect results, synthesize.
+Spawn child agents through scheduler runtime tools, collect results, synthesize.
+Session user entry is MainAgent.accept; this sample uses Agent.run for one-shots
+and Scheduler only for child delegation.
 """
 
 import asyncio
@@ -9,12 +11,10 @@ import asyncio
 from agiwo.agent import Agent
 from agiwo.agent import AgentConfig
 from agiwo.scheduler import Scheduler
-from agiwo.scheduler import RouteStreamMode
 from agiwo.llm import OpenAIModel
 
 
 async def main() -> None:
-    # Researcher agent — investigates a single topic
     researcher = Agent(
         AgentConfig(
             name="researcher",
@@ -22,9 +22,9 @@ async def main() -> None:
             system_prompt="Research the given topic and provide 3 key findings.",
         ),
         model=OpenAIModel(name="gpt-5.4"),
+        id="researcher-root",
     )
 
-    # Synthesizer agent — combines multiple findings
     synthesizer = Agent(
         AgentConfig(
             name="synthesizer",
@@ -34,46 +34,40 @@ async def main() -> None:
         model=OpenAIModel(name="gpt-5.4"),
     )
 
+    topics = [
+        "Python performance optimization",
+        "Rust memory safety",
+        "Go concurrency model",
+    ]
+
+    print("=== Fan Out: parallel Agent.run one-shots ===")
+    findings: list[str] = []
+    for topic in topics:
+        result = await researcher.run(f"Research: {topic}")
+        findings.append(f"## {topic}\n{result.response}")
+        print(f"  Collected: {topic}")
+
+    print("\n=== Fan In: synthesize with a fresh Agent.run ===")
+    combined = "\n\n".join(findings)
+    summary = await synthesizer.run(
+        "Compare and contrast these programming language approaches:\n\n" + combined
+    )
+    print(f"\n{summary.response}")
+
+    print("\n=== Scheduler child delegation (optional pattern) ===")
     async with Scheduler() as scheduler:
-        # Fan out: research multiple topics in parallel
-        topics = [
-            "Python performance optimization",
-            "Rust memory safety",
-            "Go concurrency model",
-        ]
-
-        print("=== Fan Out: Researching topics ===")
-        state_ids = []
-        for topic in topics:
-            route_result = await scheduler.route_root_input(
-                f"Research: {topic}",
-                agent=researcher,
-                stream_mode=RouteStreamMode.UNTIL_SETTLED,
-            )
-            state_ids.append(route_result.state_id)
-            print(f"  Submitted: {topic} → {route_result.state_id}")
-
-        # Fan in: collect all results
-        print("\n=== Fan In: Collecting results ===")
-        findings = []
-        for i, state_id in enumerate(state_ids):
-            result = await scheduler.wait_for(state_id)
-            findings.append(f"## {topics[i]}\n{result.response}")
-            print(f"  Collected: {topics[i]}")
-
-        # Synthesize
-        print("\n=== Synthesizing ===")
-        combined = "\n\n".join(findings)
-        route_result = await scheduler.route_root_input(
-            f"Compare and contrast these programming language approaches:\n\n{combined}",
-            agent=synthesizer,
-            stream_mode=RouteStreamMode.RUN_END,
+        await scheduler.register_worker_parent(
+            state_id=researcher.id,
+            session_id="example-08",
+            agent=researcher,
         )
-        # Consume stream to get result
-        async for item in route_result.stream:
-            if item.type == "run_output":
-                print(f"\n{item.content.response}")
-                break
+        await scheduler.enqueue_input(
+            researcher.id,
+            "Briefly note when spawn_child_agent is appropriate.",
+            agent=researcher,
+        )
+        delegated = await scheduler.wait_for(researcher.id)
+        print(delegated.response)
 
     await researcher.close()
     await synthesizer.close()

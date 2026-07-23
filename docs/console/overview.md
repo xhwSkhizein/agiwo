@@ -25,14 +25,14 @@ The Console is session-first:
 1. create or choose an agent config
 2. create a session for that agent
 3. send input to the session over SSE
-4. let the scheduler decide whether to submit, enqueue, or steer the root runtime
+4. `SessionGateway` → `MainAgent.accept` (idle opens a Run; busy enqueues)
 
 Important runtime services live under `console/server/services/runtime/`:
 
 - `build_agent(...)` constructs stable runtime agents from registry records
 - `AgentRuntimeCache` reuses runtime agents across requests
 - `SessionContextService` creates and forks sessions
-- `SessionRuntimeService` routes session input through the scheduler
+- `SessionTurnService` accepts session input via `MainAgent.accept`
 - `SessionViewService` builds session list/detail projections for the API
 - `SchedulerTreeViewService` assembles scheduler tree responses for the UI
 
@@ -115,7 +115,7 @@ Console-specific settings use the `AGIWO_CONSOLE_*` prefix. SDK settings (`AGIWO
 - create standalone sessions per agent and stream new user input over SSE
 - browse runs, steps, session summaries, and execution traces
 - inspect scheduler states, trees, pending events, and aggregate stats
-- cancel, steer, resume, or submit persistent scheduler roots
+- cancel or enqueue input for persistent scheduler roots (`resume` API → `enqueue_input`)
 - optionally enable the Feishu channel runtime
 
 ## Extending the Console
@@ -123,7 +123,7 @@ Console-specific settings use the `AGIWO_CONSOLE_*` prefix. SDK settings (`AGIWO
 ### Adding a Channel
 
 1. create a new package in `console/server/channels/your_channel/`
-2. reuse `SessionContextService` and `SessionRuntimeService` instead of building a parallel execution path
+2. reuse `SessionContextService` and `SessionTurnService` instead of building a parallel execution path
 3. initialize and register the channel service in `console/server/app.py`
 
 ### Adding an API Route

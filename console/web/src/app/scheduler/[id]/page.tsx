@@ -15,7 +15,6 @@ import {
   getAgentState,
   getAgentStateChildren,
   getPendingEvents,
-  steerAgent,
   cancelAgent,
   resumeAgent,
   getAgent,
@@ -307,10 +306,10 @@ function ChildrenTable({ items }: { items: AgentStateListItem[] }) {
 }
 
 /**
- * Render the control panel for steering, resuming, or canceling a root agent state.
+ * Render the control panel for enqueueing input or canceling a root agent state.
  *
- * Displays a message input, context-sensitive action buttons (Steer, Resume, Cancel),
- * and transient success/error feedback. The panel is rendered only for root states.
+ * Displays a message input, Enqueue / Cancel buttons, and transient feedback.
+ * The panel is rendered only for root states.
  *
  * @param state - The agent state detail to control; used to determine root status, activity, and action targets.
  * @param onAction - Called after a successful control action to allow the parent to refresh state.
@@ -334,6 +333,10 @@ function ControlPanel({
   const isRoot = state.parent_id === null;
   const isActive = isActiveStatus(state.status);
   const canResume = isRoot && state.is_persistent && ["idle", "failed"].includes(state.status);
+  const canEnqueue =
+    isRoot &&
+    state.is_persistent &&
+    (canResume || isActive);
 
   const handle = async (
     fn: () => Promise<unknown>,
@@ -364,68 +367,44 @@ function ControlPanel({
       <h3 className="text-sm font-medium">Control</h3>
       <div className="flex gap-2">
         <label htmlFor={messageInputId} className="sr-only">
-          {canResume ? "Resume message" : "Steering message"}
+          Enqueue message
         </label>
         <input
           id={messageInputId}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder={
-            canResume
-              ? "Resume message..."
-              : isActive
-                ? "Steer message..."
-                : "This state is not accepting messages"
+            canEnqueue
+              ? "Enqueue message..."
+              : "This state is not accepting messages"
           }
           className="ui-input flex-1"
           onKeyDown={(e) => {
             if (e.key === "Enter" && input.trim()) {
-              if (canResume) {
+              if (canEnqueue) {
                 void handle(
                   () => resumeAgent(state.id, input.trim()),
-                  "Message submitted. Auto-refreshing until the agent settles.",
-                  true,
-                );
-              } else if (isActive) {
-                void handle(
-                  () => steerAgent(state.id, input.trim(), true),
-                  "Steer message queued. Auto-refreshing while the agent is active.",
+                  "Input enqueued. Auto-refreshing until the agent settles.",
                   true,
                 );
               }
             }
           }}
         />
-        {isActive && (
-          <button
-            type="button"
-            disabled={busy || !input.trim()}
-            onClick={() =>
-              void handle(
-                () => steerAgent(state.id, input.trim(), true),
-                "Steer message queued. Auto-refreshing while the agent is active.",
-                true,
-              )
-            }
-            className="ui-button ui-button-primary min-h-10 px-3 py-1.5 text-xs"
-          >
-            {busy ? "Sending..." : "Steer"}
-          </button>
-        )}
-        {canResume && (
+        {canEnqueue && (
           <button
             type="button"
             disabled={busy || !input.trim()}
             onClick={() =>
               void handle(
                 () => resumeAgent(state.id, input.trim()),
-                "Message submitted. Auto-refreshing until the agent settles.",
+                "Input enqueued. Auto-refreshing until the agent settles.",
                 true,
               )
             }
             className="ui-button ui-button-primary min-h-10 px-3 py-1.5 text-xs"
           >
-            {busy ? "Sending..." : "Resume"}
+            {busy ? "Sending..." : "Enqueue"}
           </button>
         )}
         {isActive && (
@@ -446,7 +425,7 @@ function ControlPanel({
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs">
         <PillBadge className="rounded bg-panel-strong px-2 py-1 text-ink-soft whitespace-nowrap">
-          {canResume ? "next action: resume" : isActive ? "next action: steer" : "read only"}
+          {canEnqueue ? "next action: enqueue" : isActive ? "next action: cancel" : "read only"}
         </PillBadge>
         <span className="text-ink-muted">
           {isActive
@@ -473,7 +452,7 @@ function ControlPanel({
 /**
  * Renders the Agent State detail page for the state ID taken from route parameters.
  *
- * Displays the agent state, linked agent config, child states, and pending events; provides steering/resume/cancel controls when applicable and auto-refreshes while the agent is active and the page is visible.
+ * Displays the agent state, linked agent config, child states, and pending events; provides enqueue/cancel controls when applicable and auto-refreshes while the agent is active and the page is visible.
  *
  * @returns The React element for the Scheduler "Agent State" detail page.
  */

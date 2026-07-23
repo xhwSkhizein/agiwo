@@ -1,18 +1,18 @@
-"""Integration tests for session-scoped cancellation."""
+"""Integration tests for session-scoped cancellation via MainAgent."""
+
+from datetime import datetime, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from agiwo.agent import MainAgentState
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
-    AgentState,
-    AgentStateStatus,
     AgentStateStorageConfig,
     SchedulerConfig,
 )
 
 from server.app import create_app
-from server.services.session_store import InMemorySessionStore
 from server.config import ConsoleConfig
 from server.dependencies import (
     ConsoleRuntime,
@@ -20,16 +20,47 @@ from server.dependencies import (
     clear_console_runtime,
     get_console_runtime_from_app,
 )
-from server.services.agent_registry import AgentRegistry
+from server.models.session import Session
+from server.services.agent_registry import AgentConfigRecord, AgentRegistry
+from server.services.runtime import AgentRuntimeCache, CachedAgent
+from server.services.session_store import InMemorySessionStore
 from server.services.storage_wiring import create_run_log_storage, create_trace_storage
+
+from tests.test_agent_runtime_components import FakeMainAgent
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
     return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
 
 
+async def _seed_session(
+    runtime: ConsoleRuntime,
+    *,
+    session_id: str,
+) -> None:
+    assert runtime.session_store is not None
+    now = datetime.now(timezone.utc)
+    await runtime.session_store.upsert_session(
+        Session(
+            id=session_id,
+            chat_context_scope_id=None,
+            base_agent_id="agent-1",
+            created_by="TEST",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+
 @pytest.fixture
-async def client():
+async def client(monkeypatch: pytest.MonkeyPatch):
+    async def fake_materialize_main_agent(*_args, **_kwargs):
+        return FakeMainAgent("sess-stub")
+
+    monkeypatch.setattr(
+        "server.services.runtime.agent_runtime_cache.materialize_main_agent",
+        fake_materialize_main_agent,
+    )
     app = create_app()
 
     config = ConsoleConfig(
@@ -51,6 +82,11 @@ async def client():
     await scheduler.start()
     session_store = InMemorySessionStore()
     await session_store.connect()
+    agent_runtime_cache = AgentRuntimeCache(
+        agent_registry=registry,
+        console_config=config,
+        session_store=session_store,
+    )
 
     bind_console_runtime(
         app,
@@ -61,6 +97,7 @@ async def client():
             agent_registry=registry,
             scheduler=scheduler,
             session_store=session_store,
+            agent_runtime_cache=agent_runtime_cache,
         ),
     )
 
@@ -69,6 +106,7 @@ async def client():
         yield c
 
     clear_console_runtime(app)
+    await agent_runtime_cache.close()
     await scheduler.stop()
     await registry.close()
     await run_log_storage.close()
@@ -78,7 +116,7 @@ async def client():
 
 class TestSessionCancel:
     @pytest.mark.asyncio
-    async def test_cancel_nonexistent_session_state(self, client) -> None:
+    async def test_cancel_nonexistent_session_returns_404(self, client) -> None:
         resp = await client.post(
             "/api/sessions/nonexistent-session/cancel",
             json={"reason": "operator stop"},
@@ -86,18 +124,17 @@ class TestSessionCancel:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_cancel_completed_state_returns_404(self, client) -> None:
-        scheduler = _runtime(client).scheduler
-        assert scheduler is not None
-        await scheduler._store.save_state(
-            AgentState(
-                id="session-1",
-                session_id="session-1",
-                status=AgentStateStatus.COMPLETED,
-                task="Done task",
-                result_summary="All done.",
+    async def test_cancel_idle_main_agent_returns_404(self, client) -> None:
+        runtime = _runtime(client)
+        await runtime.agent_registry.create_agent(
+            AgentConfigRecord(
+                id="agent-1",
+                name="agent-one",
+                model_provider="openai",
+                model_name="gpt-test",
             )
         )
+        await _seed_session(runtime, session_id="session-1")
 
         resp = await client.post(
             "/api/sessions/session-1/cancel",
@@ -106,16 +143,36 @@ class TestSessionCancel:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_cancel_running_root_state_by_session_id(self, client) -> None:
-        scheduler = _runtime(client).scheduler
-        assert scheduler is not None
-        await scheduler._store.save_state(
-            AgentState(
-                id="session-2",
-                session_id="session-2",
-                status=AgentStateStatus.RUNNING,
-                task="Long task",
+    async def test_cancel_running_main_agent_by_session_id(self, client) -> None:
+        runtime = _runtime(client)
+        assert runtime.agent_runtime_cache is not None
+        await runtime.agent_registry.create_agent(
+            AgentConfigRecord(
+                id="agent-1",
+                name="agent-one",
+                model_provider="openai",
+                model_name="gpt-test",
             )
+        )
+        await _seed_session(runtime, session_id="session-2")
+        running_main_agent = FakeMainAgent(
+            "session-2",
+            state=MainAgentState.RUNNING,
+        )
+        runtime.agent_runtime_cache._cache["session-2"] = CachedAgent(
+            main_agent=running_main_agent,
+            config_snapshot=(
+                "agent-one",
+                "",
+                "openai",
+                "gpt-test",
+                "",
+                None,
+                None,
+                (),
+                (),
+                "",
+            ),
         )
 
         resp = await client.post(
@@ -127,56 +184,4 @@ class TestSessionCancel:
         assert data["ok"] is True
         assert data["session_id"] == "session-2"
         assert data["state_id"] == "session-2"
-
-        updated = await scheduler.get_state("session-2")
-        assert updated is not None
-        assert updated.status == AgentStateStatus.FAILED
-
-    @pytest.mark.asyncio
-    async def test_cancel_cascades_to_children(self, client) -> None:
-        scheduler = _runtime(client).scheduler
-        assert scheduler is not None
-
-        states = [
-            AgentState(
-                id="session-3",
-                session_id="session-3",
-                status=AgentStateStatus.WAITING,
-                task="Parent task",
-            ),
-            AgentState(
-                id="child-cancel-1",
-                session_id="session-3",
-                status=AgentStateStatus.RUNNING,
-                task="Child 1",
-                parent_id="session-3",
-            ),
-            AgentState(
-                id="child-cancel-2",
-                session_id="session-3",
-                status=AgentStateStatus.COMPLETED,
-                task="Child 2",
-                parent_id="session-3",
-                result_summary="Done",
-            ),
-        ]
-        for state in states:
-            await scheduler._store.save_state(state)
-
-        resp = await client.post(
-            "/api/sessions/session-3/cancel",
-            json={"reason": "operator stop"},
-        )
-        assert resp.status_code == 200
-
-        parent_state = await scheduler.get_state("session-3")
-        assert parent_state is not None
-        assert parent_state.status == AgentStateStatus.FAILED
-
-        child1 = await scheduler.get_state("child-cancel-1")
-        assert child1 is not None
-        assert child1.status == AgentStateStatus.FAILED
-
-        child2 = await scheduler.get_state("child-cancel-2")
-        assert child2 is not None
-        assert child2.status == AgentStateStatus.COMPLETED
+        assert running_main_agent.state is MainAgentState.IDLE

@@ -22,7 +22,7 @@ from server.services.runtime import (
 )
 from server.services.runtime_config import RuntimeConfigService
 from server.services.session_gateway import SessionGateway
-from server.services.runtime.session_runtime_service import SessionRuntimeService
+from server.services.runtime.session_turn_service import SessionTurnService
 
 _RUNTIME_STATE_KEY = "console_runtime"
 
@@ -100,18 +100,15 @@ def get_session_context_service(runtime: ConsoleRuntime) -> SessionContextServic
 def get_session_gateway(runtime: ConsoleRuntime) -> SessionGateway:
     if runtime.session_store is None:
         raise RuntimeError("Session store not available")
-    if runtime.scheduler is None:
-        raise RuntimeError("Scheduler not available")
     if runtime.agent_runtime_cache is None:
         raise RuntimeError("Agent runtime cache not available")
-    session_runtime = SessionRuntimeService(
-        scheduler=runtime.scheduler,
+    session_turn = SessionTurnService(
         session_store=runtime.session_store,
     )
     return SessionGateway(
         session_store=runtime.session_store,
         agent_runtime_cache=runtime.agent_runtime_cache,
-        session_runtime=session_runtime,
+        session_turn=session_turn,
     )
 
 

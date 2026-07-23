@@ -54,7 +54,7 @@ The project favors explicit runtime wiring over hidden global state. Agent execu
 
 - Streaming-first agent execution through one runtime pipeline surfaced as `start()`
 - Tool calling with builtin tools, custom `BaseTool` implementations, and agent-as-tool composition via `Agent.as_tool()`
-- Scheduler orchestration for roots and child agents, including `route_root_input` (unified entry point), `enqueue_input`, `wait_for`, `steer`, `cancel`, and `shutdown`
+- Scheduler orchestration for child agents, waitset, and control: `enqueue_input`, `wait_for`, `cancel`, and `shutdown` (Session chat uses `MainAgent.accept`, not Scheduler root dispatch)
 - Run and step persistence plus trace collection with memory, SQLite, and MongoDB-backed storage options
 - Goal-directed context optimization with milestone tracking, forced trajectory review, and introspection-based context repair
 - Global skill discovery with per-agent allowlisting through explicit `allowed_skills`
@@ -214,24 +214,24 @@ async def main() -> None:
     )
 
     async with Scheduler() as scheduler:
-        from agiwo.scheduler.commands import RouteStreamMode
-
-        route_result = await scheduler.route_root_input(
+        await scheduler.register_worker_parent(
+            state_id=agent.id,
+            session_id="demo-session",
+            agent=agent,
+        )
+        await scheduler.enqueue_input(
+            agent.id,
             "Research two competing approaches and summarize them.",
             agent=agent,
-            stream_mode=RouteStreamMode.RUN_END,
         )
-        # Consume stream to get result
-        async for item in route_result.stream:
-            if item.type == "run_completed":
-                print(item.response)
-                break
+        result = await scheduler.wait_for(agent.id)
+        print(result.response)
 
 
 asyncio.run(main())
 ```
 
-For long-running roots, the scheduler API also supports `enqueue_input`, `wait_for`, `steer`, `cancel`, and `shutdown`.
+For long-running roots, the scheduler API also supports `enqueue_input`, `wait_for`, `cancel`, and `shutdown`.
 
 ## Console
 

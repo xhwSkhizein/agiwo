@@ -9,7 +9,7 @@
 - perform deduplication, trigger checks, and command interception
 - resolve attachments and sender metadata
 - deliver replies, follow-up messages, and acknowledgements
-- hand normal messages to `SessionContextService`, `AgentRuntimeCache`, and `SessionRuntimeService`
+- hand normal messages to `SessionContextService`, `AgentRuntimeCache`, and `SessionTurnService`
 
 ## Directory Map
 
@@ -39,7 +39,7 @@ Regular user messages follow this path:
 4. non-command messages are converted to `UserMessage`.
 5. `SessionContextService` resolves or creates the active session.
 6. `AgentRuntimeCache` returns the stable runtime agent for that session.
-7. `SessionRuntimeService` sends the input through the scheduler and returns a stream or an acknowledgement.
+7. `SessionTurnService` accepts input via `MainAgent.accept` and waits for the run.
 8. `FeishuDeliveryService` sends the result back to Feishu.
 
 ## Design Boundary

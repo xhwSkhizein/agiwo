@@ -5,34 +5,31 @@ import copy
 import secrets
 from asyncio import Task
 from collections.abc import AsyncIterator
-from typing import Any
 from uuid import uuid4
 
+from agiwo.agent.completion_gates.context import CompletionGateContext
 from agiwo.agent.nested.agent_tool import AgentTool
+from agiwo.agent.nested.child_ops import AgentChildOps
 from agiwo.agent.models.config import AgentConfig, AgentOptions
 from agiwo.agent.definition import (
-    ResolvedChildDefinition,
     build_agent_hooks,
     resolve_agent_definition,
-    resolve_child_definition,
 )
+from agiwo.agent.execution_handle import AgentExecutionHandle
 from agiwo.agent.hooks import HookRegistration, HookRegistry
 from agiwo.agent.introspect.tool import ReviewTrajectoryTool
 from agiwo.agent.models.input import UserInput, UserMessage
 from agiwo.agent.plan import UpdatePlanTool
 from agiwo.agent.prompt import build_system_prompt
-from agiwo.agent.models.execution import RunTreeRole, RunExecutionRequest
-from agiwo.agent.models.log import RunResumePrepared, RunStarted
-from agiwo.agent.models.run import RunIdentity, RunOutput, RunStatus
-from agiwo.agent.resume import build_resume_plan
+from agiwo.agent.models.execution import RunExecutionRequest
+from agiwo.agent.models.run import RunIdentity, RunOutput
 from agiwo.agent.run_loop import execute_run
+from agiwo.agent.run_resume import AgentResumeOps
 from agiwo.agent.runtime.context import RunContext
 from agiwo.agent.runtime.session import SessionRuntime
 from agiwo.agent.models.stream import AgentStreamItem
-from agiwo.agent.runtime.state_ops import replace_messages
 from agiwo.agent.storage.base import RunLogStorage
 from agiwo.agent.storage.factory import create_run_log_storage
-from agiwo.agent.storage.serialization import build_run_view_from_entries
 from agiwo.agent.trace_writer import AgentTraceCollector
 from agiwo.skill.manager import get_global_skill_manager
 from agiwo.tool.base import BaseTool
@@ -53,55 +50,7 @@ def _generate_default_id(name: str) -> str:
 logger = get_logger(__name__)
 
 
-class AgentExecutionHandle:
-    """One live root execution owned by a SessionRuntime."""
-
-    def __init__(
-        self,
-        *,
-        run_id: str,
-        session_id: str,
-        session_runtime: SessionRuntime,
-        task: Task[RunOutput],
-        context: RunContext | None = None,
-    ) -> None:
-        self._run_id = run_id
-        self._session_id = session_id
-        self._session_runtime = session_runtime
-        self._task = task
-        self._context = context
-
-    @property
-    def run_id(self) -> str:
-        return self._run_id
-
-    @property
-    def session_id(self) -> str:
-        return self._session_id
-
-    def stream(self) -> AsyncIterator[AgentStreamItem]:
-        return self._session_runtime.subscribe()
-
-    async def wait(self) -> RunOutput:
-        return await self._task
-
-    async def steer(self, user_input: UserInput) -> bool:
-        return await self._session_runtime.enqueue_steer(user_input)
-
-    async def inject_system_user_message(self, user_input: UserInput) -> bool:
-        """Inject a false-user system notice into the live run (not a user bubble)."""
-        return await self._session_runtime.enqueue_inject(user_input)
-
-    def cancel(self, reason: str | None = None) -> None:
-        self._session_runtime.abort_signal.abort(reason or "Cancelled by caller")
-
-    def request_pause(self, reason: str) -> None:
-        """Ask the live run to pause at the next safe boundary (not cancel)."""
-        if self._context is not None:
-            self._context.request_pause(reason)
-
-
-class Agent:
+class Agent(AgentChildOps, AgentResumeOps):
     """Thin facade over the internal agent runtime."""
 
     def __init__(
@@ -151,6 +100,7 @@ class Agent:
             self._config.options.storage.trace_storage
         )
         self._active_executions: dict[str, tuple[Task[RunOutput], AbortSignal]] = {}
+        self._completion_gate_context: CompletionGateContext | None = None
         self._closing = False
         self._closed = False
         self._close_lock = asyncio.Lock()
@@ -185,6 +135,16 @@ class Agent:
     @property
     def model(self) -> Model:
         return self._model
+
+    def bind_completion_gate_context(
+        self, context: CompletionGateContext | None
+    ) -> None:
+        """Attach MainAgent-owned Worker registry + unified queue hooks."""
+        self._completion_gate_context = context
+
+    @property
+    def completion_gate_context(self) -> CompletionGateContext | None:
+        return self._completion_gate_context
 
     @property
     def hooks(self) -> HookRegistry:
@@ -298,122 +258,6 @@ class Agent:
             max_depth=max_depth,
         )
 
-    # --- Child agent ---
-    async def run_child(
-        self,
-        user_input: UserInput,
-        *,
-        session_runtime: SessionRuntime,
-        parent_run_id: str,
-        parent_depth: int,
-        parent_user_id: str | None,
-        parent_timeout_at: float | None,
-        parent_metadata: dict[str, Any],
-        instruction: str | None = None,
-        system_prompt_override: str | None = None,
-        child_allowed_tools: list[str] | None = None,
-        child_allowed_skills: list[str] | None = None,
-        metadata_overrides: dict[str, Any] | None = None,
-        metadata_updates: dict | None = None,
-        abort_signal: AbortSignal | None = None,
-    ) -> RunOutput:
-        resolved_child: ResolvedChildDefinition = resolve_child_definition(
-            parent_config=self._config,
-            parent_extra_tools=self._extra_tools,
-            parent_agent_id=self._id,
-            instruction=instruction,
-            system_prompt_override=system_prompt_override,
-            child_allowed_tools=child_allowed_tools,
-            child_allowed_skills=child_allowed_skills,
-        )
-        context = RunContext(
-            identity=RunIdentity(
-                run_id=str(uuid4()),
-                agent_id=self._id,
-                agent_name=self.name,
-                user_id=parent_user_id,
-                depth=parent_depth + 1,
-                parent_run_id=parent_run_id,
-                timeout_at=parent_timeout_at,
-                run_tree_role=RunTreeRole.CHILD,
-                metadata=dict(parent_metadata),
-            ),
-            session_runtime=session_runtime,
-        )
-        combined_metadata = dict(metadata_overrides or {})
-        if metadata_updates:
-            combined_metadata.update(metadata_updates)
-        if combined_metadata:
-            context.update_metadata(combined_metadata)
-        child_abort_signal = abort_signal or session_runtime.abort_signal
-
-        return await execute_run(
-            user_input,
-            context=context,
-            model=self._model,
-            system_prompt=await build_system_prompt(
-                base_prompt=resolved_child.config.system_prompt,
-                workspace=self._workspace,
-                tools=resolved_child.extra_tools,
-                allowed_skills=resolved_child.config.allowed_skills,
-                bootstrapper=WorkspaceBootstrapper(),
-                document_store=WorkspaceDocumentStore(),
-            ),
-            tools=resolved_child.extra_tools,
-            hooks=build_agent_hooks(self._config, self._hooks),
-            options=resolved_child.config.options.model_copy(deep=True),
-            abort_signal=child_abort_signal,
-            root_path=resolved_child.config.options.get_effective_root_path(),
-        )
-
-    async def create_child_agent(
-        self,
-        *,
-        child_id: str,
-        instruction: str | None = None,
-        system_prompt_override: str | None = None,
-        child_allowed_tools: list[str] | None = None,
-        child_allowed_skills: list[str] | None = None,
-        extra_tools: list[BaseTool] | None = None,
-        inherit_all_extra_tools: bool = False,
-        system_tools: list[BaseTool] | None = None,
-    ) -> "Agent":
-        """Create a child Agent with inherited configuration.
-
-        Parent's extra tools are inherited automatically (minus self-referencing
-        AgentTool).  The *extra_tools* parameter adds caller-provided tools on
-        top.
-
-        When *inherit_all_extra_tools* is ``True`` (fork mode), the exclusion
-        filter is skipped so that the child receives an identical tool set for
-        LLM KV cache reuse.
-
-        *system_tools* are injected unconditionally and not subject to
-        ``allowed_tools`` filtering.
-        """
-        resolved_child: ResolvedChildDefinition = resolve_child_definition(
-            parent_config=self._config,
-            parent_extra_tools=self._extra_tools,
-            parent_agent_id=self._id,
-            instruction=instruction,
-            system_prompt_override=system_prompt_override,
-            child_allowed_tools=child_allowed_tools,
-            child_allowed_skills=child_allowed_skills,
-            extra_tools=extra_tools,
-            inherit_all_extra_tools=inherit_all_extra_tools,
-        )
-
-        child = self.__class__(
-            resolved_child.config,
-            id=child_id,
-            model=self.model,
-            tools=resolved_child.extra_tools or None,
-            hooks=build_agent_hooks(self._config, self._hooks),
-        )
-        if system_tools:
-            child._inject_system_tools(system_tools)
-        return child
-
     # --- Execution ---
 
     def start(
@@ -524,98 +368,10 @@ class Agent:
                 options=options,
                 abort_signal=abort_signal,
                 root_path=options.get_effective_root_path(),
+                completion_gate_context=self._completion_gate_context,
             )
         finally:
             await context.session_runtime.close()
-
-    async def prepare_resume(self, *, run_id: str, session_id: str) -> str:
-        """Validate a paused run and append RunResumePrepared. Returns checkpoint_id."""
-        entries = await self._run_log_storage.list_entries(
-            session_id=session_id, run_id=run_id, limit=100_000
-        )
-        view = build_run_view_from_entries(entries)
-        if view is None or view.status is not RunStatus.PAUSED:
-            raise ValueError(f"run {run_id!r} is not PAUSED")
-        plan = build_resume_plan(entries)
-        seq = await self._run_log_storage.allocate_sequence(session_id)
-        prepared = RunResumePrepared(
-            sequence=seq,
-            session_id=session_id,
-            run_id=run_id,
-            agent_id=self._id,
-            checkpoint_id=plan.checkpoint_id,
-        )
-        await self._run_log_storage.append_entries([prepared])
-        return plan.checkpoint_id
-
-    async def resume_paused_run(
-        self,
-        *,
-        run_id: str,
-        session_id: str,
-        abort_signal: AbortSignal | None = None,
-    ) -> RunOutput:
-        """Continue a PAUSED run with the same run_id (public API unchanged)."""
-        self._ensure_open()
-        entries = await self._run_log_storage.list_entries(
-            session_id=session_id, run_id=run_id, limit=100_000
-        )
-        plan = build_resume_plan(entries)
-        started_entry = next((e for e in entries if isinstance(e, RunStarted)), None)
-        if started_entry is None:
-            raise ValueError(f"run {run_id!r} missing RunStarted")
-
-        resolved_abort = abort_signal or AbortSignal()
-        session_runtime = SessionRuntime(
-            session_id=session_id,
-            run_log_storage=self._run_log_storage,
-            abort_signal=resolved_abort,
-        )
-        context = RunContext(
-            identity=RunIdentity(
-                run_id=run_id,
-                agent_id=self._id,
-                agent_name=self.name,
-                user_id=started_entry.user_id,
-                run_tree_role=(
-                    RunTreeRole(started_entry.run_tree_role)
-                    if started_entry.run_tree_role
-                    else RunTreeRole.NONE
-                ),
-            ),
-            session_runtime=session_runtime,
-        )
-        replace_messages(context, plan.messages)
-        if plan.continue_user_message is not None:
-            msgs = context.snapshot_messages()
-            msgs.append(
-                {
-                    "role": "user",
-                    "content": plan.continue_user_message.extract_text(),
-                    "is_user_provided": False,
-                }
-            )
-            replace_messages(context, msgs)
-
-        system_prompt = await self.get_effective_system_prompt()
-        options = self._config.options.model_copy(deep=True)
-        try:
-            return await execute_run(
-                plan.continue_user_message,
-                context=context,
-                model=self._model,
-                system_prompt=system_prompt,
-                tools=list(self._tools),
-                hooks=self._hooks,
-                options=options,
-                abort_signal=resolved_abort,
-                root_path=options.get_effective_root_path(),
-                pending_tool_calls=plan.pending_tool_calls,
-                resume=True,
-                resume_checkpoint_id=plan.checkpoint_id,
-            )
-        finally:
-            await session_runtime.close()
 
     async def run(
         self,
@@ -738,4 +494,4 @@ class Agent:
             self._closing = False
 
 
-__all__ = ["Agent"]
+__all__ = ["Agent", "AgentExecutionHandle"]

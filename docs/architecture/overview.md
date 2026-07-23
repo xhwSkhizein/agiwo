@@ -3,28 +3,28 @@
 ## Console Interaction Path
 
 ```
-Console / Feishu → Session runtime services → Scheduler → Agent
+Console / Feishu → SessionGateway → MainAgent.accept → Agent Loop / RunLog
 ```
 
 The Console and Feishu adapters share the same session-first conversation semantics:
 
 - **Entry adapters** (Console Web, Feishu) handle transport-specific concerns (SSE, long-connection, message parsing)
-- **Session runtime services** (`SessionContextService`, `SessionRuntimeService`, `SessionViewService`) own session lifecycle, routing, and projection assembly
-- **Scheduler** mediates execution for persistent roots and child agents
-- **Agent** executes the actual work, with results projected back as SDK execution facts
+- **SessionGateway / SessionTurnService** accept user input via `MainAgent.accept` and project history from RunLog
+- **Scheduler** owns waitset, cancel, and Worker parent registration—not Session chat entry
+- **Agent / MainAgent** execute the work; results are projected from RunLog facts
 
 ## Key Domain Objects
 
 | Object | Description |
 |--------|-------------|
 | Session | Primary conversation container. Users create, switch, and resume sessions across entrypoints. |
-| Task | Unit of work inside a Session. Created implicitly when the first message arrives. |
-| Run | Execution-level realization of task work, derived from SDK RunStep records. |
+| MainAgent | Session-scoped live executor; `accept` is the user-input API. |
+| Run | One MainAgent (or Worker) execution cycle, recorded in RunLog. |
+| Scheduler | Waitset + cancel + persistent-root `enqueue_input` for orchestration trees. |
 
 ## Design Principles
 
 1. **Console is a projection layer** — it views SDK execution facts, never creates a second execution truth
-2. **One session = one task by default** — keeps the mental model simple
+2. **One session entry** — `MainAgent.accept`; no Scheduler Session facade
 3. **Fork for branching** — when work diverges, fork to a new session rather than overloading one session
-4. **Scheduler-mediated execution** — Console no longer calls `agent.start()` directly
-5. **RunStep-first projections** — task/run views are built from SDK-provided execution records
+4. **RunLog-first projections** — session history, stream, and trace views are built from committed RunLog entries

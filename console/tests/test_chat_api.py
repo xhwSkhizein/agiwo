@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agiwo.agent.models.run import RunOutput
 from agiwo.scheduler.engine import Scheduler
 from agiwo.scheduler.models import (
     AgentStateStorageConfig,
@@ -25,40 +24,33 @@ from server.dependencies import (
 from server.models.session import Session
 from server.services.agent_registry import AgentConfigRecord, AgentRegistry
 from server.services.runtime import AgentRuntimeCache
-from server.services.runtime.session_runtime_service import SessionRuntimeService
 from server.services.storage_wiring import (
     create_run_log_storage,
     create_trace_storage,
 )
-from tests.test_agent_runtime_components import FakeAgent
+from server.services.session_gateway import SessionGateway, SessionStreamStart
+from tests.test_agent_runtime_components import FakeMainAgent
 
 
 def _runtime(client: AsyncClient) -> ConsoleRuntime:
     return get_console_runtime_from_app(client._transport.app)  # type: ignore[attr-defined]
 
 
-async def _stub_submit_user_message(_self, _agent, session, _user_message):
-    return f"run_{session.id}", RunOutput(
-        response="stub reply",
-        session_id=session.id,
+async def _stub_start_user_message(self, session_id, user_message, *, idempotency_key):
+    del self, user_message, idempotency_key
+    return SessionStreamStart(
+        session_id=session_id,
+        run_id=f"run_{session_id}",
+        main_agent=FakeMainAgent(session_id),
     )
-
-
-async def _stub_runtime_agent(_self, session):
-    return FakeAgent(session.id)
 
 
 @pytest.fixture
 async def client(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
-        SessionRuntimeService,
-        "submit_user_message",
-        _stub_submit_user_message,
-    )
-    monkeypatch.setattr(
-        AgentRuntimeCache,
-        "get_or_create_runtime_agent",
-        _stub_runtime_agent,
+        SessionGateway,
+        "start_user_message",
+        _stub_start_user_message,
     )
     app = create_app()
 
@@ -84,7 +76,6 @@ async def client(monkeypatch: pytest.MonkeyPatch):
     await session_store.connect()
 
     agent_runtime_cache = AgentRuntimeCache(
-        scheduler=scheduler,
         agent_registry=registry,
         console_config=config,
         session_store=session_store,
@@ -233,12 +224,13 @@ async def test_session_input_accepts_session_even_if_base_agent_missing(
 ) -> None:
     """Gateway owns the turn; missing agent fails later at dispatch, not at accept."""
 
-    async def _raise_missing(_self, session):
-        raise BaseAgentNotFoundError(session.base_agent_id)
+    async def _raise_missing(self, session_id, user_message, *, idempotency_key):
+        del self, session_id, user_message, idempotency_key
+        raise BaseAgentNotFoundError("missing-agent")
 
     monkeypatch.setattr(
-        AgentRuntimeCache,
-        "get_or_create_runtime_agent",
+        SessionGateway,
+        "start_user_message",
         _raise_missing,
     )
     runtime = _runtime(client)

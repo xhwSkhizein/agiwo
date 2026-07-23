@@ -116,7 +116,9 @@ async def test_plan_milestones_still_guard_unfinished_root() -> None:
     assert result.finalization.decision == {"reason": "run_completed"}
     assert len(model.calls) == 4
     guard_call = model.calls[2]
-    assert guard_call[-1]["origin"] == "run_plan_guard"
+    guard_text = guard_call[-1].get("content", "")
+    assert isinstance(guard_text, str)
+    assert "unfinished milestones" in guard_text
 
 
 @pytest.mark.asyncio

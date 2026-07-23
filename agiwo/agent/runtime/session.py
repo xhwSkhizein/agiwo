@@ -35,7 +35,7 @@ class SessionRuntime:
         self.run_log_storage = run_log_storage
         self.trace_runtime = trace_runtime
         self.abort_signal = abort_signal or AbortSignal()
-        self._pending_steer_inputs: list[UserMessage] = []
+        self._pending_inputs: list[UserMessage] = []
         self._subscribers: set[asyncio.Queue[AgentStreamItem | object]] = set()
         self._closed = False
 
@@ -111,37 +111,23 @@ class SessionRuntime:
 
         return _iterator()
 
-    async def enqueue_steer(self, user_input: UserInput) -> bool:
-        if self._closed:
-            return False
-        UserMessage.require_user_provided(user_input)
-        message = UserMessage.from_value(user_input)
-        if not message.has_content():
-            return False
-        self._pending_steer_inputs.append(message)
-        return True
-
-    async def enqueue_inject(self, user_input: UserInput) -> bool:
-        """Append a system-notice user message (is_user_provided=false) for running input."""
+    async def enqueue_message(self, user_input: UserInput) -> bool:
+        """Append one pending user-role message for the next loop turn."""
         if self._closed:
             return False
         message = UserMessage.from_value(user_input)
-        if message.is_user_provided:
-            raise ValueError(
-                "enqueue_inject requires is_user_provided=False system notices"
-            )
         if not message.has_content():
             return False
-        self._pending_steer_inputs.append(message)
+        self._pending_inputs.append(message)
         return True
 
-    def peek_pending_steer_inputs(self) -> list[UserMessage]:
-        return [UserMessage.from_value(item) for item in self._pending_steer_inputs]
+    def peek_pending_inputs(self) -> list[UserMessage]:
+        return [UserMessage.from_value(item) for item in self._pending_inputs]
 
-    def ack_pending_steer_inputs(self, count: int) -> None:
+    def ack_pending_inputs(self, count: int) -> None:
         if count <= 0:
             return
-        del self._pending_steer_inputs[:count]
+        del self._pending_inputs[:count]
 
     async def publish(self, item: AgentStreamItem) -> None:
         if self._closed:
