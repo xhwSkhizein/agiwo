@@ -66,7 +66,6 @@ class SpawnWorkerTool(BaseTool):
         context: ToolContext,
         abort_signal: AbortSignal | None = None,
     ) -> ToolResult:
-        del abort_signal
         start_time = time.time()
         task = parameters.get("task", "")
         if not isinstance(task, str) or not task.strip():
@@ -88,6 +87,7 @@ class SpawnWorkerTool(BaseTool):
                 main_run_id=context.run_id or "",
                 sync=sync,
                 instruction=instruction_text,
+                abort_signal=abort_signal,
             )
         except ValueError as exc:
             return ToolResult.failed(
@@ -99,7 +99,13 @@ class SpawnWorkerTool(BaseTool):
             )
 
         if sync:
-            assert report is not None
+            if report is None:
+                return ToolResult.aborted(
+                    tool_name=self.name,
+                    tool_call_id=context.tool_call_id,
+                    input_args=parameters,
+                    start_time=start_time,
+                )
             return ToolResult.success(
                 tool_name=self.name,
                 tool_call_id=context.tool_call_id,

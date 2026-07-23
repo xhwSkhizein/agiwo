@@ -261,6 +261,7 @@ class BaseTool(ABC):
             metadata=dict(run_context.metadata),
             gate_checked=True,
             tool_call_id=tool_call_id,
+            run_id=getattr(run_context, "run_id", None),
         )
 
     def get_definition(self) -> ToolDefinition:

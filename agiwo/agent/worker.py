@@ -9,6 +9,7 @@ from agiwo.agent.worker_port import (
     WorkerSchedulerPort,
     WorkerSpawnRequest,
 )
+from agiwo.utils.abort_signal import AbortSignal
 from agiwo.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -59,10 +60,13 @@ class WorkerService:
         main_run_id: str,
         sync: bool,
         instruction: str | None = None,
+        abort_signal: AbortSignal | None = None,
     ) -> tuple[WorkerHandle, str | None]:
         """Spawn a depth-1 Worker.
 
         Returns ``(handle, report)``; ``report`` is set only for sync spawns.
+        Sync waits race against ``abort_signal``; on abort the Worker is
+        cancelled and ``report`` is ``None``.
         """
         await self.ensure_started()
 
@@ -83,7 +87,10 @@ class WorkerService:
         self._scheduler.nudge()
 
         if sync:
-            report = await self._scheduler.get_worker_report(state.worker_id)
+            report = await self._wait_report_abortable(
+                state.worker_id,
+                abort_signal=abort_signal,
+            )
             self._workers.pop(state.worker_id, None)
             return handle, report
 
@@ -92,6 +99,47 @@ class WorkerService:
         )
         self._monitor_tasks[state.worker_id] = monitor
         return handle, None
+
+    async def _wait_report_abortable(
+        self,
+        worker_id: str,
+        *,
+        abort_signal: AbortSignal | None,
+    ) -> str | None:
+        """Wait for the worker report; on abort, cancel the worker and return None."""
+        wait_task = asyncio.ensure_future(self._scheduler.get_worker_report(worker_id))
+        if abort_signal is None:
+            return await wait_task
+        if abort_signal.is_aborted():
+            wait_task.cancel()
+            await self._scheduler.cancel_worker(
+                worker_id,
+                abort_signal.reason or "Aborted by parent tool batch",
+            )
+            try:
+                await wait_task
+            except asyncio.CancelledError:
+                pass
+            return None
+
+        abort_task = asyncio.ensure_future(abort_signal.wait())
+        done, pending = await asyncio.wait(
+            {wait_task, abort_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        if wait_task in done and not wait_task.cancelled():
+            return wait_task.result()
+        await self._scheduler.cancel_worker(
+            worker_id,
+            abort_signal.reason or "Aborted by parent tool batch",
+        )
+        try:
+            await wait_task
+        except asyncio.CancelledError:
+            pass
+        return None
 
     async def cancel_all_workers(self, reason: str) -> None:
         children = await self._scheduler.list_children(
