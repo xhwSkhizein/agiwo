@@ -3,11 +3,14 @@
 from dataclasses import dataclass, field
 from enum import Enum
 import traceback as traceback_lib
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from agiwo.agent.models.input import UserInput
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from agiwo.memory.defaults import DefaultMemoryHook, filter_relevant_memories
 
 logger = get_logger(__name__)
 
@@ -540,12 +543,6 @@ def decision_support(
     )
 
 
-# Re-export memory defaults so existing ``from agiwo.agent.hooks import ...`` keeps working.
-from agiwo.memory.defaults import (  # noqa: E402
-    DefaultMemoryHook,
-    filter_relevant_memories,
-)
-
 __all__ = [
     "DefaultMemoryHook",
     "HookCapability",
@@ -563,3 +560,22 @@ __all__ = [
     "phase_spec",
     "transform",
 ]
+
+
+def __getattr__(name: str) -> object:
+    # Lazy re-export: defaults imports agent models; eager import cycles when
+    # ``agiwo.agent`` is loaded while ``agiwo.memory.defaults`` is initializing.
+    if name in {"DefaultMemoryHook", "filter_relevant_memories"}:
+        from agiwo.memory.defaults import (  # noqa: PLC0415
+            DefaultMemoryHook,
+            filter_relevant_memories,
+        )
+
+        exports = {
+            "DefaultMemoryHook": DefaultMemoryHook,
+            "filter_relevant_memories": filter_relevant_memories,
+        }
+        value = exports[name]
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -11,7 +11,6 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     distro = None
 
-from agiwo.memory.defaults import filter_relevant_memories
 from agiwo.agent.models.input import ChannelContext, UserMessage
 from agiwo.agent.models.run import MemoryRecord
 from agiwo.agent.models.step import StepView
@@ -226,6 +225,8 @@ def assemble_run_messages(
         existing_steps=existing_steps,
         base_messages=base_messages,
     )
+    from agiwo.memory.defaults import filter_relevant_memories  # noqa: PLC0415
+
     filtered_memories = filter_relevant_memories(messages, memories or [])
 
     preamble_parts: list[str] = []

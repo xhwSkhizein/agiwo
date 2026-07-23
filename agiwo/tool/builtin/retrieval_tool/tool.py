@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from agiwo.config.settings import settings
-from agiwo.memory import WorkspaceMemoryService
+from agiwo.memory.service import WorkspaceMemoryService
 from agiwo.tool.base import BaseTool, ToolIdempotency, ToolResult
 from agiwo.tool.context import ToolContext
 from agiwo.tool.builtin.registry import builtin_tool, default_enable

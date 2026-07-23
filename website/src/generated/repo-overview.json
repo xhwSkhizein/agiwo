@@ -292,7 +292,7 @@
         }
       ],
       "import_path": "agiwo.scheduler",
-      "role": "Public entry for orchestration, persistent roots, routing, waiting, and scheduler-backed agent coordination.",
+      "role": "Public entry for orchestration, persistent roots, child waitset, routing, and scheduler-backed agent coordination.",
       "source_paths": [
         "agiwo/scheduler",
         "agiwo/scheduler/engine.py"
@@ -422,7 +422,7 @@
       ],
       "label": "Scheduler",
       "path": "agiwo/scheduler",
-      "responsibility": "Agent-level orchestration, runtime tools, lifecycle management, and scheduler state persistence."
+      "responsibility": "Agent-level orchestration, child waitset, lifecycle management, and scheduler state persistence."
     },
     {
       "citations": [
@@ -642,6 +642,24 @@
       "label": "Templates",
       "path": "templates",
       "responsibility": "Template content consumed by runtime features."
+    },
+    {
+      "citations": [
+        {
+          "kind": "directory",
+          "label": "Directory",
+          "path": "trash"
+        },
+        {
+          "kind": "document",
+          "label": "Repository guide",
+          "path": "AGENTS.md",
+          "title": "AGENTS.md"
+        }
+      ],
+      "label": "Trash",
+      "path": "trash",
+      "responsibility": "Soft-delete landing area for removed files."
     }
   ]
 }

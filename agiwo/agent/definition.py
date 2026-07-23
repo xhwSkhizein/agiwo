@@ -10,7 +10,6 @@ from agiwo.agent.hooks import (
     HookRegistry,
     transform,
 )
-from agiwo.memory.defaults import DefaultMemoryHook
 from agiwo.agent.prompt import compose_child_system_prompt
 from agiwo.skill.allowlist import validate_expanded_allowed_skills
 from agiwo.skill.manager import get_global_skill_manager
@@ -70,6 +69,8 @@ def build_agent_hooks(
     else:
         resolved = HookRegistry(list(hooks or []))
     if not resolved.has_phase(HookPhase.ASSEMBLE_CONTEXT):
+        from agiwo.memory.defaults import DefaultMemoryHook  # noqa: PLC0415
+
         memory_hook = DefaultMemoryHook(
             root_path=config.options.get_effective_root_path()
         )
