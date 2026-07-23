@@ -7,6 +7,10 @@ from agiwo.agent.models.plan import RunPlan
 
 IntentEntryKind = Literal["user_input", "run_report"]
 
+# Compass retention: keep the newest N entries on read; lazy physical
+# cleanup kicks in after ~2N appends (see SessionIntentStore).
+MAX_INTENT_ENTRIES = 200
+
 
 @dataclass
 class IntentEntry:
@@ -27,4 +31,4 @@ class SessionIntent:
     updated_at: int = 0
 
 
-__all__ = ["IntentEntry", "IntentEntryKind", "SessionIntent"]
+__all__ = ["IntentEntry", "IntentEntryKind", "MAX_INTENT_ENTRIES", "SessionIntent"]
