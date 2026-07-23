@@ -24,6 +24,7 @@ class HookPhase(str, Enum):
     BEFORE_COMPACTION = "before_compaction"
     AFTER_COMPACTION = "after_compaction"
     BEFORE_REVIEW = "before_review"
+    AFTER_STEP_BACK = "after_step_back"
     BEFORE_TERMINATION = "before_termination"
     AFTER_TERMINATION = "after_termination"
     AFTER_STEP_COMMIT = "after_step_commit"
@@ -422,6 +423,17 @@ class HookRegistry:
         )
         advice = payload.get("review_advice")
         return advice if isinstance(advice, str) else None
+
+    async def after_step_back(
+        self,
+        outcome: object,
+        context: object | None = None,
+    ) -> None:
+        await self._dispatch(
+            HookPhase.AFTER_STEP_BACK,
+            {"outcome": outcome, "context": context},
+            allow_transform=False,
+        )
 
     async def after_run(self, result: object, context: object) -> None:
         await self._dispatch(

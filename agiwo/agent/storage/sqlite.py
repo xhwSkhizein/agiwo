@@ -318,6 +318,7 @@ class SQLiteRunLogStorage(RunLogStorage):
         self,
         *,
         session_id: str,
+        include_hidden_from_context: bool = True,
     ) -> int:
         conn = await self._ensure_connection()
         step_kinds = [
@@ -345,12 +346,27 @@ class SQLiteRunLogStorage(RunLogStorage):
             *step_kinds,
             RunLogEntryKind.RUN_ROLLED_BACK.value,
         ]
+        if not include_hidden_from_context:
+            query += """
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM run_log_entries AS hidden,
+                       json_each(hidden.payload, '$.step_ids') AS hidden_step
+                  WHERE hidden.session_id = steps.session_id
+                    AND hidden.kind = ?
+                    AND hidden_step.value = json_extract(steps.payload, '$.step_id')
+              )
+            """
+            params.append(RunLogEntryKind.CONTEXT_STEPS_HIDDEN.value)
         async with conn.execute(query, params) as cursor:
             row = await cursor.fetchone()
         return int(row[0]) if row is not None else 0
 
     async def get_committed_step_count(self, session_id: str) -> int:
-        return await self.count_step_views(session_id=session_id)
+        return await self.count_step_views(
+            session_id=session_id,
+            include_hidden_from_context=False,
+        )
 
     async def batch_count_run_views(self, session_ids: list[str]) -> dict[str, int]:
         if not session_ids:
@@ -374,7 +390,10 @@ class SQLiteRunLogStorage(RunLogStorage):
         self, session_ids: list[str]
     ) -> dict[str, int]:
         return {
-            session_id: await self.count_step_views(session_id=session_id)
+            session_id: await self.count_step_views(
+                session_id=session_id,
+                include_hidden_from_context=False,
+            )
             for session_id in session_ids
         }
 
@@ -387,6 +406,7 @@ class SQLiteRunLogStorage(RunLogStorage):
         run_id: str | None = None,
         agent_id: str | None = None,
         include_rolled_back: bool = False,
+        include_hidden_from_context: bool = True,
         limit: int = 1000,
         order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
@@ -395,6 +415,8 @@ class SQLiteRunLogStorage(RunLogStorage):
             RunLogEntryKind.USER_STEP_COMMITTED.value,
             RunLogEntryKind.ASSISTANT_STEP_COMMITTED.value,
             RunLogEntryKind.TOOL_STEP_COMMITTED.value,
+            RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED.value,
+            RunLogEntryKind.CONTEXT_STEPS_HIDDEN.value,
             RunLogEntryKind.RUN_ROLLED_BACK.value,
         ]
         placeholders = ",".join("?" for _ in kinds)
@@ -418,6 +440,7 @@ class SQLiteRunLogStorage(RunLogStorage):
         step_views = build_step_views_from_entries(
             entries,
             include_rolled_back=include_rolled_back,
+            include_hidden_from_context=include_hidden_from_context,
         )
         if start_seq is not None:
             step_views = [step for step in step_views if step.sequence >= start_seq]

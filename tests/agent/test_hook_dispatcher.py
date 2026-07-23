@@ -283,6 +283,29 @@ async def test_hook_registry_before_review_returns_review_advice() -> None:
     assert advice == "Focus on auth.py before broadening the search."
 
 
+@pytest.mark.asyncio
+async def test_hook_registry_after_step_back_dispatches_observer() -> None:
+    seen: list[object] = []
+
+    async def observe_step_back(payload: dict) -> None:
+        seen.append(payload["outcome"])
+
+    registry = HookRegistry(
+        registrations=[
+            observe(
+                HookPhase.AFTER_STEP_BACK,
+                "observe_step_back",
+                observe_step_back,
+            )
+        ]
+    )
+    outcome = object()
+
+    await registry.after_step_back(outcome, context=object())
+
+    assert seen == [outcome]
+
+
 def test_phase_spec_exposes_full_before_llm_contract() -> None:
     spec = phase_spec(HookPhase.BEFORE_LLM)
     assert spec.allow_transform is True

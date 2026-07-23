@@ -8,6 +8,8 @@ from agiwo.agent.models.log import (
     CompactionApplied,
     CompactionFailed,
     ContextAssembled,
+    ContextRepairApplied,
+    ContextStepsHidden,
     ExternalEffectMayHaveStarted,
     HookFailed,
     IntrospectionCheckpointRecorded,
@@ -27,6 +29,7 @@ from agiwo.agent.models.log import (
     RunResumePrepared,
     RunResumed,
     RunStarted,
+    StepCondensedContentUpdated,
     TerminationDecided,
     build_committed_step_entry,
 )
@@ -412,22 +415,76 @@ class RunStateWriter:
         self,
         *,
         aligned: bool | None,
+        mode: Literal["metadata_only", "step_back"],
         experience: str | None,
         tool_usefulness: list[dict[str, object]],
         active_milestone_id: str | None,
         review_tool_call_id: str | None,
         review_step_id: str | None,
+        hidden_step_ids: list[str],
+        notice_cleaned_step_ids: list[str],
+        condensed_step_ids: list[str],
         boundary_seq: int,
+        repair_start_seq: int | None,
+        repair_end_seq: int | None,
     ) -> list[RunLogEntry]:
         return await self.emit(
             IntrospectionOutcomeRecorded,
             aligned=aligned,
+            mode=mode,
             experience=experience,
             tool_usefulness=list(tool_usefulness),
             active_milestone_id=active_milestone_id,
             review_tool_call_id=review_tool_call_id,
             review_step_id=review_step_id,
+            hidden_step_ids=list(hidden_step_ids),
+            notice_cleaned_step_ids=list(notice_cleaned_step_ids),
+            condensed_step_ids=list(condensed_step_ids),
             boundary_seq=boundary_seq,
+            repair_start_seq=repair_start_seq,
+            repair_end_seq=repair_end_seq,
+        )
+
+    async def record_context_steps_hidden(
+        self,
+        *,
+        step_ids: list[str],
+        reason: str,
+    ) -> list[RunLogEntry]:
+        return await self.emit(
+            ContextStepsHidden,
+            step_ids=list(step_ids),
+            reason=reason,
+        )
+
+    async def record_step_condensed_content_updated(
+        self,
+        *,
+        step_id: str,
+        condensed_content: str,
+    ) -> list[RunLogEntry]:
+        return await self.emit(
+            StepCondensedContentUpdated,
+            step_id=step_id,
+            condensed_content=condensed_content,
+        )
+
+    async def record_context_repair_applied(
+        self,
+        *,
+        mode: Literal["step_back"],
+        affected_count: int,
+        start_seq: int,
+        end_seq: int,
+        experience: str,
+    ) -> list[RunLogEntry]:
+        return await self.emit(
+            ContextRepairApplied,
+            mode=mode,
+            affected_count=affected_count,
+            start_seq=start_seq,
+            end_seq=end_seq,
+            experience=experience,
         )
 
     async def record_hook_failed(

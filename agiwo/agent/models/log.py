@@ -32,12 +32,15 @@ class RunLogEntryKind(str, Enum):
     TOOL_STEP_COMMITTED = "tool_step_committed"
     COMPACTION_APPLIED = "compaction_applied"
     COMPACTION_FAILED = "compaction_failed"
+    STEP_CONDENSED_CONTENT_UPDATED = "step_condensed_content_updated"
+    CONTEXT_STEPS_HIDDEN = "context_steps_hidden"
     TERMINATION_DECIDED = "termination_decided"
     HOOK_FAILED = "hook_failed"
     RUN_PLAN_UPDATED = "run_plan_updated"
     INTROSPECTION_TRIGGERED = "introspection_triggered"
     INTROSPECTION_CHECKPOINT_RECORDED = "introspection_checkpoint_recorded"
     INTROSPECTION_OUTCOME_RECORDED = "introspection_outcome_recorded"
+    CONTEXT_REPAIR_APPLIED = "context_repair_applied"
     RUN_CHECKPOINT = "run_checkpoint"
     RUN_PAUSED = "run_paused"
     RUN_RESUME_PREPARED = "run_resume_prepared"
@@ -286,6 +289,26 @@ class CompactionFailed(RunLogEntry):
 
 
 @dataclass(frozen=True, kw_only=True)
+class StepCondensedContentUpdated(RunLogEntry):
+    step_id: str
+    condensed_content: str
+    kind: RunLogEntryKind = field(
+        init=False,
+        default=RunLogEntryKind.STEP_CONDENSED_CONTENT_UPDATED,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextStepsHidden(RunLogEntry):
+    step_ids: list[str]
+    reason: str
+    kind: RunLogEntryKind = field(
+        init=False,
+        default=RunLogEntryKind.CONTEXT_STEPS_HIDDEN,
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
 class TerminationDecided(RunLogEntry):
     termination_reason: TerminationReason
     phase: str
@@ -349,14 +372,32 @@ class IntrospectionCheckpointRecorded(RunLogEntry):
 @dataclass(frozen=True, kw_only=True)
 class IntrospectionOutcomeRecorded(RunLogEntry):
     boundary_seq: int
+    mode: Literal["metadata_only", "step_back"] = "metadata_only"
     aligned: bool | None = None
     experience: str | None = None
     active_milestone_id: str | None = None
     review_tool_call_id: str | None = None
     review_step_id: str | None = None
     tool_usefulness: list[dict[str, Any]] = field(default_factory=list)
+    hidden_step_ids: list[str] = field(default_factory=list)
+    notice_cleaned_step_ids: list[str] = field(default_factory=list)
+    condensed_step_ids: list[str] = field(default_factory=list)
+    repair_start_seq: int | None = None
+    repair_end_seq: int | None = None
     kind: RunLogEntryKind = field(
         init=False, default=RunLogEntryKind.INTROSPECTION_OUTCOME_RECORDED
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class ContextRepairApplied(RunLogEntry):
+    mode: Literal["step_back"]
+    affected_count: int
+    start_seq: int
+    end_seq: int
+    experience: str
+    kind: RunLogEntryKind = field(
+        init=False, default=RunLogEntryKind.CONTEXT_REPAIR_APPLIED
     )
 
 
@@ -417,6 +458,8 @@ __all__ = [
     "CommittedStep",
     "CompactionApplied",
     "CompactionFailed",
+    "ContextRepairApplied",
+    "ContextStepsHidden",
     "ContextAssembled",
     "RunPlanUpdated",
     "HookFailed",
@@ -434,6 +477,7 @@ __all__ = [
     "ExternalEffectMayHaveStarted",
     "RetryBackoff",
     "RunRolledBack",
+    "StepCondensedContentUpdated",
     "RunFailed",
     "RunFinished",
     "RunLogEntry",

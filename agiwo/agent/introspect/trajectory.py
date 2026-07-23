@@ -1,8 +1,9 @@
 """Trajectory introspection trigger and outcome rules."""
 
 import re
+from typing import Literal
 
-from agiwo.agent.introspect.apply import parse_tool_usefulness_output
+from agiwo.agent.introspect.tool_usefulness import parse_tool_usefulness_output
 from agiwo.agent.introspect.models import (
     IntrospectionNotice,
     IntrospectionOutcome,
@@ -141,7 +142,6 @@ def parse_introspection_outcome(
     assistant_step_id: str | None,
     tool_step_id: str | None,
 ) -> IntrospectionOutcome | None:
-    del assistant_step_id
     if result.tool_name != "review_trajectory" or not result.is_success:
         return None
     output = result.output if isinstance(result.output, dict) else {}
@@ -150,14 +150,24 @@ def parse_introspection_outcome(
     experience = experience_value if isinstance(experience_value, str) else None
     if experience == "":
         experience = None
+    mode: Literal["metadata_only", "step_back"] = (
+        "metadata_only" if aligned is True else "step_back"
+    )
+    hidden_step_ids = [
+        step_id
+        for step_id in (assistant_step_id, tool_step_id)
+        if isinstance(step_id, str) and step_id
+    ]
     return IntrospectionOutcome(
         aligned=aligned if isinstance(aligned, bool) else None,
+        mode=mode,
         boundary_seq=current_seq,
         experience=experience,
         tool_usefulness=parse_tool_usefulness_output(output.get("tool_usefulness")),
         active_milestone_id=plan.active_milestone_id,
         review_tool_call_id=result.tool_call_id or None,
         review_step_id=tool_step_id,
+        hidden_step_ids=hidden_step_ids,
     )
 
 

@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from agiwo.agent.introspect.apply import parse_tool_usefulness_output
+from agiwo.agent.introspect.tool_usefulness import parse_tool_usefulness_output
 from agiwo.agent.introspect.models import (
     IntrospectionCheckpoint,
     IntrospectionState,

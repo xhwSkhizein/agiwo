@@ -48,6 +48,7 @@ async def test_writer_records_introspection_outcome_boundary() -> None:
 
     entries = await writer.record_introspection_outcome_recorded(
         aligned=False,
+        mode="step_back",
         experience="drifted",
         tool_usefulness=[
             {"tool_call_id": "tc-search", "tool_name": "search", "score": 1}
@@ -55,7 +56,12 @@ async def test_writer_records_introspection_outcome_boundary() -> None:
         active_milestone_id="inspect",
         review_tool_call_id="tc-review",
         review_step_id="step-review",
+        hidden_step_ids=[],
+        notice_cleaned_step_ids=[],
+        condensed_step_ids=["step-search"],
         boundary_seq=12,
+        repair_start_seq=1,
+        repair_end_seq=11,
     )
 
     assert isinstance(entries[0], IntrospectionOutcomeRecorded)

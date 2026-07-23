@@ -9,6 +9,8 @@ from agiwo.agent.models.plan import Milestone
 IntrospectionTriggerReason = Literal[
     "step_interval", "consecutive_errors", "milestone_switch"
 ]
+IntrospectionMode = Literal["metadata_only", "step_back"]
+ContextRepairMode = Literal["metadata_only", "step_back"]
 
 
 @dataclass
@@ -61,19 +63,51 @@ class ToolUsefulnessEntry:
     score: int | None = None
 
 
+@dataclass(frozen=True)
+class ContentUpdate:
+    step_id: str
+    tool_call_id: str
+    content: str
+
+
+@dataclass
+class ContextRepairPlan:
+    mode: ContextRepairMode
+    start_seq: int
+    end_seq: int
+    experience: str
+    content_updates: list[ContentUpdate] = field(default_factory=list)
+    notice_cleaned_step_ids: list[str] = field(default_factory=list)
+
+    @property
+    def affected_count(self) -> int:
+        return len(self.content_updates)
+
+    @property
+    def condensed_step_ids(self) -> list[str]:
+        return [update.step_id for update in self.content_updates]
+
+
 @dataclass
 class IntrospectionOutcome:
     aligned: bool | None
     boundary_seq: int
+    mode: IntrospectionMode = "metadata_only"
     experience: str | None = None
     tool_usefulness: list[ToolUsefulnessEntry] = field(default_factory=list)
     active_milestone_id: str | None = None
     review_tool_call_id: str | None = None
     review_step_id: str | None = None
+    hidden_step_ids: list[str] = field(default_factory=list)
+    repair_plan: ContextRepairPlan | None = None
 
 
 __all__ = [
+    "ContentUpdate",
+    "ContextRepairMode",
+    "ContextRepairPlan",
     "IntrospectionCheckpoint",
+    "IntrospectionMode",
     "IntrospectionNotice",
     "IntrospectionOutcome",
     "IntrospectionState",

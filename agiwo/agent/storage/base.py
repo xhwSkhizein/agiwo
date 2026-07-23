@@ -113,13 +113,17 @@ class RunLogStorage(ABC):
 
     async def get_committed_step_count(self, session_id: str) -> int:
         """Count committed step entries for one session."""
-        return await self.count_step_views(session_id=session_id)
+        return await self.count_step_views(
+            session_id=session_id,
+            include_hidden_from_context=False,
+        )
 
     @abstractmethod
     async def count_step_views(
         self,
         *,
         session_id: str,
+        include_hidden_from_context: bool = True,
     ) -> int:
         """Count committed step views without materializing StepView objects."""
         ...
@@ -128,7 +132,10 @@ class RunLogStorage(ABC):
         self, session_ids: list[str]
     ) -> dict[str, int]:
         return {
-            session_id: await self.count_step_views(session_id=session_id)
+            session_id: await self.count_step_views(
+                session_id=session_id,
+                include_hidden_from_context=False,
+            )
             for session_id in session_ids
         }
 
@@ -142,6 +149,7 @@ class RunLogStorage(ABC):
         run_id: str | None = None,
         agent_id: str | None = None,
         include_rolled_back: bool = False,
+        include_hidden_from_context: bool = True,
         limit: int = 1000,
         order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
@@ -316,10 +324,12 @@ class InMemoryRunLogStorage(RunLogStorage):
         self,
         *,
         session_id: str,
+        include_hidden_from_context: bool = True,
     ) -> int:
         return len(
             build_step_views_from_entries(
                 self.run_log_entries.get(session_id, []),
+                include_hidden_from_context=include_hidden_from_context,
             )
         )
 
@@ -327,7 +337,10 @@ class InMemoryRunLogStorage(RunLogStorage):
         self, session_ids: list[str]
     ) -> dict[str, int]:
         return {
-            session_id: await self.count_step_views(session_id=session_id)
+            session_id: await self.count_step_views(
+                session_id=session_id,
+                include_hidden_from_context=False,
+            )
             for session_id in session_ids
         }
 
@@ -363,6 +376,7 @@ class InMemoryRunLogStorage(RunLogStorage):
         run_id: str | None = None,
         agent_id: str | None = None,
         include_rolled_back: bool = False,
+        include_hidden_from_context: bool = True,
         limit: int = 1000,
         order: Literal["asc", "desc"] = "asc",
     ) -> list[StepView]:
@@ -375,6 +389,7 @@ class InMemoryRunLogStorage(RunLogStorage):
         step_views = build_step_views_from_entries(
             entries,
             include_rolled_back=include_rolled_back,
+            include_hidden_from_context=include_hidden_from_context,
         )
         if start_seq is not None:
             step_views = [step for step in step_views if step.sequence >= start_seq]

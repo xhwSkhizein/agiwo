@@ -138,6 +138,18 @@ describe("TraceDetailPage", () => {
     expect(screen.getAllByText("agent.run").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /llm\.assistant#1/i })).toBeInTheDocument();
     expect(screen.queryByText("Agent Execution Diagnostics")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mainline" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Debug" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open session" })).toHaveAttribute(
+      "href",
+      "/sessions/sess-1",
+    );
+    expect(screen.getByRole("link", { name: "Open scheduler state" })).toHaveAttribute(
+      "href",
+      "/scheduler/agent-1",
+    );
+    expect(screen.queryByText("Run Narrative")).not.toBeInTheDocument();
+    expect(screen.queryByText("Span Waterfall (0 spans)")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /llm\.assistant#1/i }));
     fireEvent.click(screen.getByRole("button", { name: "llm" }));
