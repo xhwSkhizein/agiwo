@@ -371,9 +371,6 @@ class RunLoopOrchestrator(
         )
 
     async def _enqueue_gate_feedback(self, feedback_text: str) -> None:
-        gate_context = self.runtime.completion_gate_context
-        if gate_context is not None and gate_context.on_gate_feedback is not None:
-            await gate_context.on_gate_feedback(feedback_text)
         message = UserMessage.from_system(feedback_text)
         await self.context.session_runtime.enqueue_message(message)
         logger.info(

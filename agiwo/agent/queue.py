@@ -10,7 +10,6 @@ class QueueItemKind(str, Enum):
     """Kinds of items on the MainAgent unified loop queue."""
 
     USER_INPUT = "user_input"
-    GATE_FEEDBACK = "gate_feedback"
     WORKER_REPORT = "worker_report"
 
 

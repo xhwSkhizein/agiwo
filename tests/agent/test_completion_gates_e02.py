@@ -15,7 +15,6 @@ from agiwo.agent import (
 from agiwo.agent.completion_gates.context import CompletionGateContext
 from agiwo.agent.models.config import AgentOptions as AgentOptionsModel
 from agiwo.agent.models.execution import RunTreeRole
-from agiwo.agent.queue import QueueItemKind
 from agiwo.llm.base import Model, StreamChunk
 from tests.agent.worker_test_helpers import build_main_agent_with_scheduler
 from agiwo.scheduler.engine import Scheduler
@@ -139,10 +138,19 @@ async def test_open_milestones_block_then_unblock_root_stop() -> None:
 async def test_unfinished_workers_block_then_unblock_root_stop() -> None:
     active_workers: set[str] = {"worker-1"}
 
-    async def _clear_workers_on_feedback(_: str) -> None:
-        active_workers.clear()
+    class _WorkerClearingModel(_ScriptedModel):
+        async def arun_stream(self, messages, tools=None):
+            # Simulate the Worker finishing once the gate feedback lands in
+            # the live Run's message flow.
+            if any(
+                "Unfinished Workers remain" in str(message.get("content", ""))
+                for message in messages
+            ):
+                active_workers.clear()
+            async for chunk in super().arun_stream(messages, tools):
+                yield chunk
 
-    model = _ScriptedModel(
+    model = _WorkerClearingModel(
         [
             "premature report",
             "completed after workers clear",
@@ -150,7 +158,6 @@ async def test_unfinished_workers_block_then_unblock_root_stop() -> None:
     )
     context = CompletionGateContext(
         active_worker_ids=lambda: frozenset(active_workers),
-        on_gate_feedback=_clear_workers_on_feedback,
     )
 
     result = await _run_root(model, completion_gate_context=context)
@@ -164,7 +171,7 @@ async def test_unfinished_workers_block_then_unblock_root_stop() -> None:
 
 
 @pytest.mark.asyncio
-async def test_main_agent_enqueues_gate_feedback_on_milestone_block() -> None:
+async def test_main_agent_routes_gate_feedback_into_live_run() -> None:
     update_plan_call = {
         "index": 0,
         "id": "plan-1",
@@ -208,12 +215,13 @@ async def test_main_agent_enqueues_gate_feedback_on_milestone_block() -> None:
     await main.accept("complete the work")
     await main.wait_current_run()
 
-    gate_items = [
-        item
-        for item in main._pending  # noqa: SLF001 - assert unified queue bookkeeping
-        if item.kind is QueueItemKind.GATE_FEEDBACK
-    ]
-    assert gate_items
-    assert "unfinished milestones" in (gate_items[0].text or "")
+    # Gate feedback is written directly into the live Run's loop queue, so
+    # the model call after the blocked completion attempt must contain it.
+    assert len(model.calls) == 4
+    guard_messages = model.calls[2]
+    assert any(
+        "unfinished milestones" in str(message.get("content", ""))
+        for message in guard_messages
+    )
 
     await scheduler.stop()

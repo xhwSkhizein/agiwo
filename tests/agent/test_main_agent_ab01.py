@@ -55,7 +55,6 @@ def test_agent_spec_holds_config_only() -> None:
 
 def test_queue_item_kind_includes_reserved_kinds() -> None:
     assert QueueItemKind.USER_INPUT.value == "user_input"
-    assert QueueItemKind.GATE_FEEDBACK.value == "gate_feedback"
     assert QueueItemKind.WORKER_REPORT.value == "worker_report"
 
 

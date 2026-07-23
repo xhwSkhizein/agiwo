@@ -27,6 +27,9 @@ from agiwo.agent.worker_port import WorkerSchedulerPort
 from agiwo.config.termination import TerminationReason
 from agiwo.llm.base import Model
 from agiwo.tool.base import BaseTool
+from agiwo.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class MainAgentState(str, Enum):
@@ -39,8 +42,11 @@ class MainAgentState(str, Enum):
 class MainAgent:
     """Session-scoped live executor bound from an AgentSpec (ADR 0049).
 
-    MainAgent stays alive across Runs within a Session. User input, gate
-    feedback, and worker reports share one unified loop queue.
+    MainAgent stays alive across Runs within a Session. External user input
+    and async Worker reports share one Session-level staging queue drained by
+    a single routine: items go to the live Run's loop queue while a Run is
+    active, or start/continue a Run while idle. Gate feedback is written by
+    the Loop directly into the live Run's queue and never staged here.
 
     SessionIntent writes (Wave C):
     - ``accept``: append full user text after RunLog user write (D1).
@@ -80,8 +86,8 @@ class MainAgent:
             )
         else:
             self._session_intent_store = session_intent_store
-        self._state = MainAgentState.IDLE
         self._pending: list[QueueItem] = []
+        self._drain_lock = asyncio.Lock()
         self._handle: AgentExecutionHandle | None = None
         self._completion_task: asyncio.Task[None] | None = None
         self._worker_service = None
@@ -103,16 +109,6 @@ class MainAgent:
 
         return CompletionGateContext(
             active_worker_ids=_active_worker_ids,
-            on_gate_feedback=self._enqueue_gate_feedback,
-        )
-
-    async def _enqueue_gate_feedback(self, feedback_text: str) -> None:
-        self.enqueue(
-            QueueItem(
-                kind=QueueItemKind.GATE_FEEDBACK,
-                text=feedback_text,
-                created_at=time.time(),
-            )
         )
 
     @property
@@ -129,7 +125,9 @@ class MainAgent:
 
     @property
     def state(self) -> MainAgentState:
-        return self._state
+        if self._handle is not None and self._handle.is_active:
+            return MainAgentState.RUNNING
+        return MainAgentState.IDLE
 
     @property
     def agent(self) -> Agent:
@@ -160,29 +158,15 @@ class MainAgent:
         )
         await self._append_user_input_intent(message)
 
-        if self._handle is not None and self._handle.is_active:
-            await self._handle.enqueue_message(message)
-            self.enqueue(
-                QueueItem(
-                    kind=QueueItemKind.USER_INPUT,
-                    message=message,
-                    created_at=time.time(),
-                )
+        self.enqueue(
+            QueueItem(
+                kind=QueueItemKind.USER_INPUT,
+                message=message,
+                created_at=time.time(),
             )
-            return self._handle
-
-        self._state = MainAgentState.RUNNING
-        handle = self._agent.start_prevalidated(
-            None,
-            session_id=self._session_id,
-            execution_request=RunExecutionRequest(
-                run_id=str(uuid4()),
-                run_tree_role=RunTreeRole.ROOT,
-            ),
         )
-        self._handle = handle
-        self._completion_task = asyncio.create_task(self._await_run_completion(handle))
-        return handle
+        await self._drain()
+        return self._handle
 
     async def _append_user_input_intent(self, message: UserMessage) -> None:
         await self._session_intent_store.append_entry(
@@ -206,10 +190,9 @@ class MainAgent:
             if self._handle is handle:
                 self._handle = None
                 self._completion_task = None
-                self._state = MainAgentState.IDLE
                 if self._worker_service is not None:
                     await self._worker_service.sync_parent_idle()
-                await self._process_pending_worker_reports()
+                await self._drain()
 
     async def _maybe_append_run_report(
         self,
@@ -262,34 +245,72 @@ class MainAgent:
                 created_at=time.time(),
             )
         )
-        await self._process_pending_worker_reports()
+        await self._drain()
 
-    async def _process_pending_worker_reports(self) -> None:
-        while self.peek_pending() is not None:
-            item = self.peek_pending()
-            if item is None or item.kind is not QueueItemKind.WORKER_REPORT:
-                return
-            self.ack_pending()
-            if not item.text or not item.run_id:
-                continue
-            message = UserMessage.from_system(
+    async def _drain(self) -> None:
+        """Drain the staging queue through the single delivery path.
+
+        Every queued item is eventually acked: delivered into the live Run's
+        loop queue, used to start/continue a Run while idle, or dropped with a
+        log line. When the live Run is closing (``enqueue_message`` returns
+        False) the item stays queued and the completion-finally drain retries
+        it on the idle path, so nothing is lost.
+        """
+        async with self._drain_lock:
+            while (item := self.peek_pending()) is not None:
+                handle = self._handle
+                if handle is not None and handle.is_active:
+                    message = self._queue_item_to_message(item)
+                    if message is None:
+                        self.ack_pending()
+                        logger.warning(
+                            "main_agent_queue_item_discarded",
+                            session_id=self._session_id,
+                            kind=item.kind.value,
+                        )
+                        continue
+                    if await handle.enqueue_message(message):
+                        self.ack_pending()
+                        continue
+                    return
+                self.ack_pending()
+                if item.kind is QueueItemKind.USER_INPUT:
+                    self._start_new_run()
+                elif item.kind is QueueItemKind.WORKER_REPORT:
+                    message = self._queue_item_to_message(item)
+                    if message is not None and item.run_id:
+                        self._continue_run(item.run_id, message)
+
+    @staticmethod
+    def _queue_item_to_message(item: QueueItem) -> UserMessage | None:
+        if item.kind is QueueItemKind.USER_INPUT:
+            return item.message
+        if item.kind is QueueItemKind.WORKER_REPORT and item.text:
+            return UserMessage.from_system(
                 f"<worker-report>\n{item.text}\n</worker-report>"
             )
-            if self._handle is not None and self._handle.is_active:
-                await self._handle.enqueue_message(message)
-                continue
-            if self._state is MainAgentState.RUNNING:
-                continue
-            self._state = MainAgentState.RUNNING
-            handle = self._agent.continue_completed_run(
-                run_id=item.run_id,
-                session_id=self._session_id,
-                user_input=message,
-            )
-            self._handle = handle
-            self._completion_task = asyncio.create_task(
-                self._await_run_completion(handle)
-            )
+        return None
+
+    def _start_new_run(self) -> None:
+        handle = self._agent.start_prevalidated(
+            None,
+            session_id=self._session_id,
+            execution_request=RunExecutionRequest(
+                run_id=str(uuid4()),
+                run_tree_role=RunTreeRole.ROOT,
+            ),
+        )
+        self._handle = handle
+        self._completion_task = asyncio.create_task(self._await_run_completion(handle))
+
+    def _continue_run(self, run_id: str, message: UserMessage) -> None:
+        handle = self._agent.continue_completed_run(
+            run_id=run_id,
+            session_id=self._session_id,
+            user_input=message,
+        )
+        self._handle = handle
+        self._completion_task = asyncio.create_task(self._await_run_completion(handle))
 
     def enqueue(self, item: QueueItem) -> None:
         """Append one item to the unified pending loop queue."""
@@ -319,7 +340,6 @@ class MainAgent:
             await completion_task
         self._handle = None
         self._completion_task = None
-        self._state = MainAgentState.IDLE
 
     def subscribe(self) -> AsyncIterator[AgentStreamItem]:
         """Subscribe to live stream items for the current run."""

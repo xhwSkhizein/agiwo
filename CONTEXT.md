@@ -13,7 +13,7 @@ _Avoid_：Objective、Turn 聚合、为每个 Run 更换主执行者身份、把
 _Avoid_：把活着的 MainAgent 叫作 spec、在 spec 上保存 Session 状态
 
 **主执行者（MainAgent）**：
-由 AgentSpec 绑定到某一 Session 后的长期活体：Run 结束只进入空闲，不销毁。外部用户输入经 `accept`；用户插话、结束门禁反馈、Worker report 共用同一条 Loop 消息队列与同一 enqueue 原语（用条目类型区分），不再另设 steer/inject。
+由 AgentSpec 绑定到某一 Session 后的长期活体：Run 结束只进入空闲，不销毁。外部用户输入经 `accept`；用户插话与 Worker report 共用 MainAgent 的 Session 级 staging 队列与同一 enqueue/drain 原语（活 Run 则转投 Loop 消息队列，空闲则开新 Run 或续 Run）；结束门禁反馈只发生在 Run 存活期间，由 Loop 直接写入活 Run 的消息队列，不经 Session 级队列。不再另设 steer/inject。
 _Avoid_：ExecutionHandle、Run 结束即丢弃句柄、steer/inject 双队列、SessionRuntime（作领域对外名）、与 MainAgent 并行的第二套 Agent.run 入口
 
 **运行（Run）**：
